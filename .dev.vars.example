@@ -1,0 +1,7 @@
+PUBLIC_APP_ORIGIN=http://localhost:3000
+CLOUDFLARE_OAUTH_CLIENT_ID=replace-with-development-client-id
+CLOUDFLARE_OAUTH_CLIENT_SECRET=replace-with-development-client-secret
+CLOUDFLARE_OAUTH_SCOPES=openid profile email offline_access
+SESSION_SECRET=replace-with-at-least-32-random-bytes
+TOKEN_ENCRYPTION_KEY=replace-with-another-at-least-32-random-bytes
+

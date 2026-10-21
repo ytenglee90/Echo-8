@@ -1,0 +1,145 @@
+/* Memory overview and routine management. */
+/* AI memory and connection settings: routine work first, maintenance on demand. */
+.ai-memory-center { padding: 16px; }
+.ai-memory-center > .ai-memory-center-overview {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0;
+}
+.ai-memory-center > .ai-memory-center-overview > div {
+  display: grid;
+  min-height: 0;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.ai-memory-center-overview h2 { margin: 0; font-size: 17px; line-height: 1.3; }
+.ai-memory-center-overview p { max-width: 48ch; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ai-memory-center-overview > button,
+.ai-memory-daily-action > button,
+.ai-memory-maintenance button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 33px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ai-memory-daily-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 15px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--control-surface) 64%, var(--panel));
+}
+.ai-memory-daily-action > div { display: grid; min-width: 0; gap: 3px; }
+.ai-memory-daily-action strong { font-size: 13px; }
+.ai-memory-daily-action small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.ai-memory-daily-action > button { border-color: var(--ink); background: var(--ink); color: var(--panel); }
+.ai-memory-daily-action > button:disabled,
+.ai-memory-maintenance button:disabled { cursor: not-allowed; opacity: .45; }
+.ai-memory-selection-summary { margin-top: 10px; }
+.ai-memory-center-candidates {
+  display: block;
+  margin-top: 10px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--control-surface) 54%, var(--panel));
+}
+.ai-memory-center-candidates > details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 54px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.ai-memory-center-candidates > details > summary::-webkit-details-marker { display: none; }
+.ai-memory-center-candidates > details > summary > span { display: grid; min-width: 0; gap: 3px; }
+.ai-memory-center-candidates > details > summary strong { font-size: 13px; }
+.ai-memory-center-candidates > details > summary small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.ai-memory-center-candidates > details > summary em {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.ai-memory-center-candidates > details[open] > summary { border-bottom: 1px solid var(--border); }
+.ai-memory-candidates-content { display: grid; gap: 10px; padding: 11px 12px 12px; }
+.ai-memory-candidates-content > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ai-memory-auto-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  cursor: pointer;
+}
+.ai-memory-auto-toggle input { flex: 0 0 auto; margin: 2px 0 0; accent-color: var(--ink); }
+.ai-memory-auto-toggle span { display: grid; gap: 2px; min-width: 0; }
+.ai-memory-auto-toggle strong { font-size: 12px; }
+.ai-memory-auto-toggle small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.ai-memory-candidate-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ai-memory-candidate-tools small { color: var(--muted); font-size: 11px; }
+.ai-memory-maintenance {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.ai-memory-maintenance > summary { color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 700; }
+.ai-memory-maintenance[open] > summary { color: var(--ink); }
+.ai-memory-maintenance > div { display: grid; gap: 9px; margin-top: 9px; }
+.ai-memory-maintenance p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ai-memory-maintenance > div > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-memory-filter { margin-top: 12px; }
+.ai-memory-center-list { margin-top: 10px; }
+.ai-memory-card-use {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 27px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ai-memory-card-use input { margin: 0; accent-color: var(--ink); }
+.ai-memory-card-use:has(input:disabled) { cursor: not-allowed; opacity: .55; }
+.ai-memory-title-copy { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.ai-memory-title-copy strong { overflow: hidden; font-size: 13px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.ai-memory-title-copy small { color: var(--faint); font-size: 11px; }
+.ai-memory-center-badges { align-self: flex-start; }
+.ai-memory-entry-meta { max-width: 200px; color: var(--faint); font-size: 11px; line-height: 1.35; text-align: right; }
+

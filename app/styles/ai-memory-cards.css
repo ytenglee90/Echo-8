@@ -1,0 +1,177 @@
+/* Memory cards, inline editing and delete dialog. */
+/* Memory center: one aligned reading column, with obvious interactive controls. */
+.ai-memory-center { padding: 18px 16px 22px; }
+.ai-memory-center > .ai-memory-center-overview { align-items: center; }
+.ai-memory-center-overview p { max-width: 56ch; }
+.ai-memory-file-actions {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  min-width: 0;
+}
+.ai-memory-file-actions > small { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.ai-memory-file-actions > span { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.ai-memory-file-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 31px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.ai-memory-file-actions button:hover { border-color: var(--border-strong); background: var(--control-surface); }
+.ai-memory-daily-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 13px 14px;
+}
+.ai-memory-daily-action > button { min-width: 94px; }
+.ai-memory-save-progress { color: var(--ink) !important; font-weight: 650; }
+.ai-memory-selection-summary { align-items: center; min-height: 48px; padding: 10px 12px; }
+.ai-memory-center-candidates > details > summary { min-height: 58px; padding: 11px 13px; }
+.ai-memory-candidates-content { padding: 12px 13px 13px; }
+.ai-memory-maintenance { padding: 11px 13px; }
+.ai-memory-filter { margin-top: 14px; }
+.ai-memory-filter input { height: 34px; padding: 0 11px; }
+.ai-memory-center-list { gap: 10px; margin-top: 12px; }
+.ai-memory-center-entry { gap: 10px; padding: 12px; }
+.ai-memory-center-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+}
+.ai-memory-title-copy { padding-top: 1px; }
+.ai-memory-title-inline-button {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: text;
+  font: inherit;
+  text-align: left;
+}
+.ai-memory-title-inline-button:focus-visible { outline: 2px solid var(--selection); outline-offset: 3px; border-radius: 4px; }
+.ai-memory-title-inline-input {
+  width: 100%;
+  height: 29px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--control-surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.ai-memory-title-inline-input:focus { outline: 2px solid var(--selection); outline-offset: 1px; }
+.ai-memory-center-badges { min-width: 0; padding-top: 1px; }
+.ai-memory-center-title em { display: block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.ai-memory-center-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+.ai-memory-center-actions .ai-memory-card-use { min-height: 29px; align-self: center; }
+.ai-memory-card-direct-actions,
+.ai-memory-card-right-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ai-memory-card-right-actions { justify-content: flex-end; }
+.ai-memory-card-direct-actions > button,
+.ai-memory-card-right-actions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+}
+.ai-memory-delete-action {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border)) !important;
+  color: var(--danger) !important;
+}
+.ai-memory-delete-action:hover,
+.ai-memory-delete-action:focus-visible { background: color-mix(in srgb, var(--danger) 7%, var(--panel)) !important; }
+.ai-memory-primary-actions { justify-content: flex-end; }
+.ai-memory-primary-actions > button { min-height: 30px; }
+.ai-memory-entry-meta { max-width: none; }
+
+.ai-memory-delete-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, .28);
+  backdrop-filter: blur(6px);
+}
+.ai-memory-delete-dialog {
+  width: min(410px, calc(100vw - 48px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, .22);
+}
+.ai-memory-delete-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 17px 17px 13px 18px;
+}
+.ai-memory-delete-dialog > header > div { display: grid; gap: 5px; min-width: 0; }
+.ai-memory-delete-dialog > header strong { font-size: 14px; }
+.ai-memory-delete-dialog > header span { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.ai-memory-delete-dialog > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 17px 16px;
+  border-top: 1px solid var(--border);
+}
+.ai-memory-delete-dialog > footer > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.ai-memory-delete-dialog > footer > button:hover:not(:disabled),
+.ai-memory-delete-dialog > footer > button:focus-visible { border-color: var(--border-strong); background: var(--control-surface); }
+.ai-memory-delete-dialog > footer > button:disabled { cursor: wait; opacity: .62; }
+.ai-memory-delete-dialog > footer > .ai-memory-delete-confirm {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: white;
+}
+.ai-memory-delete-dialog > footer > .ai-memory-delete-confirm:hover:not(:disabled),
+.ai-memory-delete-dialog > footer > .ai-memory-delete-confirm:focus-visible { background: color-mix(in srgb, var(--danger) 86%, black); }
+.ai-memory-delete-error { margin: 0 18px 13px; color: var(--danger); font-size: 12px; line-height: 1.45; }
+

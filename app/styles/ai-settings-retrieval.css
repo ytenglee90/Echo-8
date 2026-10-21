@@ -1,0 +1,18 @@
+/* Retrieval contribution layout. */
+/* Retrieval cards are separate plugin contributions. Let the common settings
+   host own one vertical scroll area so expanding the cloud card never leaves
+   the model connection below it with a zero-height, overlapping viewport. */
+.ai-provider-settings-host { overflow-y: auto; overflow-x: hidden; }
+.ai-provider-settings-host > .ui-contribution-root:has(.ai-provider-panel) {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: visible;
+}
+.ai-provider-settings-host > .ui-contribution-root:has(.ai-provider-panel) > .ai-provider-panel {
+  flex: 1 1 auto;
+  min-height: auto;
+  min-width: 0;
+  overflow: visible;
+}

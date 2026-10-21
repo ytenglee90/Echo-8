@@ -1,0 +1,18 @@
+/* Model and retrieval option separation. */
+/* The retrieval options are one choice area; the chat model is a separate
+   task.  Keep the visual grouping in the host without coupling either plugin. */
+.ai-provider-settings-host > .ui-contribution-root:has(.ai-provider-panel) > .ai-provider-panel {
+  width: auto;
+  align-self: stretch;
+  margin: 18px 16px 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.ai-provider-setup-eyebrow {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .02em;
+}

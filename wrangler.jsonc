@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "echo8",
+  "main": "vinext/server/app-router-entry",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "CONTROL_DB",
+      "database_name": "echo8-control",
+      "database_id": "e727e311-5a8a-4555-8d59-0954dc76b42d"
+    }
+  ],
+  "vars": {
+    "PUBLIC_APP_ORIGIN": "https://echo8.ytenglee90.workers.dev"
+  }
+,
+  "assets": { "directory": "dist/client", "not_found_handling": "none", "binding": "ASSETS" }
+}

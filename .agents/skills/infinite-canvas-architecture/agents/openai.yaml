@@ -1,0 +1,6 @@
+interface:
+  display_name: "无限画布架构守则"
+  short_description: "约束无限画布的插件架构、广播通信、性能与数据安全"
+  default_prompt: "Use $infinite-canvas-architecture to implement or review this infinite-canvas application without breaking its architecture."
+policy:
+  allow_implicit_invocation: true

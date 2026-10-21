@@ -1,0 +1,149 @@
+/* Secondary memory and provider capabilities. */
+/* Routine memory management: one visible choice, compact exceptional actions. */
+.ai-memory-center-candidates > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 0;
+}
+.ai-memory-center-candidates > header > em {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.ai-memory-center-candidates > .ai-memory-candidate-card {
+  margin: 10px 11px 11px;
+}
+.ai-memory-candidate-card > strong { font-size: 12px; }
+.ai-memory-candidate-card > span { color: var(--muted); font-size: 12px; }
+.ai-memory-candidate-card > footer { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* Secondary capabilities stay available without competing with daily work. */
+.ai-provider-retrieval-details,
+.ai-provider-backup-details,
+.ai-memory-files {
+  margin-top: 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--control-surface) 62%, var(--panel));
+}
+.ai-provider-retrieval-details > summary,
+.ai-provider-backup-details > summary,
+.ai-memory-files > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.ai-provider-retrieval-details > summary { padding: 9px 10px; }
+.ai-provider-retrieval-details[open] > summary,
+.ai-provider-backup-details[open] > summary,
+.ai-memory-files[open] > summary { color: var(--ink); }
+.ai-provider-retrieval-details > div { display: grid; gap: 8px; padding: 0 9px 9px; }
+.ai-provider-retrieval-details .ai-provider-remote-semantic-details {
+  margin: 0;
+  padding: 8px 9px;
+  background: var(--panel);
+}
+.ai-provider-backup-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+}
+.ai-provider-backup-details > summary small { color: var(--muted); font-size: 11px; font-weight: 500; }
+.ai-provider-backup-details > div { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 10px 10px; }
+.ai-provider-backup-details button,
+.ai-memory-files button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 31px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.ai-memory-files > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+}
+.ai-memory-files > summary small { color: var(--muted); font-size: 11px; font-weight: 500; }
+.ai-memory-files > div { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 10px 10px; }
+.ai-memory-files-progress { align-self: center; color: var(--muted); font-size: 11px; }
+.ai-memory-files .ai-error { flex-basis: 100%; margin: 0; }
+
+@media (max-width: 540px) {
+  .ai-memory-card-use { align-self: flex-start; }
+  .ai-memory-entry-meta { max-width: none; text-align: left; }
+}
+
+.ai-provider-setup-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0 0 12px;
+}
+.ai-provider-setup-steps span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--control-surface);
+  color: var(--muted);
+  font-size: 11px;
+}
+.ai-provider-setup-steps b {
+  display: inline-grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 11px;
+}
+.ai-provider-manual-details {
+  margin-top: 11px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--control-surface) 62%, var(--panel));
+}
+.ai-provider-manual-details > summary { color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 700; }
+.ai-provider-manual-details[open] > summary { color: var(--ink); }
+.ai-provider-manual-details > div { display: grid; gap: 9px; margin-top: 9px; }
+.ai-provider-manual-details > div > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ai-provider-manual-details .ai-provider-advanced { margin-top: 0; background: var(--panel); }
+
+@media (max-width: 540px) {
+  .ai-memory-center > .ai-memory-center-overview,
+  .ai-memory-daily-action,
+  .ai-memory-center-candidates > details > summary { align-items: stretch; flex-direction: column; }
+  .ai-memory-daily-action { grid-template-columns: minmax(0, 1fr); }
+  .ai-memory-center-overview > button,
+  .ai-memory-daily-action > button { width: 100%; }
+  .ai-memory-file-actions { justify-items: start; }
+  .ai-memory-file-actions > span { justify-content: flex-start; }
+  .ai-memory-center-candidates > details > summary em { align-self: flex-start; }
+  .ai-memory-center-title { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .ai-memory-center-badges { grid-column: 2; }
+  .ai-memory-center-actions { align-items: flex-start; }
+  .ai-memory-card-direct-actions,
+  .ai-memory-card-right-actions { width: 100%; justify-content: flex-start; }
+}

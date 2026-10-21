@@ -1,0 +1,129 @@
+/* Local and remote semantic retrieval choices. */
+/* Keep the recommended local option and the optional cloud alternative
+   together, before the unrelated conversation-model configuration. */
+.ai-provider-settings-host > .ai-provider-panel {
+  order: 1;
+  border-top: 0;
+  padding: 16px;
+}
+.ai-provider-settings-host > .ui-contribution-root { min-width: 0; }
+.ai-provider-settings-host > .ui-contribution-root:has(.ai-provider-panel) {
+  order: 1;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.ai-provider-settings-host > .ui-contribution-root:has(.ai-provider-panel) > .ai-provider-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ai-provider-setup-intro { display: grid; gap: 4px; margin: 0; }
+.ai-provider-setup-intro .eyebrow { color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .02em; }
+.ai-provider-setup-intro h2 { margin: 0; font-size: 16px; line-height: 1.25; }
+.ai-provider-setup-intro p { max-width: 48ch; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.ai-provider-security-note {
+  margin: 0 0 12px;
+  padding: 8px 9px;
+  border-left: 3px solid var(--border-strong);
+  background: color-mix(in srgb, var(--control-surface) 72%, var(--panel));
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.ai-provider-profile-toolbar { flex-wrap: wrap; }
+.ai-provider-profile-toolbar select { flex: 1 1 190px; }
+.ai-provider-inline-action,
+.ai-provider-primary-button,
+.ai-provider-secondary-button,
+.ai-provider-backup-details button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 35px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.ai-provider-inline-action { padding: 0 10px; }
+.ai-provider-inline-icon-action,
+.ai-provider-secondary-icon-action {
+  width: 35px;
+  min-width: 35px;
+  padding: 0;
+}
+.ai-provider-inline-action:hover,
+.ai-provider-secondary-button:hover,
+.ai-provider-backup-details button:hover { border-color: var(--border-strong); background: var(--control-surface); }
+.ai-provider-primary-button {
+  flex: 1 1 150px;
+  padding: 0 13px;
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--panel);
+}
+.ai-provider-primary-button:hover { background: var(--accent); }
+.ai-provider-secondary-button { flex: 0 0 auto; padding: 0 10px; }
+.ai-provider-inline-action:disabled,
+.ai-provider-primary-button:disabled,
+.ai-provider-secondary-button:disabled,
+.ai-provider-backup-details button:disabled { cursor: not-allowed; opacity: .45; }
+.ai-provider-backup-details,
+.ai-provider-help-details {
+  margin-top: 11px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--control-surface) 68%, var(--panel));
+}
+.ai-provider-backup-details summary,
+.ai-provider-help-details summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.ai-provider-backup-details[open] summary,
+.ai-provider-help-details[open] summary { color: var(--ink); }
+.ai-provider-backup-details p,
+.ai-provider-help-details p { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ai-provider-backup-details > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.ai-provider-backup-details button { padding: 0 9px; }
+
+.semantic-provider-settings > details {
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+}
+.semantic-provider-settings > details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 13px;
+  cursor: pointer;
+  list-style: none;
+}
+.semantic-provider-settings > details > summary::-webkit-details-marker { display: none; }
+.semantic-provider-settings > details > summary > span { display: grid; gap: 3px; }
+.semantic-provider-settings > details > summary strong { font-size: 13px; }
+.semantic-provider-settings > details > summary small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.semantic-provider-settings > details > summary em {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+.semantic-provider-settings-content { display: grid; gap: 10px; padding: 0 13px 13px; }
+.ai-provider-retrieval-module .semantic-provider-unavailable {
+  padding: 12px 13px;
+}

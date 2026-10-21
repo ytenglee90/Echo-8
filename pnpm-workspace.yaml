@@ -1,0 +1,12 @@
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
+  workerd: true
+minimumReleaseAgeExclude:
+  - '@playwright/test@1.63.0'
+  - playwright-core@1.63.0
+  - playwright@1.63.0
+  # beta.10 regresses controlled-textarea undo and the extreme editor-open gate.
+  # Remove this one-package exception after beta.11 clears minimumReleaseAge.
+  - vinext@1.0.0-beta.11
