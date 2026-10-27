@@ -47,36 +47,28 @@ export function PluginCenterPanel({ client }: { client: ViewClient }) {
   };
 
   if (!open) return null;
-
-  const sections: Array<{ category: PluginSnapshot['category']; label: string; copy: string }> = [
-    { category: 'core', label: '核心组件', copy: '维持画布、内容和交互基础，存在依赖时不可停用。' },
-    { category: 'feature', label: '可选功能', copy: '可以按工作方式启用或停用。' },
-    { category: 'provider', label: 'AI 与同步服务', copy: '连接外部能力或本地模型，停用不会删除内容。' },
-    { category: 'diagnostic', label: '管理与诊断', copy: '用于配置、排查和开发状态检查。' },
-  ];
+  const sections = groupPlugins(plugins);
 
   return (
     <section className="plugin-center" aria-label="插件中心">
       <div className="panel-heading">
         <div>
-          <span className="eyebrow">微内核</span>
-          <h2>插件运行状态</h2>
+          <span className="eyebrow">{plugins.length} 个内置组件</span>
+          <h2>插件中心</h2>
         </div>
         <IconButton icon="close" label="关闭插件中心" onClick={() => void client.dispatch('pluginCenter.close')} />
       </div>
-      <p className="panel-copy">这里只展示用户可理解的功能边界；内部资源和权限详情请到诊断中心查看。</p>
+      <p className="panel-copy">按使用场景整理。停用可选组件不会删除已有内容。</p>
       {error && <p className="plugin-toggle-error">{error}</p>}
       {sections.map((section) => {
-        const sectionPlugins = plugins.filter((plugin) => plugin.category === section.category);
-        if (sectionPlugins.length === 0) return null;
         return (
-          <section className="plugin-section" aria-labelledby={`plugin-section-${section.category}`} key={section.category}>
+          <section className="plugin-section" aria-labelledby={`plugin-section-${section.id}`} key={section.id}>
             <div className="plugin-section-heading">
-              <h3 id={`plugin-section-${section.category}`}>{section.label}</h3>
+              <h3 id={`plugin-section-${section.id}`}>{section.label}<span>{section.plugins.length}</span></h3>
               <p>{section.copy}</p>
             </div>
             <div className="plugin-list">
-              {sectionPlugins.map((plugin) => {
+              {section.plugins.map((plugin) => {
                 const active = plugin.status === 'active';
                 const reason = plugin.blockers.length > 0
                   ? `正在被${plugin.blockers.join('、')}使用`
@@ -111,6 +103,86 @@ export function PluginCenterPanel({ client }: { client: ViewClient }) {
       })}
     </section>
   );
+}
+
+interface PluginSection {
+  id: string;
+  label: string;
+  copy: string;
+  pluginIds: readonly string[];
+}
+
+const PLUGIN_SECTIONS: readonly PluginSection[] = [
+  {
+    id: 'canvas-writing',
+    label: '画布与写作',
+    copy: '节点、编辑、选择、连线和历史。',
+    pluginIds: ['canvas', 'text-node', 'selection', 'connections', 'editor', 'history-controls'],
+  },
+  {
+    id: 'organize-find',
+    label: '组织与查找',
+    copy: '群组、注释、排列、检索和文本辅助。',
+    pluginIds: [
+      'groups', 'annotations', 'smart-layout', 'clipboard', 'search-replace', 'search-index',
+      'statistics', 'text-assist',
+    ],
+  },
+  {
+    id: 'books-appearance',
+    label: '书籍与外观',
+    copy: '书库、保存恢复、云同步和颜色。',
+    pluginIds: ['book-library', 'import-export', 'cloud-sync', 'palette'],
+  },
+  {
+    id: 'ai',
+    label: 'AI 与语义能力',
+    copy: '助手、模型连接和本地或远程语义检索。',
+    pluginIds: ['ai-assistant', 'ai-provider', 'local-semantic-provider', 'semantic-provider'],
+  },
+  {
+    id: 'workflow',
+    label: '效率工具',
+    copy: '命令面板和快捷键管理。',
+    pluginIds: ['command-palette', 'shortcut-center'],
+  },
+  {
+    id: 'system',
+    label: '系统与诊断',
+    copy: '插件管理和运行状态检查。',
+    pluginIds: ['plugin-center', 'diagnostic-center'],
+  },
+] as const;
+
+export function groupPlugins(plugins: PluginSnapshot[]): Array<Omit<PluginSection, 'pluginIds'> & {
+  plugins: PluginSnapshot[];
+}> {
+  const byId = new Map(plugins.map((plugin) => [plugin.id, plugin]));
+  const claimed = new Set<string>();
+  const sections = PLUGIN_SECTIONS.flatMap((section) => {
+    const grouped = section.pluginIds.flatMap((id) => {
+      const plugin = byId.get(id);
+      if (!plugin) return [];
+      claimed.add(id);
+      return [plugin];
+    });
+    return grouped.length > 0 ? [{
+      id: section.id,
+      label: section.label,
+      copy: section.copy,
+      plugins: grouped,
+    }] : [];
+  });
+  const unclaimed = plugins.filter((plugin) => !claimed.has(plugin.id));
+  if (unclaimed.length > 0) {
+    sections.push({
+      id: 'other',
+      label: '其他组件',
+      copy: '尚未归入固定场景的新组件。',
+      plugins: unclaimed,
+    });
+  }
+  return sections;
 }
 
 function pluginStatusLabel(status: PluginSnapshot['status']): string {

@@ -50,11 +50,21 @@ export interface ConnectionResizeLabelRequest {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'connection.create': CommandContract<{
+      from: ConnectionEndpoint;
+      to: ConnectionEndpoint;
+    }, { id?: string }>;
     'connection.setLabel': CommandContract<ConnectionSetLabelRequest, { revision: number }>;
     'connection.resizeLabel': CommandContract<ConnectionResizeLabelRequest, {
       width: number;
       height: number;
       revision: number;
+    }>;
+    'connection.toggleSelected': CommandContract<undefined, { removed?: number; id?: string }>;
+    'connection.toggleTitleSelected': CommandContract<undefined, {
+      removed?: number;
+      id?: string;
+      converted?: boolean;
     }>;
   }
 }

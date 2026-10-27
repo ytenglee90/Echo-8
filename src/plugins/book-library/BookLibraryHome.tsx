@@ -146,20 +146,20 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
       <header className="book-library-header">
         <div className="book-library-brand">
           <span className="book-library-mark" aria-hidden="true"><i /><i /><i /></span>
-          <div><strong>Echo-8</strong><span>无限画布书库</span></div>
+          <strong>Echo-8</strong>
         </div>
         <div className="book-library-account">
           {cloud.authenticated ? (
             <>
               <span className="book-library-avatar" aria-hidden="true">{accountInitial(accountLabel)}</span>
-              <span><strong>{accountLabel || 'Cloudflare 账户'}</strong><small>已登录</small></span>
+              <span><strong>{accountLabel || 'Cloudflare 账户'}</strong></span>
               <button type="button" disabled={Boolean(busy)} onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}>退出</button>
             </>
           ) : (
             <>
-              <span><strong>未登录账户</strong><small>本地书籍仍可使用</small></span>
+              <span className="book-library-avatar muted" aria-hidden="true"><Icon name="globe" /></span>
               {cloud.configured && (
-                <button type="button" onClick={() => globalThis.location.assign('/api/cloud/oauth/start?returnTo=/')}>登录 Cloudflare</button>
+                <button type="button" onClick={() => globalThis.location.assign('/api/cloud/oauth/start?returnTo=/')}>登录</button>
               )}
             </>
           )}
@@ -168,52 +168,49 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
 
       <main className="book-library-content">
         <div className="book-library-intro">
-          <span className="eyebrow">BOOK LIBRARY</span>
           <h1>今天想打开哪一本？</h1>
-          <p>每本云端书籍各自保存，换地点或换设备后，登录同一个 Cloudflare 账户即可继续。</p>
         </div>
 
         {error && <div className="book-library-error" role="alert">{error}</div>}
 
         <div className="book-library-layout">
-          <section className="book-library-section local-books" aria-labelledby="local-books-title">
-            <div className="book-library-section-heading">
-              <div><span>这台设备</span><h2 id="local-books-title">本地书籍</h2></div>
-            </div>
-            <div className="book-library-local-actions">
+          <section className="book-library-quick-start" aria-labelledby="local-books-title">
+            <h2 className="sr-only" id="local-books-title">本地书籍</h2>
+            <div className="book-library-local-actions" aria-label="快速开始">
               <button
                 type="button"
                 className="book-library-action-card primary"
+                aria-label="新建空白书籍"
+                title="新建空白书籍"
                 disabled={Boolean(busy)}
                 onClick={() => void run('new-local', () => client.dispatch('bookLibrary.createLocal'))}
               >
                 <Icon name="add" />
-                <span><strong>{busy === 'new-local' ? '正在新建…' : '新建空白书籍'}</strong><small>从一张干净画布开始</small></span>
+                <strong>{busy === 'new-local' ? '正在新建…' : '新建'}</strong>
               </button>
               <button
                 type="button"
                 className="book-library-action-card"
+                aria-label="打开本地书籍"
+                title="打开本地书籍"
                 disabled={Boolean(busy)}
                 onClick={() => void openLocalPicker()}
               >
                 <Icon name="folder-open" />
-                <span><strong>{busy === 'open-local' ? '正在准备…' : '打开本地书籍'}</strong><small>选择 .echo8 文件</small></span>
+                <strong>{busy === 'open-local' ? '正在准备…' : '打开'}</strong>
+              </button>
+              <button
+                className="book-library-action-card continue"
+                type="button"
+                aria-label="继续当前浏览器中的画布"
+                title="继续当前浏览器中的画布"
+                disabled={Boolean(busy)}
+                onClick={() => void client.dispatch('bookLibrary.enterCanvas')}
+              >
+                <Icon name="play" />
+                <strong>继续</strong>
               </button>
             </div>
-            <button
-              className="book-library-continue"
-              type="button"
-              aria-label="继续当前浏览器中的画布"
-              disabled={Boolean(busy)}
-              onClick={() => void client.dispatch('bookLibrary.enterCanvas')}
-            >
-              <span className="book-library-continue-icon"><Icon name="play" /></span>
-              <span className="book-library-continue-copy">
-                <strong>继续当前浏览器中的画布</strong>
-                <small>回到这台设备上尚未关闭的编辑现场</small>
-              </span>
-              <Icon name="chevron-right" />
-            </button>
             <input
               ref={fileInput}
               className="sr-only"
@@ -229,14 +226,16 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
 
           <section className="book-library-section cloud-books" aria-labelledby="cloud-books-title">
             <div className="book-library-section-heading">
-              <div><span>跨设备保存</span><h2 id="cloud-books-title">我的云端书籍</h2></div>
+              <div><h2 id="cloud-books-title">云端书籍</h2><span>{projects.length > 0 ? `${projects.length} 本` : '跨设备'}</span></div>
               {installation && (
                 <button
                   className="book-library-refresh"
                   type="button"
+                  aria-label="刷新云端书籍"
+                  title="刷新云端书籍"
                   disabled={Boolean(busy)}
                   onClick={() => void run('refresh', () => client.dispatch('cloudSync.listProjects'))}
-                >刷新</button>
+                ><Icon name="reset" /></button>
               )}
             </div>
 
@@ -356,10 +355,6 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
         </div>
       </main>
 
-      <footer className="book-library-footer">
-        <span>本地书籍通过 .echo8 文件保存</span>
-        <span>云端正文直接进入你的 Worker 与 D1</span>
-      </footer>
     </section>
   );
 }

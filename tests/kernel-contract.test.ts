@@ -3588,6 +3588,61 @@ test('selection deletes nodes and attached connections in one undoable transacti
   assert.equal(connectionsAfterUndo.length, 1);
 });
 
+test('title connection shortcut operation creates, converts, and disconnects selected node titles', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSelectionPlugin());
+  harness.plugins.register(createConnectionsPlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('selection');
+  await harness.plugins.start('connections');
+
+  const left = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '标题起点', x: 100, y: 100,
+  }, 'core.test');
+  const right = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '标题终点', x: 500, y: 200,
+  }, 'core.test');
+  await harness.router.dispatch('selection.set', { ids: [left.id, right.id], mode: 'replace' }, 'core.test');
+
+  const shortcut = harness.ui.listShortcuts().find((item) =>
+    item.owner === 'connections' && item.id === 'connections.toggle-title-selected-shortcut',
+  );
+  assert.equal(shortcut?.chord, 'shift+l');
+  assert.equal(shortcut?.command, 'connection.toggleTitleSelected');
+
+  const created = await harness.router.dispatch<{ id?: string }>(
+    'connection.toggleTitleSelected', undefined, 'core.test',
+  );
+  let connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
+  assert.equal(connections.length, 1);
+  assert.equal(connections[0].id, created.id);
+  assert.deepEqual(connections[0].from, { nodeId: left.id, side: 'title' });
+  assert.deepEqual(connections[0].to, { nodeId: right.id, side: 'title' });
+
+  await harness.router.dispatch('connection.toggleTitleSelected', undefined, 'core.test');
+  connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
+  assert.equal(connections.length, 0);
+  await harness.transactions.undo();
+  connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
+  assert.equal(connections[0].from.side, 'title');
+
+  await harness.transactions.undo();
+  await harness.router.dispatch('connection.toggleSelected', undefined, 'core.test');
+  connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
+  const ordinaryId = connections[0].id;
+  assert.notEqual(connections[0].from.side, 'title');
+
+  const converted = await harness.router.dispatch<{ id?: string; converted?: boolean }>(
+    'connection.toggleTitleSelected', undefined, 'core.test',
+  );
+  connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
+  assert.equal(converted.converted, true);
+  assert.equal(connections[0].id, ordinaryId);
+  assert.equal(connections[0].from.side, 'title');
+  assert.equal(connections[0].to.side, 'title');
+});
+
 test('annotations follow text edits and target deletion in the same global transactions', async () => {
   const harness = createHarness();
   harness.plugins.register(textNodePlugin);

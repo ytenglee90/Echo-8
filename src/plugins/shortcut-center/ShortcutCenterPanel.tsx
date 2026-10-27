@@ -89,23 +89,23 @@ export function ShortcutCenterPanel({ client }: { client: ViewClient }) {
   return (
     <section className="shortcut-center" aria-label="快捷键中心">
       <div className="panel-heading">
-        <div><span className="eyebrow">全部操作 · 统一裁决</span><h2>快捷键中心</h2></div>
+        <div><span className="eyebrow">{operations.length} 项操作</span><h2>快捷键中心</h2></div>
         <IconButton icon="close" label="关闭快捷键中心" onClick={() => void client.dispatch('shortcuts.close')} />
       </div>
-      <p className="panel-copy">这里列出所有公开操作、交互指令和当前按键。修改时会先检查冲突，再由统一键盘管理器接管。</p>
+      <p className="panel-copy">按工作场景整理全部公开操作。点按按键框即可修改，冲突会自动拦截。</p>
       <div className="shortcut-center-toolbar">
-        <span>{operations.length} 项操作 · {shortcuts.length} 组按键 · {shortcuts.filter((item) => item.overridden).length} 项已自定义</span>
+        <span>{shortcuts.length} 组按键 · {shortcuts.filter((item) => item.overridden).length} 项已自定义</span>
         <IconButton icon="reset" label="全部恢复默认" onClick={() => void client.dispatch('shortcuts.resetAll')} />
       </div>
       <label className="shortcut-filter">
         <span className="sr-only">查找操作指令</span>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="查找操作、命令或分类…" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索操作或分类…" />
       </label>
       {error && <p className="shortcut-error" role="alert">{error}</p>}
       <div className="shortcut-list">
         {grouped.map(([category, rows]) => (
           <section className="shortcut-category" key={category}>
-            <h3>{category}</h3>
+            <h3>{category}<span>{rows.length}</span></h3>
             {rows.map((operation) => (
               <div className="shortcut-row" key={operation.key}>
                 <div className="shortcut-operation-copy">
@@ -175,8 +175,10 @@ function buildOperationRows(actions: RegisteredAction[], shortcuts: RegisteredSh
     return {
       key: `action:${action.owner}:${action.id}`,
       label: action.label,
-      category: action.category,
-      detail: `${action.command} · ${action.owner}`,
+      category: shortcutCategory(action.owner, action.category),
+      detail: bindings.some((shortcut) => shortcut.instruction)
+        ? bindings.find((shortcut) => shortcut.instruction)?.instruction ?? '快捷键可自定义'
+        : bindings.length > 0 ? '快捷键可自定义' : '可在命令面板执行',
       shortcuts: bindings,
     };
   });
@@ -186,8 +188,8 @@ function buildOperationRows(actions: RegisteredAction[], shortcuts: RegisteredSh
     rows.push({
       key: `shortcut:${key}`,
       label: shortcut.label,
-      category: shortcut.category ?? (shortcut.mode === 'hold' ? '画布交互' : '其他操作'),
-      detail: shortcut.instruction ?? `${shortcut.command ?? '交互修饰键'} · ${shortcut.owner}`,
+      category: shortcutCategory(shortcut.owner, shortcut.category),
+      detail: shortcut.instruction ?? (shortcut.mode === 'hold' ? '按住使用' : '快捷键可自定义'),
       shortcuts: [shortcut],
     });
   }
@@ -201,7 +203,50 @@ function groupOperations(operations: OperationRow[]): Array<[string, OperationRo
     rows.push(operation);
     groups.set(operation.category, rows);
   }
-  return [...groups.entries()];
+  return [...groups.entries()].sort(([left], [right]) =>
+    categoryRank(left) - categoryRank(right) || left.localeCompare(right, 'zh-CN'),
+  );
+}
+
+const CATEGORY_ORDER = [
+  '画布与视图',
+  '节点与连线',
+  '群组与排列',
+  '选择与编辑',
+  '文本编辑',
+  '文本格式',
+  '查找与写作辅助',
+  '文件与书库',
+  '外观',
+  'AI',
+  '云同步',
+  '系统与面板',
+] as const;
+
+function shortcutCategory(owner: string, category?: string): string {
+  if (category === '文本格式') return '文本格式';
+  if (owner === 'connections' || owner === 'text-node') return '节点与连线';
+  if (owner === 'groups' || owner === 'smart-layout' || category === '群组') return '群组与排列';
+  if (owner === 'selection' || owner === 'clipboard' || owner === 'history-controls' || category === '编辑') {
+    return '选择与编辑';
+  }
+  if (owner === 'editor' || owner === 'annotations' || category === '文本编辑') return '文本编辑';
+  if (owner === 'search-replace' || owner === 'text-assist' || category === '查找') {
+    return '查找与写作辅助';
+  }
+  if (owner === 'book-library' || owner === 'import-export' || category === '文件' || category === '书籍') {
+    return '文件与书库';
+  }
+  if (owner === 'palette' || category === '外观') return '外观';
+  if (owner === 'cloud-sync' || category === '云同步') return '云同步';
+  if (owner.startsWith('ai-') || owner.includes('semantic-provider') || category === 'AI') return 'AI';
+  if (owner === 'canvas' || category === '画布' || category === '画布交互') return '画布与视图';
+  return '系统与面板';
+}
+
+function categoryRank(category: string): number {
+  const rank = CATEGORY_ORDER.indexOf(category as typeof CATEGORY_ORDER[number]);
+  return rank < 0 ? CATEGORY_ORDER.length : rank;
 }
 
 function chordFromCapture(event: React.KeyboardEvent<HTMLInputElement>): string | undefined {

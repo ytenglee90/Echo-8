@@ -627,7 +627,7 @@ test('cloud books can be confirmed and deleted from the library and sync panel',
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   const libraryDelete = library.getByRole('button', { name: '删除书籍：首页待删除' });
   await expect(libraryDelete).toBeVisible();
-  await expect(libraryDelete.getByText('删除', { exact: true })).toBeVisible();
+  await expect(libraryDelete.locator('[data-icon="trash"]')).toBeVisible();
   await libraryDelete.click();
   const firstDialog = page.getByRole('dialog', { name: '删除这本云端书籍？' });
   await expect(firstDialog).toContainText('首页待删除');
@@ -646,7 +646,7 @@ test('cloud books can be confirmed and deleted from the library and sync panel',
   await page.getByRole('button', { name: /^云同步：/u }).click();
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   const panelDelete = panel.getByRole('button', { name: '删除书籍：同步页待删除' });
-  await expect(panelDelete.getByText('删除', { exact: true })).toBeVisible();
+  await expect(panelDelete.locator('[data-icon="trash"]')).toBeVisible();
   await panelDelete.click();
   const secondDialog = page.getByRole('dialog', { name: '删除这本云端书籍？' });
   await expect(secondDialog).toContainText('同步页待删除');
@@ -1072,13 +1072,18 @@ test('shortcut center exposes and applies the text-box presentation shortcut', a
   await openApplication(page);
   await executeCommand(page, '打开快捷键中心');
   const panel = page.getByRole('region', { name: '快捷键中心' });
-  await panel.getByPlaceholder('查找操作、命令或分类…').fill('文本框与文字节点相互转换');
+  const search = panel.getByPlaceholder('搜索操作或分类…');
+  await search.fill('文本框与文字节点相互转换');
   const binding = panel.getByRole('textbox', { name: '修改文本框与文字节点相互转换的快捷键' });
   await expect(binding).toBeVisible();
   await expect(binding).toHaveValue('未设置');
   await binding.focus();
   await page.keyboard.press('Control+Shift+9');
   await expect(binding).toHaveValue(/Ctrl.*Shift.*9/u);
+  await search.fill('标题到标题连接两个文字节点');
+  const titleConnectionBinding = panel.getByRole('textbox', { name: '修改标题到标题连接两个文字节点的快捷键' });
+  await expect(titleConnectionBinding).toHaveValue('Shift + L');
+  await expect(panel.getByRole('heading', { name: /节点与连线/u })).toBeVisible();
   await panel.getByRole('button', { name: '关闭快捷键中心', exact: true }).click();
 
   const title = 'AI 助手使用指南';

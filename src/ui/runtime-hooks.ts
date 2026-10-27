@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../core/contracts.ts';
 import { commandTooltip } from './shortcut-presentation.ts';
 import type {
@@ -48,7 +48,7 @@ export function useContentCatalog(client: ViewClient, options?: { geometryOnly?:
   const queue = useRef<Promise<void>>(Promise.resolve());
   const generation = useRef(0);
 
-  const enqueueRefresh = (reset: boolean) => {
+  const enqueueRefresh = useCallback((reset: boolean) => {
     const expectedGeneration = generation.current;
     queue.current = queue.current.catch(() => undefined).then(async () => {
       const deltas = await client.requestAll<ContentCatalogDelta>('content.catalog@2',
@@ -76,25 +76,21 @@ export function useContentCatalog(client: ViewClient, options?: { geometryOnly?:
       setSummaries([]);
       setUnavailable(true);
     });
-  };
+  }, [client, geometryOnly]);
 
   useEffect(() => {
     generation.current += 1;
     catalogVersion.current = undefined;
     multipleProviders.current = false;
     enqueueRefresh(true);
-    // enqueueRefresh intentionally reads the current generation and stable client.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capabilityVersion, client, geometryOnly]);
+  }, [capabilityVersion, enqueueRefresh]);
 
   useEffect(
     () => client.subscribeSignal<ContentCatalogInvalidation>('content.catalog.invalidated', (message) => {
       if (geometryOnly && !message.payload.geometry) return;
       enqueueRefresh(false);
     }),
-    // enqueueRefresh intentionally serializes through refs and the stable client.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [client, geometryOnly],
+    [client, enqueueRefresh, geometryOnly],
   );
 
   useEffect(() => () => {

@@ -82,6 +82,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.setLabel',
         'connection.resizeLabel',
         'connection.toggleSelected',
+        'connection.toggleTitleSelected',
       ],
       dispatches: ['selection.set', 'interaction.begin', 'interaction.end'],
       events: [
@@ -107,8 +108,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.label.resize.preview',
       ],
       ui: ['connections.layer', 'connections.toolbar-action'],
-      actions: ['connections.toggle-selected-action'],
-      shortcuts: ['connections.toggle-selected-shortcut'],
+      actions: ['connections.toggle-selected-action', 'connections.toggle-title-selected-action'],
+      shortcuts: ['connections.toggle-selected-shortcut', 'connections.toggle-title-selected-shortcut'],
       permissions: [
         'store.own.read',
         'store.own.write',
@@ -389,6 +390,91 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         },
       });
 
+      context.commands.register<undefined, { removed?: number; id?: string; converted?: boolean }>({
+        type: 'connection.toggleTitleSelected',
+        handle: async () => {
+          const [selection, nodes] = await Promise.all([
+            context.capabilities.request<SelectionSnapshot>('selection.read@1'),
+            context.capabilities.request<ContentSummary[]>('content.summaries@1'),
+          ]);
+          const known = new Map(nodes.map((node) => [node.id, node]));
+          const selected = [...new Set(selection.ids)]
+            .map((id) => known.get(id))
+            .filter(Boolean) as ContentSummary[];
+          if (selected.length !== 2) throw new Error('请选择两个文字节点');
+
+          const selectedIds = new Set(selected.map((node) => node.id));
+          const existing = Object.values(readConnections()).find((connection) =>
+            selectedIds.has(connection.from.nodeId) && selectedIds.has(connection.to.nodeId),
+          );
+          if (existing?.from.side === 'title' || existing?.to.side === 'title') {
+            return {
+              result: { removed: 1 },
+              transaction: {
+                label: '断开标题连线',
+                patches: [{
+                  op: 'delete' as const,
+                  domain: 'document' as const,
+                  namespace: CONNECTION_NAMESPACE,
+                  key: existing.id,
+                }],
+                events: [{ type: 'connections.deleted', payload: { ids: [existing.id] } }],
+              },
+            };
+          }
+
+          const ordered = [...selected].sort((left, right) => {
+            const horizontal = (left.x + left.width / 2) - (right.x + right.width / 2);
+            if (horizontal !== 0) return horizontal;
+            const vertical = (left.y + left.height / 2) - (right.y + right.height / 2);
+            return vertical || left.id.localeCompare(right.id);
+          });
+          const from = { nodeId: ordered[0].id, side: 'title' as const };
+          const to = { nodeId: ordered[1].id, side: 'title' as const };
+          if (existing) {
+            return {
+              result: { id: existing.id, converted: true },
+              transaction: {
+                label: '转换为标题连线',
+                patches: [{
+                  op: 'set' as const,
+                  domain: 'document' as const,
+                  namespace: CONNECTION_NAMESPACE,
+                  key: existing.id,
+                  value: { ...existing, from, to, revision: existing.revision + 1 },
+                }],
+                events: [{ type: 'connection.changed', payload: { id: existing.id } }],
+              },
+            };
+          }
+
+          const id = createId('connection');
+          const connection: ConnectionRecord = {
+            id,
+            from,
+            to,
+            labelWidth: DEFAULT_CONNECTION_LABEL_WIDTH,
+            labelHeight: DEFAULT_CONNECTION_LABEL_HEIGHT,
+            revision: 1,
+            createdAt: Date.now(),
+          };
+          return {
+            result: { id },
+            transaction: {
+              label: '创建标题连线',
+              patches: [{
+                op: 'set' as const,
+                domain: 'document' as const,
+                namespace: CONNECTION_NAMESPACE,
+                key: id,
+                value: connection,
+              }],
+              events: [{ type: 'connection.created', payload: { id } }],
+            },
+          };
+        },
+      });
+
       context.capabilities.provide({
         key: 'connections.list@1',
         invoke: async () => {
@@ -630,14 +716,30 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         chord: 'l',
         command: 'connection.toggleSelected',
         label: '连接两个节点或断开选中节点的连线',
+        category: '节点与连线',
+      });
+      context.ui.shortcut({
+        id: 'connections.toggle-title-selected-shortcut',
+        chord: 'shift+l',
+        command: 'connection.toggleTitleSelected',
+        label: '标题到标题连接两个文字节点',
+        category: '节点与连线',
       });
       context.ui.action({
         id: 'connections.toggle-selected-action',
         label: '连接两个节点或断开选中节点的连线',
         command: 'connection.toggleSelected',
-        category: '画布',
+        category: '节点与连线',
         keywords: ['连线', '连接', '断开', 'link', 'connection'],
         priority: 63,
+      });
+      context.ui.action({
+        id: 'connections.toggle-title-selected-action',
+        label: '标题到标题连接两个文字节点',
+        command: 'connection.toggleTitleSelected',
+        category: '节点与连线',
+        keywords: ['标题', '标题栏', '连线', '连接', 'title', 'connection'],
+        priority: 64,
       });
     },
   };

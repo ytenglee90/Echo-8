@@ -500,7 +500,8 @@
 }
 .shortcut-list { display: grid; gap: 12px; margin-top: 11px; }
 .shortcut-category { display: grid; gap: 4px; }
-.shortcut-category h3 { margin: 4px 2px; color: var(--muted); font-size: 12px; letter-spacing: .08em; }
+.shortcut-category h3 { display: flex; align-items: baseline; gap: 7px; margin: 4px 2px; color: var(--muted); font-size: 12px; letter-spacing: .08em; }
+.shortcut-category h3 span { color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: 0; }
 .shortcut-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(164px, .9fr);
