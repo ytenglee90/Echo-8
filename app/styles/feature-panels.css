@@ -563,51 +563,6 @@
 .diagnostic-plugin-list small { color: var(--muted); font-size: 12px; }
 .diagnostic-empty { margin: 0; padding: 9px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); font-size: 12px; }
 
-.novelforge-panel { padding: 18px; border-bottom: 1px solid var(--border); background: var(--panel); }
-.novelforge-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 14px; }
-.novelforge-actions > button:first-child { grid-column: 1 / -1; }
-.novelforge-actions button { min-height: 34px; font-size: 12px; }
-.novelforge-actions button:disabled,
-.novelforge-boundary-actions button:disabled { cursor: not-allowed; opacity: 0.45; }
-.novelforge-status { margin: 10px 0 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--control-surface); color: var(--muted); font-size: 12px; line-height: 1.45; }
-.novelforge-status.ready { border-color: color-mix(in srgb, var(--success) 30%, var(--border)); color: var(--success); }
-.novelforge-status.error { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); color: var(--danger); }
-.novelforge-section { margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--border); }
-.novelforge-section h3 { margin: 0 0 9px; font-size: 12px; }
-.novelforge-project-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin: 0; }
-.novelforge-project-grid > div { display: grid; gap: 3px; padding: 8px; border-radius: 8px; background: var(--control-surface); }
-.novelforge-project-grid dt { color: var(--muted); font-size: 12px; }
-.novelforge-project-grid dd { overflow: hidden; margin: 0; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.novelforge-digest { display: block; overflow: hidden; margin-top: 7px; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.novelforge-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
-.novelforge-counts > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--control-surface); }
-.novelforge-counts span { color: var(--muted); font-size: 12px; }
-.novelforge-counts strong { font-size: 14px; }
-.novelforge-counts .good { border-color: color-mix(in srgb, var(--success) 25%, var(--border)); }
-.novelforge-counts .warn { border-color: color-mix(in srgb, var(--selection) 30%, var(--border)); }
-.novelforge-counts .danger { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
-.novelforge-binding-list { display: grid; gap: 5px; }
-.novelforge-binding-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; padding: 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--control-surface); }
-.novelforge-binding-list > div.conflict { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
-.novelforge-binding-list > div.local-draft { border-color: color-mix(in srgb, var(--selection) 35%, var(--border)); }
-.novelforge-binding-list > div > div { display: grid; min-width: 0; gap: 2px; }
-.novelforge-binding-list strong,
-.novelforge-binding-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.novelforge-binding-list strong { font-size: 12px; }
-.novelforge-binding-list span,
-.novelforge-binding-list small,
-.novelforge-binding-list code { color: var(--muted); font-size: 11px; line-height: 1.4; }
-.novelforge-binding-list i { color: var(--muted); font-size: 11px; font-style: normal; }
-.novelforge-binding-list small,
-.novelforge-binding-list code { grid-column: 1 / -1; overflow-wrap: anywhere; white-space: normal; }
-.novelforge-empty { margin: 0; padding: 9px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); font-size: 12px; }
-.novelforge-footnote { margin: 7px 0 0; color: var(--muted); font-size: 11px; }
-.novelforge-steps { display: grid; gap: 7px; margin: 0; padding-left: 21px; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.novelforge-steps code { color: var(--ink); font-size: 11px; }
-.novelforge-boundary-actions { display: grid; gap: 7px; }
-.novelforge-boundary-actions button { min-height: 32px; font-size: 12px; }
-.novelforge-boundary-actions .danger-button { border: 1px solid var(--danger); border-radius: 8px; background: color-mix(in srgb, var(--danger) 10%, var(--panel)); color: var(--danger); cursor: pointer; }
-
 .status-bar {
   grid-area: status;
   z-index: 35;

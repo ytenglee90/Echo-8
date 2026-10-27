@@ -12,22 +12,6 @@ export interface AIProviderPreset {
 
 export const AI_PROVIDER_PRESETS: readonly AIProviderPreset[] = [
   {
-    id: 'novelforge-codex',
-    label: 'NovelForge Codex（本机）',
-    draft: {
-      platform: 'NovelForge Codex', label: 'NovelForge Codex（本机）',
-      endpoint: 'http://127.0.0.1:32147/v1/chat/completions', model: 'novelforge-codex',
-      contextWindowTokens: 200_000,
-      transport: 'novelforge-connector',
-      authentication: 'none', apiStyle: 'openai', memoryToolEnabled: false,
-      // Defensive legacy setting: even if an old UI injects a key, it never enters backups.
-      secretPersistence: 'session-only',
-    },
-    suggestedModels: ['novelforge-codex'],
-    modelHint: 'novelforge-codex（由本机 Codex 决定实际模型）',
-    note: '先在 NovelForge 面板完成一次本机配对；以后 AI 助手会自动复用连接，不需要 API Key。',
-  },
-  {
     id: 'deepseek',
     label: 'DeepSeek',
     draft: {

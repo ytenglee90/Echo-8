@@ -1,8 +1,6 @@
 import type { CommandContract } from '../../protocols/commands.ts';
 
 export interface AIProviderPreferences {
-  /** `novelforge-connector` delegates transport and authentication to the NovelForge capability owner. */
-  transport?: 'http' | 'novelforge-connector';
   endpoint: string;
   model: string;
   /** User/provider-declared total context window. It is never guessed from a mutable model name. */
@@ -11,7 +9,7 @@ export interface AIProviderPreferences {
   apiStyle: 'openai' | 'gemini';
   /** Personal opt-in: send the bounded local `search_memory` tool to this connection. */
   memoryToolEnabled?: boolean;
-  /** Provider API keys may be personal-local; NovelForge pairing tokens are never stored here. */
+  /** Provider API keys may be personal-local or limited to the current page session. */
   secretPersistence?: 'personal-local' | 'session-only';
 }
 

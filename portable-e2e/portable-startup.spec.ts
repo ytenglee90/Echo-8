@@ -70,16 +70,6 @@ test('the generated single HTML starts from the library and edits without extern
   await expect.poll(async () => feed.evaluate((element) =>
     Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop))).toBeLessThanOrEqual(2);
 
-  await page.keyboard.press('Control+k');
-  const palette = page.getByRole('dialog', { name: '命令面板' });
-  await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开 NovelForge 小说工程');
-  await palette.getByRole('option', { name: /^打开 NovelForge 小说工程/u }).click();
-  const novelForge = page.getByRole('region', { name: 'NovelForge 小说工程' });
-  await expect(novelForge).toBeVisible();
-  await expect(novelForge).toContainText('网址 ↔ 本机 Runtime · 安全连接 v2');
-  await expect(novelForge).toContainText('不会直接修改 SQLite、审批、质量门或 Seal');
-  await expect(novelForge).toContainText('离线 HTML 不能安全连接本机服务');
-
   const externalRequests = requestedUrls.filter((url) => (
     url !== artifactUrl
     && !url.startsWith('data:')

@@ -1,6 +1,6 @@
 {
   "name": "echo-8-infinite-canvas",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "packageManager": "pnpm@11.19.0",
   "engines": {
@@ -17,7 +17,6 @@
     "build:debug": "node scripts/generate-pycorrector-text-assist.mjs && vite build --config vite.debug.config.ts",
     "fixture:brutal": "node scripts/generate-brutal-fixture.mjs",
     "verify:brutal": "node --max-old-space-size=4096 --experimental-strip-types scripts/verify-brutal-fixture.mjs",
-    "verify:novelforge-exchange": "node --experimental-strip-types scripts/verify-novelforge-exchange.mjs",
     "start": "vinext start",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",

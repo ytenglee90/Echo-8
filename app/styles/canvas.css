@@ -771,5 +771,4 @@
 .right-rail:has(.cloud-sync-panel) .editor-dock,
 .right-rail:has(.shortcut-center) .editor-dock,
 .right-rail:has(.diagnostic-center) .editor-dock,
-.right-rail:has(.novelforge-panel) .editor-dock,
 .right-rail:has(.ai-assistant-panel) .editor-dock { display: none; }

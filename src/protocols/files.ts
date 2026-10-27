@@ -9,8 +9,6 @@ export const PROJECT_MEDIA_TYPE = 'application/x-echo-8-canvas+gzip' as const;
 export const LEGACY_PROJECT_MEDIA_TYPE = 'application/x-echo-8-canvas+ndjson' as const;
 /** Opens a user-confirmed writable directory, preferring the current book's location. */
 export const PROJECT_RELATED_DIRECTORY_CAPABILITY = 'file.chooseDirectoryNearProject@1' as const;
-/** Opens a user-approved directory owned by another local application/project. */
-export const EXTERNAL_PROJECT_DIRECTORY_CAPABILITY = 'file.chooseExternalProjectDirectory@1' as const;
 export const PROJECT_OPEN_ACCEPT = [
   PROJECT_FILE_EXTENSION,
   '.eco8',

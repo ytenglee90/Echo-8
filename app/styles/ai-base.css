@@ -267,7 +267,6 @@
   .right-rail:has(.cloud-sync-panel),
   .right-rail:has(.shortcut-center),
   .right-rail:has(.diagnostic-center),
-  .right-rail:has(.novelforge-panel),
   .right-rail:has(.ai-assistant-panel) { display: block; }
 
   .editor-dock { width: min(340px, calc(100vw - 66px)) !important; min-width: 0; }

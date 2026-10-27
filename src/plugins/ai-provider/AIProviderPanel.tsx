@@ -21,7 +21,6 @@ const EMPTY_DRAFT: AIProviderProfileDraft = {
   platform: '',
   endpoint: '',
   model: '',
-  transport: 'http',
   authentication: 'bearer',
   apiStyle: 'openai',
   memoryToolEnabled: false,
@@ -31,7 +30,6 @@ const EMPTY_DRAFT: AIProviderProfileDraft = {
 const EMPTY_STATE: AIProviderPanelState = {
   endpoint: '',
   model: '',
-  transport: 'http',
   authentication: 'bearer',
   apiStyle: 'openai',
   memoryToolEnabled: false,
@@ -156,7 +154,7 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
       <header className="ai-provider-setup-intro">
         <span className="ai-provider-setup-eyebrow">对话模型</span>
         <h2>连接模型</h2>
-        <p>选择平台并按提示保存；NovelForge Codex 会自动复用本机配对。</p>
+        <p>选择平台并按提示保存；KEY 只保存在本机个人配置或当前页面会话中。</p>
       </header>
 
       <div className="ai-provider-profile-toolbar">
@@ -232,19 +230,17 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
       </label>
       {draft.authentication !== 'none' && (
         <label className="ai-field">
-          <span>{draft.secretPersistence === 'session-only' ? '配对令牌' : 'API KEY'}</span>
+          <span>API KEY</span>
           <input
             type="password"
             autoComplete="off"
             value={apiKey}
-            placeholder={draft.secretPersistence === 'session-only'
-              ? selected?.hasSessionKey ? '本次页面会话已配对；留空保持' : '粘贴 Codex 返回的一次性配对令牌'
-              : selected?.hasSessionKey ? '本机已保存；留空保持不变' : '保存在本机个人配置区'}
+            placeholder={selected?.hasSessionKey ? '本机已保存；留空保持不变' : '保存在本机个人配置区'}
             onChange={(event) => setApiKey(event.target.value)}
           />
         </label>
       )}
-      {draft.transport !== 'novelforge-connector' && <details className="ai-provider-manual-details">
+      <details className="ai-provider-manual-details">
         <summary>自定义地址（可选）</summary>
         <div>
           <label className="ai-field">
@@ -300,7 +296,7 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
             </label>
           </details>
         </div>
-      </details>}
+      </details>
       <div className="ai-provider-actions">
         <button
           type="button"
@@ -308,7 +304,7 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
           disabled={!draft.endpoint.trim() || !draft.model.trim()}
           onClick={saveProfile}
         ><Icon name="save" size={15} />保存连接</button>
-        {draft.transport !== 'novelforge-connector' && <IconButton
+        <IconButton
           icon="trash"
           label="清除当前平台的会话 KEY"
           className="ai-provider-secondary-button ai-provider-secondary-icon-action"
@@ -318,7 +314,7 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
             '当前平台 KEY 已清除',
             draft.id,
           )}
-        />}
+        />
       </div>
       {message && <p className="ai-message">{message}</p>}
       {error && <p className="ai-error" role="alert">{error}</p>}
@@ -334,7 +330,6 @@ function profileDraft(profile: AIProviderProfileState): AIProviderProfileDraft {
     platform: profile.platform,
     endpoint: profile.endpoint,
     model: profile.model,
-    transport: profile.transport ?? 'http',
     contextWindowTokens: profile.contextWindowTokens,
     authentication: profile.authentication,
     apiStyle: profile.apiStyle,

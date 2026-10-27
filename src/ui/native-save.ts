@@ -140,16 +140,6 @@ export async function chooseNativeDirectoryNearProject(
   });
 }
 
-export async function chooseNativeExternalProjectDirectory(): Promise<FileDirectoryTarget | undefined> {
-  const picker = (globalThis.window as NativeSaveWindow | undefined)?.showDirectoryPicker;
-  if (!picker) return undefined;
-  return picker({
-    id: `${PRODUCT_SLUG}-external-project`,
-    mode: 'readwrite',
-    startIn: 'documents',
-  });
-}
-
 export async function chooseNativeAIMemoryDirectory(): Promise<FileDirectoryTarget | undefined> {
   const picker = (globalThis.window as NativeSaveWindow | undefined)?.showDirectoryPicker;
   if (!picker) return undefined;

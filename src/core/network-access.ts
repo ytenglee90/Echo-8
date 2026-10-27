@@ -1,4 +1,4 @@
-export type AINetworkKind = 'generate' | 'embed' | 'model' | 'sync' | 'connector';
+export type AINetworkKind = 'generate' | 'embed' | 'model' | 'sync';
 
 /** Public, version-pinned model assets that a local AI runtime may retrieve. */
 export type LocalModelAsset =
@@ -58,12 +58,6 @@ const DEFAULT_POLICIES: Record<AINetworkKind, AINetworkPolicy> = {
     timeoutMs: 2 * 60_000,
     maxRequestBytes: 16 * 1024 * 1024,
     maxConcurrent: 2,
-    maxRequestsPerMinute: 600,
-  },
-  connector: {
-    timeoutMs: 15 * 60_000,
-    maxRequestBytes: 16 * 1024 * 1024,
-    maxConcurrent: 4,
     maxRequestsPerMinute: 600,
   },
 };
@@ -138,7 +132,6 @@ export class NetworkAccessService {
       embed: mergePolicy(DEFAULT_POLICIES.embed, options.policies?.embed),
       model: mergePolicy(DEFAULT_POLICIES.model, options.policies?.model),
       sync: mergePolicy(DEFAULT_POLICIES.sync, options.policies?.sync),
-      connector: mergePolicy(DEFAULT_POLICIES.connector, options.policies?.connector),
     };
   }
 
@@ -178,7 +171,7 @@ export class NetworkAccessService {
     }
 
     const policy = this.policies[kind];
-    const requestInit = kind === 'sync' || kind === 'connector'
+    const requestInit = kind === 'sync'
       ? validateSyncRequestInit(init, policy.maxRequestBytes)
       : validateRequestInit(init, policy.maxRequestBytes);
     this.admitRate(owner, kind, policy);
@@ -187,7 +180,7 @@ export class NetworkAccessService {
     const active = this.activeRequests.get(key) ?? new Set<AbortController>();
     if (active.size >= policy.maxConcurrent) {
       const label = kind === 'generate' ? '生成' : kind === 'embed' ? '语义检索' :
-        kind === 'sync' ? '云同步' : kind === 'connector' ? '本机连接器' : '下载';
+        kind === 'sync' ? '云同步' : '下载';
       throw new Error(`网络请求过多：${label}最多同时进行 ${policy.maxConcurrent} 个`);
     }
 

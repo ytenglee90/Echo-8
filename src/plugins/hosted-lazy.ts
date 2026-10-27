@@ -14,7 +14,6 @@ import { editorPlugin } from './editor/plugin.ts';
 import { groupsPlugin } from './groups/plugin.ts';
 import { importExportPlugin } from './import-export/plugin.ts';
 import { localSemanticProviderPlugin } from './local-semantic-provider/plugin.ts';
-import { novelForgePlugin } from './novelforge/plugin.ts';
 import { palettePlugin } from './palette/plugin.ts';
 import { searchReplacePlugin } from './search-replace/plugin.ts';
 import { searchIndexPlugin } from './search-index/plugin.ts';
@@ -51,7 +50,6 @@ export const hostedPlugins: PluginDefinition[] = [
   editorPlugin,
   palettePlugin,
   importExportPlugin,
-  novelForgePlugin,
   bookLibraryPlugin,
   historyControlsPlugin,
   pluginCenterPlugin,

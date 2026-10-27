@@ -6439,13 +6439,13 @@ test('AI provider parses OpenAI-compatible SSE without waiting for one JSON resp
   }
 });
 
-test('AI provider preserves bounded bridge errors from HTTP and SSE responses', async () => {
+test('AI provider preserves bounded provider errors from HTTP and SSE responses', async () => {
   const harness = createHarness();
   harness.plugins.register(createAIProviderPlugin());
   await harness.plugins.start('ai-provider');
   await harness.router.dispatch('aiProvider.setPreferences', {
-    endpoint: 'http://127.0.0.1:32147/v1/chat/completions',
-    model: 'novelforge-codex',
+    endpoint: 'https://api.example.com/v1/chat/completions',
+    model: 'example-chat',
     authentication: 'none',
   }, 'core.test');
   const request = {
@@ -6456,20 +6456,20 @@ test('AI provider preserves bounded bridge errors from HTTP and SSE responses', 
   const originalFetch = globalThis.fetch;
   try {
     globalThis.fetch = (async () => new Response(JSON.stringify({
-      error: { message: '配对令牌无效', type: 'novelforge_canvas_bridge_error' },
+      error: { message: '模型密钥无效', type: 'provider_error' },
     }), {
       status: 401,
       headers: { 'content-type': 'application/json' },
     })) as typeof fetch;
     await assert.rejects(
       () => harness.capabilities.request('ai.generate@1', request),
-      /HTTP 401：配对令牌无效/u,
+      /HTTP 401：模型密钥无效/u,
     );
 
     const encoder = new TextEncoder();
     globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(encoder.encode('data: {"error":{"message":"Codex App Server 未登录"}}\n\n'));
+        controller.enqueue(encoder.encode('data: {"error":{"message":"模型服务暂不可用"}}\n\n'));
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       },
@@ -6477,9 +6477,9 @@ test('AI provider preserves bounded bridge errors from HTTP and SSE responses', 
     const stream = await harness.capabilities.request<AIGenerateStream>('ai.generate.stream@1', request);
     await assert.rejects(async () => {
       for await (const event of stream.events) {
-        assert.fail(`Bridge error was exposed as ${event.type} instead of failing the stream`);
+        assert.fail(`Provider error was exposed as ${event.type} instead of failing the stream`);
       }
-    }, /Codex App Server 未登录/u);
+    }, /模型服务暂不可用/u);
   } finally {
     globalThis.fetch = originalFetch;
     await harness.plugins.stop('ai-provider');
@@ -6568,12 +6568,8 @@ test('AI provider refuses to turn reasoning-only content into a user-visible ans
 
 test('AI provider presets fill current official-compatible connection shapes without storing keys', () => {
   assert.deepEqual(AI_PROVIDER_PRESETS.map((preset) => preset.id), [
-    'novelforge-codex', 'deepseek', 'openai', 'kimi', 'qwen', 'doubao', 'gemini',
+    'deepseek', 'openai', 'kimi', 'qwen', 'doubao', 'gemini',
   ]);
-  const localCodex = applyAIProviderPreset('novelforge-codex');
-  assert.equal(localCodex?.endpoint, 'http://127.0.0.1:32147/v1/chat/completions');
-  assert.equal(localCodex?.model, 'novelforge-codex');
-  assert.equal(localCodex?.secretPersistence, 'session-only');
   assert.equal(applyAIProviderPreset('openai')?.endpoint, 'https://api.openai.com/v1/chat/completions');
   assert.equal(applyAIProviderPreset('kimi')?.endpoint, 'https://api.moonshot.cn/v1/chat/completions');
   assert.equal(
@@ -6593,7 +6589,7 @@ test('AI provider presets fill current official-compatible connection shapes wit
   );
 });
 
-test('NovelForge local pairing token stays session-only and is excluded from personal backup', async () => {
+test('session-only AI provider keys are excluded from personal backup', async () => {
   const harness = createHarness();
   const preferences = new Map<string, unknown>();
   harness.router.registerQuery('core.preferences', {
@@ -6615,11 +6611,17 @@ test('NovelForge local pairing token stays session-only and is excluded from per
   harness.plugins.register(createAIProviderPlugin());
   await harness.plugins.start('ai-provider');
   const profile = await harness.router.dispatch<{ id: string }>('aiProvider.profile.save', {
-    ...applyAIProviderPreset('novelforge-codex')!,
+    platform: '临时模型服务',
+    label: '临时会话连接',
+    endpoint: 'https://api.example.com/v1/chat/completions',
+    model: 'example-chat',
+    authentication: 'bearer',
+    apiStyle: 'openai',
+    secretPersistence: 'session-only',
   }, 'core.test');
   await harness.router.dispatch('aiProvider.setSessionKey', {
     profileId: profile.id,
-    apiKey: 'temporary-pairing-token-must-not-persist',
+    apiKey: 'temporary-api-key-must-not-persist',
   }, 'core.test');
   let serialized = '';
   const handle = {
@@ -6633,7 +6635,7 @@ test('NovelForge local pairing token stays session-only and is excluded from per
   await harness.router.dispatch('aiProvider.personalBackup.bind', { handle }, 'core.test');
   assert.match(serialized, /密钥保存：仅当前会话/u);
   assert.match(serialized, /当前平台 KEY：\s*$/mu);
-  assert.doesNotMatch(serialized, /temporary-pairing-token-must-not-persist/u);
+  assert.doesNotMatch(serialized, /temporary-api-key-must-not-persist/u);
 });
 
 test('AI provider accepts an arbitrary model id and adds verified native web-search parameters', async () => {

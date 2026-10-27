@@ -32,7 +32,6 @@ export const KNOWN_PERMISSIONS = new Set([
   'network.ai.embed',
   'network.ai.model',
   'network.cloud.sync',
-  'network.local.connector',
   'network.origin.manage',
 ]);
 

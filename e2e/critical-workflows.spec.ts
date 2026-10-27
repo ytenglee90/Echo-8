@@ -390,24 +390,6 @@ test('starts with governed plugin views and no runtime isolation failure', async
   expect(failures).toEqual([]);
 });
 
-test('NovelForge Codex local preset reuses the NovelForge connector without a second token', async ({ page }) => {
-  await openApplication(page);
-  await executeCommand(page, '配置 AI 模型连接与密钥');
-  const settings = page.getByRole('region', { name: 'AI 模型连接与密钥' });
-  await expect(settings).toBeVisible();
-  await settings.getByRole('combobox', { name: '选择平台' })
-    .selectOption({ label: 'NovelForge Codex（本机）' });
-  await expect(settings.getByText(/NovelForge Codex 会自动复用本机配对/u)).toBeVisible();
-  await expect(settings.getByLabel('配对令牌')).toHaveCount(0);
-  await settings.getByRole('button', { name: '保存连接' }).click();
-  await expect(settings.getByText('当前连接已就绪')).toBeVisible();
-  await page.getByRole('button', { name: 'AI 对话' }).click();
-  await expect(page.getByRole('combobox', { name: '当前模型平台' }))
-    .toHaveValue(/ai-provider-profile:/u);
-  await expect(page.getByRole('combobox', { name: '当前模型平台' }).locator('option:checked'))
-    .toHaveText('novelforge-codex');
-});
-
 test('cloud sync stays out of the canvas layout until its governed panel is opened', async ({ page }) => {
   await openApplication(page);
   const cloudStatus = page.getByRole('button', { name: /^云同步：/u });
@@ -1817,24 +1799,6 @@ test('command palette and Escape close surfaces without leaking shortcuts into e
   await expect(page.getByRole('region', { name: 'AI 助手' })).toHaveCount(0);
 });
 
-test('NovelForge opens as a governed Runtime bridge without claiming direct authority', async ({ page }) => {
-  await openApplication(page);
-  await executeCommand(page, '打开 NovelForge 小说工程');
-
-  const panel = page.getByRole('region', { name: 'NovelForge 小说工程' });
-  await expect(panel).toBeVisible();
-  await expect(panel).toContainText('网址 ↔ 本机 Runtime · 安全连接 v2');
-  await expect(panel).toContainText('不会直接修改 SQLite、审批、质量门或 Seal');
-  await expect(panel.getByRole('button', { name: '保存并连接（只需一次）' })).toBeDisabled();
-  await panel.getByText('兼容模式：手动选择 exchange 目录').click();
-  await expect(panel.getByRole('button', { name: '连接 exchange 目录' })).toBeEnabled();
-  await expect(panel.getByRole('button', { name: '同步权威投影' })).toBeDisabled();
-  await expect(panel.getByRole('button', { name: '提交本地改动提案' })).toBeDisabled();
-
-  await panel.getByRole('button', { name: '关闭 NovelForge' }).click();
-  await expect(panel).toHaveCount(0);
-});
-
 test('command palette text follows the luminance of its own panel background', async ({ page }) => {
   await openApplication(page);
   await executeCommand(page, '打开全局颜色设置');
@@ -2057,11 +2021,15 @@ test('a selected canvas node creates a visible annotation marker and editor', as
   await zoom.fill('40');
   await zoom.press('Enter');
   await expect(zoom).toHaveAttribute('aria-label', /40%/u);
+  const zoomedOutDetailRatio = Math.sqrt(0.4);
+  await expect.poll(async () => {
+    const box = await annotationMarker.boundingBox();
+    return Math.abs((box?.width ?? 0) / markerBoxAt100!.width - zoomedOutDetailRatio);
+  }).toBeLessThan(0.03);
   const markerBoxAt40 = await annotationMarker.boundingBox();
   const iconBoxAt40 = await annotationMarker.locator('svg').boundingBox();
   expect(markerBoxAt40).not.toBeNull();
   expect(iconBoxAt40).not.toBeNull();
-  const zoomedOutDetailRatio = Math.sqrt(0.4);
   expect(Math.abs(markerBoxAt40!.width / markerBoxAt100!.width - zoomedOutDetailRatio)).toBeLessThan(0.03);
   expect(Math.abs(markerBoxAt40!.height / markerBoxAt100!.height - zoomedOutDetailRatio)).toBeLessThan(0.03);
   expect(Math.abs(iconBoxAt40!.width / iconBoxAt100!.width - zoomedOutDetailRatio)).toBeLessThan(0.03);

@@ -86,8 +86,4 @@
 | [0074](ADR-0074-PLUGIN-BOUNDARIES-AND-CANVAS-COMPOSITION.md) | 插件边界、画布组合与运行时资源归属 | 有效；补充 0001、0025、0029、0032、0045、0060，部分替代 0062 的目录决定 |
 | [0075](ADR-0075-CONFIRMED-CLOUD-BOOK-DELETION.md) | 首页与同步面板共用的云端书籍删除确认 | 有效；补充 0067、0070、0073 |
 | [0076](ADR-0076-PORTABLE-LIBRARY-AND-CONDITIONAL-CLOUD-CONTROL.md) | 便携版书库入口与按来源启用的云控制面 | 有效；补充 0033，部分替代 0070 的便携版排除决定 |
-| [0077](ADR-0077-NOVELFORGE-LOCAL-RUNTIME-BRIDGE.md) | NovelForge 本地 Runtime 投影、画布映射与受审提案桥接 | 有效；补充 0006、0035、0060、0074 |
-| [0078](ADR-0078-NOVELFORGE-CODEX-LOOPBACK-PROVIDER.md) | NovelForge Codex 回环 Provider、会话配对与现有 AI 输入框复用 | **部分被 0079 替代**；回环、App Server、权威和提权限制保留 |
-| [0079](ADR-0079-NOVELFORGE-PERSISTENT-LOCAL-CONNECTOR.md) | Windows 用户级持久本机连接器、一次配对、Runtime 同步与 Codex 共享能力 | 有效；补充 0039、0060、0067、0074、0077、0078，部分替代 0078 的会话生命周期 |
-
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

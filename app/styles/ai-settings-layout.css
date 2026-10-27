@@ -474,8 +474,7 @@
   .application-shell:has(.right-rail .file-panel),
   .application-shell:has(.right-rail .cloud-sync-panel),
   .application-shell:has(.right-rail .shortcut-center),
-  .application-shell:has(.right-rail .diagnostic-center),
-  .application-shell:has(.right-rail .novelforge-panel) {
+  .application-shell:has(.right-rail .diagnostic-center) {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "top" "canvas";
   }
@@ -489,8 +488,7 @@
   .right-rail:has(.file-panel),
   .right-rail:has(.cloud-sync-panel),
   .right-rail:has(.shortcut-center),
-  .right-rail:has(.diagnostic-center),
-  .right-rail:has(.novelforge-panel) {
+  .right-rail:has(.diagnostic-center) {
     position: fixed;
     z-index: 50;
     top: 56px;

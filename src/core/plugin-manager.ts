@@ -677,10 +677,6 @@ export class PluginManager {
           assertPermission(manifest, 'network.cloud.sync', 'perform cloud synchronization request');
           return this.network.request(owner, 'sync', input, init);
         },
-        connector: (input, init) => {
-          assertPermission(manifest, 'network.local.connector', 'call the paired local connector');
-          return this.network.request(owner, 'connector', input, init);
-        },
         downloadLocalModelAsset: (asset, signal) => {
           assertPermission(manifest, 'network.ai.model', 'download an approved local AI model asset');
           return this.network.downloadLocalModelAsset(owner, asset, signal);

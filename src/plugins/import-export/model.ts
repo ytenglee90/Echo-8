@@ -15,17 +15,12 @@ import type {
   ProjectSource,
 } from '../../protocols/files.ts';
 import type { CloudSyncState } from '../../cloud/contracts.ts';
-import {
-  EXTERNAL_PROJECT_DIRECTORY_CAPABILITY,
-  PROJECT_FILE_EXTENSION,
-  PROJECT_RELATED_DIRECTORY_CAPABILITY,
-} from '../../protocols/files.ts';
+import { PROJECT_FILE_EXTENSION, PROJECT_RELATED_DIRECTORY_CAPABILITY } from '../../protocols/files.ts';
 import { PRODUCT_NAME } from '../../product.ts';
 import { defineManifest } from '../manifest.ts';
 import { parseProject, serializeProject } from './codec.ts';
 import {
   chooseNativeDirectoryNearProject,
-  chooseNativeExternalProjectDirectory,
   chooseNativeProjectOpen,
   chooseNativeProjectSave,
 } from '../../ui/native-save.ts';
@@ -102,7 +97,6 @@ export function createImportExportPlugin(
         'file.state@1',
         'file.textExportState@1',
         PROJECT_RELATED_DIRECTORY_CAPABILITY,
-        EXTERNAL_PROJECT_DIRECTORY_CAPABILITY,
       ],
       commands: [
         'file.openPanel',
@@ -1062,10 +1056,6 @@ export function createImportExportPlugin(
       context.capabilities.provide<undefined, FileDirectoryTarget | undefined>({
         key: PROJECT_RELATED_DIRECTORY_CAPABILITY,
         invoke: () => chooseNativeDirectoryNearProject(projectDestination),
-      });
-      context.capabilities.provide<undefined, FileDirectoryTarget | undefined>({
-        key: EXTERNAL_PROJECT_DIRECTORY_CAPABILITY,
-        invoke: () => chooseNativeExternalProjectDirectory(),
       });
       context.capabilities.provide<{ nodeId: string }>({
         key: 'file.textExportState@1',

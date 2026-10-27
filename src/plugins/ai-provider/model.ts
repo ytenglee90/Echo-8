@@ -1,4 +1,4 @@
-import { createId, isRecord, type PluginContext, type PluginDefinition } from '../../core/contracts.ts';
+import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
 import type {
   AIGenerateRequest,
   AIGenerateResult,
@@ -10,10 +10,6 @@ import type {
   AIProviderInfo,
 } from '../../protocols/ai.ts';
 import type { FileReadWriteTarget } from '../../protocols/files.ts';
-import {
-  NOVELFORGE_LOCAL_CONNECTOR_CAPABILITY,
-  type NovelForgeConnectorFetchRequest,
-} from '../../protocols/novelforge.ts';
 import { canReusePersistedFileHandle } from '../../ui/native-file-permission.ts';
 import { defineManifest } from '../manifest.ts';
 import {
@@ -39,7 +35,7 @@ import { EmbeddedReasoningStream } from './reasoning-stream.ts';
 export const AI_PROVIDER_NAMESPACE = 'aiProvider';
 const DEFAULT_PREFERENCES: AIProviderPreferences = {
   endpoint: '', model: '', contextWindowTokens: 16_000, authentication: 'bearer', apiStyle: 'openai',
-  transport: 'http', memoryToolEnabled: false, secretPersistence: 'personal-local',
+  memoryToolEnabled: false, secretPersistence: 'personal-local',
 };
 const PERSONAL_CONNECTIONS_KEY = 'connections-and-keys@1';
 const PERSONAL_BACKUP_HANDLE_KEY = 'ai-personal-backup-handle@1';
@@ -103,7 +99,6 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         'system.preferences.get',
       ],
       providesCapabilities: ['ai.generate@1', 'ai.generate.stream@1', 'ai.provider.info@1', 'ai.provider.catalog@1'],
-      optionalCapabilities: [NOVELFORGE_LOCAL_CONNECTOR_CAPABILITY],
       ui: ['ai-provider.settings', 'ai-provider.semantic-settings'],
       permissions: [
         'store.own.read',
@@ -138,9 +133,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         configuration.profiles.find((profile) => profile.id === configuration.activeProfileId) ??
         configuration.profiles[0];
       const syncApprovedOrigins = (configuration = readConfiguration()) => {
-        context.network.configureOrigins(configuration.profiles
-          .filter((profile) => profile.transport !== 'novelforge-connector')
-          .map((profile) => profile.endpoint));
+        context.network.configureOrigins(configuration.profiles.map((profile) => profile.endpoint));
       };
       syncApprovedOrigins();
       const profileState = (profile: AIProviderProfile): AIProviderProfileState => {
@@ -448,9 +441,8 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
           signal?.addEventListener('abort', abort, { once: true });
           try {
             const request = buildProviderRequest(profile, apiKey, input, false);
-            const fetcher = providerFetcher(context, profile, controller.signal);
             const response = await fetchWithInitialRetry(
-              fetcher,
+              context.network.fetch,
               request.endpoint,
               { ...request.init, signal: controller.signal },
               controller.signal,
@@ -487,9 +479,8 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
           signal?.addEventListener('abort', abort, { once: true });
           try {
             const request = buildProviderRequest(profile, apiKey, input, true);
-            const fetcher = providerFetcher(context, profile, controller.signal);
             const response = await fetchWithInitialRetry(
-              fetcher,
+              context.network.fetch,
               request.endpoint,
               { ...request.init, signal: controller.signal },
               controller.signal,
@@ -599,7 +590,6 @@ function serializePersonalAIBackup(backup: PersonalAIBackup): string {
       '【模型连接】',
       `平台名称：${oneLine(profile.platform)}`,
       `连接名称：${oneLine(profile.label)}`,
-      `传输方式：${profile.transport === 'novelforge-connector' ? 'NovelForge 本机连接器' : '标准 HTTP'}`,
       `接口格式：${profile.apiStyle === 'gemini' ? 'Google Gemini 原生' : 'OpenAI 兼容'}`,
       `完整接口地址：${oneLine(profile.endpoint)}`,
       `模型名称：${oneLine(profile.model)}`,
@@ -646,9 +636,6 @@ function parsePersonalAIBackup(text: string): PersonalAIBackup {
       const profile = validateProfile({
         platform: readBackupLine(body, '平台名称'),
         label: readBackupLine(body, '连接名称'),
-        transport: readBackupLine(body, '传输方式', false) === 'NovelForge 本机连接器'
-          ? 'novelforge-connector'
-          : 'http',
         endpoint: readBackupLine(body, '完整接口地址', false),
         model: readBackupLine(body, '模型名称', false),
         contextWindowTokens: parseContextWindowTokens(readBackupLine(body, '模型上下文上限', false)),
@@ -795,7 +782,6 @@ function normalizePreferences(value: unknown): AIProviderPreferences {
 
 function isPreferences(value: unknown): value is AIProviderPreferences {
   return isRecord(value) && typeof value.endpoint === 'string' && typeof value.model === 'string' &&
-    (value.transport === undefined || value.transport === 'http' || value.transport === 'novelforge-connector') &&
     (value.contextWindowTokens === undefined || (Number.isInteger(value.contextWindowTokens) &&
       Number(value.contextWindowTokens) >= 4_000 && Number(value.contextWindowTokens) <= 10_000_000)) &&
     (value.authentication === 'bearer' || value.authentication === 'api-key' || value.authentication === 'none') &&
@@ -833,7 +819,6 @@ function validatePreferences(value: AIProviderPreferences): AIProviderPreference
     throw new Error('模型上下文上限必须是 4,000 到 10,000,000 之间的整数');
   }
   return {
-    transport: value.transport ?? 'http',
     endpoint,
     model,
     contextWindowTokens,
@@ -1017,27 +1002,6 @@ function buildProviderRequest(
         ...(stream ? { stream: true } : {}),
       }),
     },
-  };
-}
-
-function providerFetcher(
-  context: PluginContext,
-  profile: AIProviderProfile,
-  signal: AbortSignal,
-): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
-  if (profile.transport !== 'novelforge-connector') return context.network.fetch;
-  return async (_input, init = {}) => {
-    if (typeof init.body !== 'string') throw new Error('NovelForge Codex 请求正文格式不正确');
-    const body: unknown = JSON.parse(init.body);
-    if (!isRecord(body)) throw new Error('NovelForge Codex 请求正文必须是对象');
-    return context.capabilities.request<Response>(
-      NOVELFORGE_LOCAL_CONNECTOR_CAPABILITY,
-      {
-        path: '/v1/chat/completions',
-        body,
-      } satisfies NovelForgeConnectorFetchRequest,
-      signal,
-    );
   };
 }
 

@@ -10,14 +10,6 @@
 
 公开 BYOC 部署、OAuth 权限、数据库迁移与跨设备验收见 [`docs/CLOUDFLARE-BYOC-DEPLOYMENT.zh-CN.md`](docs/CLOUDFLARE-BYOC-DEPLOYMENT.zh-CN.md)。
 
-## NovelForge 本地小说工程
-
-当前版本包含一个独立的 NovelForge 画布插件和 Windows 当前用户本机连接器。托管 HTTP(S) 画布可通过受 origin 白名单和设备配对令牌保护的 `127.0.0.1` 协议，列出项目、分页同步 Runtime 投影并提交待审改动。它不打开 SQLite、不批准提案、不修改 Seal，也不把节点坐标当成章节权威。
-
-首次先安装 Engine，再双击 `connector/install.cmd`（正式站点用 `install.ps1 -CanvasOrigin https://你的域名`）。把安装器显示的 endpoint 和令牌在 NovelForge 面板保存一次，以后登录 Windows 后静默运行、网页自动重连。原有 `canvas-export` + exchange 目录作为无连接器环境的兼容模式保留。完整步骤见 [`docs/NOVELFORGE-INTEGRATION.zh-CN.md`](docs/NOVELFORGE-INTEGRATION.zh-CN.md)。
-
-托管版还可把原有 AI 助手直接接到用户本机 Codex。NovelForge 面板配对后，到“AI 助手 → 配置模型平台与 KEY”选择“NovelForge Codex（本机）”即可，不再输入第二份令牌。AI Provider 只调用版本化能力，看不到配对令牌。此链路不要求登录 Cloudflare；浏览器首次访问 `127.0.0.1` 时可能要求本地网络许可。令牌只存在连接器安全文件和该设备的画布个人偏好中，不进入 `.echo8`、TXT 连接备份或云同步。便携 `file://` 版本没有可信 origin，因此不开放这条实时链路。
-
 ## 架构纪律
 
 - 用户操作只能发送公开指令，经过消息路由、权限校验和事务提交后再广播事件。
@@ -37,7 +29,6 @@ pnpm run dev
 pnpm run typecheck
 pnpm run lint
 pnpm run test
-pnpm run verify:novelforge-exchange -- C:\path\to\exchange\BOOK-id
 pnpm exec playwright install chromium
 pnpm run test:e2e
 pnpm run test:performance-browser

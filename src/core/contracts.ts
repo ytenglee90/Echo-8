@@ -353,7 +353,6 @@ export interface PluginContext {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
     embed(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
     sync(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-    connector(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
     downloadLocalModelAsset(asset: LocalModelAsset, signal?: AbortSignal): Promise<LocalModelAssetData>;
   };
   readonly diagnostics: {
