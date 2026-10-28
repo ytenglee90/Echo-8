@@ -252,10 +252,17 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
       });
       context.events.subscribe('history.changed', () => {
         void readCatalog().then((entities) => {
-          const available = new Map(entities.map((entity) => [entity.id, entity.kind]));
+          const available = new Map(entities.map((entity) => [entity.id, entity]));
           const items = readSelection().items
             .filter((item) => available.has(item.id))
-            .map((item) => ({ id: item.id, kind: available.get(item.id) ?? item.kind }));
+            .map((item) => {
+              const entity = available.get(item.id);
+              return {
+                id: item.id,
+                kind: entity?.kind ?? item.kind,
+                ...(item.part && entity?.parts?.includes(item.part) ? { part: item.part } : {}),
+              };
+            });
           void context.commands.dispatch('selection.set', { items, mode: 'replace' });
         }).catch(() => undefined);
       });
@@ -359,7 +366,11 @@ function applyMode(current: SelectionItem[], incoming: SelectionItem[], mode: Se
 }
 
 function uniqueItems(items: SelectionItem[]): SelectionItem[] {
-  return [...new Map(items.map((item) => [item.id, { id: item.id, kind: item.kind }])).values()];
+  return [...new Map(items.map((item) => [item.id, {
+    id: item.id,
+    kind: item.kind,
+    ...(item.part ? { part: item.part } : {}),
+  }])).values()];
 }
 
 function prioritizeBoxHits(entities: SelectableEntity[]): SelectableEntity[] {
@@ -387,7 +398,11 @@ function resolveDirectSelection(
   const byId = new Map(entities.map((entity) => [entity.id, entity]));
   return uniqueItems(items
     .filter((item) => byId.has(item.id))
-    .map((item) => ({ id: item.id, kind: byId.get(item.id)?.kind ?? item.kind })));
+    .map((item) => {
+      const entity = byId.get(item.id)!;
+      const part = item.part && entity.parts?.includes(item.part) ? item.part : undefined;
+      return { id: item.id, kind: entity.kind, ...(part ? { part } : {}) };
+    }));
 }
 
 function expandSelectionItems(items: SelectionItem[], entities: SelectableEntity[]): string[] {
@@ -404,7 +419,7 @@ function expandSelectionItems(items: SelectionItem[], entities: SelectableEntity
 
 function sameSelection(left: SelectionItem[], right: SelectionItem[]): boolean {
   return left.length === right.length && left.every((item, index) =>
-    item.id === right[index]?.id && item.kind === right[index]?.kind);
+    item.id === right[index]?.id && item.kind === right[index]?.kind && item.part === right[index]?.part);
 }
 
 function intersects(
@@ -434,13 +449,13 @@ function containsBounds(
 }
 
 function isSetSelectionPayload(payload: unknown): payload is SelectionSetPayload {
-  return (
-    isRecord(payload) &&
-    ((Array.isArray(payload.ids) && payload.ids.every((id) => typeof id === 'string')) ||
-      (Array.isArray(payload.items) && payload.items.every((item) =>
-        isRecord(item) && typeof item.id === 'string' && typeof item.kind === 'string'))) &&
-    (payload.mode === undefined || ['replace', 'add', 'remove', 'toggle'].includes(String(payload.mode)))
-  );
+  if (!isRecord(payload)) return false;
+  const hasIds = Array.isArray(payload.ids) && payload.ids.every((id) => typeof id === 'string');
+  const hasItems = Array.isArray(payload.items) && payload.items.every((item) =>
+    isRecord(item) && typeof item.id === 'string' && typeof item.kind === 'string' &&
+    (item.part === undefined || typeof item.part === 'string'));
+  return (hasIds || hasItems) &&
+    (payload.mode === undefined || ['replace', 'add', 'remove', 'toggle'].includes(String(payload.mode)));
 }
 
 function isSelectionBoxPayload(payload: unknown): payload is SelectionBoxPayload {

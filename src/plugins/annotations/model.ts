@@ -1,5 +1,11 @@
 import { createId, isRecord, type PluginContext, type PluginDefinition } from '../../core/contracts.ts';
 import type {
+  AppearanceReadContribution,
+  AppearanceReadRequest,
+  AppearanceUpdatePlan,
+  AppearanceUpdateRequest,
+} from '../../protocols/appearance.ts';
+import type {
   AnnotationCreateRequest,
   AnnotationOpenRequest,
   AnnotationOpenState,
@@ -16,7 +22,11 @@ import {
   MAX_ANNOTATION_CLIPBOARD_BODY,
   MAX_ANNOTATION_CLIPBOARD_ITEMS,
 } from '../../protocols/annotations.ts';
-import type { EntityDeletePlan, SelectionSnapshot } from '../../protocols/selection.ts';
+import type {
+  EntityDeletePlan,
+  SelectionCatalogContribution,
+  SelectionSnapshot,
+} from '../../protocols/selection.ts';
 import type { EditorSelectionSnapshot } from '../../protocols/editor.ts';
 import type { EditorContextSnapshot } from '../../protocols/editor.ts';
 import type { CameraState, CanvasViewportSize } from '../../protocols/canvas.ts';
@@ -36,6 +46,7 @@ export function createAnnotationsPlugin(
 ): PluginDefinition {
   return {
     manifest: defineManifest('annotations', '注释', {
+      dataVersion: 2,
       namespaces: [ANNOTATION_NAMESPACE, ANNOTATION_UI_NAMESPACE],
       namespaceDomains: {
         [ANNOTATION_NAMESPACE]: 'document',
@@ -59,6 +70,9 @@ export function createAnnotationsPlugin(
         'content.anchorMovePlan@1',
         'content.annotationClonePlan@1',
         'entity.deletePlan@1',
+        'selection.entities@1',
+        'appearance.read@1',
+        'appearance.updatePlan@1',
       ],
       commands: [
         'annotation.createAtContext',
@@ -70,7 +84,7 @@ export function createAnnotationsPlugin(
         'annotation.delete',
         'annotation.setPanelRect',
       ],
-      dispatches: ['annotation.open'],
+      dispatches: ['annotation.open', 'selection.set'],
       events: [
         'annotation.created',
         'annotation.changed',
@@ -85,6 +99,7 @@ export function createAnnotationsPlugin(
         'canvas.node.resize.preview',
         'content.catalog.invalidated',
         'groups.invalidated',
+        'appearance.color.preview',
       ],
       ui: ['annotations.create', 'annotations.markers', 'annotations.popup', 'annotations.immersive-popup'],
       actions: ['annotations.create-action'],
@@ -100,6 +115,12 @@ export function createAnnotationsPlugin(
         'ui.shortcut.register',
       ],
     }),
+
+    migrations: [{
+      from: 1,
+      to: 2,
+      migrate: (data) => data,
+    }],
 
     start(context) {
       const readRecords = () => context.store.readNamespace<Record<string, AnnotationRecord>>(ANNOTATION_NAMESPACE);
@@ -407,11 +428,88 @@ export function createAnnotationsPlugin(
           };
         },
       });
+      context.capabilities.provide<undefined, SelectionCatalogContribution>({
+        key: 'selection.entities@1',
+        invoke: () => ({
+          owner: 'annotations',
+          entities: Object.values(readRecords()).map((record) => ({
+            id: record.id,
+            kind: 'annotation',
+            includeInSelectAll: false,
+          })),
+        }),
+      });
+      context.capabilities.provide<AppearanceReadRequest, AppearanceReadContribution>({
+        key: 'appearance.read@1',
+        invoke: (input) => {
+          if (input?.mode !== 'selection') return { targets: [] };
+          const selectedIds = new Set(input.selectedItems
+            ?.filter((item) => item.kind === 'annotation')
+            .map((item) => item.id) ?? input.selectedIds ?? []);
+          const records = Object.values(readRecords()).filter((record) => selectedIds.has(record.id));
+          if (records.length === 0) return { targets: [] };
+          const fallback = input.defaults?.['annotation-marker'] ?? '#ff9f0a';
+          const colors = records.map((record) => record.color ?? fallback);
+          const open = readOpenState();
+          return {
+            targets: [{
+              kind: 'annotation-marker',
+              label: '注释标记',
+              scopeLabel: `${records.length} 个选中注释`,
+              color: colors[0],
+              mixed: new Set(colors).size > 1,
+              entities: records.map((record, index) => ({
+                id: record.id,
+                revision: record.revision,
+                expectedColor: colors[index],
+              })),
+              anchor: open && selectedIds.has(open.id) ? open.rect : undefined,
+            }],
+          };
+        },
+      });
+      context.capabilities.provide<AppearanceUpdateRequest, AppearanceUpdatePlan>({
+        key: 'appearance.updatePlan@1',
+        invoke: (input) => {
+          if (input.kind !== 'annotation-marker') return { patches: [], changed: 0 };
+          if (!isAppearanceUpdate(input)) throw new Error('注释颜色请求不正确');
+          const records = readRecords();
+          const changed = input.entities.flatMap((reference) => {
+            const record = records[reference.id];
+            if (!record || record.revision !== reference.revision ||
+              (record.color ?? reference.expectedColor.toLowerCase()) !== reference.expectedColor.toLowerCase()) {
+              throw new Error('注释颜色已经变化，请重新打开调色盘');
+            }
+            if (record.color === input.color.toLowerCase()) return [];
+            return [{
+              ...record,
+              color: input.color.toLowerCase(),
+              revision: record.revision + 1,
+              updatedAt: Date.now(),
+            } satisfies AnnotationRecord];
+          });
+          return {
+            changed: changed.length,
+            patches: changed.map((record) => ({
+              op: 'set' as const,
+              domain: 'document' as const,
+              namespace: ANNOTATION_NAMESPACE,
+              key: record.id,
+              value: record,
+              schemaOwner: 'annotations',
+            })),
+            events: changed.length > 0
+              ? [{ type: 'annotation.changed', payload: { ids: changed.map((record) => record.id) } }]
+              : [],
+          };
+        },
+      });
       context.capabilities.provide<{ ids: string[] }, EntityDeletePlan>({
         key: 'entity.deletePlan@1',
         invoke: (payload) => {
           const ids = new Set(Array.isArray(payload?.ids) ? payload.ids : []);
-          const deleted = Object.values(readRecords()).filter((record) => ids.has(record.target.targetId));
+          const deleted = Object.values(readRecords()).filter((record) =>
+            ids.has(record.id) || ids.has(record.target.targetId));
           return {
             patches: deleted.map((record) => ({
               op: 'delete', domain: 'document', namespace: ANNOTATION_NAMESPACE, key: record.id,
@@ -568,6 +666,16 @@ function isAnnotationOpenRequest(value: unknown): value is AnnotationOpenRequest
 function isAnnotationUpdateRequest(value: unknown): value is AnnotationUpdateRequest {
   return isRecord(value) && typeof value.id === 'string' && typeof value.body === 'string' &&
     Number.isInteger(value.expectedRevision);
+}
+
+function isAppearanceUpdate(value: AppearanceUpdateRequest): boolean {
+  return isHexColor(value.color) && value.entities.length > 0 && value.entities.every((entity) =>
+    typeof entity.id === 'string' && Number.isInteger(entity.revision) && entity.revision > 0 &&
+    isHexColor(entity.expectedColor));
+}
+
+function isHexColor(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/iu.test(value);
 }
 
 function isAnnotationIdPayload(value: unknown): value is { id: string } {

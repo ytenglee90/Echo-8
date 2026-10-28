@@ -138,14 +138,14 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
   if (!open) return null;
   const installation = readyInstallation(cloud);
   const upgrade = upgradeInstallation(cloud);
-  const accountLabel = cloud.user?.name || cloud.user?.email || installation?.accountName;
+  const accountLabel = cloud.user?.email || cloud.user?.name || installation?.accountName;
   const isLocalFile = globalThis.location.protocol === 'file:';
 
   return (
     <section className="book-library-home" aria-label="Echo-8 书库">
       <header className="book-library-header">
         <div className="book-library-brand">
-          <span className="book-library-mark" aria-hidden="true"><i /><i /><i /></span>
+          <span className="book-library-mark" aria-hidden="true"><Icon name="echo-8" /></span>
           <strong>Echo-8</strong>
         </div>
         <div className="book-library-account">
@@ -167,10 +167,6 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
       </header>
 
       <main className="book-library-content">
-        <div className="book-library-intro">
-          <h1>今天想打开哪一本？</h1>
-        </div>
-
         {error && <div className="book-library-error" role="alert">{error}</div>}
 
         <div className="book-library-layout">
@@ -225,8 +221,8 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
           </section>
 
           <section className="book-library-section cloud-books" aria-labelledby="cloud-books-title">
-            <div className="book-library-section-heading">
-              <div><h2 id="cloud-books-title">云端书籍</h2><span>{projects.length > 0 ? `${projects.length} 本` : '跨设备'}</span></div>
+            <h2 className="sr-only" id="cloud-books-title">云端书籍</h2>
+            <div className="book-library-cloud-tools">
               {installation && (
                 <button
                   className="book-library-refresh"
@@ -322,17 +318,19 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                               }}
                             >{project.name}</button>
                           )}
-                          <small>{project.headRevision === 0 ? '新书籍' : `云版本 ${project.headRevision}`} · {formatTime(project.updatedAt)}</small>
+                          <small>{projectStatus(project, cloud)} · {formatTime(project.updatedAt)}</small>
                         </span>
                         <span className="book-library-project-actions">
                           <button
                             className="book-library-project-open"
                             type="button"
+                            aria-label={`${project.id === cloud.activeProjectId ? '继续' : '打开'}书籍：${project.name}`}
+                            title={project.id === cloud.activeProjectId ? '继续当前书籍' : '打开书籍'}
                             disabled={Boolean(busy) || editing}
                             onClick={() => void run(`open:${project.id}`, () => client.dispatch('cloudSync.openProject', { projectId: project.id })).then((ok) => {
                               if (ok) void client.dispatch('bookLibrary.enterCanvas');
                             })}
-                          >{busy === `open:${project.id}` ? '打开中…' : project.id === cloud.activeProjectId ? '继续' : '打开'}</button>
+                          ><Icon name={project.id === cloud.activeProjectId ? 'play' : 'folder-open'} /></button>
                           <button
                             className="book-library-project-delete"
                             type="button"
@@ -340,13 +338,13 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                             title={`删除书籍：${project.name}`}
                             disabled={Boolean(busy) || editing}
                             onClick={() => requestDelete(project)}
-                          ><Icon name="trash" /><span>删除</span></button>
+                          ><Icon name="trash" /></button>
                         </span>
                       </div>
                     );
                   })}
                   {projects.length === 0 && cloud.phase !== 'connecting' && (
-                    <p className="book-library-empty">还没有云端书籍。新建空白书籍并开始编辑，第一次保存时会自动加入这里。</p>
+                    <p className="book-library-empty">还没有云端书籍。新建空白书籍并开始编辑，自动保存时会加入这里。</p>
                   )}
                 </div>
               </>
@@ -380,6 +378,15 @@ function formatTime(value: number): string {
   return new Date(value).toLocaleString('zh-CN', {
     month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
   });
+}
+
+function projectStatus(project: CloudProjectSummary, state: CloudSyncState): string {
+  if (project.id !== state.activeProjectId) return '未打开';
+  if (state.phase === 'syncing' || state.phase === 'connecting' || state.pendingCommits > 0) return '当前书籍 · 同步中';
+  if (state.phase === 'read-only') return '当前书籍 · 只读';
+  if (state.phase === 'conflict' || state.phase === 'error') return '当前书籍 · 需要处理';
+  if (state.phase === 'offline') return '当前书籍 · 等待同步';
+  return '当前书籍 · 已同步';
 }
 
 function errorMessage(value: unknown): string {

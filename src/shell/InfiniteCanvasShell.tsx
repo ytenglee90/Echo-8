@@ -186,6 +186,7 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
     ['history', '撤销与重做'],
     ['tools', '画布工具'],
     ['edit', '编辑'],
+    ['appearance', '选中项颜色'],
     ['clipboard', '剪贴板'],
     ['status', '画布状态'],
     ['metrics', '文字统计'],

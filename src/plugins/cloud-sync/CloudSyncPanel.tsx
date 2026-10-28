@@ -100,7 +100,25 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
           <span className="eyebrow">BYOC · 用户自有云</span>
           <h2>跨设备继续编辑</h2>
         </div>
-        <IconButton icon="close" label="关闭云同步" onClick={() => void client.dispatch('cloudSync.close')} />
+        <div className="cloud-sync-heading-actions">
+          {state.authenticated && state.installations.some((item) => item.status === 'ready') && (
+            <IconButton
+              icon="sync"
+              label="立即同步"
+              disabled={Boolean(busy) || !state.activeProjectId || state.phase === 'read-only'}
+              onClick={() => void run('sync', () => client.dispatch('cloudSync.syncNow'))}
+            />
+          )}
+          {state.authenticated && (
+            <IconButton
+              icon="logout"
+              label="退出账户"
+              disabled={Boolean(busy)}
+              onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}
+            />
+          )}
+          <IconButton icon="close" label="关闭云同步" onClick={() => void client.dispatch('cloudSync.close')} />
+        </div>
       </div>
 
       <div className={`cloud-sync-summary phase-${state.phase}`} role="status">
@@ -177,7 +195,13 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
           <div className="cloud-sync-section">
             <div className="cloud-section-heading">
               <h3>云端书籍</h3>
-              <button type="button" disabled={Boolean(busy)} onClick={() => void run('refresh', () => client.dispatch('cloudSync.listProjects'))}>刷新</button>
+              <IconButton
+                icon="reset"
+                label="刷新云端书籍"
+                className="cloud-section-refresh"
+                disabled={Boolean(busy)}
+                onClick={() => void run('refresh', () => client.dispatch('cloudSync.listProjects'))}
+              />
             </div>
             <div className="cloud-project-list">
               {projects.map((project) => {
@@ -225,9 +249,11 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
                       <button
                         className="cloud-project-open"
                         type="button"
+                        aria-label={`${project.id === state.activeProjectId ? '当前书籍' : '打开书籍'}：${project.name}`}
+                        title={project.id === state.activeProjectId ? '当前书籍' : '打开书籍'}
                         disabled={Boolean(busy) || editing}
                         onClick={() => void run(`open:${project.id}`, () => client.dispatch('cloudSync.openProject', { projectId: project.id }))}
-                      >{busy === `open:${project.id}` ? '打开中…' : project.id === state.activeProjectId ? '当前' : '打开'}</button>
+                      ><Icon name={project.id === state.activeProjectId ? 'check' : 'folder-open'} /></button>
                       <button
                         className="cloud-project-delete"
                         type="button"
@@ -235,7 +261,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
                         title={`删除书籍：${project.name}`}
                         disabled={Boolean(busy) || editing}
                         onClick={() => requestDelete(project)}
-                      ><Icon name="trash" /><span>删除</span></button>
+                      ><Icon name="trash" /></button>
                     </span>
                   </div>
                 );
@@ -262,10 +288,6 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
             </div>
           )}
 
-          <div className="cloud-sync-actions">
-            <button type="button" disabled={Boolean(busy) || !state.activeProjectId || state.phase === 'read-only'} onClick={() => void run('sync', () => client.dispatch('cloudSync.syncNow'))}>立即同步</button>
-            <button type="button" disabled={Boolean(busy)} onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}>退出账户</button>
-          </div>
         </>
       )}
 

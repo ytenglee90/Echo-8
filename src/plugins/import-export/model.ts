@@ -62,18 +62,22 @@ import {
 } from './file-operations.ts';
 
 const FILE_NAMESPACE = 'fileUI';
+type DocumentOrigin = 'file' | 'cloud' | 'new' | 'recovery' | 'external';
 export function createImportExportPlugin(
   panel?: unknown,
   artifactHost?: unknown,
 ): PluginDefinition {
   let activeTask: TaskHandle<unknown> | undefined;
   let autosaveTask: TaskHandle<unknown> | undefined;
+  let automaticCloudSave: Promise<void> | undefined;
   let autosavePending = false;
   let fileWrites = new FileWriteCoordinator();
   let projectDestination: FileSaveTarget | undefined;
   let lastProjectSavedRevision: number | undefined;
   let saveLocationRequired = false;
   let cloudProjectActive = false;
+  let documentOrigin: DocumentOrigin = 'external';
+  let documentEpoch = 0;
   let pendingOpenFile: (Blob & { name?: string }) | undefined;
   let pendingOpenDestination: FileSaveTarget | undefined;
   let pendingOpen: FileRuntimeState['pendingOpen'];
@@ -174,12 +178,15 @@ export function createImportExportPlugin(
     start(context) {
       activeTask = undefined;
       autosaveTask = undefined;
+      automaticCloudSave = undefined;
       autosavePending = false;
       fileWrites = new FileWriteCoordinator();
       projectDestination = undefined;
       lastProjectSavedRevision = undefined;
       saveLocationRequired = false;
       cloudProjectActive = false;
+      documentOrigin = 'external';
+      documentEpoch = 0;
       pendingOpenFile = undefined;
       pendingOpenDestination = undefined;
       pendingOpen = undefined;
@@ -854,18 +861,22 @@ export function createImportExportPlugin(
         }),
       });
 
-      context.events.subscribe('document.replaced', () => {
+      context.events.subscribe<{ origin: DocumentOrigin }>('document.replaced', (message) => {
         autosaveTask?.cancel();
         autosaveTask = undefined;
+        automaticCloudSave = undefined;
         autosavePending = false;
         textExportBindings.clear();
         projectDestination = undefined;
         lastProjectSavedRevision = pendingOpenedDocumentRevision;
         pendingOpenedDocumentRevision = undefined;
         saveLocationRequired = false;
+        documentOrigin = message.payload.origin;
+        documentEpoch += 1;
         context.signals.emit('file.recovery.changed');
         context.signals.emit('file.save-state.changed', fileState());
         context.signals.emit('file.text-export-state.changed', { all: true });
+        if (documentOrigin === 'new') beginAutomaticCloudSave(false);
       });
       context.signals.subscribe<CloudSyncState>('cloudSync.updated', (message) => applyCloudState(message.payload));
       void readCloudState();
@@ -875,18 +886,69 @@ export function createImportExportPlugin(
         textExportBindings.set(message.payload.id, { ...binding, renameRequired: true });
         context.signals.emit('file.text-export-state.changed', { nodeId: message.payload.id });
       });
-      const scheduleAutomaticOutputs = () => {
-        if (autosaveTask) {
+      const requireLocalSaveLocation = () => {
+        if (saveLocationRequired) return;
+        saveLocationRequired = true;
+        context.signals.emit('file.save-location.required', fileState());
+        context.signals.emit('file.save-state.changed', fileState());
+      };
+      const beginAutomaticCloudSave = (fallbackToLocal = true) => {
+        const epoch = documentEpoch;
+        const pending = (async () => {
+          const before = await readCloudState();
+          if (epoch !== documentEpoch) return;
+          if (before?.activeProjectId) return;
+          const cloudReady = before?.authenticated &&
+            before.installations.some((item) => item.status === 'ready');
+          if (!cloudReady) {
+            if (fallbackToLocal) requireLocalSaveLocation();
+            return;
+          }
+          try {
+            await context.commands.dispatch('cloudSync.saveCurrentAsProject');
+            if (epoch !== documentEpoch) return;
+            const next = await readCloudState();
+            if (epoch !== documentEpoch) return;
+            if (!next?.activeProjectId || next.phase !== 'ready' || next.pendingCommits > 0) {
+              throw new Error(next?.error || '云端书籍尚未完成自动保存，本机恢复副本仍然保留');
+            }
+            const snapshot = await context.queries.ask<DocumentRevisionSnapshot>('system.document.revision');
+            if (epoch !== documentEpoch) return;
+            lastProjectSavedRevision = snapshot.revision;
+            saveLocationRequired = false;
+            context.signals.emit('file.save-state.changed', fileState());
+          } catch (error) {
+            if (fallbackToLocal) requireLocalSaveLocation();
+            context.signals.emit('file.status', {
+              operation: 'project-save', state: 'error',
+              message: error instanceof Error ? error.message : String(error),
+            } satisfies FileOperationStatus);
+          }
+        })();
+        automaticCloudSave = pending;
+        void pending.finally(() => {
+          if (automaticCloudSave !== pending) return;
+          automaticCloudSave = undefined;
+          if (autosavePending) scheduleAutomaticOutputs();
+        });
+      };
+      const scheduleAutomaticOutputs = (message?: { payload?: { documentRevision?: number } }) => {
+        if (autosaveTask || automaticCloudSave) {
           autosavePending = true;
           return;
         }
         autosavePending = false;
         if (!projectDestination && !cloudProjectActive) {
-          saveLocationRequired = true;
-          context.signals.emit('file.save-location.required', fileState());
-          context.signals.emit('file.save-state.changed', fileState());
+          if (documentOrigin === 'new') {
+            beginAutomaticCloudSave();
+            return;
+          }
+          requireLocalSaveLocation();
         }
-        if (!projectDestination && textExportBindings.size === 0) return;
+        const documentRevision = message?.payload?.documentRevision;
+        const writeProject = Boolean(projectDestination) &&
+          (documentRevision === undefined || documentRevision !== lastProjectSavedRevision);
+        if (!writeProject && textExportBindings.size === 0) return;
         const destination = projectDestination;
         const boundExports = [...textExportBindings.entries()];
         const task = context.tasks.schedule<string>({
@@ -894,12 +956,12 @@ export function createImportExportPlugin(
           label: boundExports.length > 0 ? '正在自动保存书籍并导出文本' : '正在自动保存书籍',
           priority: 44,
           timeoutMs: 5 * 60_000,
-          noticeAfterMs: 0,
+          noticeAfterMs: 1_200,
           estimatedCost: 8,
           run: async (signal, report) => {
             report(0.08);
             let projectBytes = 0;
-            if (destination) {
+            if (destination && writeProject) {
               const source = await context.queries.ask<ProjectSource>('system.project.source');
               projectBytes = await writeProjectDestination(
                 source,
@@ -1027,7 +1089,9 @@ export function createImportExportPlugin(
               }
             }
             report(1);
-            const canvasMessage = destination ? `书籍 ${formatBytes(projectBytes)}` : '书籍本地存档';
+            const canvasMessage = destination && writeProject
+              ? `书籍 ${formatBytes(projectBytes)}`
+              : destination ? '书籍无需更新' : '书籍本地存档';
             const suffix = renamePendingCount > 0
               ? `；${renamePendingCount} 个导出文件名需点击导出后重新选择位置`
               : renamedCount > 0 ? `，并同步 ${renamedCount} 个导出文件名` : '';

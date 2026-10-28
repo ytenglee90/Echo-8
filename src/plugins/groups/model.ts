@@ -1,5 +1,11 @@
 import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
 import type {
+  AppearanceReadContribution,
+  AppearanceReadRequest,
+  AppearanceUpdatePlan,
+  AppearanceUpdateRequest,
+} from '../../protocols/appearance.ts';
+import type {
   ClipboardFragment,
   ClipboardInstantiateInput,
   ClipboardInstantiatePlan,
@@ -52,6 +58,7 @@ export function createGroupsPlugin(
 ): PluginDefinition {
   return {
     manifest: defineManifest('groups', '群组', {
+      dataVersion: 2,
       namespaces: [GROUP_NAMESPACE, GROUP_MEMBERSHIP_UI_NAMESPACE],
       namespaceDomains: {
         [GROUP_NAMESPACE]: 'document',
@@ -76,6 +83,8 @@ export function createGroupsPlugin(
         'selection.scopeAt@1',
         'group.membership.state@1',
         'group.dropTarget@1',
+        'appearance.read@1',
+        'appearance.updatePlan@1',
       ],
       commands: [
         'group.create',
@@ -99,6 +108,7 @@ export function createGroupsPlugin(
         'group.created',
         'group.members.changed',
         'group.ungrouped',
+        'group.appearance.changed',
         'nodes.pasted',
         'history.changed',
         'document.replaced',
@@ -136,6 +146,12 @@ export function createGroupsPlugin(
         'ui.action.register', 'ui.shortcut.register',
       ],
     }),
+
+    migrations: [{
+      from: 1,
+      to: 2,
+      migrate: (data) => data,
+    }],
 
     start(context) {
       const readGroups = () =>
@@ -489,6 +505,69 @@ export function createGroupsPlugin(
         key: 'groups.list@1',
         invoke: () => Object.values(readGroups()),
       });
+      context.capabilities.provide<AppearanceReadRequest, AppearanceReadContribution>({
+        key: 'appearance.read@1',
+        invoke: (input) => {
+          if (input?.mode !== 'selection') return { targets: [] };
+          const selectedIds = new Set(input.selectedItems
+            ?.filter((item) => item.kind === 'group')
+            .map((item) => item.id) ?? input.selectedIds ?? []);
+          const groups = Object.values(readGroups()).filter((group) => selectedIds.has(group.id));
+          if (groups.length === 0) return { targets: [] };
+          const fallback = input.defaults?.['group-fill'] ?? '#202124';
+          const colors = groups.map((group) => group.color ?? fallback);
+          return {
+            targets: [{
+              kind: 'group-fill',
+              label: '群组',
+              scopeLabel: `${groups.length} 个选中群组`,
+              color: colors[0],
+              mixed: new Set(colors).size > 1,
+              entities: groups.map((group, index) => ({
+                id: group.id,
+                revision: group.revision,
+                expectedColor: colors[index],
+              })),
+            }],
+          };
+        },
+      });
+      context.capabilities.provide<AppearanceUpdateRequest, AppearanceUpdatePlan>({
+        key: 'appearance.updatePlan@1',
+        invoke: (input) => {
+          if (input.kind !== 'group-fill') return { patches: [], changed: 0 };
+          if (!isAppearanceUpdate(input)) throw new Error('群组颜色请求不正确');
+          const groups = readGroups();
+          const changed = input.entities.flatMap((reference) => {
+            const group = groups[reference.id];
+            if (!group || group.revision !== reference.revision ||
+              (group.color ?? reference.expectedColor.toLowerCase()) !== reference.expectedColor.toLowerCase()) {
+              throw new Error('群组颜色已经变化，请重新打开调色盘');
+            }
+            if (group.color === input.color.toLowerCase()) return [];
+            return [{
+              ...group,
+              color: input.color.toLowerCase(),
+              revision: group.revision + 1,
+              updatedAt: Date.now(),
+            } satisfies GroupRecord];
+          });
+          return {
+            changed: changed.length,
+            patches: changed.map((group) => ({
+              op: 'set' as const,
+              domain: 'document' as const,
+              namespace: GROUP_NAMESPACE,
+              key: group.id,
+              value: group,
+              schemaOwner: 'groups',
+            })),
+            events: changed.length > 0
+              ? [{ type: 'group.appearance.changed', payload: { ids: changed.map((group) => group.id) } }]
+              : [],
+          };
+        },
+      });
       context.capabilities.provide({
         key: 'group.membership.state@1',
         invoke: () => ({ open: membershipPanelOpen() }),
@@ -643,6 +722,7 @@ export function createGroupsPlugin(
       context.events.subscribe('group.created', invalidateGroups);
       context.events.subscribe('group.members.changed', invalidateGroups);
       context.events.subscribe('group.ungrouped', invalidateGroups);
+      context.events.subscribe('group.appearance.changed', invalidateGroups);
       context.events.subscribe('nodes.pasted', invalidateGroups);
       context.events.subscribe('history.changed', invalidateGroups);
       context.events.subscribe('document.replaced', invalidateGroups);
@@ -806,7 +886,18 @@ function isSerializedGroups(payload: unknown): payload is SerializedGroups {
         isGroupTitleStyle(group.titleStyle) &&
         (group.titleMarks === undefined || (
           Array.isArray(group.titleMarks) && group.titleMarks.every(isGroupTitleMark)
-        )),
+        )) &&
+        (group.color === undefined || isHexColor(group.color)),
     )
   );
+}
+
+function isAppearanceUpdate(value: AppearanceUpdateRequest): boolean {
+  return isHexColor(value.color) && value.entities.length > 0 && value.entities.every((entity) =>
+    typeof entity.id === 'string' && Number.isInteger(entity.revision) && entity.revision > 0 &&
+    isHexColor(entity.expectedColor));
+}
+
+function isHexColor(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/iu.test(value);
 }

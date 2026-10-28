@@ -10,6 +10,7 @@ import {
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { AnnotationRecord } from '../../protocols/annotations.ts';
+import type { AppearancePreview } from '../../protocols/appearance.ts';
 import type {
   TextCompletionCandidate,
   TextCorrectionDecoration,
@@ -17,6 +18,7 @@ import type {
   TextNodeReferenceTarget,
 } from '../../protocols/text-assist.ts';
 import { Icon } from '../../ui/Icon.tsx';
+import { contrastingInk } from '../../ui/color-contrast.ts';
 import { textOffsetToDomPoint } from './dom-text-selection.ts';
 
 export type TextAssistMenu =
@@ -68,10 +70,17 @@ export function EditorAnnotationMarkers({
   );
   const [invalidation, setInvalidation] = useState(0);
   const [records, setRecords] = useState<AnnotationRecord[]>([]);
+  const [appearancePreview, setAppearancePreview] = useState<AppearancePreview>();
   const [positions, setPositions] = useState<Record<string, { left: number; top: number; visible: boolean }>>({});
 
   useEffect(
     () => client.subscribeSignal('annotations.invalidated', () => setInvalidation((value) => value + 1)),
+    [client],
+  );
+  useEffect(
+    () => client.subscribeSignal<AppearancePreview>('appearance.color.preview', (message) => {
+      setAppearancePreview(message.payload.clear ? undefined : message.payload);
+    }),
     [client],
   );
   useEffect(() => {
@@ -140,13 +149,25 @@ export function EditorAnnotationMarkers({
       {records.map((record) => {
         const position = positions[record.id];
         if (!position?.visible) return null;
+        const previewColor = appearancePreview?.kind === 'annotation-marker' &&
+          appearancePreview.entityIds?.includes(record.id)
+          ? appearancePreview.color
+          : undefined;
+        const color = previewColor ?? record.color;
         return (
           <button
             type="button"
             key={record.id}
             className="editor-annotation-marker"
             data-annotation-offset={record.target.kind === 'text-range' ? record.target.offset : undefined}
-            style={{ left: position.left, top: position.top }}
+            style={{
+              left: position.left,
+              top: position.top,
+              ...(color ? {
+                '--annotation-color': color,
+                '--annotation-ink': contrastingInk(color),
+              } : {}),
+            } as CSSProperties}
             title={record.body || '打开注释'}
             aria-label={`打开注释${record.body ? `：${record.body.slice(0, 40)}` : ''}`}
             onPointerDown={(event) => {
@@ -155,10 +176,13 @@ export function EditorAnnotationMarkers({
             }}
             onClick={(event) => {
               event.stopPropagation();
-              void client.dispatch('annotation.open', {
-                id: record.id,
-                anchor: { x: event.clientX, y: event.clientY },
-              });
+              void client.dispatch('selection.set', {
+                items: [{ id: record.id, kind: 'annotation' }],
+                mode: 'replace',
+              }).then(() => client.dispatch('annotation.open', {
+                  id: record.id,
+                  anchor: { x: event.clientX, y: event.clientY },
+                }));
             }}
           >
             <Icon name="comment" size={9} />

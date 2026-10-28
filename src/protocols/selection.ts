@@ -5,6 +5,8 @@ export type SelectionMode = 'replace' | 'add' | 'remove' | 'toggle';
 export interface SelectionItem {
   id: string;
   kind: string;
+  /** Optional owner-declared visual part, such as a connection label background or its text. */
+  part?: string;
 }
 
 export interface SelectionSnapshot {
@@ -41,6 +43,8 @@ export interface SelectableEntity extends SelectionItem {
   boxMatch?: 'intersect' | 'contain';
   /** Set false for entities that remain directly selectable but must not join Select All. */
   includeInSelectAll?: boolean;
+  /** Direct-selection parts accepted for this entity without changing its durable identity. */
+  parts?: string[];
 }
 
 export interface SelectionCatalogContribution {

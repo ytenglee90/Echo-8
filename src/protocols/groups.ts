@@ -14,6 +14,8 @@ export interface GroupRecord {
   memberIds: string[];
   titleStyle: GroupTitleStyle;
   titleMarks?: GroupTitleMark[];
+  /** Optional object-level fill override; absence inherits the global group color. */
+  color?: string;
   revision: number;
   createdAt: number;
   updatedAt: number;

@@ -610,22 +610,43 @@
 .boot-screen > span, .fatal-screen p, .fatal-screen > span { color: var(--muted); font-size: 12px; }
 .fatal-screen h1 { margin: 0; }
 .cloud-sync-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: max-content;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
   height: 30px;
-  padding: 0 7px;
+  padding: 0;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--toolbar-muted);
-  font-size: 11px;
-  font-weight: 700;
   cursor: pointer;
 }
-.cloud-sync-status:hover { background: var(--toolbar-hover); color: var(--toolbar-ink); }
-.cloud-sync-status > i,
+.cloud-sync-status .echo-8-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  transition: opacity 150ms ease, box-shadow 150ms ease;
+}
+.cloud-sync-status::after {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--toolbar);
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+.cloud-sync-status.is-unsynced { color: #8c8f98; }
+.cloud-sync-status.is-synced { color: #32a65a; }
+.cloud-sync-status.is-unsynced .echo-8-icon { opacity: .58; }
+.cloud-sync-status.is-synced .echo-8-icon {
+  box-shadow: 0 0 0 2px color-mix(in srgb, #32a65a 30%, transparent);
+}
+.cloud-sync-status:hover { background: var(--toolbar-hover); }
+.cloud-sync-status.is-active .echo-8-icon { animation: cloud-sync-logo-pulse 1s ease-in-out infinite; }
 .cloud-sync-summary > i {
   width: 8px;
   height: 8px;
@@ -634,28 +655,12 @@
   background: #46a56c;
   box-shadow: 0 0 0 3px color-mix(in srgb, #46a56c 15%, transparent);
 }
-.cloud-sync-status > b {
-  min-width: 16px;
-  padding: 2px 4px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--toolbar-ink) 10%, transparent);
-  font: 700 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
-}
-.cloud-sync-status.phase-connecting > i,
-.cloud-sync-status.phase-syncing > i,
 .cloud-sync-summary.phase-connecting > i,
 .cloud-sync-summary.phase-syncing > i { background: #d99a32; animation: cloud-sync-pulse 1s ease-in-out infinite; }
-.cloud-sync-status.phase-offline > i,
-.cloud-sync-status.phase-read-only > i,
 .cloud-sync-summary.phase-offline > i,
 .cloud-sync-summary.phase-read-only > i { background: #8c8f98; }
-.cloud-sync-status.phase-conflict > i,
-.cloud-sync-status.phase-error > i,
 .cloud-sync-summary.phase-conflict > i,
 .cloud-sync-summary.phase-error > i { background: var(--danger); }
-.cloud-sync-status.phase-disabled > i,
-.cloud-sync-status.phase-signed-out > i,
-.cloud-sync-status.phase-needs-installation > i { background: transparent; border: 1px solid currentColor; box-shadow: none; }
 
 .cloud-sync-summary {
   display: flex;
@@ -705,18 +710,24 @@
 .cloud-section-heading h3 { margin: 0; font-size: 12px; }
 .cloud-sync-section > p { margin: 5px 0 10px; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .cloud-section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.cloud-section-heading button,
-.cloud-sync-actions button {
-  min-height: 30px;
-  padding: 0 9px;
+.cloud-sync-heading-actions { display: inline-flex; align-items: center; gap: 3px; }
+.cloud-sync-heading-actions .icon-button,
+.cloud-section-refresh {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--control-surface);
   color: var(--ink);
-  font-size: 11px;
-  font-weight: 700;
   cursor: pointer;
 }
+.cloud-sync-heading-actions .icon-button:hover,
+.cloud-section-refresh:hover { background: var(--control-hover); }
+.cloud-sync-heading-actions svg,
+.cloud-section-refresh svg { width: 14px; height: 14px; }
 .cloud-account-list,
 .cloud-project-list { display: grid; gap: 5px; }
 .cloud-account-list > button,
@@ -742,8 +753,7 @@
 .cloud-project-name { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .cloud-account-list small,
 .cloud-project-copy small { color: var(--muted); font-size: 10px; }
-.cloud-account-list b,
-.cloud-project-open { color: var(--muted); font-size: 11px; }
+.cloud-account-list b { color: var(--muted); font-size: 11px; }
 .cloud-project-name,
 .cloud-project-open {
   min-width: 0;
@@ -758,22 +768,29 @@
 .cloud-project-name { font-size: 12px; font-weight: 700; }
 .cloud-project-name:hover,
 .cloud-project-name:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
-.cloud-project-open { flex: 0 0 auto; color: var(--muted); font-size: 11px; font-weight: 700; }
+.cloud-project-open {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  color: var(--muted);
+}
+.cloud-project-open:hover,
+.cloud-project-open:focus-visible { background: var(--panel); color: var(--ink); }
+.cloud-project-open svg { width: 14px; height: 14px; }
 .cloud-project-actions { display: inline-flex; align-items: center; gap: 7px; }
 .cloud-project-delete {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 29px;
-  padding: 0 8px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border));
   border-radius: 7px;
   background: color-mix(in srgb, var(--danger) 5%, var(--panel));
   color: var(--danger);
-  font: inherit;
-  font-size: 10px;
-  font-weight: 720;
-  white-space: nowrap;
   cursor: pointer;
 }
 .cloud-project-delete svg { width: 13px; height: 13px; }
@@ -798,9 +815,8 @@
   font-weight: 700;
   outline: 2px solid color-mix(in srgb, var(--selection) 16%, transparent);
 }
-.cloud-sync-actions { display: flex; gap: 7px; margin-top: 16px; }
-.cloud-sync-actions button:first-child { background: var(--ink); color: var(--panel); }
-.cloud-sync-actions button:disabled,
+.cloud-sync-heading-actions button:disabled,
+.cloud-section-refresh:disabled,
 .cloud-account-list button:disabled,
 .cloud-project-list button:disabled,
 .cloud-project-list input:disabled { cursor: not-allowed; opacity: .5; }
@@ -816,3 +832,12 @@
 .cloud-sync-data-boundary strong { color: var(--ink); }
 
 @keyframes cloud-sync-pulse { 50% { opacity: .38; transform: scale(.82); } }
+@keyframes cloud-sync-logo-pulse {
+  50% { opacity: .4; transform: scale(.82) rotate(8deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-sync-status.is-active .echo-8-icon,
+  .cloud-sync-summary.phase-connecting > i,
+  .cloud-sync-summary.phase-syncing > i { animation: none; }
+}

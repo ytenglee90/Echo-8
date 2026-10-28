@@ -10,6 +10,8 @@ export interface AnnotationRecord {
   id: string;
   target: AnnotationTarget;
   body: string;
+  /** Optional marker override; absence inherits the global annotation color. */
+  color?: string;
   revision: number;
   createdAt: number;
   updatedAt: number;

@@ -153,6 +153,7 @@ export interface UIContribution {
     | 'assist'
     | 'history'
     | 'edit'
+    | 'appearance'
     | 'clipboard'
     | 'status'
     | 'metrics'

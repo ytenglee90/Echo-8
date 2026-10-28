@@ -562,8 +562,15 @@ export function CanvasSurface({
 
   useEffect(() => {
     if (pendingDrag.current) pendingDrag.current.duplicateOnCommit = duplicateModifierActive;
-    if (drag.current) drag.current.duplicateOnCommit = duplicateModifierActive;
-  }, [duplicateModifierActive]);
+    if (!drag.current) return;
+    drag.current.duplicateOnCommit = duplicateModifierActive;
+    if (drag.current.moved) {
+      client.emit('canvas.drag.preview', {
+        positions: drag.current.latest,
+        duplicateOrigins: duplicateModifierActive ? drag.current.origins : [],
+      } satisfies DragPreview);
+    }
+  }, [client, duplicateModifierActive]);
 
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
   const panToolActive = tool === 'hand';
@@ -816,7 +823,10 @@ export function CanvasSurface({
     };
     setDragOriginPreview(moved ? origins : []);
     if (moved) {
-      client.emit('canvas.drag.preview', { positions: latest });
+      client.emit('canvas.drag.preview', {
+        positions: latest,
+        duplicateOrigins: request.duplicateOnCommit ? origins : [],
+      } satisfies DragPreview);
       syncReferenceDragPreview(request.primaryId, request.latestX, request.latestY);
       syncGroupMembershipPreview(
         request.primaryId,
@@ -1068,7 +1078,11 @@ export function CanvasSurface({
         y: origin.y + dy,
       }));
       drag.current.latest = snapPositions(rawLatest);
-      client.emit('canvas.drag.preview', { positions: drag.current.latest });
+      drag.current.duplicateOnCommit = event.altKey || duplicateModifierActive;
+      client.emit('canvas.drag.preview', {
+        positions: drag.current.latest,
+        duplicateOrigins: drag.current.duplicateOnCommit ? drag.current.origins : [],
+      } satisfies DragPreview);
       syncReferenceDragPreview(drag.current.primaryId, event.clientX, event.clientY);
       syncGroupMembershipPreview(
         drag.current.primaryId,

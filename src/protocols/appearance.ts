@@ -1,7 +1,16 @@
 import type { EventDeclaration, PatchOperation } from '../core/contracts.ts';
 import type { CommandContract } from './commands.ts';
+import type { SelectionItem } from './selection.ts';
 
-export type AppearanceKind = 'canvas-background' | 'connection-line' | 'node-title' | 'text-color';
+export type AppearanceKind =
+  | 'canvas-background'
+  | 'connection-line'
+  | 'connection-label-background'
+  | 'connection-label-text'
+  | 'node-title'
+  | 'text-color'
+  | 'group-fill'
+  | 'annotation-marker';
 
 export interface AppearanceEntityRef {
   id: string;
@@ -10,8 +19,11 @@ export interface AppearanceEntityRef {
 }
 
 export interface AppearanceReadRequest {
+  mode?: 'global' | 'selection';
   selectedIds: string[];
+  selectedItems?: SelectionItem[];
   activeNodeId?: string;
+  defaults?: Partial<Record<AppearanceKind, string>>;
 }
 
 export interface AppearanceTarget {
@@ -21,6 +33,8 @@ export interface AppearanceTarget {
   color: string;
   mixed: boolean;
   entities: AppearanceEntityRef[];
+  /** Optional screen-space anchor supplied when the selected entity is not a canvas catalog item. */
+  anchor?: PaletteAnchorRect;
 }
 
 export interface AppearanceReadContribution {

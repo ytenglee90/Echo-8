@@ -1,4 +1,4 @@
-import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
+import { createId, isRecord, type PluginContext, type PluginDefinition } from '../../core/contracts.ts';
 import type {
   AppearanceReadContribution,
   AppearanceReadRequest,
@@ -28,7 +28,12 @@ import {
   type ConnectionSetLabelRequest,
 } from '../../protocols/connections.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
-import type { EntityDeletePlan, SelectionCatalogContribution, SelectionSnapshot } from '../../protocols/selection.ts';
+import type {
+  EntityDeletePlan,
+  SelectionCatalogContribution,
+  SelectionItem,
+  SelectionSnapshot,
+} from '../../protocols/selection.ts';
 import type { StatisticsContribution } from '../../protocols/statistics.ts';
 import { defineManifest } from '../manifest.ts';
 import { canvasContrastColors } from '../../ui/canvas-contrast.ts';
@@ -38,6 +43,10 @@ const CONNECTION_NAMESPACE = 'connections';
 const CONNECTION_APPEARANCE_NAMESPACE = 'connectionAppearance';
 const CONNECTION_APPEARANCE_KEY = 'line';
 const FALLBACK_CONNECTION_LINE_COLOR = '#888886';
+type LocalConnectionAppearanceKind =
+  | 'connection-line'
+  | 'connection-label-background'
+  | 'connection-label-text';
 
 interface CreateConnectionPayload {
   from: ConnectionEndpoint;
@@ -51,7 +60,7 @@ interface SerializedConnections {
 export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('connections', '连线', {
-      dataVersion: 5,
+      dataVersion: 6,
       namespaces: [CONNECTION_NAMESPACE, CONNECTION_APPEARANCE_NAMESPACE],
       namespaceDomains: {
         [CONNECTION_NAMESPACE]: 'document',
@@ -158,6 +167,10 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           }),
         ),
       }),
+    }, {
+      from: 5,
+      to: 6,
+      migrate: (data) => data,
     }],
 
     start(context) {
@@ -498,7 +511,51 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       });
       context.capabilities.provide<AppearanceReadRequest, AppearanceReadContribution>({
         key: 'appearance.read@1',
-        invoke: async () => {
+        invoke: async (input) => {
+          if (input?.mode === 'selection') {
+            const requestedItems: SelectionItem[] = input.selectedItems?.length
+              ? input.selectedItems
+              : (input.selectedIds ?? []).map((id) => ({ id, kind: 'connection' }));
+            const items = requestedItems.filter((item) => item.kind === 'connection');
+            const records = new Map(Object.values(readConnections()).map((record) => [record.id, record]));
+            const canvasColor = await readCanvasColor(context);
+            const globalLineColor = await readEffectiveConnectionColor();
+            const byKind = new Map<LocalConnectionAppearanceKind, ConnectionRecord[]>();
+            for (const item of items) {
+              const record = records.get(item.id);
+              if (!record) continue;
+              const kind: LocalConnectionAppearanceKind = item.part === 'label-background'
+                ? 'connection-label-background'
+                : item.part === 'label-text'
+                  ? 'connection-label-text'
+                  : 'connection-line';
+              const list = byKind.get(kind) ?? [];
+              list.push(record);
+              byKind.set(kind, list);
+            }
+            return {
+              targets: [...byKind].map(([kind, selectedConnections]) => {
+                const colors = selectedConnections.map((record) => connectionPartColor(
+                  record,
+                  kind,
+                  globalLineColor,
+                  canvasColor,
+                ));
+                return {
+                  kind,
+                  label: connectionPartLabel(kind),
+                  scopeLabel: `${selectedConnections.length} 个选中连接对象`,
+                  color: colors[0],
+                  mixed: new Set(colors).size > 1,
+                  entities: selectedConnections.map((record, index) => ({
+                    id: record.id,
+                    revision: record.revision,
+                    expectedColor: colors[index],
+                  })),
+                };
+              }),
+            };
+          }
           const appearance = readConnectionAppearance();
           const color = appearance.color ?? await readEffectiveConnectionColor();
           return {
@@ -520,7 +577,45 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       context.capabilities.provide<AppearanceUpdateRequest, AppearanceUpdatePlan>({
         key: 'appearance.updatePlan@1',
         invoke: async (input) => {
-          if (input.kind !== 'connection-line') return { patches: [], changed: 0 };
+          if (input.kind !== 'connection-line' && input.kind !== 'connection-label-background' &&
+            input.kind !== 'connection-label-text') return { patches: [], changed: 0 };
+          if (!(input.kind === 'connection-line' && input.entities.length === 1 &&
+            input.entities[0].id === CONNECTION_APPEARANCE_KEY)) {
+            if (!isLocalConnectionAppearanceUpdate(input)) throw new Error('选中连接对象的颜色请求不正确');
+            const records = readConnections();
+            const canvasColor = await readCanvasColor(context);
+            const globalLineColor = await readEffectiveConnectionColor();
+            const changed: ConnectionRecord[] = [];
+            for (const reference of input.entities) {
+              const record = records[reference.id];
+              if (!record || record.revision !== reference.revision ||
+                connectionPartColor(record, input.kind, globalLineColor, canvasColor) !==
+                  reference.expectedColor.toLowerCase()) {
+                throw new Error('选中连接对象的颜色已经变化，请重新打开调色盘');
+              }
+              const field = connectionPartField(input.kind);
+              if (record[field] === input.color.toLowerCase()) continue;
+              changed.push({
+                ...record,
+                [field]: input.color.toLowerCase(),
+                revision: record.revision + 1,
+              });
+            }
+            return {
+              changed: changed.length,
+              patches: changed.map((record) => ({
+                op: 'set' as const,
+                domain: 'document' as const,
+                namespace: CONNECTION_NAMESPACE,
+                key: record.id,
+                value: record,
+                schemaOwner: 'connections',
+              })),
+              events: changed.length > 0
+                ? [{ type: 'connection.changed', payload: { ids: changed.map((record) => record.id) } }]
+                : [],
+            };
+          }
           if (!isConnectionAppearanceUpdate(input)) throw new Error('连接曲线颜色更新请求不正确');
           const appearance = readConnectionAppearance();
           const currentColor = appearance.color ?? await readEffectiveConnectionColor();
@@ -598,6 +693,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
               return [{
                 id: connection.id,
                 kind: 'connection',
+                parts: ['line', 'label-background', 'label-text'],
                 includeInSelectAll: false,
                 bounds,
               }];
@@ -820,6 +916,51 @@ function isConnectionAppearanceUpdate(value: AppearanceUpdateRequest): boolean {
     /^#[0-9a-f]{6}$/iu.test(value.entities[0].expectedColor);
 }
 
+function isLocalConnectionAppearanceUpdate(value: AppearanceUpdateRequest): boolean {
+  return isHexColor(value.color) && value.entities.length > 0 &&
+    value.entities.every((entity) => entity.id !== CONNECTION_APPEARANCE_KEY &&
+      Number.isInteger(entity.revision) && entity.revision > 0 && isHexColor(entity.expectedColor));
+}
+
+async function readCanvasColor(context: PluginContext): Promise<string> {
+  try {
+    return (await context.capabilities.request<CanvasAppearanceSnapshot>('canvas.appearance@1')).color.toLowerCase();
+  } catch {
+    return '#efefec';
+  }
+}
+
+function connectionPartColor(
+  connection: ConnectionRecord,
+  kind: LocalConnectionAppearanceKind,
+  globalLineColor: string,
+  canvasColor: string,
+): string {
+  if (kind === 'connection-label-background') return connection.labelBackgroundColor ?? canvasColor;
+  if (kind === 'connection-label-text') {
+    return connection.labelTextColor ?? connection.lineColor ?? globalLineColor;
+  }
+  return connection.lineColor ?? globalLineColor;
+}
+
+function connectionPartField(
+  kind: LocalConnectionAppearanceKind,
+): 'lineColor' | 'labelBackgroundColor' | 'labelTextColor' {
+  if (kind === 'connection-label-background') return 'labelBackgroundColor';
+  if (kind === 'connection-label-text') return 'labelTextColor';
+  return 'lineColor';
+}
+
+function connectionPartLabel(kind: LocalConnectionAppearanceKind): string {
+  if (kind === 'connection-label-background') return '连接文字框';
+  if (kind === 'connection-label-text') return '连接文字';
+  return '连接线';
+}
+
+function isHexColor(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/iu.test(value);
+}
+
 function normalizeConnectionLabel(label: string): string {
   return label.replace(/\r\n?/gu, '\n').trim();
 }
@@ -838,6 +979,9 @@ function isSerializedConnections(payload: unknown): payload is SerializedConnect
           (typeof connection.label === 'string' && connection.label.length <= MAX_CONNECTION_LABEL_LENGTH)) &&
         (connection.labelWidth === undefined || Number.isFinite(connection.labelWidth)) &&
         (connection.labelHeight === undefined || Number.isFinite(connection.labelHeight)) &&
+        (connection.lineColor === undefined || isHexColor(connection.lineColor)) &&
+        (connection.labelBackgroundColor === undefined || isHexColor(connection.labelBackgroundColor)) &&
+        (connection.labelTextColor === undefined || isHexColor(connection.labelTextColor)) &&
         (connection.revision === undefined ||
           (Number.isInteger(connection.revision) && Number(connection.revision) > 0)),
     )

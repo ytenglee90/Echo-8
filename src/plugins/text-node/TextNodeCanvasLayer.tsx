@@ -3,9 +3,6 @@ import type {
 } from 'react';
 import { useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
-import type {
-  NodeTitleColorPickerOpenRequest,
-} from '../../protocols/appearance.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import {
   useCanvasEntityLayerRuntime,
@@ -23,13 +20,11 @@ interface TextNodeCanvasLayerProps {
 
 export function TextNodeCanvasLayer({ client }: TextNodeCanvasLayerProps) {
   const runtime = useCanvasEntityLayerRuntime();
-  const paletteAvailable = useCommandAvailability(client, 'palette.nodeTitlePicker.open');
   const connectionsAvailable = useCommandAvailability(client, 'connection.create');
   return (
     <TextNodeCanvasLayerView
       client={client}
       {...runtime}
-      paletteAvailable={paletteAvailable}
       connectionsAvailable={connectionsAvailable}
     />
   );
@@ -48,15 +43,12 @@ function TextNodeCanvasLayerView({
   previewEntities,
   nodeCharacterCounts,
   selected,
-  selectedIds,
   connectionTargetId,
-  paletteAvailable,
   connectionsAvailable,
   beginNodeDrag,
   handleConnectionPort,
   beginNodeResize,
 }: TextNodeCanvasLayerProps & ReturnType<typeof useCanvasEntityLayerRuntime> & {
-  paletteAvailable: boolean;
   connectionsAvailable: boolean;
 }) {
   const detail = canvasNodeDetail(camera.zoom);
@@ -225,41 +217,6 @@ function TextNodeCanvasLayerView({
                     }}
                   >
                     <Icon name="replace" size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    className="node-color-button"
-                    title={paletteAvailable ? `修改${node.title}的标题栏颜色` : '全局颜色设置插件未启用'}
-                    disabled={!paletteAvailable}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      if (!paletteAvailable) return;
-                      const targets = (selected.has(node.id)
-                        ? selectedIds.flatMap((id) => {
-                            const target = nodeById.get(id);
-                            return target ? [target] : [];
-                          })
-                        : [node]
-                      ).map((target) => ({
-                        id: target.id,
-                        revision: target.nodeRevision ?? target.revision,
-                        expectedColor: target.titleColor,
-                      }));
-                      void client.dispatch('palette.nodeTitlePicker.open', {
-                        targets,
-                        anchor: {
-                          x: rect.left,
-                          y: rect.top,
-                          width: rect.width,
-                          height: rect.height,
-                        },
-                      } satisfies NodeTitleColorPickerOpenRequest).catch(() => undefined);
-                    }}
-                    aria-label={`修改${node.title}的标题栏颜色`}
-                  >
-                    <Icon name="palette" size={13} />
                   </button>
                   <span
                     className="node-count"

@@ -179,6 +179,11 @@
   transform: translate(-50%, -50%) scale(var(--canvas-detail-screen-scale, 1)) scale(1.08);
 }
 
+.annotation-canvas-marker.selected {
+  outline: 2px solid var(--canvas-selection, var(--selection));
+  outline-offset: 2px;
+}
+
 .floating-panel.annotation-floating-panel { box-shadow: none; }
 .annotation-floating-panel .floating-panel-body { min-height: 0; }
 .annotation-popup-body {
@@ -636,6 +641,12 @@
   stroke: var(--canvas-selection, var(--selection));
 }
 
+.connection-path.selected.custom-color {
+  fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
+  stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
+  filter: drop-shadow(0 0 2px var(--canvas-selection, var(--selection)));
+}
+
 .connection-path.draft {
   fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
   stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
@@ -663,7 +674,7 @@
   border: 1px solid var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
   border-radius: 7px;
   background: var(--connection-label-background, var(--canvas-background));
-  color: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
+  color: var(--connection-label-text, var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62))));
   box-shadow: none;
   font-family: inherit;
   font-size: 12px;
@@ -695,6 +706,12 @@
   color: var(--canvas-selection, var(--selection));
 }
 
+.connection-label-display.selected.custom-label-text,
+.connection-label-display.hovered.custom-label-text {
+  color: var(--connection-label-text);
+  box-shadow: 0 0 0 2px var(--canvas-selection-soft, transparent);
+}
+
 .connection-label-editor {
   pointer-events: auto;
 }
@@ -704,7 +721,7 @@
   padding: 6px 9px;
   border-color: var(--canvas-selection, var(--selection));
   outline: none;
-  color: var(--canvas-selection, var(--selection));
+  color: var(--connection-label-text, var(--canvas-selection, var(--selection)));
   overflow-wrap: anywhere;
   resize: none;
   white-space: pre-wrap;

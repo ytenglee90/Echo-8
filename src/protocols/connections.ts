@@ -25,6 +25,10 @@ export interface ConnectionRecord {
   label?: string;
   labelWidth: number;
   labelHeight: number;
+  /** Optional object-level overrides; absence inherits the corresponding global appearance. */
+  lineColor?: string;
+  labelBackgroundColor?: string;
+  labelTextColor?: string;
   revision: number;
   createdAt: number;
 }

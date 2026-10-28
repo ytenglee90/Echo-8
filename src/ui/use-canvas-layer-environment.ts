@@ -20,6 +20,7 @@ interface CanvasLayerEnvironment<TElement extends Element> {
   nodeById: ReadonlyMap<string, ContentSummary>;
   camera: CameraState;
   previews: Record<string, NodePosition>;
+  duplicateOriginIds: ReadonlySet<string>;
   sizePreviews: Record<string, { width: number; height: number }>;
   selectedIds: string[];
   canvasColor: string;
@@ -40,6 +41,7 @@ export function useCanvasLayerEnvironment<TElement extends Element>(
   const { summaries: nodes, byId: nodeById } = useContentCatalog(client, { geometryOnly: true });
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 1 });
   const [previews, setPreviews] = useState<Record<string, NodePosition>>({});
+  const [duplicateOriginIds, setDuplicateOriginIds] = useState<ReadonlySet<string>>(() => new Set());
   const [sizePreviews, setSizePreviews] = useState<Record<string, { width: number; height: number }>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [committedCanvasColor, setCommittedCanvasColor] = useState('#efefec');
@@ -133,10 +135,14 @@ export function useCanvasLayerEnvironment<TElement extends Element>(
     () => client.subscribeSignal<DragPreview>('canvas.drag.preview', (message) => {
       if (message.payload.clear) {
         setPreviews({});
+        setDuplicateOriginIds(new Set());
         return;
       }
       setPreviews(Object.fromEntries(
         (message.payload.positions ?? []).map((position) => [position.id, position]),
+      ));
+      setDuplicateOriginIds(new Set(
+        (message.payload.duplicateOrigins ?? []).map((position) => position.id),
       ));
     }),
     [client],
@@ -148,6 +154,7 @@ export function useCanvasLayerEnvironment<TElement extends Element>(
     nodeById,
     camera,
     previews,
+    duplicateOriginIds,
     sizePreviews,
     selectedIds,
     canvasColor: previewCanvasColor ?? committedCanvasColor,

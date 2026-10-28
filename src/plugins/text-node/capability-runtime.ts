@@ -822,8 +822,8 @@ export function registerTextNodeCapabilities({
           const colors = selectedNodes.map((node) => node.titleColor);
           targets.push({
             kind: 'node-title',
-            label: '节点标题栏',
-            scopeLabel: `${selectedNodes.length} 个文本节点`,
+            label: selectedNodes.every((node) => node.presentation === 'text-box') ? '文本框' : '节点标题栏',
+            scopeLabel: `${selectedNodes.length} 个选中文字对象`,
             color: colors[0],
             mixed: new Set(colors).size > 1,
             entities: selectedNodes.map((node) => ({
@@ -837,7 +837,7 @@ export function registerTextNodeCapabilities({
           ? context.store.readValue<TextNodeRecord>(NODE_NAMESPACE, input.activeNodeId)
           : undefined;
         const textNodes = activeNode ? [activeNode] : selectedNodes;
-        if (textNodes.length > 0) {
+        if (input?.mode !== 'selection' && textNodes.length > 0) {
           const formats = textNodes.map((node) => readFormatRecord(context, node.id));
           const colors = formats.map((format) => format.format.color);
           targets.push({

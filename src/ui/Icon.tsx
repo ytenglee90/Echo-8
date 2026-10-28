@@ -13,9 +13,23 @@ export type IconName =
   | 'pointer' | 'hand' | 'link' | 'grid' | 'grid-horizontal' | 'grid-vertical'
   | 'font-size' | 'font-weight' | 'line-height' | 'letter-spacing'
   | 'first-indent' | 'paragraph-spacing' | 'text-color'
-  | 'spellcheck' | 'autocomplete' | 'comment' | 'globe' | 'echo-file' | 'template';
+  | 'spellcheck' | 'autocomplete' | 'comment' | 'globe' | 'echo-8' | 'echo-file' | 'template'
+  | 'sync' | 'logout';
 
 export function Icon({ name, size = 17 }: { name: IconName | string; size?: number }) {
+  if (name === 'echo-8') {
+    return (
+      <img
+        className="ui-icon echo-8-icon"
+        width={size}
+        height={size}
+        src="/favicon.svg"
+        data-icon={name}
+        alt=""
+        aria-hidden="true"
+      />
+    );
+  }
   return (
     <svg
       className="ui-icon"
@@ -112,6 +126,8 @@ function iconPaths(name: string) {
     case 'sun': return <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19" /></>;
     case 'moon': return <path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z" />;
     case 'reset': return <><path d="M4 12a8 8 0 1 0 2-5.5L4 9" /><path d="M4 4v5h5" /></>;
+    case 'sync': return <><path d="M20 7h-5V2" /><path d="M20 7a8 8 0 0 0-14-2" /><path d="M4 17h5v5" /><path d="M4 17a8 8 0 0 0 14 2" /></>;
+    case 'logout': return <><path d="M10 4H5v16h5" /><path d="M13 8l4 4-4 4M8 12h9" /></>;
     case 'command': return <><path d="M9 6V5a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v14a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6Z" /></>;
     case 'resize': return <path d="m12 18 6-6M7 18 18 7" />;
     case 'play': return <path d="m8 5 11 7-11 7V5Z" />;

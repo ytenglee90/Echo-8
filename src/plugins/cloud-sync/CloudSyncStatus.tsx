@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { CloudSyncState } from '../../cloud/contracts.ts';
+import { Icon } from '../../ui/Icon.tsx';
 
 const INITIAL: CloudSyncState = {
   phase: 'connecting', configured: false, authenticated: false, accounts: [], installations: [],
@@ -22,17 +23,18 @@ export function CloudSyncStatus({ client }: { client: ViewClient }) {
     return () => { current = false; unsubscribe(); };
   }, [client]);
 
+  const synced = state.phase === 'ready' && Boolean(state.activeProjectId) && state.pendingCommits === 0;
+  const active = state.phase === 'connecting' || state.phase === 'syncing' || state.pendingCommits > 0;
+
   return (
     <button
       type="button"
-      className={`cloud-sync-status phase-${state.phase}`}
+      className={`cloud-sync-status ${synced ? 'is-synced' : 'is-unsynced'}${active ? ' is-active' : ''}`}
       onClick={() => void client.dispatch('cloudSync.open')}
       title={statusTitle(state)}
       aria-label={`云同步：${statusLabel(state)}`}
     >
-      <i aria-hidden="true" />
-      <span>{statusLabel(state)}</span>
-      {state.pendingCommits > 0 && <b>{state.pendingCommits}</b>}
+      <Icon name="echo-8" />
     </button>
   );
 }
@@ -49,7 +51,7 @@ function statusLabel(state: CloudSyncState): string {
     case 'offline': return '离线保存';
     case 'conflict': return '需要处理';
     case 'error': return '同步异常';
-    default: return state.activeProjectName || '已同步';
+    default: return state.activeProjectName ? `已同步 · ${state.activeProjectName}` : '未连接书籍';
   }
 }
 

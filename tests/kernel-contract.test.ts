@@ -1763,6 +1763,274 @@ test('palette composes owner appearance plans into one undoable document transac
   assert.equal(restored.find((node) => node.id === created.id)?.titleColor, titleTarget.color);
 });
 
+test('selection palette changes only the selected object and keeps the change undoable', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSelectionPlugin());
+  harness.plugins.register(createPalettePlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('selection');
+  await harness.plugins.start('palette');
+  const shortcut = harness.ui.listShortcuts().find((item) => item.id === 'palette.selection-color-shortcut');
+  assert.equal(shortcut?.chord, 'p');
+  assert.equal(shortcut?.command, 'palette.selectionColor.open');
+
+  const first = await harness.router.dispatch<{ id: string }>(
+    'node.create',
+    { title: '局部配色一' },
+    'core.test',
+  );
+  const second = await harness.router.dispatch<{ id: string }>(
+    'node.create',
+    { title: '局部配色二' },
+    'core.test',
+  );
+  const before = await harness.capabilities.request<ContentSummary[]>('content.summaries@1');
+  const firstBefore = before.find((node) => node.id === first.id)!;
+  const secondBefore = before.find((node) => node.id === second.id)!;
+  await harness.router.dispatch('selection.set', {
+    items: [{ id: first.id, kind: 'text-node' }],
+    mode: 'replace',
+  }, 'core.test');
+  const historyBefore = harness.history.getState().undoCount;
+
+  await harness.router.dispatch('palette.selectionColor.open', undefined, 'core.test');
+  const picker = await harness.router.ask<{
+    sessionId: string;
+    color: string;
+    appearancePreview?: { kind?: string; entityIds?: string[] };
+  }>('palette.colorPicker.state', undefined, 'core.test');
+  assert.equal(picker.color, firstBefore.titleColor);
+  assert.equal(picker.appearancePreview?.kind, 'node-title');
+  assert.deepEqual(picker.appearancePreview?.entityIds, [first.id]);
+  await harness.router.dispatch('palette.colorPicker.commit', {
+    sessionId: picker.sessionId,
+    color: '#356ac3',
+  }, 'core.test');
+  await harness.router.dispatch('palette.colorPicker.close', {
+    sessionId: picker.sessionId,
+    silent: true,
+  }, 'core.test');
+
+  const changed = await harness.capabilities.request<ContentSummary[]>('content.summaries@1');
+  assert.equal(changed.find((node) => node.id === first.id)?.titleColor, '#356ac3');
+  assert.equal(changed.find((node) => node.id === second.id)?.titleColor, secondBefore.titleColor);
+  assert.equal(harness.history.getState().undoCount, historyBefore + 1);
+
+  await harness.transactions.undo();
+  const restored = await harness.capabilities.request<ContentSummary[]>('content.summaries@1');
+  assert.equal(restored.find((node) => node.id === first.id)?.titleColor, firstBefore.titleColor);
+  assert.equal(restored.find((node) => node.id === second.id)?.titleColor, secondBefore.titleColor);
+});
+
+test('selection palette persists independent line, label-box, and label-text colors', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSelectionPlugin());
+  harness.plugins.register(createConnectionsPlugin());
+  harness.plugins.register(createPalettePlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('selection');
+  await harness.plugins.start('connections');
+  await harness.plugins.start('palette');
+
+  const left = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '局部连线左', x: 100, y: 100,
+  }, 'core.test');
+  const right = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '局部连线右', x: 600, y: 100,
+  }, 'core.test');
+  const connection = await harness.router.dispatch<{ id: string }>('connection.create', {
+    from: { nodeId: left.id, side: 'right' },
+    to: { nodeId: right.id, side: 'left' },
+  }, 'core.test');
+  const initial = (await harness.capabilities.request<ConnectionRecord[]>('connections.list@1'))[0];
+  await harness.router.dispatch('connection.setLabel', {
+    id: connection.id,
+    label: '局部标签',
+    expectedRevision: initial.revision,
+  }, 'core.test');
+
+  const cases = [
+    { part: 'line', kind: 'connection-line', field: 'lineColor', color: '#315f9f' },
+    {
+      part: 'label-background',
+      kind: 'connection-label-background',
+      field: 'labelBackgroundColor',
+      color: '#f0d989',
+    },
+    {
+      part: 'label-text',
+      kind: 'connection-label-text',
+      field: 'labelTextColor',
+      color: '#703d92',
+    },
+  ] as const;
+
+  for (const item of cases) {
+    await harness.router.dispatch('selection.set', {
+      items: [{ id: connection.id, kind: 'connection', part: item.part }],
+      mode: 'replace',
+    }, 'core.test');
+    await harness.router.dispatch('palette.selectionColor.open', undefined, 'core.test');
+    const picker = await harness.router.ask<{
+      sessionId: string;
+      appearancePreview?: { kind?: string; entityIds?: string[] };
+    }>('palette.colorPicker.state', undefined, 'core.test');
+    assert.equal(picker.appearancePreview?.kind, item.kind);
+    assert.deepEqual(picker.appearancePreview?.entityIds, [connection.id]);
+    await harness.router.dispatch('palette.colorPicker.commit', {
+      sessionId: picker.sessionId,
+      color: item.color,
+    }, 'core.test');
+    await harness.router.dispatch('palette.colorPicker.close', {
+      sessionId: picker.sessionId,
+      silent: true,
+    }, 'core.test');
+    const stored = (await harness.capabilities.request<ConnectionRecord[]>('connections.list@1'))[0];
+    assert.equal(stored[item.field], item.color);
+  }
+
+  const selected = await harness.capabilities.request<{
+    items: Array<{ id: string; part?: string }>;
+  }>('selection.read@1');
+  assert.equal(selected.items[0]?.part, 'label-text');
+  await harness.transactions.undo();
+  const undone = (await harness.capabilities.request<ConnectionRecord[]>('connections.list@1'))[0];
+  assert.equal(undone.labelTextColor, undefined);
+  assert.equal(undone.labelBackgroundColor, '#f0d989');
+  assert.equal(undone.lineColor, '#315f9f');
+});
+
+test('selection palette stores group and annotation overrides without changing global defaults', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSelectionPlugin());
+  harness.plugins.register(createGroupsPlugin());
+  harness.plugins.register(createAnnotationsPlugin());
+  harness.plugins.register(createPalettePlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('selection');
+  await harness.plugins.start('groups');
+  await harness.plugins.start('annotations');
+  await harness.plugins.start('palette');
+
+  const first = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '群组颜色一', x: 100, y: 100,
+  }, 'core.test');
+  const second = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '群组颜色二', x: 500, y: 100,
+  }, 'core.test');
+  await harness.router.dispatch('selection.set', { ids: [first.id, second.id], mode: 'replace' }, 'core.test');
+  const group = await harness.router.dispatch<{ id: string }>('group.create', { title: '局部群组色' }, 'core.test');
+
+  await harness.router.dispatch('selection.set', {
+    items: [{ id: group.id, kind: 'group' }],
+    mode: 'replace',
+  }, 'core.test');
+  await harness.router.dispatch('palette.selectionColor.open', undefined, 'core.test');
+  let picker = await harness.router.ask<{
+    sessionId: string;
+    appearancePreview?: { kind?: string };
+  }>('palette.colorPicker.state', undefined, 'core.test');
+  assert.equal(picker.appearancePreview?.kind, 'group-fill');
+  await harness.router.dispatch('palette.colorPicker.commit', {
+    sessionId: picker.sessionId,
+    color: '#547f6a',
+  }, 'core.test');
+  await harness.router.dispatch('palette.colorPicker.close', {
+    sessionId: picker.sessionId,
+    silent: true,
+  }, 'core.test');
+  const storedGroup = (await harness.capabilities.request<Array<{ id: string; color?: string }>>(
+    'groups.list@1',
+  )).find((item) => item.id === group.id);
+  assert.equal(storedGroup?.color, '#547f6a');
+
+  const annotation = await harness.router.dispatch<{ id: string }>('annotation.create', {
+    target: { kind: 'text-node', targetId: first.id },
+    body: '局部注释色',
+  }, 'core.test');
+  await harness.router.dispatch('selection.set', {
+    items: [{ id: annotation.id, kind: 'annotation' }],
+    mode: 'replace',
+  }, 'core.test');
+  await harness.router.dispatch('palette.selectionColor.open', undefined, 'core.test');
+  picker = await harness.router.ask('palette.colorPicker.state', undefined, 'core.test');
+  assert.equal(picker.appearancePreview?.kind, 'annotation-marker');
+  await harness.router.dispatch('palette.colorPicker.commit', {
+    sessionId: picker.sessionId,
+    color: '#c64f4f',
+  }, 'core.test');
+  await harness.router.dispatch('palette.colorPicker.close', {
+    sessionId: picker.sessionId,
+    silent: true,
+  }, 'core.test');
+  const storedAnnotation = (await harness.capabilities.request<Array<{ id: string; color?: string }>>(
+    'annotations.list@1',
+  )).find((item) => item.id === annotation.id);
+  assert.equal(storedAnnotation?.color, '#c64f4f');
+
+  const preferences = harness.store.readValue<{
+    groupBackground: string;
+    annotationColor: string;
+  }>('workspace', 'palette', 'preferences');
+  assert.notEqual(preferences?.groupBackground, '#547f6a');
+  assert.notEqual(preferences?.annotationColor, '#c64f4f');
+});
+
+test('object-level appearance migrations keep legacy records inheriting global colors', async () => {
+  const legacyConnection = {
+    id: 'connection-legacy',
+    from: { nodeId: 'left', side: 'right' },
+    to: { nodeId: 'right', side: 'left' },
+    revision: 1,
+    createdAt: 1,
+  };
+  const legacyGroup = {
+    id: 'group-legacy',
+    title: '',
+    memberIds: ['left', 'right'],
+    titleStyle: { fontSize: 16, fontWeight: 600 },
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const legacyAnnotation = {
+    id: 'annotation-legacy',
+    target: { kind: 'text-node', targetId: 'left' },
+    body: '旧注释',
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const connections = createConnectionsPlugin();
+  const groups = createGroupsPlugin();
+  const annotations = createAnnotationsPlugin();
+  const connectionMigration = connections.migrations?.find((item) => item.from === 5 && item.to === 6);
+  const groupMigration = groups.migrations?.find((item) => item.from === 1 && item.to === 2);
+  const annotationMigration = annotations.migrations?.find((item) => item.from === 1 && item.to === 2);
+  assert.ok(connectionMigration);
+  assert.ok(groupMigration);
+  assert.ok(annotationMigration);
+
+  assert.deepEqual(
+    await connectionMigration.migrate({ connections: { [legacyConnection.id]: legacyConnection } }),
+    { connections: { [legacyConnection.id]: legacyConnection } },
+  );
+  assert.deepEqual(
+    await groupMigration.migrate({ groups: { [legacyGroup.id]: legacyGroup } }),
+    { groups: { [legacyGroup.id]: legacyGroup } },
+  );
+  assert.deepEqual(
+    await annotationMigration.migrate({ annotations: { [legacyAnnotation.id]: legacyAnnotation } }),
+    { annotations: { [legacyAnnotation.id]: legacyAnnotation } },
+  );
+  assert.equal(connections.manifest.dataVersion, 6);
+  assert.equal(groups.manifest.dataVersion, 2);
+  assert.equal(annotations.manifest.dataVersion, 2);
+});
+
 test('global palette persists one contrast-safe connection curve color through the connection owner', async () => {
   const kernel = new ApplicationKernel([
     textNodePlugin,
@@ -1805,7 +2073,7 @@ test('global palette persists one contrast-safe connection curve color through t
 
   const source = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
   const descriptor = source.plugins.find((plugin) => plugin.id === 'connections');
-  assert.equal(descriptor?.dataVersion, 5);
+  assert.equal(descriptor?.dataVersion, 6);
   assert.deepEqual(descriptor?.namespaces.sort(), ['connectionAppearance', 'connections']);
 
   const reopened = new ApplicationKernel([
@@ -2187,9 +2455,22 @@ test('opening a native book binds it as the automatic-save destination immediate
     true,
   );
 
-  await kernel.router.dispatch('node.rename', { id: savedNode.id, title: '打开后已修改' }, 'core.test');
+  const openedState = await kernel.capabilities.request<FileRuntimeState>('file.state@1');
   kernel.router.emitSignal(
-    'system.persistence.automaticCheckpoint.completed', { documentRevision: 1 }, 'core.persistence',
+    'system.persistence.automaticCheckpoint.completed',
+    { documentRevision: openedState.savedDocumentRevision! },
+    'core.persistence',
+  );
+  assert.equal(writeCount, 0);
+
+  await kernel.router.dispatch('node.rename', { id: savedNode.id, title: '打开后已修改' }, 'core.test');
+  const changedRevision = await kernel.router.ask<{ revision: number }>(
+    'system.document.revision', undefined, 'core.test',
+  );
+  kernel.router.emitSignal(
+    'system.persistence.automaticCheckpoint.completed',
+    { documentRevision: changedRevision.revision },
+    'core.persistence',
   );
   await waitFor(async () => writeCount === 1 ? true : undefined);
   const saved = await parseProject(written);
@@ -2301,7 +2582,7 @@ test('cloud books use cloud save by default, suppress local-location prompts, an
   );
 });
 
-test('the first Save of an unbound book creates a cloud project from the current document', async () => {
+test('a new book automatically gets a cloud target while an opened local book keeps local-save rules', async () => {
   let createCount = 0;
   let nativePickerCount = 0;
   let activeProjectId: string | undefined;
@@ -2343,7 +2624,12 @@ test('the first Save of an unbound book creates a cloud project from the current
       });
       context.commands.register({
         type: 'cloudSync.disconnectProject',
-        handle: () => ({ result: cloudState() }),
+        handle: () => {
+          activeProjectId = undefined;
+          const next = cloudState();
+          context.signals.emit('cloudSync.updated', next);
+          return { result: next };
+        },
       });
       context.commands.register({
         type: 'cloudSync.saveCurrentAsProject',
@@ -2378,18 +2664,60 @@ test('the first Save of an unbound book creates a cloud project from the current
   try {
     const kernel = new ApplicationKernel([cloudPlugin, textNodePlugin, createImportExportPlugin()]);
     await kernel.start();
-    await kernel.router.dispatch('node.create', { title: '当前内容必须保留' }, 'core.test');
-    await kernel.router.dispatch('file.saveProject', undefined, 'core.test');
+    await kernel.router.dispatch('system.document.new', undefined, 'core.test');
+    await waitFor(async () => createCount === 1 ? true : undefined);
+    const initialRevision = await kernel.router.ask<{ revision: number }>(
+      'system.document.revision', undefined, 'core.test',
+    );
+    const initialFileState = await kernel.capabilities.request<FileRuntimeState>('file.state@1');
+    assert.equal(initialFileState.cloudProjectActive, true);
+    assert.equal(initialFileState.savedDocumentRevision, initialRevision.revision);
+    assert.equal(initialFileState.hasProjectDestination, false);
 
-    assert.equal(createCount, 1);
-    assert.equal(nativePickerCount, 0);
+    await kernel.router.dispatch('node.create', { title: '当前内容必须保留' }, 'core.test');
     const revision = await kernel.router.ask<{ revision: number }>(
       'system.document.revision', undefined, 'core.test',
     );
-    const fileState = await kernel.capabilities.request<FileRuntimeState>('file.state@1');
-    assert.equal(fileState.cloudProjectActive, true);
-    assert.equal(fileState.savedDocumentRevision, revision.revision);
-    assert.equal(fileState.hasProjectDestination, false);
+    kernel.router.emitSignal(
+      'system.persistence.automaticCheckpoint.completed',
+      { documentRevision: revision.revision },
+      'core.persistence',
+    );
+    assert.equal(createCount, 1);
+    assert.equal(nativePickerCount, 0);
+
+    const localSource = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
+    const localFile = await serializeProject(localSource) as Blob & { name?: string };
+    Object.defineProperty(localFile, 'name', { value: '仍按本地规则.echo8' });
+    const localOpened = new Promise<void>((resolve) => {
+      const unsubscribe = kernel.router.subscribeEvent(
+        'core.test',
+        'document.replaced',
+        (message) => {
+          if ((message.payload as { origin?: string }).origin !== 'file') return;
+          unsubscribe();
+          resolve();
+        },
+      );
+    });
+    await kernel.router.dispatch('file.openProjectFromLibrary', { file: localFile }, 'core.test');
+    await localOpened;
+    await waitFor(async () => (await kernel.capabilities.request<FileRuntimeState>('file.state@1')).cloudProjectActive
+      ? undefined
+      : true);
+    const localRevision = await kernel.router.ask<{ revision: number }>(
+      'system.document.revision', undefined, 'core.test',
+    );
+    kernel.router.emitSignal(
+      'system.persistence.automaticCheckpoint.completed',
+      { documentRevision: localRevision.revision },
+      'core.persistence',
+    );
+    await waitFor(async () => (await kernel.capabilities.request<FileRuntimeState>('file.state@1')).saveLocationRequired
+      ? true
+      : undefined);
+    assert.equal(createCount, 1);
+    assert.equal(nativePickerCount, 0);
   } finally {
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
     else Reflect.deleteProperty(globalThis, 'window');
@@ -3940,7 +4268,7 @@ test('title-bar connections stay pinned to title endpoints through movement and 
   assert.deepEqual([resizedConnection.labelWidth, resizedConnection.labelHeight, resizedConnection.revision], [286, 96, 3]);
 
   const source = await harness.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
-  assert.equal(source.plugins.find((plugin) => plugin.id === 'connections')?.dataVersion, 5);
+  assert.equal(source.plugins.find((plugin) => plugin.id === 'connections')?.dataVersion, 6);
   const reopened = new ApplicationKernel([
     textNodePlugin,
     createSelectionPlugin(),

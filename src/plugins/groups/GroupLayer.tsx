@@ -11,6 +11,7 @@ import {
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import { SpatialHashIndex } from '../../core/spatial-index.ts';
+import type { AppearancePreview } from '../../protocols/appearance.ts';
 import type {
   CanvasPointerSnapshot,
   CanvasSnapPreview,
@@ -70,6 +71,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
   useSyncExternalStore(client.subscribeKeyboard, client.getKeyboardVersion, () => 0);
   const duplicateModifierActive = client.isShortcutPressed('canvas.duplicate-modifier');
   const [groups, setGroups] = useState<GroupRecord[]>([]);
+  const [appearancePreview, setAppearancePreview] = useState<AppearancePreview>();
   const [membershipPreview, setMembershipPreview] = useState<GroupMembershipPreview>();
   const drag = useRef<GroupDrag | undefined>(undefined);
   const pendingDrag = useRef<PendingGroupDrag | undefined>(undefined);
@@ -84,6 +86,13 @@ export function GroupLayer({ client }: { client: ViewClient }) {
       current = false;
     };
   }, [capabilityVersion, client]);
+
+  useEffect(
+    () => client.subscribeSignal<AppearancePreview>('appearance.color.preview', (message) => {
+      setAppearancePreview(message.payload.clear ? undefined : message.payload);
+    }),
+    [client],
+  );
 
   useEffect(
     () => client.subscribeSignal('groups.invalidated', () => {
@@ -413,6 +422,11 @@ export function GroupLayer({ client }: { client: ViewClient }) {
           const bounds = computeGroupBounds(members);
           if (!boundsIntersect(viewport, bounds)) return null;
           const isSelected = selected.has(group.id);
+          const previewColor = appearancePreview?.kind === 'group-fill' &&
+            appearancePreview.entityIds?.includes(group.id)
+            ? appearancePreview.color
+            : undefined;
+          const groupColor = previewColor ?? group.color;
           return (
             <section
               key={group.id}
@@ -422,7 +436,8 @@ export function GroupLayer({ client }: { client: ViewClient }) {
                 top: bounds.y,
                 width: bounds.width,
                 height: bounds.height,
-              }}
+                ...(groupColor ? { '--group-background': groupColor } : {}),
+              } as CSSProperties}
               aria-label={`群组，包含 ${members.length} 个节点`}
               aria-pressed={isSelected}
               role="button"

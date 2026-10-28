@@ -82,8 +82,10 @@
 | [0070](ADR-0070-BOOK-LIBRARY-ENTRY-AND-PROJECT-SWITCHING.md) | 托管版书库首页与显式书籍切换 | **部分被 0076 替代**；书库与切换语义保留，便携版排除决定失效 |
 | [0071](ADR-0071-CLOUD-FIRST-SAVE-AND-PERSONAL-AI-BOUNDARY.md) | 云端优先保存、另存本地副本与个人 AI 数据边界 | 有效；补充 0006、0039、0056、0067、0068、0070 |
 | [0072](ADR-0072-COMMAND-PALETTE-PRIMARY-FILE-ACTIONS.md) | 命令面板承载首页、保存、另存与打开的主要入口 | 有效；补充 0038、0046、0070、0071 |
-| [0073](ADR-0073-FIRST-SAVE-CREATES-CLOUD-BOOK.md) | 首次保存创建云端书籍 | 有效；补充 0006、0070、0072 |
+| [0073](ADR-0073-FIRST-SAVE-CREATES-CLOUD-BOOK.md) | 首次保存创建云端书籍 | **部分被 0077 替代**；手动保存兜底保留，新建书籍的自动检查点成为首选触发器 |
 | [0074](ADR-0074-PLUGIN-BOUNDARIES-AND-CANVAS-COMPOSITION.md) | 插件边界、画布组合与运行时资源归属 | 有效；补充 0001、0025、0029、0032、0045、0060，部分替代 0062 的目录决定 |
 | [0075](ADR-0075-CONFIRMED-CLOUD-BOOK-DELETION.md) | 首页与同步面板共用的云端书籍删除确认 | 有效；补充 0067、0070、0073 |
-| [0076](ADR-0076-PORTABLE-LIBRARY-AND-CONDITIONAL-CLOUD-CONTROL.md) | 便携版书库入口与按来源启用的云控制面 | 有效；补充 0033，部分替代 0070 的便携版排除决定 |
+| [0076](ADR-0076-PORTABLE-LIBRARY-AND-CONDITIONAL-CLOUD-CONTROL.md) | 便携版书库入口与按来源启用的云控制面 | **部分被 0077 替代**；便携版边界保留，删除按钮的文字呈现要求失效 |
+| [0077](ADR-0077-ICON-FIRST-CLOUD-STATUS-AND-AUTOSAVE-TARGETS.md) | 图标优先的云状态与按来源选择自动保存目标 | 有效；补充 0006、0071、0075，部分替代 0073、0076 |
+| [0078](ADR-0078-SELECTION-SCOPED-APPEARANCE.md) | 选中对象与连接线部件的局部调色 | 有效；补充 0005、0017、0019、0060、0065 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

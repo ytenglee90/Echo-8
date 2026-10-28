@@ -343,7 +343,11 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   const unsavedNotice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' });
   await expect(library).toBeVisible();
-  await expect(library.getByRole('heading', { name: '今天想打开哪一本？' })).toBeVisible();
+  await expect(library.getByRole('heading', { name: '今天想打开哪一本？' })).toHaveCount(0);
+  const libraryMark = library.locator('.book-library-brand [data-icon="echo-8"]');
+  await expect(libraryMark).toBeVisible();
+  await expect(libraryMark).toHaveAttribute('src', '/favicon.svg');
+  await expect(library.locator('#cloud-books-title')).toHaveClass('sr-only');
   await expect(library.getByRole('button', { name: /新建空白书籍/u })).toBeVisible();
   await expect(library.getByRole('button', { name: /打开本地书籍/u })).toBeVisible();
   const continueButton = library.getByRole('button', { name: '继续当前浏览器中的画布' });
@@ -393,6 +397,10 @@ test('starts with governed plugin views and no runtime isolation failure', async
 test('cloud sync stays out of the canvas layout until its governed panel is opened', async ({ page }) => {
   await openApplication(page);
   const cloudStatus = page.getByRole('button', { name: /^云同步：/u });
+  const cloudMark = cloudStatus.locator('[data-icon="echo-8"]');
+  await expect(cloudMark).toBeVisible();
+  await expect(cloudMark).toHaveAttribute('src', '/favicon.svg');
+  await expect(cloudStatus.locator('span, b, i')).toHaveCount(0);
   const commandButton = page.getByRole('button', { name: '命令面板' });
   const [cloudStatusBox, commandButtonBox] = await Promise.all([
     cloudStatus.boundingBox(),
@@ -454,7 +462,7 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
     json: {
       configured: true,
       authenticated: true,
-      user: { id: 'user-rename-test', name: '测试账户' },
+      user: { id: 'user-rename-test', name: "reader@example.com's Account", email: 'reader@example.com' },
       accounts: [],
       installations: [{
         id: 'installation-rename-test',
@@ -495,6 +503,8 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
 
   await page.goto('/');
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
+  await expect(library.getByText('reader@example.com', { exact: true })).toBeVisible();
+  await expect(library.getByText("reader@example.com's Account", { exact: true })).toHaveCount(0);
   const libraryName = library.getByRole('button', { name: '重命名书籍：初始书名' });
   await expect(libraryName).toBeVisible();
   await libraryName.dblclick();
@@ -506,6 +516,9 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   await library.getByRole('button', { name: '继续当前浏览器中的画布' }).click();
   await page.getByRole('button', { name: /^云同步：/u }).click();
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
+  await expect(panel.getByRole('button', { name: '立即同步' }).locator('[data-icon="sync"]')).toBeVisible();
+  await expect(panel.getByRole('button', { name: '退出账户' }).locator('[data-icon="logout"]')).toBeVisible();
+  await expect(panel.getByRole('button', { name: '刷新云端书籍' }).locator('[data-icon="reset"]')).toBeVisible();
   await expect(panel.getByRole('button', { name: '返回书库' })).toHaveCount(0);
   await expect(panel.getByRole('button', { name: '新建云端书籍' })).toHaveCount(0);
   const panelName = panel.getByRole('button', { name: '重命名书籍：书库重命名' });
@@ -641,7 +654,7 @@ test('cloud books can be confirmed and deleted from the library and sync panel',
   await expect(library.getByText('首页待删除')).toHaveCount(0);
 
   await library.locator('.book-library-project-row').filter({ hasText: '同步页待删除' })
-    .getByRole('button', { name: '打开' }).click();
+    .getByRole('button', { name: '打开书籍：同步页待删除' }).click();
   await expect(library).toHaveCount(0);
   await page.getByRole('button', { name: /^云同步：/u }).click();
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
@@ -952,6 +965,56 @@ test('node resize shows edge guides and snaps the resized frame to nearby nodes'
   expect(Math.abs(firstBox!.y + firstBox!.height - (secondBox!.y + secondBox!.height))).toBeLessThan(1);
 });
 
+test('toolbar palette changes only the selected object and opens beside it', async ({ page }) => {
+  await openApplication(page);
+  const first = page.locator('.text-node-card').filter({
+    has: page.locator('strong[title="AI 助手使用指南"]'),
+  });
+  const second = page.locator('.text-node-card').filter({
+    has: page.locator('strong[title="画布基本操作指南"]'),
+  });
+  const firstHeader = first.locator('header');
+  const secondHeader = second.locator('header');
+  const [firstOriginal, secondOriginal] = await Promise.all([
+    firstHeader.evaluate((element) => getComputedStyle(element).backgroundColor),
+    secondHeader.evaluate((element) => getComputedStyle(element).backgroundColor),
+  ]);
+  await first.click();
+
+  const appearanceGroup = page.getByRole('group', { name: '选中项颜色', exact: true });
+  const clipboardGroup = page.getByRole('group', { name: '剪贴板', exact: true });
+  const paletteButton = appearanceGroup.getByRole('button', { name: '修改选中项颜色', exact: true });
+  const copyButton = clipboardGroup.getByRole('button', { name: /^复制/u });
+  const [paletteBox, copyBox] = await Promise.all([paletteButton.boundingBox(), copyButton.boundingBox()]);
+  expect(paletteBox).not.toBeNull();
+  expect(copyBox).not.toBeNull();
+  expect(paletteBox!.x).toBeLessThan(copyBox!.x);
+  await expect(clipboardGroup).toHaveCSS('border-left-width', '1px');
+
+  await paletteButton.click();
+  const picker = page.getByRole('dialog', { name: '颜色选择器' });
+  await expect(picker).toBeVisible();
+  const [pickerBox, selectedBox] = await Promise.all([picker.boundingBox(), first.boundingBox()]);
+  expect(pickerBox).not.toBeNull();
+  expect(selectedBox).not.toBeNull();
+  expect(pickerBox!.x).toBeLessThan(selectedBox!.x + selectedBox!.width);
+  expect(pickerBox!.x + pickerBox!.width).toBeGreaterThan(selectedBox!.x);
+
+  await picker.getByRole('spinbutton', { name: 'R 通道数值' }).fill('18');
+  await picker.getByRole('spinbutton', { name: 'G 通道数值' }).fill('52');
+  await picker.getByRole('spinbutton', { name: 'B 通道数值' }).fill('86');
+  await expect(firstHeader).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+  await expect(secondHeader).toHaveCSS('background-color', secondOriginal);
+  await picker.getByRole('spinbutton', { name: 'B 通道数值' }).press('Enter');
+  await expect(picker).toBeHidden();
+  await expect(firstHeader).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+  await expect(secondHeader).toHaveCSS('background-color', secondOriginal);
+
+  await page.keyboard.press('Control+z');
+  await expect(firstHeader).toHaveCSS('background-color', firstOriginal);
+  await expect(secondHeader).toHaveCSS('background-color', secondOriginal);
+});
+
 test('canvas cards convert to editable border-only text boxes and remember both sizes', async ({ page }) => {
   await openApplication(page);
   const originalTitle = 'AI 助手使用指南';
@@ -962,9 +1025,8 @@ test('canvas cards convert to editable border-only text boxes and remember both 
   }));
   const titleColor = await card.locator('header').evaluate((element) => getComputedStyle(element).backgroundColor);
   const headerButtons = card.locator('header button');
-  await expect(headerButtons).toHaveCount(2);
+  await expect(headerButtons).toHaveCount(1);
   await expect(headerButtons.nth(0)).toHaveAttribute('aria-label', `将${originalTitle}转换为文本框`);
-  await expect(headerButtons.nth(1)).toHaveAttribute('aria-label', `修改${originalTitle}的标题栏颜色`);
 
   await card.getByRole('button', { name: `将${originalTitle}转换为文本框`, exact: true }).click();
   let textBox = page.getByRole('article', { name: new RegExp(`文本框：${originalTitle}$`, 'u') });
@@ -2253,6 +2315,50 @@ test('a selected group creates a visible annotation pinned to its frame', async 
   await page.getByRole('button', { name: '添加注释', exact: true }).click();
   await expect(page.getByRole('region', { name: '注释' })).toBeVisible();
   await expect(page.locator('.annotation-canvas-marker')).toBeVisible();
+});
+
+test('Alt dragging a connected node keeps its existing connection anchored to the original', async ({ page }) => {
+  await openApplication(page);
+  const source = page.locator('.text-node-card').filter({
+    has: page.locator('strong[title="AI 助手使用指南"]'),
+  });
+  const target = page.locator('.text-node-card').filter({
+    has: page.locator('strong[title="画布基本操作指南"]'),
+  });
+  const sourcePort = source.getByRole('button', { name: '从AI 助手使用指南标题栏连接', exact: true });
+  const [sourcePortBox, targetBox] = await Promise.all([sourcePort.boundingBox(), target.boundingBox()]);
+  expect(sourcePortBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+
+  await page.mouse.move(
+    sourcePortBox!.x + sourcePortBox!.width / 2,
+    sourcePortBox!.y + sourcePortBox!.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(targetBox!.x + 8, targetBox!.y + 21, { steps: 8 });
+  await page.mouse.up();
+
+  const connection = page.locator('.connection-path').first();
+  await expect(connection).toBeVisible();
+  const pathBeforeDrag = await connection.getAttribute('d');
+  expect(pathBeforeDrag).not.toBeNull();
+  const titleBox = await source.locator('strong').boundingBox();
+  expect(titleBox).not.toBeNull();
+
+  await page.keyboard.down('Alt');
+  await page.mouse.move(titleBox!.x + titleBox!.width / 2, titleBox!.y + titleBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(titleBox!.x + titleBox!.width / 2 + 180, titleBox!.y + titleBox!.height / 2 + 110, {
+    steps: 8,
+  });
+
+  await expect(page.locator('.text-node-card.duplicate-origin')).toHaveCount(1);
+  await expect.poll(() => connection.getAttribute('d')).toBe(pathBeforeDrag);
+
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  await expect(page.getByRole('article', { name: /文本节点：/u })).toHaveCount(3);
+  await expect(connection).toHaveAttribute('d', pathBeforeDrag!);
 });
 
 test('Alt dragging a group duplicates the complete group instead of moving the original', async ({ page }) => {

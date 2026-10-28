@@ -22,7 +22,11 @@ test('the generated single HTML starts from the library and edits without extern
   await expect(page).toHaveTitle(/Echo-8/u);
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   await expect(library).toBeVisible();
-  await expect(library.getByRole('heading', { name: '云端书籍' })).toBeVisible();
+  await expect(library.locator('#cloud-books-title')).toHaveClass('sr-only');
+  const libraryMark = library.locator('.book-library-brand [data-icon="echo-8"]');
+  await expect(libraryMark).toBeVisible();
+  await expect(libraryMark).toHaveAttribute('src', /^data:image\/svg\+xml,/u);
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /^data:image\/svg\+xml,/u);
   await expect(library.getByText('单文件模式已保留云同步入口')).toBeVisible();
   await library.getByRole('button', { name: '继续当前浏览器中的画布' }).click();
   await expect(page.getByRole('article', { name: /文本节点：/u })).toHaveCount(2);

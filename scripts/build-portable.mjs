@@ -15,6 +15,11 @@ assertInsideProject(outputRoot);
 await build({ configFile: resolve(projectRoot, 'vite.portable.config.ts') });
 let html = await readFile(resolve(stageRoot, 'portable.html'), 'utf8');
 const rulesText = await readFile(resolve(projectRoot, 'public/Echo-8-text-assist-rules.txt'), 'utf8');
+const faviconSvg = await readFile(resolve(projectRoot, 'public/favicon.svg'), 'utf8');
+const faviconDataUrl = `data:image/svg+xml,${encodeURIComponent(faviconSvg)}`;
+html = html
+  .replaceAll('./favicon.svg', faviconDataUrl)
+  .replaceAll('/favicon.svg', faviconDataUrl);
 
 const stylesheet = html.match(/<link[^>]+href="([^"]+\.css)"[^>]*>/u);
 if (stylesheet) {
@@ -24,7 +29,9 @@ if (stylesheet) {
 
 const moduleScript = html.match(/<script[^>]+type="module"[^>]+src="([^"]+\.js)"[^>]*><\/script>/u);
 if (!moduleScript) throw new Error('Portable build did not emit one module script');
-const javascript = (await readFile(resolveAsset(moduleScript[1]), 'utf8')).replace(/<\/script/giu, '<\\/script');
+const javascript = (await readFile(resolveAsset(moduleScript[1]), 'utf8'))
+  .replaceAll('/favicon.svg', faviconDataUrl)
+  .replace(/<\/script/giu, '<\\/script');
 html = html.replace(moduleScript[0], () => `<script type="module">${javascript}</script>`);
 
 const remainingAsset = html.match(/<(?:script|link)[^>]+(?:src|href)="\.\/assets\//u);

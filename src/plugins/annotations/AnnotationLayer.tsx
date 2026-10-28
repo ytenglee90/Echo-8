@@ -3,11 +3,14 @@
 import { type CSSProperties, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { AnnotationRecord } from '../../protocols/annotations.ts';
+import type { AppearancePreview } from '../../protocols/appearance.ts';
 import type { CameraState, DragPreview } from '../../protocols/canvas.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { GroupRecord } from '../../protocols/groups.ts';
+import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import { Icon } from '../../ui/Icon.tsx';
 import { canvasDetailScreenScale, worldPointToCanvasScreen } from '../../ui/canvas-screen-scale.ts';
+import { contrastingInk } from '../../ui/color-contrast.ts';
 import { useContentCatalog } from '../../ui/runtime-hooks.ts';
 import { ANNOTATION_NAMESPACE } from './model.ts';
 
@@ -19,6 +22,7 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
     () => client.getOwnStateVersion(ANNOTATION_NAMESPACE),
     () => 0,
   );
+  const workspaceVersion = useSyncExternalStore(client.subscribeState, client.getWorkspaceVersion, () => 0);
   const capabilityVersion = useSyncExternalStore(
     client.subscribeCapabilities,
     client.getCapabilityVersion,
@@ -30,6 +34,8 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
   const [camera, setCamera] = useState<CameraState>(DEFAULT_CAMERA);
   const [previews, setPreviews] = useState<Record<string, { x: number; y: number }>>({});
   const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({});
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [appearancePreview, setAppearancePreview] = useState<AppearancePreview>();
 
   const refreshAnnotations = () => {
     void client.request<AnnotationRecord[]>('annotations.list@1')
@@ -46,9 +52,12 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
     refreshAnnotations();
     refreshGroups();
     void client.request<CameraState>('canvas.camera@1').then(setCamera).catch(() => undefined);
+    void client.request<SelectionSnapshot>('selection.read@1')
+      .then((selection) => setSelectedIds(selection.ids))
+      .catch(() => setSelectedIds([]));
     // Refresh helpers intentionally use the stable plugin client.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [annotationVersion, capabilityVersion, client]);
+  }, [annotationVersion, capabilityVersion, client, workspaceVersion]);
   useEffect(
     () => client.subscribeSignal('annotations.invalidated', refreshAnnotations),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -61,6 +70,12 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
   );
   useEffect(
     () => client.subscribeSignal<CameraState>('canvas.camera.preview', (message) => setCamera(message.payload)),
+    [client],
+  );
+  useEffect(
+    () => client.subscribeSignal<AppearancePreview>('appearance.color.preview', (message) => {
+      setAppearancePreview(message.payload.clear ? undefined : message.payload);
+    }),
     [client],
   );
   useEffect(
@@ -89,6 +104,7 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
     { ...node, ...previews[id], ...sizes[id] },
   ])), [byId, previews, sizes]);
   const groupMap = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
   const targetOrder = new Map<string, number>();
 
   return (
@@ -108,25 +124,37 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
         if (left < -32 || top < -32 || left > globalThis.innerWidth + 32 || top > globalThis.innerHeight + 32) {
           return [];
         }
+        const previewColor = appearancePreview?.kind === 'annotation-marker' &&
+          appearancePreview.entityIds?.includes(annotation.id)
+          ? appearancePreview.color
+          : undefined;
+        const color = previewColor ?? annotation.color;
         return [(
           <button
             type="button"
-            className="annotation-canvas-marker"
+            className={`annotation-canvas-marker ${selected.has(annotation.id) ? 'selected' : ''}`}
             key={annotation.id}
             style={{
               left,
               top,
               '--canvas-detail-screen-scale': canvasDetailScreenScale(camera.zoom),
+              ...(color ? {
+                '--annotation-color': color,
+                '--annotation-ink': contrastingInk(color),
+              } : {}),
             } as CSSProperties}
             title={annotation.body || '打开注释'}
             aria-label={`打开注释${annotation.body ? `：${annotation.body.slice(0, 40)}` : ''}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
-              void client.dispatch('annotation.open', {
-                id: annotation.id,
-                anchor: { x: event.clientX, y: event.clientY },
-              });
+              void client.dispatch('selection.set', {
+                items: [{ id: annotation.id, kind: 'annotation' }],
+                mode: 'replace',
+              }).then(() => client.dispatch('annotation.open', {
+                  id: annotation.id,
+                  anchor: { x: event.clientX, y: event.clientY },
+                }));
             }}
           >
             <Icon name="comment" size={12} />

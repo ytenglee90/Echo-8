@@ -141,7 +141,7 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       'content.setDocumentFormat',
       'content.setRangeFormat',
     ],
-    dispatches: ['editor.open', 'palette.nodeTitlePicker.open', 'connection.create'],
+    dispatches: ['editor.open', 'connection.create'],
     queries: ['textNode.count'],
     providesCapabilities: [
       'content.summaries@1',

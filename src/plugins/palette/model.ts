@@ -1,4 +1,4 @@
-import { isRecord, type PluginContext, type PluginDefinition } from '../../core/contracts.ts';
+import { createId, isRecord, type PluginContext, type PluginDefinition } from '../../core/contracts.ts';
 import type {
   AppearanceReadContribution,
   AppearanceReadRequest,
@@ -20,7 +20,12 @@ import type {
   PaletteTitleColorRecord,
 } from '../../protocols/appearance.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
-import type { SelectionSnapshot } from '../../protocols/selection.ts';
+import type { CameraState, CanvasViewportSize } from '../../protocols/canvas.ts';
+import type {
+  SelectionCatalogContribution,
+  SelectionItem,
+  SelectionSnapshot,
+} from '../../protocols/selection.ts';
 import type { ThemeDefinition } from '../../protocols/theme.ts';
 import { defineManifest } from '../manifest.ts';
 
@@ -110,6 +115,9 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         'selection.read@1',
         'editor.activeNode@1',
         'content.summaries@1',
+        'selection.entities@1',
+        'canvas.camera@1',
+        'canvas.viewport@1',
       ],
       providesCapabilities: ['palette.state@1', 'palette.targets@1', 'palette.titleColors@1'],
       commands: [
@@ -122,6 +130,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         'palette.colorPicker.close',
         'palette.nodeTitlePicker.open',
         'palette.nodeTitlePicker.close',
+        'palette.selectionColor.open',
       ],
       events: [
         'palette.preferences.changed',
@@ -144,17 +153,19 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         'palette.preferences.preview',
       ],
       queries: ['palette.colorPicker.state', 'palette.nodeTitlePicker.state'],
-      ui: ['palette.panel', 'palette.node-title-picker'],
-      actions: ['palette.open-action'],
+      ui: ['palette.panel', 'palette.node-title-picker', 'palette.selection-color-button'],
+      actions: ['palette.open-action', 'palette.selection-color-action'],
       shortcuts: [
         'palette.open-shortcut',
         'palette.close-shortcut',
+        'palette.selection-color-shortcut',
       ],
       themes: ['light', 'dark'],
       permissions: [
         'store.own.read',
         'store.own.write',
         'ui.right.contribute',
+        'ui.top.contribute',
         'ui.modal.contribute',
         'ui.action.register',
         'ui.shortcut.register',
@@ -291,6 +302,35 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         context.signals.emit('palette.nodeTitlePicker.changed', { open: true });
         return { result: { opened: true as const } };
       };
+      const openSelectionPicker = async () => {
+        const preferences = readPreferences();
+        const request = await resolveAppearanceScope(context, 'selection', preferences);
+        if (request.selectedIds.length === 0) throw new Error('请先选择要修改颜色的对象');
+        const contributions = await context.capabilities.requestAll<AppearanceReadContribution>(
+          'appearance.read@1',
+          request,
+        );
+        const selected = new Set(request.selectedIds);
+        const targets = contributions.flatMap((contribution) => contribution.targets)
+          .filter((target) => target.entities.some((entity) => selected.has(entity.id)));
+        if (targets.length === 0) throw new Error('当前选中对象暂不支持单独修改颜色');
+        const kinds = new Set(targets.map((target) => target.kind));
+        if (kinds.size !== 1 || targets.length !== 1) {
+          throw new Error('请只选择同一种可着色对象后再打开调色盘');
+        }
+        const target = targets[0];
+        const anchor = target.anchor ?? await resolveSelectionAnchor(context, request.selectedItems ?? []);
+        return openPicker({
+          sessionId: createId('selection-color'),
+          color: target.color,
+          anchor,
+          appearanceRequest: { kind: target.kind, entities: target.entities },
+          appearancePreview: {
+            kind: target.kind,
+            entityIds: target.entities.map((entity) => entity.id),
+          },
+        });
+      };
 
       context.commands.register({
         type: 'palette.open',
@@ -403,6 +443,10 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         type: 'palette.nodeTitlePicker.close',
         handle: () => closePicker(),
       });
+      context.commands.register({
+        type: 'palette.selectionColor.open',
+        handle: openSelectionPicker,
+      });
       context.queries.register<undefined, ColorPickerState | undefined>({
         type: 'palette.colorPicker.state',
         handle: async () => colorPickerState ? {
@@ -444,7 +488,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
       context.capabilities.provide<undefined, AppearanceTarget[]>({
         key: 'palette.targets@1',
         invoke: async () => {
-          const request = await resolveAppearanceScope(context);
+          const request = await resolveAppearanceScope(context, 'global', readPreferences());
           const contributions = await context.capabilities.requestAll<AppearanceReadContribution>(
             'appearance.read@1',
             request,
@@ -477,6 +521,17 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         component: colorPicker,
         priority: 45,
       });
+      context.ui.contribute({
+        id: 'palette.selection-color-button',
+        slot: 'top.primary',
+        kind: 'button',
+        label: '修改选中项颜色',
+        tooltip: '修改选中项颜色（P）',
+        icon: 'palette',
+        group: 'appearance',
+        command: 'palette.selectionColor.open',
+        priority: 10,
+      });
       context.ui.shortcut({
         id: 'palette.open-shortcut',
         chord: 'mod+shift+c',
@@ -489,6 +544,13 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         label: '关闭全局颜色设置',
         category: '外观',
       });
+      context.ui.shortcut({
+        id: 'palette.selection-color-shortcut',
+        chord: 'p',
+        command: 'palette.selectionColor.open',
+        label: '修改选中项颜色',
+        category: '外观',
+      });
       context.ui.action({
         id: 'palette.open-action',
         label: '打开全局颜色设置',
@@ -496,6 +558,14 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         category: '外观',
         keywords: ['全局颜色', '主题', '颜色', '背景', 'theme'],
         priority: 30,
+      });
+      context.ui.action({
+        id: 'palette.selection-color-action',
+        label: '修改选中项颜色',
+        command: 'palette.selectionColor.open',
+        category: '外观',
+        keywords: ['调色盘', '选中项', '局部颜色', 'palette', 'color'],
+        priority: 31,
       });
 
       applyTheme();
@@ -521,12 +591,18 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
   };
 }
 
-async function resolveAppearanceScope(context: PluginContext): Promise<AppearanceReadRequest> {
+async function resolveAppearanceScope(
+  context: PluginContext,
+  mode: AppearanceReadRequest['mode'],
+  preferences: PalettePreferences,
+): Promise<AppearanceReadRequest> {
   let selectedIds: string[] = [];
+  let selectedItems: SelectionItem[] = [];
   let activeNodeId: string | undefined;
   try {
     const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
     selectedIds = selection.ids;
+    selectedItems = selection.items;
   } catch {
     // Selection is optional; canvas appearance remains available without it.
   }
@@ -535,7 +611,64 @@ async function resolveAppearanceScope(context: PluginContext): Promise<Appearanc
   } catch {
     // Editor is optional; selected text nodes become the body-color scope.
   }
-  return { selectedIds, activeNodeId };
+  return {
+    mode,
+    selectedIds,
+    selectedItems,
+    activeNodeId,
+    defaults: {
+      'group-fill': preferences.groupBackground,
+      'annotation-marker': preferences.annotationColor,
+    },
+  };
+}
+
+async function resolveSelectionAnchor(
+  context: PluginContext,
+  selectedItems: SelectionItem[],
+): Promise<ColorPickerOpenRequest['anchor']> {
+  const selected = new Set(selectedItems.map((item) => item.id));
+  let bounds: Array<{ x: number; y: number; width: number; height: number }> = [];
+  try {
+    const contributions = await context.capabilities.requestAll<SelectionCatalogContribution>(
+      'selection.entities@1',
+    );
+    bounds = contributions.flatMap((contribution) => contribution.entities)
+      .filter((entity) => selected.has(entity.id) && entity.bounds)
+      .map((entity) => entity.bounds!);
+  } catch {
+    // A stopped canvas owner can leave a valid selection without a geometry provider.
+  }
+  let viewport: CanvasViewportSize = { width: globalThis.innerWidth || 1200, height: globalThis.innerHeight || 800 };
+  try {
+    viewport = await context.capabilities.request<CanvasViewportSize>('canvas.viewport@1');
+  } catch {
+    // The viewport fallback still gives the picker a deterministic on-screen position.
+  }
+  if (bounds.length === 0) {
+    return {
+      x: (viewport.left ?? 0) + viewport.width / 2 - 1,
+      y: (viewport.top ?? 0) + viewport.height / 2 - 1,
+      width: 2,
+      height: 2,
+    };
+  }
+  let camera: CameraState = { x: 0, y: 0, zoom: 1 };
+  try {
+    camera = await context.capabilities.request<CameraState>('canvas.camera@1');
+  } catch {
+    // Headless tests and a stopped canvas use identity world-to-screen conversion.
+  }
+  const left = Math.min(...bounds.map((item) => item.x));
+  const top = Math.min(...bounds.map((item) => item.y));
+  const right = Math.max(...bounds.map((item) => item.x + item.width));
+  const bottom = Math.max(...bounds.map((item) => item.y + item.height));
+  return {
+    x: (viewport.left ?? 0) + camera.x + left * camera.zoom,
+    y: (viewport.top ?? 0) + camera.y + top * camera.zoom,
+    width: Math.max(1, (right - left) * camera.zoom),
+    height: Math.max(1, (bottom - top) * camera.zoom),
+  };
 }
 
 function workspaceStateTransaction(label: string, key: string, value: unknown) {
@@ -604,7 +737,9 @@ function isPreferencesPatch(value: unknown): value is PalettePreferencesPatch {
 function isAppearanceUpdateRequest(value: unknown): value is AppearanceUpdateRequest {
   return isRecord(value) &&
     (value.kind === 'canvas-background' || value.kind === 'connection-line' ||
-      value.kind === 'node-title' || value.kind === 'text-color') &&
+      value.kind === 'connection-label-background' || value.kind === 'connection-label-text' ||
+      value.kind === 'node-title' || value.kind === 'text-color' ||
+      value.kind === 'group-fill' || value.kind === 'annotation-marker') &&
     typeof value.color === 'string' && isHexColor(value.color) &&
     Array.isArray(value.entities) && value.entities.length > 0 &&
     value.entities.every((entity) => isRecord(entity) &&
@@ -660,9 +795,17 @@ function appearanceLabel(input: AppearanceUpdateRequest, changed: number): strin
     ? '画布背景'
     : input.kind === 'connection-line'
       ? '连接曲线'
+      : input.kind === 'connection-label-background'
+        ? '连接文字框'
+        : input.kind === 'connection-label-text'
+          ? '连接文字'
       : input.kind === 'node-title'
         ? '节点标题栏'
-        : '正文文字';
+        : input.kind === 'text-color'
+          ? '正文文字'
+          : input.kind === 'group-fill'
+            ? '群组'
+            : '注释标记';
   return changed > 1 ? `修改 ${changed} 个${name}颜色` : `修改${name}颜色`;
 }
 
