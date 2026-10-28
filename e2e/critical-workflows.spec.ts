@@ -350,6 +350,16 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   const libraryMarkBox = await libraryMark.boundingBox();
   expect(libraryMarkBox).not.toBeNull();
   expect(libraryMarkBox!.width / libraryMarkBox!.height).toBeGreaterThan(2.2);
+  const libraryMarkCornerAlpha = await libraryMark.evaluate((element) => {
+    const image = element as HTMLImageElement;
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d');
+    context?.drawImage(image, 0, 0);
+    return context?.getImageData(0, 0, 1, 1).data[3] ?? 255;
+  });
+  expect(libraryMarkCornerAlpha).toBe(0);
   await expect(library.locator('#cloud-books-title')).toHaveClass('sr-only');
   await expect(library.getByRole('button', { name: /新建空白书籍/u })).toBeVisible();
   await expect(library.getByRole('button', { name: /打开本地书籍/u })).toBeVisible();
@@ -403,8 +413,8 @@ test('cloud sync stays out of the canvas layout until its governed panel is open
   await expect(cloudMark).toHaveAttribute('src', '/favicon.svg');
   await expect(cloudStatus.locator('span, b, i')).toHaveCount(0);
   await expect(cloudStatus).toHaveClass(/is-unsynced/u);
-  await expect(cloudStatus).toHaveCSS('width', '54px');
-  await expect(cloudMark).toHaveCSS('width', '46px');
+  await expect(cloudStatus).toHaveCSS('width', '66px');
+  await expect(cloudMark).toHaveCSS('width', '58px');
   const cloudMarkBox = await cloudMark.boundingBox();
   expect(cloudMarkBox).not.toBeNull();
   expect(cloudMarkBox!.width / cloudMarkBox!.height).toBeGreaterThan(2.2);
@@ -571,7 +581,19 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   const renamedLibraryRow = library.locator('.book-library-project-row').filter({ hasText: '书库重命名' });
   await renamedLibraryRow.click({ position: { x: 8, y: 35 } });
   await expect(library).toHaveCount(0);
-  await page.getByRole('button', { name: /^云同步：/u }).click();
+  const syncedStatus = page.getByRole('button', { name: /^云同步：已同步/u });
+  await expect(syncedStatus).toHaveClass(/is-synced/u);
+  const syncedMark = syncedStatus.locator('[data-icon="echo-8"]');
+  await expect(syncedMark).toHaveCSS('width', '58px');
+  await expect(syncedMark).toHaveCSS('filter', 'none');
+  await expect(syncedMark).toHaveCSS('opacity', '1');
+  const syncedVisual = await syncedStatus.evaluate((element) => {
+    return {
+      beforeContent: getComputedStyle(element, '::before').content,
+    };
+  });
+  expect(syncedVisual.beforeContent).toBe('none');
+  await syncedStatus.click();
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   await expect(panel.getByRole('button', { name: '立即同步' }).locator('[data-icon="sync"]')).toBeVisible();
   await expect(panel.getByRole('button', { name: '退出账户' }).locator('[data-icon="logout"]')).toBeVisible();

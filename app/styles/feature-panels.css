@@ -615,9 +615,9 @@
   position: relative;
   display: grid;
   place-items: center;
-  width: 54px;
-  min-width: 54px;
-  height: 34px;
+  width: 66px;
+  min-width: 66px;
+  height: 36px;
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -626,30 +626,16 @@
 }
 .cloud-sync-status .echo-8-icon {
   position: relative;
-  width: 46px;
+  width: 58px;
   height: auto;
   transition: filter 150ms ease, opacity 150ms ease, transform 150ms ease;
 }
-.cloud-sync-status::before {
-  position: absolute;
-  z-index: 1;
-  width: 46px;
-  aspect-ratio: 594 / 263;
-  border-radius: 2px;
-  background: currentColor;
-  content: '';
-  mix-blend-mode: color;
-  pointer-events: none;
-}
-.cloud-sync-status.is-unsynced { color: #8c8f98; }
-.cloud-sync-status.is-synced { color: #32a65a; }
 .cloud-sync-status.is-unsynced .echo-8-icon {
   filter: grayscale(1);
-  opacity: .58;
+  opacity: .52;
 }
 .cloud-sync-status:hover { background: var(--toolbar-hover); }
-.cloud-sync-status.is-active .echo-8-icon,
-.cloud-sync-status.is-active::before { animation: cloud-sync-logo-pulse 1.05s ease-in-out infinite; }
+.cloud-sync-status.is-active .echo-8-icon { animation: cloud-sync-logo-pulse 1.05s ease-in-out infinite; }
 .cloud-sync-summary > i {
   width: 8px;
   height: 8px;
@@ -841,7 +827,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cloud-sync-status.is-active .echo-8-icon,
-  .cloud-sync-status.is-active::before,
   .cloud-sync-summary.phase-connecting > i,
   .cloud-sync-summary.phase-syncing > i { animation: none; }
 }

@@ -24,14 +24,18 @@ opened local file must never be silently converted into a cloud book.
 - The library brand, browser favicon and toolbar cloud affordance use the one
   canonical `public/favicon.svg` E8 asset; feature code does not redraw an E8
   glyph. The canonical mark keeps Echo-8's wide rectangular proportion: a
-  black panel with paired white bars and offset diagonal cuts. The library,
-  loading surface and toolbar size it by that intrinsic ratio instead of
-  forcing it into a square container. The
-  toolbar applies a state tint over that same mark without a separate state
-  dot: green means the active book is fully
-  synchronized, gray means signed out, unbound, offline or otherwise not
-  synchronized, and a bounded breathing animation indicates connecting,
-  uploading or queued changes. The mark is intentionally one step larger than
+  transparent outer canvas around a black panel with paired white bars and
+  offset diagonal cuts. The transparent edge removes a fixed white backing:
+  the dark panel supplies contrast on light chrome, while the white negative
+  bars remain visible on dark chrome. The library, loading surface and toolbar
+  size it by that intrinsic ratio instead of forcing it into a square
+  container. The
+  toolbar keeps the canonical mark black and white without a colored outline,
+  recolored brand stroke or persistent status backdrop. Full contrast means
+  the active book is fully synchronized; reduced opacity and grayscale mean
+  signed out, unbound, offline or otherwise not synchronized; and a bounded
+  breathing animation indicates connecting, uploading or queued changes. The
+  mark is intentionally wider and one clear step larger than
   adjacent toolbar glyphs so the compact status remains legible.
   The button's accessible name and hover title always state the exact phase,
   pending count and latest sync detail, so color and motion are not the only
@@ -80,8 +84,10 @@ opened local file must never be silently converted into a cloud book.
 - Kernel tests cover immediate automatic cloud binding for a new document, local-origin
   preservation and unchanged native-output suppression.
 - Hosted browser tests verify that the brand and E8-only toolbar status both
-  load `/favicon.svg`, retain a greater-than-2.2:1 rendered ratio, and that the
-  toolbar has no separate dot and uses the larger state-colored mark. They also
+  load `/favicon.svg`, retain a greater-than-2.2:1 rendered ratio, expose a
+  transparent corner rather than a fixed white backing, and that the
+  toolbar has no separate dot, colored brand outline, status backdrop or square
+  crop, and uses contrast plus bounded motion on the larger neutral mark. They also
   verify that the homepage has only New and Open cards and that
   a book row opens from its free surface without stealing the title's
   double-click rename gesture. Icon actions in both book lists retain deletion

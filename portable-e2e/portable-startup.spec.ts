@@ -29,6 +29,16 @@ test('the generated single HTML starts from the library and edits without extern
   const libraryMarkBox = await libraryMark.boundingBox();
   expect(libraryMarkBox).not.toBeNull();
   expect(libraryMarkBox!.width / libraryMarkBox!.height).toBeGreaterThan(2.2);
+  const libraryMarkCornerAlpha = await libraryMark.evaluate((element) => {
+    const image = element as HTMLImageElement;
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d');
+    context?.drawImage(image, 0, 0);
+    return context?.getImageData(0, 0, 1, 1).data[3] ?? 255;
+  });
+  expect(libraryMarkCornerAlpha).toBe(0);
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /^data:image\/svg\+xml,/u);
   await expect(library.getByText('单文件模式已保留云同步入口')).toBeVisible();
   await expect(library.getByRole('button', { name: '继续当前浏览器中的画布' })).toHaveCount(0);
