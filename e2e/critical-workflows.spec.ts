@@ -637,6 +637,7 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   await expect(syncedMark).toHaveCSS('width', '58px');
   await expect(syncedMark).toHaveCSS('filter', 'none');
   await expect(syncedMark).toHaveCSS('opacity', '1');
+  const steadyMarkColor = await syncedMark.evaluate((element) => getComputedStyle(element).backgroundColor);
   const syncedVisual = await syncedStatus.evaluate((element) => {
     return {
       beforeContent: getComputedStyle(element, '::before').content,
@@ -662,6 +663,9 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   expect(activeMarkBox!.width / activeMarkBox!.height).toBeGreaterThan(2.2);
   const movingGaps = activeMark.locator('.echo-8-sync-gap');
   await expect(movingGaps).toHaveCount(3);
+  await expect(activeMark).toHaveCSS('filter', 'none');
+  await expect(activeMark).toHaveCSS('opacity', '1');
+  await expect(activeMark.locator('.echo-8-sync-body')).toHaveCSS('fill', steadyMarkColor);
   const gapAnimations = await movingGaps.evaluateAll((elements) => elements.map((element) => {
     const style = getComputedStyle(element);
     return {
@@ -673,6 +677,14 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   expect(gapAnimations.every((animation) => animation.name === 'cloud-sync-gap-travel')).toBe(true);
   expect(gapAnimations.every((animation) => animation.direction === 'alternate')).toBe(true);
   expect(new Set(gapAnimations.map((animation) => animation.duration)).size).toBe(3);
+  const travelKeyframes = await movingGaps.first().evaluate((element) => {
+    const animation = element.getAnimations()[0];
+    return animation?.effect instanceof KeyframeEffect
+      ? animation.effect.getKeyframes().map((frame) => String(frame.transform))
+      : [];
+  });
+  expect(travelKeyframes).toContain('translateX(-96px)');
+  expect(travelKeyframes).toContain('translateX(96px)');
   await expect(activeMark.locator('.echo-8-sync-body')).toHaveCSS('animation-name', 'none');
   releaseHeldSync();
   await expect(syncedStatus).not.toHaveClass(/is-active/u);
@@ -1207,7 +1219,7 @@ test('toolbar palette changes only the selected object and opens beside it', asy
   await expect(secondHeader).toHaveCSS('background-color', secondOriginal);
 });
 
-test('canvas cards convert to editable border-only text boxes and remember both sizes', async ({ page }) => {
+test('canvas cards convert to canvas-backed editable text boxes and remember both sizes', async ({ page }) => {
   await openApplication(page);
   const originalTitle = 'AI 助手使用指南';
   const card = page.getByRole('article', { name: `文本节点：${originalTitle}`, exact: true });
@@ -1229,7 +1241,9 @@ test('canvas cards convert to editable border-only text boxes and remember both 
   await page.locator('.canvas-surface').click({ position: { x: 24, y: 24 } });
   await expect(textBox).toHaveClass(/\btext-box\b/u);
   await expect(textBox).not.toHaveClass(/\bcompact\b/u);
-  await expect(textBox).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  const canvas = page.locator('.canvas-surface');
+  const initialCanvasBackground = await canvas.evaluate((element) => getComputedStyle(element).backgroundColor);
+  await expect(textBox).toHaveCSS('background-color', initialCanvasBackground);
   await expect(textBox).toHaveCSS('border-color', titleColor);
   await expect(textBox).toHaveCSS('border-top-width', '3px');
   await expect(textBox.locator('.text-box-title')).toHaveCSS('color', titleColor);
@@ -1238,6 +1252,21 @@ test('canvas cards convert to editable border-only text boxes and remember both 
   await expect(textBox.getByRole('button', { name: `从${originalTitle}标题栏连接`, exact: true })).toHaveCount(0);
   await expect(textBox.getByRole('button', { name: `从${originalTitle}左侧连接`, exact: true })).toBeVisible();
   await expect(textBox.getByRole('button', { name: `从${originalTitle}右侧连接`, exact: true })).toBeVisible();
+  await executeCommand(page, '打开全局颜色设置');
+  const colorPanel = page.getByRole('region', { name: '全局颜色设置' });
+  await colorPanel.getByRole('button', { name: '画布背景颜色', exact: true }).click();
+  const canvasPicker = page.getByRole('dialog', { name: '颜色选择器' });
+  await canvasPicker.getByRole('spinbutton', { name: 'R 通道数值' }).fill('42');
+  await canvasPicker.getByRole('spinbutton', { name: 'G 通道数值' }).fill('58');
+  const canvasBlue = canvasPicker.getByRole('spinbutton', { name: 'B 通道数值' });
+  await canvasBlue.fill('74');
+  await expect(canvas).toHaveCSS('background-color', 'rgb(42, 58, 74)');
+  await expect(textBox).toHaveCSS('background-color', 'rgb(42, 58, 74)');
+  await canvasBlue.press('Enter');
+  await expect(canvasPicker).toHaveCount(0);
+  await expect(textBox).toHaveCSS('background-color', 'rgb(42, 58, 74)');
+  await page.keyboard.press('Escape');
+  await expect(colorPanel).toHaveCount(0);
   await textBox.locator('.text-box-title').click();
   await expect(textBox).toHaveAttribute('aria-label', /^已选中，/u);
   expect(await textBox.evaluate((element) => {

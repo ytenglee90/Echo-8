@@ -39,10 +39,11 @@ opened local file must never be silently converted into a cloud book.
   recolored brand stroke or persistent status backdrop. Full contrast means
   the active book is fully synchronized; reduced opacity and grayscale mean
   signed out, unbound, offline or otherwise not synchronized. During connecting,
-  uploading or queued changes, the solid body and two horizontal channels stay
-  fixed while the three slanted transparent gaps travel horizontally back and
-  forth at different speeds. Their angle and the mark's intrinsic aspect ratio
-  do not change; reduced-motion environments keep the gaps static. The
+  uploading or queued changes, the mark retains the same full neutral foreground
+  without tint, grayscale or opacity changes. The solid body and two horizontal
+  channels stay fixed while the three slanted transparent gaps travel through a
+  wider horizontal range at different speeds. Their angle and the mark's intrinsic
+  aspect ratio do not change; reduced-motion environments keep the gaps static. The
   mark is intentionally wider and one clear step larger than
   adjacent toolbar glyphs so the compact status remains legible.
   The button's accessible name and hover title always state the exact phase,
@@ -97,8 +98,9 @@ opened local file must never be silently converted into a cloud book.
   load `/favicon.svg`, retain a greater-than-2.2:1 rendered ratio, expose a
   transparent corner rather than a fixed white backing, and that the
   toolbar has no separate dot, colored brand outline, status backdrop or square
-  crop. Active synchronization keeps the body fixed while three slanted gaps
-  travel horizontally at unequal speeds without changing angle or aspect ratio.
+  crop. Active synchronization retains the steady mark's exact foreground,
+  keeps the body fixed and moves three slanted gaps through a wider horizontal
+  range at unequal speeds without changing angle or aspect ratio.
   They also
   verify that the homepage has only New and Open cards and that
   a book row opens from its free surface without stealing the title's

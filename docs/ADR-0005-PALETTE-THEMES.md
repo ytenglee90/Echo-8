@@ -29,6 +29,8 @@ Personal editor-writing, editor-chrome and navigation previews use `palette.pref
 
 Canvas foreground feedback is derived from the actual document canvas color, including an active color preview. The shared calculation chooses the stronger black/white pole, generates ordinary strokes at a minimum 3:1 contrast ratio, and supplies stronger selection plus translucent fill tokens. Canvas, connection and group views obtain the background only through `canvas.appearance@1` and declared appearance signals; no feature reaches into another plugin's DOM or state.
 
+Text-box presentation uses the canvas host's rendered document-background token as its fill. It therefore follows canvas-background preview, commit, undo, redo and fallback without storing a second color or reading canvas-owned document state from the text plugin.
+
 The palette does not subscribe to the global workspace revision while open. Selection and active-editor changes arrive as committed events and are translated to `palette.targets.invalidated`, avoiding appearance rereads for unrelated writing-metric and layout updates.
 
 ## Compatibility

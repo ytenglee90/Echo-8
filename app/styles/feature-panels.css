@@ -635,6 +635,10 @@
   filter: grayscale(1);
   opacity: .52;
 }
+.cloud-sync-status.is-active .echo-8-icon {
+  filter: none;
+  opacity: 1;
+}
 .cloud-sync-status:hover { background: var(--toolbar-hover); }
 .cloud-sync-status .echo-8-sync-mark { overflow: visible; }
 .cloud-sync-status .echo-8-sync-gap {
@@ -837,8 +841,8 @@
 
 @keyframes cloud-sync-pulse { 50% { opacity: .38; transform: scale(.82); } }
 @keyframes cloud-sync-gap-travel {
-  from { transform: translateX(-34px); }
-  to { transform: translateX(34px); }
+  from { transform: translateX(-96px); }
+  to { transform: translateX(96px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

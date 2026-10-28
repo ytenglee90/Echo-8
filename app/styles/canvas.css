@@ -300,7 +300,7 @@
   border-width: 3px;
   border-color: var(--text-box-color);
   border-radius: 10px;
-  background: transparent;
+  background: var(--document-canvas-background, var(--canvas-background));
   color: var(--text-box-color);
 }
 
