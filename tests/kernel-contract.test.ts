@@ -1823,6 +1823,105 @@ test('selection palette changes only the selected object and keeps the change un
   assert.equal(restored.find((node) => node.id === second.id)?.titleColor, secondBefore.titleColor);
 });
 
+test('selection palette recolors mixed module kinds in one undoable transaction and records every used color', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSelectionPlugin());
+  harness.plugins.register(createConnectionsPlugin());
+  harness.plugins.register(createGroupsPlugin());
+  harness.plugins.register(createPalettePlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('selection');
+  await harness.plugins.start('connections');
+  await harness.plugins.start('groups');
+  await harness.plugins.start('palette');
+
+  const left = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '混合颜色节点', x: 100, y: 100,
+  }, 'core.test');
+  const right = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '混合颜色目标', x: 600, y: 100,
+  }, 'core.test');
+  const connection = await harness.router.dispatch<{ id: string }>('connection.create', {
+    from: { nodeId: left.id, side: 'right' },
+    to: { nodeId: right.id, side: 'left' },
+  }, 'core.test');
+  await harness.router.dispatch('selection.set', { ids: [left.id, right.id], mode: 'replace' }, 'core.test');
+  const group = await harness.router.dispatch<{ id: string }>('group.create', { title: '混合颜色群组' }, 'core.test');
+  const beforeNode = (await harness.capabilities.request<ContentSummary[]>('content.summaries@1'))
+    .find((node) => node.id === left.id)!;
+  const historyBefore = harness.history.getState().undoCount;
+
+  await harness.router.dispatch('selection.set', {
+    items: [
+      { id: left.id, kind: 'text-node' },
+      { id: connection.id, kind: 'connection', part: 'line' },
+      { id: group.id, kind: 'group' },
+    ],
+    mode: 'replace',
+  }, 'core.test');
+  await harness.router.dispatch('palette.selectionColor.open', undefined, 'core.test');
+  let picker = await harness.router.ask<{
+    sessionId: string;
+    appearancePreview?: { targets?: Array<{ kind: string; entityIds: string[] }> };
+    colors: Array<{ color: string; count: number }>;
+  }>('palette.colorPicker.state', undefined, 'core.test');
+  assert.deepEqual(
+    picker.appearancePreview?.targets?.map((target) => target.kind).sort(),
+    ['connection-line', 'group-fill', 'node-title'],
+  );
+  await harness.router.dispatch('palette.colorPicker.commit', {
+    sessionId: picker.sessionId,
+    color: '#4a7c59',
+  }, 'core.test');
+  await harness.router.dispatch('palette.colorPicker.close', {
+    sessionId: picker.sessionId,
+    silent: true,
+  }, 'core.test');
+
+  assert.equal(
+    (await harness.capabilities.request<ContentSummary[]>('content.summaries@1'))
+      .find((node) => node.id === left.id)?.titleColor,
+    '#4a7c59',
+  );
+  assert.equal(
+    (await harness.capabilities.request<ConnectionRecord[]>('connections.list@1'))
+      .find((item) => item.id === connection.id)?.lineColor,
+    '#4a7c59',
+  );
+  assert.equal(
+    (await harness.capabilities.request<Array<{ id: string; color?: string }>>('groups.list@1'))
+      .find((item) => item.id === group.id)?.color,
+    '#4a7c59',
+  );
+  assert.equal(harness.history.getState().undoCount, historyBefore + 1);
+
+  await harness.router.dispatch('palette.selectionColor.open', undefined, 'core.test');
+  picker = await harness.router.ask('palette.colorPicker.state', undefined, 'core.test');
+  assert.ok(picker.colors.some((record) => record.color === '#4a7c59' && record.count >= 3));
+  await harness.router.dispatch('palette.colorPicker.close', {
+    sessionId: picker.sessionId,
+    silent: true,
+  }, 'core.test');
+
+  await harness.transactions.undo();
+  assert.equal(
+    (await harness.capabilities.request<ContentSummary[]>('content.summaries@1'))
+      .find((node) => node.id === left.id)?.titleColor,
+    beforeNode.titleColor,
+  );
+  assert.equal(
+    (await harness.capabilities.request<ConnectionRecord[]>('connections.list@1'))
+      .find((item) => item.id === connection.id)?.lineColor,
+    undefined,
+  );
+  assert.equal(
+    (await harness.capabilities.request<Array<{ id: string; color?: string }>>('groups.list@1'))
+      .find((item) => item.id === group.id)?.color,
+    undefined,
+  );
+});
+
 test('selection palette persists independent line, label-box, and label-text colors', async () => {
   const harness = createHarness();
   harness.plugins.register(textNodePlugin);
@@ -1977,6 +2076,176 @@ test('selection palette stores group and annotation overrides without changing g
   }>('workspace', 'palette', 'preferences');
   assert.notEqual(preferences?.groupBackground, '#547f6a');
   assert.notEqual(preferences?.annotationColor, '#c64f4f');
+});
+
+test('global color reset restores document and personal defaults while keeping the document reset undoable', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSelectionPlugin());
+  harness.plugins.register(createConnectionsPlugin());
+  harness.plugins.register(createGroupsPlugin());
+  harness.plugins.register(createAnnotationsPlugin());
+  harness.plugins.register(createPalettePlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('selection');
+  await harness.plugins.start('connections');
+  await harness.plugins.start('groups');
+  await harness.plugins.start('annotations');
+  await harness.plugins.start('palette');
+
+  const left = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '重置颜色一', body: 'abcdef', x: 100, y: 100,
+  }, 'core.test');
+  const right = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '重置颜色二', x: 600, y: 100,
+  }, 'core.test');
+  const connection = await harness.router.dispatch<{ id: string }>('connection.create', {
+    from: { nodeId: left.id, side: 'right' },
+    to: { nodeId: right.id, side: 'left' },
+  }, 'core.test');
+  await harness.router.dispatch('selection.set', { ids: [left.id, right.id], mode: 'replace' }, 'core.test');
+  const group = await harness.router.dispatch<{ id: string }>('group.create', { title: '重置颜色群组' }, 'core.test');
+  const annotation = await harness.router.dispatch<{ id: string }>('annotation.create', {
+    target: { kind: 'text-node', targetId: left.id },
+    body: '重置颜色注释',
+  }, 'core.test');
+
+  const globalTargets = await harness.capabilities.request<Array<{
+    kind: string;
+    color: string;
+    entities: Array<{ id: string; revision: number; expectedColor: string }>;
+  }>>('palette.targets@1');
+  const connectionTarget = globalTargets.find((target) => target.kind === 'connection-line')!;
+  await harness.router.dispatch('palette.applyAppearance', {
+    kind: connectionTarget.kind,
+    color: '#665544',
+    entities: connectionTarget.entities,
+  }, 'core.test');
+
+  await harness.router.dispatch('selection.set', {
+    items: [
+      { id: left.id, kind: 'text-node' },
+      { id: connection.id, kind: 'connection', part: 'line' },
+      { id: group.id, kind: 'group' },
+      { id: annotation.id, kind: 'annotation' },
+    ],
+    mode: 'replace',
+  }, 'core.test');
+  await harness.router.dispatch('palette.selectionColor.open', undefined, 'core.test');
+  const picker = await harness.router.ask<{ sessionId: string }>(
+    'palette.colorPicker.state',
+    undefined,
+    'core.test',
+  );
+  await harness.router.dispatch('palette.colorPicker.commit', {
+    sessionId: picker.sessionId,
+    color: '#7b4d8f',
+  }, 'core.test');
+  await harness.router.dispatch('palette.colorPicker.close', {
+    sessionId: picker.sessionId,
+    silent: true,
+  }, 'core.test');
+
+  let format = await harness.capabilities.request<{
+    revision: number;
+    contentRevision: number;
+    format: { color: string };
+  }>('content.formatting@2', { nodeId: left.id });
+  await harness.router.dispatch('content.setDocumentFormat', {
+    nodeId: left.id,
+    expectedRevision: format.revision,
+    patch: { color: '#234567' },
+  }, 'core.test');
+  format = await harness.capabilities.request('content.formatting@2', { nodeId: left.id });
+  await harness.router.dispatch('content.setRangeFormat', {
+    nodeId: left.id,
+    expectedRevision: format.revision,
+    expectedContentRevision: format.contentRevision,
+    start: 1,
+    end: 4,
+    scope: 'selection',
+    patch: { color: '#c34567' },
+  }, 'core.test');
+  await harness.router.dispatch('palette.setPreferences', {
+    editorBackground: '#eeeeee',
+    editorChromeBackground: '#dddddd',
+    toolbarBackground: '#cccccc',
+    annotationColor: '#bb5500',
+    groupBackground: '#335577',
+  }, 'core.test');
+  const historyBeforeReset = harness.history.getState().undoCount;
+
+  const reset = await harness.router.dispatch<{ changed: number }>('palette.resetAppearance', undefined, 'core.test');
+  await harness.router.dispatch('palette.setPreferences', {
+    themeId: 'light',
+    editorBackground: '#f1f1ef',
+    editorChromeBackground: '#ffffff',
+    toolbarBackground: '#fafaf9',
+    annotationColor: '#ff9f0a',
+    groupBackground: '#202124',
+  }, 'core.test');
+  assert.ok(reset.changed > 0);
+  assert.equal(harness.history.getState().undoCount, historyBeforeReset + 1);
+
+  assert.equal(
+    (await harness.capabilities.request<ConnectionAppearanceSnapshot>('connections.appearance@1')).color,
+    undefined,
+  );
+  assert.equal(
+    (await harness.capabilities.request<ConnectionRecord[]>('connections.list@1'))
+      .find((item) => item.id === connection.id)?.lineColor,
+    undefined,
+  );
+  assert.equal(
+    (await harness.capabilities.request<Array<{ id: string; color?: string }>>('groups.list@1'))
+      .find((item) => item.id === group.id)?.color,
+    undefined,
+  );
+  assert.equal(
+    (await harness.capabilities.request<Array<{ id: string; color?: string }>>('annotations.list@1'))
+      .find((item) => item.id === annotation.id)?.color,
+    undefined,
+  );
+  assert.equal(
+    (await harness.capabilities.request<ContentSummary[]>('content.summaries@1'))
+      .find((node) => node.id === left.id)?.titleColor,
+    '#202124',
+  );
+  const resetFormat = await harness.capabilities.request<{
+    format: { color: string };
+    marks: Array<{ format: { color?: string } }>;
+  }>('content.formatting@2', { nodeId: left.id });
+  assert.equal(resetFormat.format.color, DEFAULT_TEXT_DOCUMENT_FORMAT.color);
+  assert.equal(resetFormat.marks.some((mark) => mark.format.color !== undefined), false);
+  assert.deepEqual(
+    harness.store.readValue('workspace', 'palette', 'preferences'),
+    {
+      themeId: 'light',
+      editorBackground: '#f1f1ef',
+      editorChromeBackground: '#ffffff',
+      toolbarBackground: '#fafaf9',
+      annotationColor: '#ff9f0a',
+      groupBackground: '#202124',
+    },
+  );
+
+  await harness.transactions.undo();
+  assert.equal(
+    (await harness.capabilities.request<ContentSummary[]>('content.summaries@1'))
+      .find((node) => node.id === left.id)?.titleColor,
+    '#7b4d8f',
+  );
+  assert.equal(
+    (await harness.capabilities.request<ConnectionRecord[]>('connections.list@1'))
+      .find((item) => item.id === connection.id)?.lineColor,
+    '#7b4d8f',
+  );
+  const restoredFormat = await harness.capabilities.request<{
+    format: { color: string };
+    marks: Array<{ format: { color?: string } }>;
+  }>('content.formatting@2', { nodeId: left.id });
+  assert.equal(restoredFormat.format.color, '#234567');
+  assert.equal(restoredFormat.marks.some((mark) => mark.format.color === '#c34567'), true);
 });
 
 test('object-level appearance migrations keep legacy records inheriting global colors', async () => {
@@ -3931,7 +4200,9 @@ test('title connection shortcut operation creates, converts, and disconnects sel
   const right = await harness.router.dispatch<{ id: string }>('node.create', {
     title: '标题终点', x: 500, y: 200,
   }, 'core.test');
-  await harness.router.dispatch('selection.set', { ids: [left.id, right.id], mode: 'replace' }, 'core.test');
+  // Deliberately select from right to left: shortcut direction follows the
+  // user's selection order, not the nodes' visual position.
+  await harness.router.dispatch('selection.set', { ids: [right.id, left.id], mode: 'replace' }, 'core.test');
 
   const shortcut = harness.ui.listShortcuts().find((item) =>
     item.owner === 'connections' && item.id === 'connections.toggle-title-selected-shortcut',
@@ -3945,8 +4216,8 @@ test('title connection shortcut operation creates, converts, and disconnects sel
   let connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
   assert.equal(connections.length, 1);
   assert.equal(connections[0].id, created.id);
-  assert.deepEqual(connections[0].from, { nodeId: left.id, side: 'title' });
-  assert.deepEqual(connections[0].to, { nodeId: right.id, side: 'title' });
+  assert.deepEqual(connections[0].from, { nodeId: right.id, side: 'title' });
+  assert.deepEqual(connections[0].to, { nodeId: left.id, side: 'title' });
 
   await harness.router.dispatch('connection.toggleTitleSelected', undefined, 'core.test');
   connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
@@ -3960,6 +4231,8 @@ test('title connection shortcut operation creates, converts, and disconnects sel
   connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
   const ordinaryId = connections[0].id;
   assert.notEqual(connections[0].from.side, 'title');
+  assert.equal(connections[0].from.nodeId, right.id);
+  assert.equal(connections[0].to.nodeId, left.id);
 
   const converted = await harness.router.dispatch<{ id?: string; converted?: boolean }>(
     'connection.toggleTitleSelected', undefined, 'core.test',
@@ -3967,8 +4240,8 @@ test('title connection shortcut operation creates, converts, and disconnects sel
   connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
   assert.equal(converted.converted, true);
   assert.equal(connections[0].id, ordinaryId);
-  assert.equal(connections[0].from.side, 'title');
-  assert.equal(connections[0].to.side, 'title');
+  assert.deepEqual(connections[0].from, { nodeId: right.id, side: 'title' });
+  assert.deepEqual(connections[0].to, { nodeId: left.id, side: 'title' });
 });
 
 test('annotations follow text edits and target deletion in the same global transactions', async () => {

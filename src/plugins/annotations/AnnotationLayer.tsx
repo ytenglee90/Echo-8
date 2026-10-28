@@ -3,7 +3,7 @@
 import { type CSSProperties, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { AnnotationRecord } from '../../protocols/annotations.ts';
-import type { AppearancePreview } from '../../protocols/appearance.ts';
+import { appearancePreviewTarget, type AppearancePreview } from '../../protocols/appearance.ts';
 import type { CameraState, DragPreview } from '../../protocols/canvas.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { GroupRecord } from '../../protocols/groups.ts';
@@ -124,9 +124,9 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
         if (left < -32 || top < -32 || left > globalThis.innerWidth + 32 || top > globalThis.innerHeight + 32) {
           return [];
         }
-        const previewColor = appearancePreview?.kind === 'annotation-marker' &&
-          appearancePreview.entityIds?.includes(annotation.id)
-          ? appearancePreview.color
+        const annotationPreview = appearancePreviewTarget(appearancePreview, 'annotation-marker');
+        const previewColor = annotationPreview?.entityIds.includes(annotation.id)
+          ? annotationPreview.color
           : undefined;
         const color = previewColor ?? annotation.color;
         return [(

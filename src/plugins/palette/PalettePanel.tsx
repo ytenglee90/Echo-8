@@ -50,6 +50,7 @@ export function PalettePanel({ client }: { client: ViewClient }) {
   const [reloadToken, setReloadToken] = useState(0);
   const [error, setError] = useState<string>();
   const [applyingPreset, setApplyingPreset] = useState<PalettePresetId>();
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -221,6 +222,29 @@ export function PalettePanel({ client }: { client: ViewClient }) {
       setApplyingPreset(undefined);
     }
   };
+  const resetColors = async () => {
+    clearPreviews(client);
+    setResetting(true);
+    try {
+      await client.dispatch('palette.resetAppearance');
+      const preferences = await client.dispatch('palette.setPreferences', EMPTY_STATE.preferences);
+      setState((current) => ({ ...current, preferences }));
+      setCanvasDraft('#efefec');
+      setConnectionDraft('#888886');
+      setEditorDraft(preferences.editorBackground);
+      setEditorChromeDraft(preferences.editorChromeBackground);
+      setToolbarDraft(preferences.toolbarBackground);
+      setAnnotationDraft(preferences.annotationColor);
+      setGroupDraft(preferences.groupBackground);
+      setReloadToken((value) => value + 1);
+      setError(undefined);
+    } catch (reason) {
+      setReloadToken((value) => value + 1);
+      setError(errorMessage(reason));
+    } finally {
+      setResetting(false);
+    }
+  };
 
   return (
     <section className="palette-panel global-color-settings-panel" aria-label="全局颜色设置">
@@ -229,7 +253,15 @@ export function PalettePanel({ client }: { client: ViewClient }) {
           <span className="eyebrow">外观</span>
           <h2>全局颜色设置</h2>
         </div>
-        <IconButton icon="close" label="关闭全局颜色设置" onClick={close} />
+        <div className="palette-heading-actions">
+          <IconButton
+            icon="reset"
+            label={resetting ? '正在重置全部颜色' : '重置全部颜色'}
+            disabled={resetting || applyingPreset !== undefined}
+            onClick={() => void resetColors()}
+          />
+          <IconButton icon="close" label="关闭全局颜色设置" onClick={close} />
+        </div>
       </div>
 
       <PaletteSetting title="配套主题" description="一键统一画布与界面颜色，可继续逐项微调。">

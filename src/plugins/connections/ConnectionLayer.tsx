@@ -10,7 +10,7 @@ import {
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import { SpatialHashIndex } from '../../core/spatial-index.ts';
-import type { AppearancePreview } from '../../protocols/appearance.ts';
+import { appearancePreviewTarget, type AppearancePreview } from '../../protocols/appearance.ts';
 import type { CanvasWheelZoomRequest } from '../../protocols/canvas.ts';
 import {
   connectionEndpointPoint,
@@ -263,30 +263,35 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     () => orderConnectionsForPaint(drawableGeometry, selected),
     [drawableGeometry, selected],
   );
-  const globalLinePreview = appearancePreview?.kind === 'connection-line' &&
-    appearancePreview.entityIds?.includes('line')
-    ? appearancePreview.color
+  const linePreview = useMemo(
+    () => appearancePreviewTarget(appearancePreview, 'connection-line'),
+    [appearancePreview],
+  );
+  const labelBackgroundPreview = appearancePreviewTarget(appearancePreview, 'connection-label-background');
+  const labelTextPreview = appearancePreviewTarget(appearancePreview, 'connection-label-text');
+  const globalLinePreview = linePreview?.entityIds.includes('line')
+    ? linePreview.color
     : undefined;
   const globalConnectionSourceColor = globalLinePreview ?? connectionAppearance.color;
   const globalConnectionLineColor = globalConnectionSourceColor
     ? ensureCanvasColorContrast(globalConnectionSourceColor, canvasColor)
     : canvasContrastColors(canvasColor).line;
   const previewIds = useMemo(
-    () => new Set(appearancePreview?.entityIds ?? []),
-    [appearancePreview?.entityIds],
+    () => new Set(linePreview?.entityIds ?? []),
+    [linePreview],
   );
   const lineColorFor = (connection: ConnectionRecord) => {
-    const localPreview = appearancePreview?.kind === 'connection-line' && previewIds.has(connection.id)
-      ? appearancePreview.color
+    const localPreview = previewIds.has(connection.id)
+      ? linePreview?.color
       : undefined;
     const source = localPreview ?? connection.lineColor ?? globalConnectionSourceColor;
     return source ? ensureCanvasColorContrast(source, canvasColor) : globalConnectionLineColor;
   };
   const batchedPaths = useMemo(() => {
     if (!batchRendered) return [];
-    const batchPreviewIds = new Set(appearancePreview?.entityIds ?? []);
-    const batchGlobalPreview = appearancePreview?.kind === 'connection-line' && batchPreviewIds.has('line')
-      ? appearancePreview.color
+    const batchPreviewIds = new Set(linePreview?.entityIds ?? []);
+    const batchGlobalPreview = batchPreviewIds.has('line')
+      ? linePreview?.color
       : undefined;
     const batchGlobalSource = batchGlobalPreview ?? connectionAppearance.color;
     const batchGlobalLine = batchGlobalSource
@@ -294,8 +299,8 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       : canvasContrastColors(canvasColor).line;
     const paths = new Map<string, string[]>();
     for (const item of drawableGeometry) {
-      const localPreview = appearancePreview?.kind === 'connection-line' && batchPreviewIds.has(item.connection.id)
-        ? appearancePreview.color
+      const localPreview = batchPreviewIds.has(item.connection.id)
+        ? linePreview?.color
         : undefined;
       const source = localPreview ?? item.connection.lineColor ?? batchGlobalSource;
       const color = source ? ensureCanvasColorContrast(source, canvasColor) : batchGlobalLine;
@@ -305,11 +310,11 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     }
     return [...paths].map(([color, pathsForColor]) => ({ color, path: pathsForColor.join(' ') }));
   }, [
-    appearancePreview,
     batchRendered,
     canvasColor,
     connectionAppearance.color,
     drawableGeometry,
+    linePreview,
   ]);
   const highlightedGeometry = useMemo(() => batchRendered
     ? drawableGeometry.filter((item) => selected.has(item.connection.id) || item.connection.id === hoveredId)
@@ -521,7 +526,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
           <path
             key={`highlight-${connection.id}`}
             className={`connection-path selected ${connection.lineColor ||
-              appearancePreview?.kind === 'connection-line' && previewIds.has(connection.id)
+              previewIds.has(connection.id)
               ? 'custom-color'
               : ''}`}
             d={renderedPath}
@@ -532,7 +537,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         {!batchRendered && paintOrderedGeometry.map(({ connection, curvePath, renderedPath }) => {
           const isSelected = selected.has(connection.id);
           const hasLocalColor = Boolean(connection.lineColor ||
-            appearancePreview?.kind === 'connection-line' && previewIds.has(connection.id));
+            previewIds.has(connection.id));
           return (
             <g key={connection.id}>
               <path
@@ -584,15 +589,14 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
           if ((!connection.label && !isEditing) || !midpoint) return null;
           const isSelected = selected.has(connection.id);
           const isHovered = connection.id === hoveredId;
-          const labelBackground = appearancePreview?.kind === 'connection-label-background' &&
-            previewIds.has(connection.id)
-            ? appearancePreview.color ?? canvasColor
+          const labelBackground = labelBackgroundPreview?.entityIds.includes(connection.id)
+            ? labelBackgroundPreview.color ?? canvasColor
             : connection.labelBackgroundColor ?? canvasColor;
-          const labelText = appearancePreview?.kind === 'connection-label-text' && previewIds.has(connection.id)
-            ? appearancePreview.color ?? lineColorFor(connection)
+          const labelText = labelTextPreview?.entityIds.includes(connection.id)
+            ? labelTextPreview.color ?? lineColorFor(connection)
             : connection.labelTextColor ?? lineColorFor(connection);
           const hasCustomLabelText = Boolean(connection.labelTextColor ||
-            appearancePreview?.kind === 'connection-label-text' && previewIds.has(connection.id));
+            labelTextPreview?.entityIds.includes(connection.id));
           const committedSize = normalizeConnectionLabelSize(connection.labelWidth, connection.labelHeight);
           const size = labelResizePreview?.id === connection.id &&
             labelResizePreview.width !== undefined && labelResizePreview.height !== undefined

@@ -88,4 +88,5 @@
 | [0076](ADR-0076-PORTABLE-LIBRARY-AND-CONDITIONAL-CLOUD-CONTROL.md) | 便携版书库入口与按来源启用的云控制面 | **部分被 0077 替代**；便携版边界保留，删除按钮的文字呈现要求失效 |
 | [0077](ADR-0077-ICON-FIRST-CLOUD-STATUS-AND-AUTOSAVE-TARGETS.md) | 图标优先的云状态与按来源选择自动保存目标 | 有效；补充 0006、0071、0075，部分替代 0073、0076 |
 | [0078](ADR-0078-SELECTION-SCOPED-APPEARANCE.md) | 选中对象与连接线部件的局部调色 | 有效；补充 0005、0017、0019、0060、0065 |
+| [0079](ADR-0079-MIXED-APPEARANCE-CATALOG-AND-RESET.md) | 混合模块调色、全画布颜色记录与恢复初始颜色 | 有效；补充 0005、0078，替代 0078 的单一外观类型限制 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

@@ -53,10 +53,31 @@ export interface AppearanceUpdatePlan {
   changed: number;
 }
 
+/** Rebuildable color usage reported by one appearance owner. */
+export interface AppearanceColorRecord {
+  color: string;
+  count: number;
+}
+
+export interface AppearanceColorReadRequest {
+  defaults?: Partial<Record<AppearanceKind, string>>;
+}
+
+export interface AppearanceColorContribution {
+  colors: AppearanceColorRecord[];
+}
+
+export interface AppearancePreviewTarget {
+  kind: AppearanceKind;
+  entityIds: string[];
+}
+
 export interface AppearancePreview {
   kind?: AppearanceKind;
   color?: string;
   entityIds?: string[];
+  /** Multiple target kinds share one preview color for a mixed selection. */
+  targets?: AppearancePreviewTarget[];
   textRange?: {
     start: number;
     end: number;
@@ -64,6 +85,16 @@ export interface AppearancePreview {
     contentRevision: number;
   };
   clear?: boolean;
+}
+
+export function appearancePreviewTarget(
+  preview: AppearancePreview | undefined,
+  kind: AppearanceKind,
+): { color?: string; entityIds: string[] } | undefined {
+  if (!preview || preview.clear) return undefined;
+  if (preview.kind === kind) return { color: preview.color, entityIds: preview.entityIds ?? [] };
+  const target = preview.targets?.find((candidate) => candidate.kind === kind);
+  return target ? { color: preview.color, entityIds: target.entityIds } : undefined;
 }
 
 export interface PalettePreferences {
@@ -89,6 +120,7 @@ export interface PalettePreferencesPatch {
 declare module './commands.ts' {
   interface ApplicationCommandMap {
     'palette.setPreferences': CommandContract<PalettePreferencesPatch, PalettePreferences>;
+    'palette.resetAppearance': CommandContract<undefined, { changed: number }>;
   }
 }
 
@@ -106,11 +138,8 @@ export interface PalettePreferencesPreview {
   clear?: boolean;
 }
 
-/** Rebuildable summary of title-bar colors currently used by text nodes. */
-export interface PaletteTitleColorRecord {
-  color: string;
-  count: number;
-}
+/** @deprecated Legacy capability name; records now cover every canvas appearance owner. */
+export type PaletteTitleColorRecord = AppearanceColorRecord;
 
 export interface PaletteAnchorRect {
   x: number;

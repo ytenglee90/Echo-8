@@ -10,7 +10,7 @@ import {
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { AnnotationRecord } from '../../protocols/annotations.ts';
-import type { AppearancePreview } from '../../protocols/appearance.ts';
+import { appearancePreviewTarget, type AppearancePreview } from '../../protocols/appearance.ts';
 import type {
   TextCompletionCandidate,
   TextCorrectionDecoration,
@@ -149,9 +149,9 @@ export function EditorAnnotationMarkers({
       {records.map((record) => {
         const position = positions[record.id];
         if (!position?.visible) return null;
-        const previewColor = appearancePreview?.kind === 'annotation-marker' &&
-          appearancePreview.entityIds?.includes(record.id)
-          ? appearancePreview.color
+        const annotationPreview = appearancePreviewTarget(appearancePreview, 'annotation-marker');
+        const previewColor = annotationPreview?.entityIds.includes(record.id)
+          ? annotationPreview.color
           : undefined;
         const color = previewColor ?? record.color;
         return (

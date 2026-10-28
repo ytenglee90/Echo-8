@@ -11,7 +11,7 @@ import {
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import { SpatialHashIndex } from '../../core/spatial-index.ts';
-import type { AppearancePreview } from '../../protocols/appearance.ts';
+import { appearancePreviewTarget, type AppearancePreview } from '../../protocols/appearance.ts';
 import type {
   CanvasPointerSnapshot,
   CanvasSnapPreview,
@@ -422,9 +422,9 @@ export function GroupLayer({ client }: { client: ViewClient }) {
           const bounds = computeGroupBounds(members);
           if (!boundsIntersect(viewport, bounds)) return null;
           const isSelected = selected.has(group.id);
-          const previewColor = appearancePreview?.kind === 'group-fill' &&
-            appearancePreview.entityIds?.includes(group.id)
-            ? appearancePreview.color
+          const groupPreview = appearancePreviewTarget(appearancePreview, 'group-fill');
+          const previewColor = groupPreview?.entityIds.includes(group.id)
+            ? groupPreview.color
             : undefined;
           const groupColor = previewColor ?? group.color;
           return (

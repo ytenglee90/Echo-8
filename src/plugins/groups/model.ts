@@ -1,5 +1,7 @@
 import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
 import type {
+  AppearanceColorContribution,
+  AppearanceColorReadRequest,
   AppearanceReadContribution,
   AppearanceReadRequest,
   AppearanceUpdatePlan,
@@ -85,6 +87,8 @@ export function createGroupsPlugin(
         'group.dropTarget@1',
         'appearance.read@1',
         'appearance.updatePlan@1',
+        'appearance.colors@1',
+        'appearance.resetPlan@1',
       ],
       commands: [
         'group.create',
@@ -562,6 +566,43 @@ export function createGroupsPlugin(
               value: group,
               schemaOwner: 'groups',
             })),
+            events: changed.length > 0
+              ? [{ type: 'group.appearance.changed', payload: { ids: changed.map((group) => group.id) } }]
+              : [],
+          };
+        },
+      });
+      context.capabilities.provide<AppearanceColorReadRequest, AppearanceColorContribution>({
+        key: 'appearance.colors@1',
+        invoke: (input) => {
+          const fallback = input?.defaults?.['group-fill'] ?? '#202124';
+          const counts = new Map<string, number>();
+          for (const group of Object.values(readGroups())) {
+            const color = group.color ?? fallback;
+            counts.set(color, (counts.get(color) ?? 0) + 1);
+          }
+          return { colors: [...counts].map(([color, count]) => ({ color, count })) };
+        },
+      });
+      context.capabilities.provide<undefined, AppearanceUpdatePlan>({
+        key: 'appearance.resetPlan@1',
+        invoke: () => {
+          const changed = Object.values(readGroups()).filter((group) => group.color !== undefined);
+          const updatedAt = Date.now();
+          return {
+            changed: changed.length,
+            patches: changed.map((group) => {
+              const next = { ...group, revision: group.revision + 1, updatedAt };
+              delete next.color;
+              return {
+                op: 'set' as const,
+                domain: 'document' as const,
+                namespace: GROUP_NAMESPACE,
+                key: group.id,
+                value: next,
+                schemaOwner: 'groups',
+              };
+            }),
             events: changed.length > 0
               ? [{ type: 'group.appearance.changed', payload: { ids: changed.map((group) => group.id) } }]
               : [],

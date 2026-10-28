@@ -23,16 +23,24 @@ opened local file must never be silently converted into a cloud book.
 
 - The library brand, browser favicon and toolbar cloud affordance use the one
   canonical `public/favicon.svg` E8 asset; feature code does not redraw an E8
-  glyph. The toolbar renders that icon with a compact state dot and opacity:
-  green means the active book is fully synchronized, neutral means signed out,
-  unbound, offline or otherwise not synchronized, and a bounded animation
-  indicates connecting, uploading or queued changes.
+  glyph. The canonical mark is a monochrome rounded E8: the continuous double
+  loop of the `8` also reads as infinity and echo. The toolbar colors the whole
+  mark without a separate state dot: green means the active book is fully
+  synchronized, gray means signed out, unbound, offline or otherwise not
+  synchronized, and a bounded breathing animation indicates connecting,
+  uploading or queued changes. The mark is intentionally one step larger than
+  adjacent toolbar glyphs so the compact status remains legible.
   The button's accessible name and hover title always state the exact phase,
   pending count and latest sync detail, so color and motion are not the only
   signals.
 - Repeated library headings and book-list action text are visually removed.
   Open, delete, refresh, sync and logout remain ordinary buttons with icons,
   stable accessible names, keyboard focus and native hover titles.
+- The large Continue card keeps its text action and accessible name without a
+  redundant play glyph. Book rows use larger book and action icons, while the
+  active book uses a solid near-black row with white foregrounds. Account
+  display names remove Cloudflare's presentation-only English `’s Account`
+  suffix without changing the authenticated account identity.
 - ADR-0075's confirmation remains mandatory for deletion. ADR-0076's
   requirement that the pre-confirmation Delete control itself be text-labelled
   is replaced by the accessible icon-button presentation above.
@@ -66,7 +74,8 @@ opened local file must never be silently converted into a cloud book.
 - Kernel tests cover immediate automatic cloud binding for a new document, local-origin
   preservation and unchanged native-output suppression.
 - Hosted browser tests verify that the brand and E8-only toolbar status both
-  load `/favicon.svg`, plus icon actions in both book lists while retaining
+  load `/favicon.svg`, that the toolbar has no separate dot and uses the larger
+  state-colored mark, plus icon actions in both book lists while retaining
   deletion confirmation.
 - Portable browser tests verify that the same SVG is embedded as data URLs for
   both the page favicon and E8 brand while preserving the zero-network

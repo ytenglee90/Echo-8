@@ -181,7 +181,7 @@ export function GlobalColorPicker({ client }: { client: ViewClient }) {
                 className={record.color === color ? 'selected' : ''}
                 key={record.color}
                 style={{ '--picker-record-color': record.color } as CSSProperties}
-                aria-label={`${record.color.toUpperCase()}，${record.count} 个节点使用`}
+                aria-label={`${record.color.toUpperCase()}，画布中 ${record.count} 处使用`}
                 onClick={() => preview(record.color)}
               />
             ))}

@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { UISlot, ViewClient } from '../../core/contracts.ts';
-import type { AppearancePreview } from '../../protocols/appearance.ts';
+import { appearancePreviewTarget, type AppearancePreview } from '../../protocols/appearance.ts';
 import type {
   CameraState,
   CanvasAppearanceSnapshot,
@@ -580,13 +580,13 @@ export function CanvasSurface({
     () => duplicateModifierActive ? dragOriginPreview : [],
     [dragOriginPreview, duplicateModifierActive],
   );
+  const nodeTitlePreview = appearancePreviewTarget(appearancePreview, 'node-title');
   const previewEntities = useMemo(
-    () => new Set(appearancePreview?.entityIds ?? []),
-    [appearancePreview?.entityIds],
+    () => new Set(nodeTitlePreview?.entityIds ?? []),
+    [nodeTitlePreview?.entityIds],
   );
-  const renderedCanvasColor = appearancePreview?.kind === 'canvas-background'
-    ? appearancePreview.color ?? canvasColor
-    : canvasColor;
+  const canvasPreview = appearancePreviewTarget(appearancePreview, 'canvas-background');
+  const renderedCanvasColor = canvasPreview?.color ?? canvasColor;
   const canvasContrastStyle = useMemo(
     () => canvasContrastVariables(renderedCanvasColor),
     [renderedCanvasColor],

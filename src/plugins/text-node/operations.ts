@@ -43,6 +43,11 @@ import {
 
 export const NODE_NAMESPACE = 'textNode';
 export const CONTENT_NAMESPACE = 'textContent';
+export const DEFAULT_NODE_TITLE_COLORS = ['#202124', '#374151'] as const;
+
+export function defaultNodeTitleColor(index: number): string {
+  return DEFAULT_NODE_TITLE_COLORS[Math.abs(Math.trunc(index)) % DEFAULT_NODE_TITLE_COLORS.length];
+}
 export const DEFAULT_NODE_WIDTH = GRID_NODE_WIDTH;
 export const DEFAULT_NODE_HEIGHT = GRID_NODE_HEIGHT;
 export const MIN_NODE_WIDTH = 220;

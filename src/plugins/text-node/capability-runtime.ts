@@ -43,6 +43,7 @@ import type {
   ContentAnchorTransformRequest,
 } from '../../protocols/annotations.ts';
 import type {
+  AppearanceColorContribution,
   AppearanceReadContribution,
   AppearanceReadRequest,
   AppearanceUpdatePlan,
@@ -107,6 +108,7 @@ import {
   buildTitleColorPlan,
   contentStatisticsSignature,
   countContentChunks,
+  defaultNodeTitleColor,
   isCanvasTextNode,
   isMoveManyPayload,
   isSerializedTextNodes,
@@ -867,6 +869,112 @@ export function registerTextNodeCapabilities({
         return input.kind === 'node-title'
           ? buildTitleColorPlan(context, input.color, input.entities)
           : buildTextColorPlan(context, input.color, input.entities);
+      },
+    });
+
+    context.capabilities.provide<undefined, AppearanceColorContribution>({
+      key: 'appearance.colors@1',
+      invoke: () => {
+        const counts = new Map<string, number>();
+        const add = (color: string | undefined) => {
+          if (!color) return;
+          const normalized = color.toLowerCase();
+          counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+        };
+        for (const node of Object.values(readNodes()).filter(isCanvasTextNode)) {
+          add(node.titleColor);
+          const format = readFormatRecord(context, node.id);
+          add(format.format.color);
+          for (const mark of readFormatMarks(context, format)) add(mark.format.color);
+        }
+        return { colors: [...counts].map(([color, count]) => ({ color, count })) };
+      },
+    });
+
+    context.capabilities.provide<undefined, AppearanceUpdatePlan>({
+      key: 'appearance.resetPlan@1',
+      invoke: () => {
+        const patches: PatchOperation[] = [];
+        const titleIds: string[] = [];
+        const formatIds: string[] = [];
+        const updatedAt = Date.now();
+        const canvasNodes = Object.values(readNodes()).filter(isCanvasTextNode);
+        for (const [index, node] of canvasNodes.entries()) {
+          const defaultTitleColor = defaultNodeTitleColor(index);
+          if (node.titleColor !== defaultTitleColor) {
+            titleIds.push(node.id);
+            patches.push({
+              op: 'set',
+              domain: 'document',
+              namespace: NODE_NAMESPACE,
+              key: node.id,
+              value: {
+                ...node,
+                titleColor: defaultTitleColor,
+                revision: node.revision + 1,
+                updatedAt,
+              },
+              schemaOwner: 'text-node',
+            });
+          }
+
+          const storedFormat = context.store.readValue<TextFormatRecord>(FORMAT_NAMESPACE, node.id);
+          if (!storedFormat) continue;
+          const format = readFormatRecord(context, node.id);
+          const marks = readFormatMarks(context, format);
+          const coloredMarks = marks.filter((mark) => mark.format.color !== undefined);
+          if (format.format.color === DEFAULT_TEXT_DOCUMENT_FORMAT.color && coloredMarks.length === 0) continue;
+          formatIds.push(node.id);
+          const removedMarkIds = new Set<string>();
+          for (const mark of coloredMarks) {
+            const nextFormat = { ...mark.format };
+            delete nextFormat.color;
+            if (Object.keys(nextFormat).length === 0) {
+              removedMarkIds.add(mark.id);
+              patches.push({
+                op: 'delete',
+                domain: 'document',
+                namespace: FORMAT_MARK_NAMESPACE,
+                key: mark.id,
+                schemaOwner: 'text-node',
+              });
+            } else {
+              patches.push({
+                op: 'set',
+                domain: 'document',
+                namespace: FORMAT_MARK_NAMESPACE,
+                key: mark.id,
+                value: { ...mark, format: nextFormat, revision: mark.revision + 1 },
+                schemaOwner: 'text-node',
+              });
+            }
+          }
+          patches.push({
+            op: 'set',
+            domain: 'document',
+            namespace: FORMAT_NAMESPACE,
+            key: node.id,
+            value: {
+              ...format,
+              markIds: (format.markIds ?? []).filter((id) => !removedMarkIds.has(id)),
+              revision: format.revision + 1,
+              format: { ...format.format, color: DEFAULT_TEXT_DOCUMENT_FORMAT.color },
+            },
+            schemaOwner: 'text-node',
+          });
+        }
+        return {
+          patches,
+          changed: titleIds.length + formatIds.length,
+          events: [
+            ...(titleIds.length > 0
+              ? [{ type: 'node.appearance.changed', payload: { ids: titleIds, kind: 'node-title' } }]
+              : []),
+            ...(formatIds.length > 0
+              ? [{ type: 'content.format.changed', payload: { nodeIds: formatIds } }]
+              : []),
+          ],
+        };
       },
     });
 

@@ -1,5 +1,7 @@
 import { createId, isRecord, type PluginContext, type PluginDefinition } from '../../core/contracts.ts';
 import type {
+  AppearanceColorContribution,
+  AppearanceColorReadRequest,
   AppearanceReadContribution,
   AppearanceReadRequest,
   AppearancePreview,
@@ -98,7 +100,7 @@ export const DARK_THEME: ThemeDefinition = {
 };
 
 type ColorPickerRuntimeState = ColorPickerOpenRequest & {
-  appearanceRequest?: Omit<AppearanceUpdateRequest, 'color'>;
+  appearanceRequests?: Array<Omit<AppearanceUpdateRequest, 'color'>>;
   appearancePreview?: AppearancePreview;
   legacyTargets?: NodeTitleColorPickerOpenRequest['targets'];
 };
@@ -112,6 +114,8 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
       optionalCapabilities: [
         'appearance.read@1',
         'appearance.updatePlan@1',
+        'appearance.colors@1',
+        'appearance.resetPlan@1',
         'selection.read@1',
         'editor.activeNode@1',
         'content.summaries@1',
@@ -124,6 +128,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         'palette.open',
         'palette.close',
         'palette.setPreferences',
+        'palette.resetAppearance',
         'palette.applyAppearance',
         'palette.colorPicker.open',
         'palette.colorPicker.commit',
@@ -218,32 +223,42 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
           .sort((left, right) => right.count - left.count || left.color.localeCompare(right.color));
       };
       const readCanvasColors = async (): Promise<PaletteTitleColorRecord[]> => {
-        let summaries: ContentSummary[];
-        try {
-          summaries = await context.capabilities.request<ContentSummary[]>('content.summaries@1');
-        } catch {
-          summaries = [];
-        }
         const counts = new Map<string, number>();
-        const add = (color: string | undefined) => {
+        const add = (color: string | undefined, count = 1) => {
           if (!color || !isHexColor(color)) return;
           const normalized = color.toLowerCase();
-          counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+          counts.set(normalized, (counts.get(normalized) ?? 0) + count);
         };
-        for (const node of summaries) {
-          add(node.titleColor);
-          add(node.textColor);
-        }
-        try {
-          const contributions = await context.capabilities.requestAll<AppearanceReadContribution>(
-            'appearance.read@1',
-            { selectedIds: [] } satisfies AppearanceReadRequest,
-          );
-          for (const target of contributions.flatMap((contribution) => contribution.targets)) add(target.color);
-        } catch {
-          // Appearance providers are optional; node colors remain available.
-        }
         const preferences = readPreferences();
+        let catalogAvailable = false;
+        try {
+          const contributions = await context.capabilities.requestAll<AppearanceColorContribution>(
+            'appearance.colors@1',
+            {
+              defaults: {
+                'group-fill': preferences.groupBackground,
+                'annotation-marker': preferences.annotationColor,
+              },
+            } satisfies AppearanceColorReadRequest,
+          );
+          catalogAvailable = contributions.length > 0;
+          for (const record of contributions.flatMap((contribution) => contribution.colors)) {
+            add(record.color, record.count);
+          }
+        } catch {
+          // Older or temporarily stopped appearance providers fall back to content summaries.
+        }
+        if (!catalogAvailable) {
+          try {
+            const summaries = await context.capabilities.request<ContentSummary[]>('content.summaries@1');
+            for (const node of summaries) {
+              add(node.titleColor);
+              add(node.textColor);
+            }
+          } catch {
+            // The picker still records personal interface colors without a content provider.
+          }
+        }
         add(preferences.editorBackground);
         add(preferences.editorChromeBackground);
         add(preferences.toolbarBackground);
@@ -253,23 +268,28 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
           .map(([color, count]) => ({ color, count }))
           .sort((left, right) => right.count - left.count || left.color.localeCompare(right.color));
       };
-      const appearanceUpdate = async (payload: AppearanceUpdateRequest) => {
-        const plans = await context.capabilities.requestAll<AppearanceUpdatePlan>(
-          'appearance.updatePlan@1',
-          { ...payload, color: payload.color.toLowerCase() },
-        );
+      const appearanceUpdates = async (payloads: AppearanceUpdateRequest[]) => {
+        const planGroups = await Promise.all(payloads.map((payload) =>
+          context.capabilities.requestAll<AppearanceUpdatePlan>(
+            'appearance.updatePlan@1',
+            { ...payload, color: payload.color.toLowerCase() },
+          )));
+        const plans = planGroups.flat();
         const changed = plans.reduce((total, plan) => total + plan.changed, 0);
         const patches = plans.flatMap((plan) => plan.patches);
         if (patches.length === 0) return { result: { changed } };
         return {
           result: { changed },
           transaction: {
-            label: appearanceLabel(payload, changed),
+            label: payloads.length === 1
+              ? appearanceLabel(payloads[0], changed)
+              : `修改 ${changed} 个选中项颜色`,
             patches,
             events: plans.flatMap((plan) => plan.events ?? []),
           },
         };
       };
+      const appearanceUpdate = (payload: AppearanceUpdateRequest) => appearanceUpdates([payload]);
       const emitPickerResult = (committed: boolean, color?: string) => {
         if (!colorPickerState) return;
         context.signals.emit('palette.colorPicker.result', {
@@ -314,21 +334,26 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         const targets = contributions.flatMap((contribution) => contribution.targets)
           .filter((target) => target.entities.some((entity) => selected.has(entity.id)));
         if (targets.length === 0) throw new Error('当前选中对象暂不支持单独修改颜色');
-        const kinds = new Set(targets.map((target) => target.kind));
-        if (kinds.size !== 1 || targets.length !== 1) {
-          throw new Error('请只选择同一种可着色对象后再打开调色盘');
-        }
-        const target = targets[0];
-        const anchor = target.anchor ?? await resolveSelectionAnchor(context, request.selectedItems ?? []);
+        const anchor = targets.length === 1 && targets[0].anchor
+          ? targets[0].anchor
+          : await resolveSelectionAnchor(context, request.selectedItems ?? []);
+        const appearancePreview: AppearancePreview = targets.length === 1
+          ? {
+              kind: targets[0].kind,
+              entityIds: targets[0].entities.map((entity) => entity.id),
+            }
+          : {
+              targets: targets.map((target) => ({
+                kind: target.kind,
+                entityIds: target.entities.map((entity) => entity.id),
+              })),
+            };
         return openPicker({
           sessionId: createId('selection-color'),
-          color: target.color,
+          color: targets[0].color,
           anchor,
-          appearanceRequest: { kind: target.kind, entities: target.entities },
-          appearancePreview: {
-            kind: target.kind,
-            entityIds: target.entities.map((entity) => entity.id),
-          },
+          appearanceRequests: targets.map((target) => ({ kind: target.kind, entities: target.entities })),
+          appearancePreview,
         });
       };
 
@@ -396,6 +421,23 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         validate: isAppearanceUpdateRequest,
         handle: appearanceUpdate,
       });
+      context.commands.register<undefined, { changed: number }>({
+        type: 'palette.resetAppearance',
+        handle: async () => {
+          const plans = await context.capabilities.requestAll<AppearanceUpdatePlan>('appearance.resetPlan@1');
+          const changed = plans.reduce((total, plan) => total + plan.changed, 0);
+          const patches = plans.flatMap((plan) => plan.patches);
+          if (patches.length === 0) return { result: { changed } };
+          return {
+            result: { changed },
+            transaction: {
+              label: '重置画布颜色',
+              patches,
+              events: plans.flatMap((plan) => plan.events ?? []),
+            },
+          };
+        },
+      });
       context.commands.register<ColorPickerOpenRequest, { opened: true }>({
         type: 'palette.colorPicker.open',
         validate: isColorPickerOpenRequest,
@@ -409,11 +451,11 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
             return { result: { committed: false } };
           }
           colorPickerState.color = payload.color.toLowerCase();
-          if (!colorPickerState.appearanceRequest) return { result: { committed: true } };
-          return appearanceUpdate({
-            ...colorPickerState.appearanceRequest,
+          if (!colorPickerState.appearanceRequests) return { result: { committed: true } };
+          return appearanceUpdates(colorPickerState.appearanceRequests.map((request) => ({
+            ...request,
             color: payload.color,
-          });
+          })));
         },
       });
       context.commands.register<ColorPickerCloseRequest>({
@@ -428,10 +470,10 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
           sessionId: `node-title:${payload.targets.map((target) => `${target.id}:${target.revision}`).join(',')}`,
           color: payload.targets[0].expectedColor,
           anchor: payload.anchor,
-          appearanceRequest: {
+          appearanceRequests: [{
             kind: 'node-title',
             entities: payload.targets,
-          },
+          }],
           appearancePreview: {
             kind: 'node-title',
             entityIds: payload.targets.map((target) => target.id),

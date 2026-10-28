@@ -72,8 +72,8 @@ function TextNodeCanvasLayerView({
       {duplicateOrigins.map((origin) => {
         const node = nodeById.get(origin.id);
         if (!node) return null;
-        const titleColor = appearancePreview?.kind === 'node-title' && previewEntities.has(node.id)
-          ? appearancePreview.color ?? node.titleColor
+        const titleColor = previewEntities.has(node.id)
+          ? appearancePreview?.color ?? node.titleColor
           : node.titleColor;
         const titleInk = contrastTextColor(titleColor);
         const isTextBox = node.presentation === 'text-box';
@@ -125,8 +125,8 @@ function TextNodeCanvasLayerView({
         const position = previews[node.id] ?? node;
         const size = resizePreviews[node.id] ?? node;
         const isTextBox = node.presentation === 'text-box';
-        const renderedTitleColor = appearancePreview?.kind === 'node-title' && previewEntities.has(node.id)
-          ? appearancePreview.color ?? node.titleColor
+        const renderedTitleColor = previewEntities.has(node.id)
+          ? appearancePreview?.color ?? node.titleColor
           : node.titleColor;
         const titleInk = contrastTextColor(renderedTitleColor);
         const renderedTitle = isTextBox

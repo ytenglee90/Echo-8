@@ -138,7 +138,9 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
   if (!open) return null;
   const installation = readyInstallation(cloud);
   const upgrade = upgradeInstallation(cloud);
-  const accountLabel = cloud.user?.email || cloud.user?.name || installation?.accountName;
+  const accountLabel = accountDisplayName(
+    cloud.user?.email || cloud.user?.name || installation?.accountName,
+  );
   const isLocalFile = globalThis.location.protocol === 'file:';
 
   return (
@@ -203,7 +205,6 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                 disabled={Boolean(busy)}
                 onClick={() => void client.dispatch('bookLibrary.enterCanvas')}
               >
-                <Icon name="play" />
                 <strong>继续</strong>
               </button>
             </div>
@@ -372,6 +373,11 @@ function upgradeInstallation(state: CloudSyncState): CloudInstallationSummary | 
 
 function accountInitial(value: string | undefined): string {
   return value?.trim().charAt(0).toLocaleUpperCase() || 'C';
+}
+
+function accountDisplayName(value: string | undefined): string | undefined {
+  const normalized = value?.trim().replace(/[’']s Account$/iu, '').trim();
+  return normalized || undefined;
 }
 
 function formatTime(value: number): string {

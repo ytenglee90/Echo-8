@@ -351,7 +351,7 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   await expect(library.getByRole('button', { name: /新建空白书籍/u })).toBeVisible();
   await expect(library.getByRole('button', { name: /打开本地书籍/u })).toBeVisible();
   const continueButton = library.getByRole('button', { name: '继续当前浏览器中的画布' });
-  await expect(continueButton.locator('[data-icon="play"]')).toBeVisible();
+  await expect(continueButton.locator('[data-icon="play"]')).toHaveCount(0);
   expect(await continueButton.evaluate((element) => getComputedStyle(element).backgroundColor))
     .not.toBe('rgba(0, 0, 0, 0)');
   if (testInfo.project.name === 'chromium') {
@@ -401,6 +401,10 @@ test('cloud sync stays out of the canvas layout until its governed panel is open
   await expect(cloudMark).toBeVisible();
   await expect(cloudMark).toHaveAttribute('src', '/favicon.svg');
   await expect(cloudStatus.locator('span, b, i')).toHaveCount(0);
+  await expect(cloudStatus).toHaveClass(/is-unsynced/u);
+  await expect(cloudStatus).toHaveCSS('width', '34px');
+  await expect(cloudMark).toHaveCSS('width', '27px');
+  expect(await cloudStatus.evaluate((element) => getComputedStyle(element, '::after').content)).toBe('none');
   const commandButton = page.getByRole('button', { name: '命令面板' });
   const [cloudStatusBox, commandButtonBox] = await Promise.all([
     cloudStatus.boundingBox(),
@@ -462,7 +466,7 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
     json: {
       configured: true,
       authenticated: true,
-      user: { id: 'user-rename-test', name: "reader@example.com's Account", email: 'reader@example.com' },
+      user: { id: 'user-rename-test', name: "reader@example.com's Account" },
       accounts: [],
       installations: [{
         id: 'installation-rename-test',
@@ -505,6 +509,12 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   await expect(library.getByText('reader@example.com', { exact: true })).toBeVisible();
   await expect(library.getByText("reader@example.com's Account", { exact: true })).toHaveCount(0);
+  const libraryRow = library.locator('.book-library-project-row').filter({ hasText: '初始书名' });
+  const libraryIconBox = await libraryRow.locator('.book-library-project-icon').boundingBox();
+  expect(libraryIconBox?.width).toBeGreaterThanOrEqual(44);
+  await libraryRow.evaluate((element) => element.classList.add('active'));
+  await expect(libraryRow).toHaveCSS('background-color', 'rgb(24, 24, 26)');
+  await expect(libraryRow).toHaveCSS('color', 'rgb(255, 255, 255)');
   const libraryName = library.getByRole('button', { name: '重命名书籍：初始书名' });
   await expect(libraryName).toBeVisible();
   await libraryName.dblclick();
@@ -2025,6 +2035,35 @@ test('global color presets keep canvas strokes adaptive on dark and eye-care bac
   const selectedCard = page.locator('.text-node-card').first();
   await selectedCard.click({ position: { x: 80, y: 28 } });
   await expect(selectedCard).toHaveCSS('border-color', 'rgb(0, 0, 0)');
+
+  await panel.getByRole('button', { name: '重置全部颜色', exact: true }).click();
+  await expect(canvas).toHaveCSS('background-color', 'rgb(239, 239, 236)');
+  await expect.poll(() => page.locator('.top-bar').evaluate((element) =>
+    getComputedStyle(element).getPropertyValue('--toolbar').trim()
+  )).toBe('#fafaf9');
+});
+
+test('a selected connection with a local color stays shadow-free', async ({ page }) => {
+  await openApplication(page);
+  const cards = page.locator('.text-node-card');
+  await cards.nth(0).click({ position: { x: 80, y: 90 } });
+  await cards.nth(1).click({ position: { x: 80, y: 90 }, modifiers: ['Shift'] });
+  await page.getByRole('button', { name: /^连接两个节点/u }).click();
+
+  const hitArea = page.locator('.connection-hit-area').first();
+  const renderedConnection = page.locator('.connection-path').first();
+  await hitArea.click({ force: true });
+  await page.getByRole('button', { name: '修改选中项颜色', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: '颜色选择器' });
+  await picker.getByRole('spinbutton', { name: 'R 通道数值' }).fill('28');
+  await picker.getByRole('spinbutton', { name: 'G 通道数值' }).fill('112');
+  const blue = picker.getByRole('spinbutton', { name: 'B 通道数值' });
+  await blue.fill('84');
+  await blue.press('Enter');
+
+  await expect(renderedConnection).toHaveClass(/\bselected\b/u);
+  await expect(renderedConnection).toHaveClass(/\bcustom-color\b/u);
+  await expect(renderedConnection).toHaveCSS('filter', 'none');
 });
 
 test('global color settings preview, save, undo and redo the connection curve color', async ({ page }) => {

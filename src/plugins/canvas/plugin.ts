@@ -1,5 +1,6 @@
 import { isRecord, type PluginDefinition } from '../../core/contracts.ts';
 import type {
+  AppearanceColorContribution,
   AppearanceReadContribution,
   AppearanceReadRequest,
   AppearanceUpdatePlan,
@@ -55,6 +56,8 @@ export const canvasPlugin: PluginDefinition = {
       'canvas.appearance@1',
       'appearance.read@1',
       'appearance.updatePlan@1',
+      'appearance.colors@1',
+      'appearance.resetPlan@1',
     ],
     commands: [
       'canvas.camera.commit',
@@ -356,6 +359,28 @@ export const canvasPlugin: PluginDefinition = {
             schemaOwner: 'canvas',
           }],
           events: [{ type: 'canvas.appearance.changed', payload: { color: input.color } }],
+        };
+      },
+    });
+    context.capabilities.provide<undefined, AppearanceColorContribution>({
+      key: 'appearance.colors@1',
+      invoke: () => ({ colors: [{ color: readAppearance().color, count: 1 }] }),
+    });
+    context.capabilities.provide<undefined, AppearanceUpdatePlan>({
+      key: 'appearance.resetPlan@1',
+      invoke: () => {
+        const stored = context.store.readValue<CanvasAppearanceRecord>(APPEARANCE_NAMESPACE, 'canvas');
+        if (!stored) return { patches: [], changed: 0 };
+        return {
+          changed: 1,
+          patches: [{
+            op: 'delete',
+            domain: 'document',
+            namespace: APPEARANCE_NAMESPACE,
+            key: 'canvas',
+            schemaOwner: 'canvas',
+          }],
+          events: [{ type: 'canvas.appearance.changed', payload: { color: DEFAULT_CANVAS_COLOR } }],
         };
       },
     });

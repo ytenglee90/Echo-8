@@ -1,5 +1,6 @@
 import { createId, isRecord, type PluginContext, type PluginDefinition } from '../../core/contracts.ts';
 import type {
+  AppearanceColorContribution,
   AppearanceReadContribution,
   AppearanceReadRequest,
   AppearanceUpdatePlan,
@@ -80,6 +81,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connections.appearance@1',
         'appearance.read@1',
         'appearance.updatePlan@1',
+        'appearance.colors@1',
+        'appearance.resetPlan@1',
         'entity.deletePlan@1',
         'clipboard.serialize@1',
         'clipboard.instantiate@1',
@@ -370,14 +373,10 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             };
           }
 
-          const ordered = [...selected].sort((left, right) => {
-            const horizontal = (left.x + left.width / 2) - (right.x + right.width / 2);
-            if (horizontal !== 0) return horizontal;
-            const vertical = (left.y + left.height / 2) - (right.y + right.height / 2);
-            return vertical || left.id.localeCompare(right.id);
-          });
           const id = createId('connection');
-          const endpoints = resolveConnectionEndpoints(ordered[0], ordered[1]);
+          // Selection order is semantic here: the first selected node is the
+          // output, and the second selected node owns the arrow/input end.
+          const endpoints = resolveConnectionEndpoints(selected[0], selected[1]);
           const connection: ConnectionRecord = {
             id,
             ...endpoints,
@@ -436,14 +435,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             };
           }
 
-          const ordered = [...selected].sort((left, right) => {
-            const horizontal = (left.x + left.width / 2) - (right.x + right.width / 2);
-            if (horizontal !== 0) return horizontal;
-            const vertical = (left.y + left.height / 2) - (right.y + right.height / 2);
-            return vertical || left.id.localeCompare(right.id);
-          });
-          const from = { nodeId: ordered[0].id, side: 'title' as const };
-          const to = { nodeId: ordered[1].id, side: 'title' as const };
+          const from = { nodeId: selected[0].id, side: 'title' as const };
+          const to = { nodeId: selected[1].id, side: 'title' as const };
           if (existing) {
             return {
               result: { id: existing.id, converted: true },
@@ -640,6 +633,72 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           };
         },
       });
+      context.capabilities.provide<undefined, AppearanceColorContribution>({
+        key: 'appearance.colors@1',
+        invoke: async () => {
+          const counts = new Map<string, number>();
+          const add = (color: string) => counts.set(color, (counts.get(color) ?? 0) + 1);
+          const canvasColor = await readCanvasColor(context);
+          const globalLineColor = await readEffectiveConnectionColor();
+          add(globalLineColor);
+          for (const connection of Object.values(readConnections())) {
+            add(connectionPartColor(connection, 'connection-line', globalLineColor, canvasColor));
+            if (connection.label) {
+              add(connectionPartColor(connection, 'connection-label-background', globalLineColor, canvasColor));
+              add(connectionPartColor(connection, 'connection-label-text', globalLineColor, canvasColor));
+            }
+          }
+          return { colors: [...counts].map(([color, count]) => ({ color, count })) };
+        },
+      });
+      context.capabilities.provide<undefined, AppearanceUpdatePlan>({
+        key: 'appearance.resetPlan@1',
+        invoke: () => {
+          const patches: AppearanceUpdatePlan['patches'] = [];
+          const changedConnections: string[] = [];
+          const storedAppearance = context.store.readValue<{ color: string; revision: number }>(
+            CONNECTION_APPEARANCE_NAMESPACE,
+            CONNECTION_APPEARANCE_KEY,
+          );
+          if (storedAppearance) {
+            patches.push({
+              op: 'delete',
+              domain: 'document',
+              namespace: CONNECTION_APPEARANCE_NAMESPACE,
+              key: CONNECTION_APPEARANCE_KEY,
+              schemaOwner: 'connections',
+            });
+          }
+          for (const connection of Object.values(readConnections())) {
+            if (!connection.lineColor && !connection.labelBackgroundColor && !connection.labelTextColor) continue;
+            const next = { ...connection, revision: connection.revision + 1 };
+            delete next.lineColor;
+            delete next.labelBackgroundColor;
+            delete next.labelTextColor;
+            changedConnections.push(connection.id);
+            patches.push({
+              op: 'set',
+              domain: 'document',
+              namespace: CONNECTION_NAMESPACE,
+              key: connection.id,
+              value: next,
+              schemaOwner: 'connections',
+            });
+          }
+          return {
+            patches,
+            changed: changedConnections.length + (storedAppearance ? 1 : 0),
+            events: [
+              ...(storedAppearance
+                ? [{ type: 'connection.appearance.changed', payload: { color: undefined } }]
+                : []),
+              ...(changedConnections.length > 0
+                ? [{ type: 'connection.changed', payload: { ids: changedConnections } }]
+                : []),
+            ],
+          };
+        },
+      });
       context.capabilities.provide<ConnectionCreatePlanRequest, ConnectionMutationPlan>({
         key: 'connections.createPlan@1',
         invoke: (input) => {
@@ -813,6 +872,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         command: 'connection.toggleSelected',
         label: '连接两个节点或断开选中节点的连线',
         category: '节点与连线',
+        instruction: '先选节点为输出端，后选节点为带箭头的输入端。',
       });
       context.ui.shortcut({
         id: 'connections.toggle-title-selected-shortcut',
@@ -820,6 +880,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         command: 'connection.toggleTitleSelected',
         label: '标题到标题连接两个文字节点',
         category: '节点与连线',
+        instruction: '先选标题为输出端，后选标题为带箭头的输入端。',
       });
       context.ui.action({
         id: 'connections.toggle-selected-action',

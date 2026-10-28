@@ -65,6 +65,7 @@
 
 .palette-heading { justify-content: space-between; gap: 12px; }
 .palette-heading h2 { margin: 2px 0 0; font-size: 15px; letter-spacing: -0.02em; }
+.palette-heading-actions { display: inline-flex; align-items: center; gap: 3px; }
 
 .palette-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
 .palette-section-title { justify-content: space-between; gap: 8px; }
@@ -613,9 +614,9 @@
   position: relative;
   display: grid;
   place-items: center;
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -623,30 +624,20 @@
   cursor: pointer;
 }
 .cloud-sync-status .echo-8-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  transition: opacity 150ms ease, box-shadow 150ms ease;
-}
-.cloud-sync-status::after {
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  width: 7px;
-  height: 7px;
-  border: 2px solid var(--toolbar);
-  border-radius: 50%;
-  background: currentColor;
-  content: '';
+  width: 27px;
+  height: 27px;
+  transition: filter 150ms ease, opacity 150ms ease, transform 150ms ease;
 }
 .cloud-sync-status.is-unsynced { color: #8c8f98; }
 .cloud-sync-status.is-synced { color: #32a65a; }
-.cloud-sync-status.is-unsynced .echo-8-icon { opacity: .58; }
+.cloud-sync-status.is-unsynced .echo-8-icon {
+  filter: grayscale(1) opacity(.56);
+}
 .cloud-sync-status.is-synced .echo-8-icon {
-  box-shadow: 0 0 0 2px color-mix(in srgb, #32a65a 30%, transparent);
+  filter: brightness(0) saturate(100%) invert(55%) sepia(44%) saturate(743%) hue-rotate(87deg) brightness(93%) contrast(88%);
 }
 .cloud-sync-status:hover { background: var(--toolbar-hover); }
-.cloud-sync-status.is-active .echo-8-icon { animation: cloud-sync-logo-pulse 1s ease-in-out infinite; }
+.cloud-sync-status.is-active .echo-8-icon { animation: cloud-sync-logo-pulse 1.05s ease-in-out infinite; }
 .cloud-sync-summary > i {
   width: 8px;
   height: 8px;
@@ -833,7 +824,7 @@
 
 @keyframes cloud-sync-pulse { 50% { opacity: .38; transform: scale(.82); } }
 @keyframes cloud-sync-logo-pulse {
-  50% { opacity: .4; transform: scale(.82) rotate(8deg); }
+  50% { opacity: .42; transform: scale(.88); }
 }
 
 @media (prefers-reduced-motion: reduce) {

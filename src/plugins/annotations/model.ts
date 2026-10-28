@@ -1,5 +1,7 @@
 import { createId, isRecord, type PluginContext, type PluginDefinition } from '../../core/contracts.ts';
 import type {
+  AppearanceColorContribution,
+  AppearanceColorReadRequest,
   AppearanceReadContribution,
   AppearanceReadRequest,
   AppearanceUpdatePlan,
@@ -73,6 +75,8 @@ export function createAnnotationsPlugin(
         'selection.entities@1',
         'appearance.read@1',
         'appearance.updatePlan@1',
+        'appearance.colors@1',
+        'appearance.resetPlan@1',
       ],
       commands: [
         'annotation.createAtContext',
@@ -498,6 +502,43 @@ export function createAnnotationsPlugin(
               value: record,
               schemaOwner: 'annotations',
             })),
+            events: changed.length > 0
+              ? [{ type: 'annotation.changed', payload: { ids: changed.map((record) => record.id) } }]
+              : [],
+          };
+        },
+      });
+      context.capabilities.provide<AppearanceColorReadRequest, AppearanceColorContribution>({
+        key: 'appearance.colors@1',
+        invoke: (input) => {
+          const fallback = input?.defaults?.['annotation-marker'] ?? '#ff9f0a';
+          const counts = new Map<string, number>();
+          for (const record of Object.values(readRecords())) {
+            const color = record.color ?? fallback;
+            counts.set(color, (counts.get(color) ?? 0) + 1);
+          }
+          return { colors: [...counts].map(([color, count]) => ({ color, count })) };
+        },
+      });
+      context.capabilities.provide<undefined, AppearanceUpdatePlan>({
+        key: 'appearance.resetPlan@1',
+        invoke: () => {
+          const changed = Object.values(readRecords()).filter((record) => record.color !== undefined);
+          const updatedAt = Date.now();
+          return {
+            changed: changed.length,
+            patches: changed.map((record) => {
+              const next = { ...record, revision: record.revision + 1, updatedAt };
+              delete next.color;
+              return {
+                op: 'set' as const,
+                domain: 'document' as const,
+                namespace: ANNOTATION_NAMESPACE,
+                key: record.id,
+                value: next,
+                schemaOwner: 'annotations',
+              };
+            }),
             events: changed.length > 0
               ? [{ type: 'annotation.changed', payload: { ids: changed.map((record) => record.id) } }]
               : [],
