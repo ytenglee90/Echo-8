@@ -387,7 +387,7 @@
 
 .text-node-card header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-height: 42px;
@@ -409,27 +409,6 @@
 
 .node-type-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.7; }
 .node-count { color: currentColor; font-size: 12px; opacity: 0.68; }
-
-.node-color-button {
-  position: relative;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  min-width: 31px;
-  height: 21px;
-  padding: 0 6px;
-  border: 1px solid currentColor;
-  border-radius: 7px;
-  background: transparent;
-  color: currentColor;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  opacity: 0.68;
-}
-
-.node-color-button:hover,
-.node-color-button:focus-visible { background: color-mix(in srgb, currentColor 14%, transparent); opacity: 1; }
 
 .text-node-card p {
   display: block;
@@ -490,40 +469,6 @@
 }
 .node-resize-handle:hover,
 .node-resize-handle:focus-visible { opacity: 1; }
-
-.node-presentation-toggle {
-  position: absolute;
-  z-index: 4;
-  bottom: -11px;
-  left: 50%;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  background: var(--node-surface);
-  color: var(--muted);
-  cursor: pointer;
-  transform: translateX(-50%);
-}
-
-.text-node-card.text-box .node-presentation-toggle {
-  background: var(--document-canvas-background, var(--canvas-background));
-  color: var(--text-box-color);
-}
-
-.text-node-card.text-box.selected .node-presentation-toggle {
-  border-width: 2px;
-  color: var(--canvas-selection, var(--selection));
-}
-
-.node-presentation-toggle:hover,
-.node-presentation-toggle:focus-visible {
-  outline: 2px solid var(--canvas-selection, var(--selection));
-  outline-offset: 1px;
-}
 
 .text-node-card.text-box .connection-edge {
   top: 8px;

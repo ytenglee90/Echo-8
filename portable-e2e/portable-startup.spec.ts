@@ -76,7 +76,18 @@ test('the generated single HTML starts from the library and edits without extern
   await expect(page.locator('.connection-hit-area')).toHaveCount(1);
 
   await page.getByRole('button', { name: '新建文本', exact: true }).click();
-  const created = page.getByRole('article', { name: '文本节点：未命名节点', exact: true });
+  const created = page.getByRole('article', { name: /文本节点：未命名节点$/u });
+  await expect(created).toBeVisible();
+  await created.click();
+  const conversionButton = page.getByRole('group', { name: '选中项工具', exact: true }).getByRole('button', {
+    name: '文本框与文字节点相互转换',
+    exact: true,
+  });
+  await conversionButton.click();
+  const createdTextBox = page.getByRole('article', { name: /文本框：未命名节点$/u });
+  await expect(createdTextBox).toBeVisible();
+  await expect(createdTextBox.getByRole('button', { name: /转换为文本/u })).toHaveCount(0);
+  await conversionButton.click();
   await expect(created).toBeVisible();
   await created.getByRole('paragraph').dblclick({ position: { x: 80, y: 80 } });
   const editor = page.locator('.editor-writing-area').first();

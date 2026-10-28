@@ -512,7 +512,7 @@ test('text plugin hot-stop releases commands, UI and capabilities but preserves 
   assert.ok(restored.some((node) => node.title === '保留的数据'));
   assert.deepEqual(
     harness.ui.list('top.primary').map((item) => item.id).sort(),
-    ['text-node.create'],
+    ['text-node.create', 'text-node.toggle-selected-presentation'],
   );
 });
 
@@ -5532,7 +5532,8 @@ test('smart-layout hot toggle snaps against a whole group frame and releases its
   assert.equal(snapped.guides.some((guide) => guide.position === 625 && guide.kind === 'edge'), true);
   assert.equal(harness.router.isCommandAvailable('node.arrangeSelectedGrid'), true);
   assert.deepEqual(
-    harness.ui.list('top.primary').filter((item) => item.group === 'status').map((item) => item.id),
+    harness.ui.list('top.primary').filter((item) =>
+      item.group === 'appearance' && item.owner === 'smart-layout').map((item) => item.id),
     ['smart-layout.arrange-grid'],
   );
 
@@ -6653,6 +6654,23 @@ test('text-box presentation is registered as a customizable shortcut and toggles
     item.owner === 'text-node' && item.id === 'text-node.toggle-selected-presentation-action');
   assert.equal(action?.label, '文本框与文字节点相互转换');
   assert.equal(action?.command, 'node.toggleSelectedPresentation');
+  const toolbar = harness.ui.list('top.primary').find((item) =>
+    item.owner === 'text-node' && item.id === 'text-node.toggle-selected-presentation');
+  assert.deepEqual({
+    kind: toolbar?.kind,
+    label: toolbar?.label,
+    icon: toolbar?.icon,
+    group: toolbar?.group,
+    command: toolbar?.command,
+    priority: toolbar?.priority,
+  }, {
+    kind: 'button',
+    label: '文本框与文字节点相互转换',
+    icon: 'replace',
+    group: 'appearance',
+    command: 'node.toggleSelectedPresentation',
+    priority: 30,
+  });
 
   const toggled = await harness.router.dispatch(
     'node.toggleSelectedPresentation',

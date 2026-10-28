@@ -862,9 +862,9 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         slot: 'top.primary',
         kind: 'view',
         label: '节点连线工具',
-        group: 'tools',
+        group: 'appearance',
         component: toolbarAction,
-        priority: 20,
+        priority: 10,
       });
       context.ui.shortcut({
         id: 'connections.toggle-selected-shortcut',

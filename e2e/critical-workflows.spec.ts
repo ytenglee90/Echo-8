@@ -1099,14 +1099,32 @@ test('toolbar palette changes only the selected object and opens beside it', asy
   ]);
   await first.click();
 
-  const appearanceGroup = page.getByRole('group', { name: '选中项颜色', exact: true });
+  const appearanceGroup = page.getByRole('group', { name: '选中项工具', exact: true });
   const clipboardGroup = page.getByRole('group', { name: '剪贴板', exact: true });
+  const connectionButton = appearanceGroup.getByRole('button', { name: /^连接两个节点/u });
+  const arrangeButton = appearanceGroup.getByRole('button', { name: /^自动排列/u });
+  const conversionButton = appearanceGroup.getByRole('button', {
+    name: '文本框与文字节点相互转换',
+    exact: true,
+  });
   const paletteButton = appearanceGroup.getByRole('button', { name: '修改选中项颜色', exact: true });
   const copyButton = clipboardGroup.getByRole('button', { name: /^复制/u });
-  const [paletteBox, copyBox] = await Promise.all([paletteButton.boundingBox(), copyButton.boundingBox()]);
-  expect(paletteBox).not.toBeNull();
-  expect(copyBox).not.toBeNull();
+  await expect(appearanceGroup.getByRole('button')).toHaveCount(4);
+  const [connectionBox, arrangeBox, conversionBox, paletteBox, copyBox] = await Promise.all([
+    connectionButton.boundingBox(),
+    arrangeButton.boundingBox(),
+    conversionButton.boundingBox(),
+    paletteButton.boundingBox(),
+    copyButton.boundingBox(),
+  ]);
+  for (const box of [connectionBox, arrangeBox, conversionBox, paletteBox, copyBox]) {
+    expect(box).not.toBeNull();
+  }
+  expect(connectionBox!.x).toBeLessThan(arrangeBox!.x);
+  expect(arrangeBox!.x).toBeLessThan(conversionBox!.x);
+  expect(conversionBox!.x).toBeLessThan(paletteBox!.x);
   expect(paletteBox!.x).toBeLessThan(copyBox!.x);
+  await expect(appearanceGroup).toHaveCSS('border-left-width', '1px');
   await expect(clipboardGroup).toHaveCSS('border-left-width', '1px');
 
   await paletteButton.click();
@@ -1143,11 +1161,16 @@ test('canvas cards convert to editable border-only text boxes and remember both 
   }));
   const titleColor = await card.locator('header').evaluate((element) => getComputedStyle(element).backgroundColor);
   const headerButtons = card.locator('header button');
-  await expect(headerButtons).toHaveCount(1);
-  await expect(headerButtons.nth(0)).toHaveAttribute('aria-label', `将${originalTitle}转换为文本框`);
+  await expect(headerButtons).toHaveCount(0);
+  const conversionButton = page.getByRole('group', { name: '选中项工具', exact: true }).getByRole('button', {
+    name: '文本框与文字节点相互转换',
+    exact: true,
+  });
 
-  await card.getByRole('button', { name: `将${originalTitle}转换为文本框`, exact: true }).click();
+  await card.click();
+  await conversionButton.click();
   let textBox = page.getByRole('article', { name: new RegExp(`文本框：${originalTitle}$`, 'u') });
+  await page.locator('.canvas-surface').click({ position: { x: 24, y: 24 } });
   await expect(textBox).toHaveClass(/\btext-box\b/u);
   await expect(textBox).not.toHaveClass(/\bcompact\b/u);
   await expect(textBox).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
@@ -1171,16 +1194,7 @@ test('canvas cards convert to editable border-only text boxes and remember both 
     return style.borderTopColor === selectionColor;
   })).toBe(true);
   await expect(textBox).toHaveCSS('outline-style', 'none');
-  const presentationToggle = textBox.getByRole('button', { name: `将${originalTitle}转换为文本节点`, exact: true });
-  expect(await presentationToggle.evaluate((element) => {
-    const style = getComputedStyle(element);
-    const probe = element.ownerDocument.createElement('span');
-    probe.style.color = getComputedStyle(element.closest('.text-node-card')!).getPropertyValue('--canvas-selection');
-    element.ownerDocument.body.appendChild(probe);
-    const selectionColor = getComputedStyle(probe).color;
-    probe.remove();
-    return style.borderTopColor === selectionColor && style.color === selectionColor;
-  })).toBe(true);
+  await expect(textBox.getByRole('button', { name: /转换为文本/u })).toHaveCount(0);
 
   const titleFontSize = await textBox.locator('.text-box-title').evaluate((element) => getComputedStyle(element).fontSize);
   const zoom = page.getByRole('textbox', { name: /画布缩放/u });
@@ -1232,15 +1246,18 @@ test('canvas cards convert to editable border-only text boxes and remember both 
   expect(resizedTextBoxSize.width).toBeGreaterThan(initialTextBoxSize.width);
   expect(resizedTextBoxSize.height).toBeGreaterThan(initialTextBoxSize.height);
 
-  await textBox.getByRole('button', { name: `将${editedTitle}转换为文本节点`, exact: true }).click();
+  await textBox.click();
+  await conversionButton.click();
   const restoredCard = page.getByRole('article', { name: new RegExp(`文本节点：${editedTitle}$`, 'u') });
   await expect(restoredCard.getByRole('paragraph')).toBeVisible();
+  await expect(restoredCard.locator('header button')).toHaveCount(0);
   await expect.poll(() => restoredCard.evaluate((element) => ({
     width: Number.parseFloat((element as HTMLElement).style.width),
     height: Number.parseFloat((element as HTMLElement).style.height),
   }))).toEqual(originalSize);
 
-  await restoredCard.getByRole('button', { name: `将${editedTitle}转换为文本框`, exact: true }).click();
+  await restoredCard.click();
+  await conversionButton.click();
   textBox = page.getByRole('article', { name: new RegExp(`文本框：${editedTitle}$`, 'u') });
   await expect.poll(() => textBox.evaluate((element) => ({
     width: Number.parseFloat((element as HTMLElement).style.width),
@@ -1560,11 +1577,16 @@ test('overlapping ordinary endpoints keep their port directions and solid target
   const targetTitle = '画布基本操作指南';
   const sourceCard = page.getByRole('article', { name: `文本节点：${sourceTitle}`, exact: true });
   const targetCard = page.getByRole('article', { name: `文本节点：${targetTitle}`, exact: true });
-  await sourceCard.getByRole('button', { name: `将${sourceTitle}转换为文本框`, exact: true }).click();
-  await targetCard.getByRole('button', { name: `将${targetTitle}转换为文本框`, exact: true }).click();
+  await sourceCard.click();
+  await targetCard.click({ modifiers: ['Control'] });
+  await page.getByRole('group', { name: '选中项工具', exact: true }).getByRole('button', {
+    name: '文本框与文字节点相互转换',
+    exact: true,
+  }).click();
 
   const source = page.getByRole('article', { name: new RegExp(`文本框：${sourceTitle}$`, 'u') });
   const target = page.getByRole('article', { name: new RegExp(`文本框：${targetTitle}$`, 'u') });
+  await page.locator('.canvas-surface').click({ position: { x: 24, y: 24 } });
   const sourceTitleBox = await source.locator('.text-box-title').boundingBox();
   expect(sourceTitleBox).not.toBeNull();
   await page.mouse.move(

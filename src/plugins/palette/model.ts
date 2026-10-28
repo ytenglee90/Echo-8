@@ -572,7 +572,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         icon: 'palette',
         group: 'appearance',
         command: 'palette.selectionColor.open',
-        priority: 10,
+        priority: 40,
       });
       context.ui.shortcut({
         id: 'palette.open-shortcut',

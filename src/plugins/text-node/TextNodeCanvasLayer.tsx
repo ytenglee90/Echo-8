@@ -199,25 +199,6 @@ function TextNodeCanvasLayerView({
                 <header style={{ backgroundColor: renderedTitleColor, color: titleInk }}>
                   <span className="node-type-dot" />
                   <strong title={node.title}>{renderedTitle}</strong>
-                  <button
-                    type="button"
-                    className="node-color-button node-presentation-header-toggle"
-                    aria-label={`将${node.title}转换为文本框`}
-                    title="转换为文本框"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onDoubleClick={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      void client.dispatch('node.presentation.set', {
-                        id: node.id,
-                        presentation: 'text-box',
-                        expectedRevision: node.nodeRevision,
-                      }).catch(() => undefined);
-                    }}
-                  >
-                    <Icon name="replace" size={13} />
-                  </button>
                   <span
                     className="node-count"
                     title="正文字数：包含标点和组合 Emoji，不含空格、制表符和换行"
@@ -259,25 +240,6 @@ function TextNodeCanvasLayerView({
                   onPointerDown={(event) => handleConnectionPort(event, node, 'right')}
                 />
               </>
-            )}
-            {isTextBox && (
-              <button
-                type="button"
-                className="node-presentation-toggle"
-                aria-label={`将${node.title}转换为文本节点`}
-                title="转换为文本节点"
-                onPointerDown={(event) => event.stopPropagation()}
-                onDoubleClick={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void client.dispatch('node.presentation.set', {
-                    id: node.id,
-                    presentation: 'card',
-                    expectedRevision: node.nodeRevision,
-                  }).catch(() => undefined);
-                }}
-              ><Icon name="replace" size={13} /></button>
             )}
             {(isTextBox || detail === 'preview') && (
               <button

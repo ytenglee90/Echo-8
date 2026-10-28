@@ -204,9 +204,9 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
         slot: 'top.primary',
         kind: 'view',
         label: '自动排列',
-        group: 'status',
+        group: 'appearance',
         component: arrangeGridActions,
-        priority: 7,
+        priority: 20,
       });
       context.ui.shortcut({
         id: 'smart-layout.arrange-grid-shortcut',

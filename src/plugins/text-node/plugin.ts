@@ -203,7 +203,12 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       'document.replaced',
     ],
     signals: ['content.catalog.invalidated'],
-    ui: ['text-node.canvas-layer', 'text-node.empty-state', 'text-node.create'],
+    ui: [
+      'text-node.canvas-layer',
+      'text-node.empty-state',
+      'text-node.create',
+      'text-node.toggle-selected-presentation',
+    ],
     actions: ['text-node.create-action', 'text-node.toggle-selected-presentation-action'],
     shortcuts: [
       'text-node.create-shortcut',
@@ -1346,6 +1351,17 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       tooltip: '创建文本节点（Ctrl/⌘ + Enter）',
       command: 'node.create',
       priority: 10,
+    });
+    context.ui.contribute({
+      id: 'text-node.toggle-selected-presentation',
+      slot: 'top.primary',
+      kind: 'button',
+      label: '文本框与文字节点相互转换',
+      tooltip: '文本框与文字节点相互转换',
+      icon: 'replace',
+      group: 'appearance',
+      command: 'node.toggleSelectedPresentation',
+      priority: 30,
     });
     context.ui.shortcut({
       id: 'text-node.create-shortcut',

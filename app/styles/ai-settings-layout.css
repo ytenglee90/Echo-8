@@ -287,8 +287,6 @@
 .ai-mention-option small { color: var(--muted); font-size: 12px; font-weight: 500; }
 .ai-mention-empty { margin: 0; padding: 18px 10px; color: var(--muted); font-size: 12px; text-align: center; }
 
-.node-color-button { display: grid; place-items: center; width: 24px; min-width: 24px; height: 24px; padding: 0; }
-.node-color-button .ui-icon { width: 13px; height: 13px; }
 .file-actions .icon-button,
 .file-actions .primary-icon-button,
 .recovery-row .icon-button,
