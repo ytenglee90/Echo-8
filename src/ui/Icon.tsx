@@ -1,6 +1,6 @@
 'use client';
 
-import type { ButtonHTMLAttributes, CSSProperties } from 'react';
+import { useId, type ButtonHTMLAttributes, type CSSProperties } from 'react';
 
 export type IconName =
   | 'add' | 'search' | 'palette' | 'sparkles' | 'file' | 'undo' | 'redo'
@@ -16,8 +16,17 @@ export type IconName =
   | 'spellcheck' | 'autocomplete' | 'comment' | 'globe' | 'echo-8' | 'echo-file' | 'template'
   | 'sync' | 'logout';
 
-export function Icon({ name, size = 17 }: { name: IconName | string; size?: number }) {
+export function Icon({
+  name,
+  size = 17,
+  motion = 'none',
+}: {
+  name: IconName | string;
+  size?: number;
+  motion?: 'none' | 'sync';
+}) {
   if (name === 'echo-8') {
+    if (motion === 'sync') return <Echo8SyncIcon size={size} />;
     const width = Math.round(size * 594 / 263);
     return (
       <span
@@ -55,6 +64,42 @@ export function Icon({ name, size = 17 }: { name: IconName | string; size?: numb
       aria-hidden="true"
     >
       {iconPaths(name)}
+    </svg>
+  );
+}
+
+function Echo8SyncIcon({ size }: { size: number }) {
+  const width = Math.round(size * 594 / 263);
+  const maskId = `echo-8-sync-${useId().replace(/[^a-zA-Z0-9_-]/gu, '')}`;
+  return (
+    <svg
+      className="ui-icon echo-8-icon echo-8-sync-mark"
+      style={{
+        '--echo-8-width': `${width}px`,
+        '--echo-8-height': `${size}px`,
+      } as CSSProperties}
+      viewBox="0 0 594 263"
+      data-icon="echo-8"
+      aria-hidden="true"
+    >
+      <defs>
+        <mask id={maskId} maskUnits="userSpaceOnUse" x="13" y="16" width="567" height="230">
+          <rect x="13" y="16" width="567" height="230" fill="#fff" />
+          <path fill="#000" d="M81 69h430v34H81zM81 157h430v33H81z" />
+          <path className="echo-8-sync-gap echo-8-sync-gap-one" fill="#000" d="m226 69 30-53h20l-30 53Z" />
+          <path className="echo-8-sync-gap echo-8-sync-gap-two" fill="#000" d="m179 103h21l-31 54h-21Z" />
+          <path className="echo-8-sync-gap echo-8-sync-gap-three" fill="#000" d="m256 190h20l-30 56h-20Z" />
+        </mask>
+      </defs>
+      <rect
+        className="echo-8-sync-body"
+        x="13"
+        y="16"
+        width="567"
+        height="230"
+        fill="currentColor"
+        mask={`url(#${maskId})`}
+      />
     </svg>
   );
 }

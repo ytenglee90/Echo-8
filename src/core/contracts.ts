@@ -145,6 +145,8 @@ export interface UIContribution {
   priority?: number;
   tooltip?: string;
   icon?: string;
+  /** Semantic toolbar emphasis; the shell owns its theme-aware rendering. */
+  tone?: 'default' | 'primary';
   /** Keeps the current editable selection alive while a toolbar command consumes it. */
   preserveEditableFocus?: boolean;
   group?:

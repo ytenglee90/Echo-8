@@ -352,7 +352,7 @@ function TopContribution({
     return (
       <button
         type="button"
-        className={`toolbar-icon-button ${contribution.id.includes('create') ? 'primary' : ''}`}
+        className={`toolbar-icon-button ${contribution.tone === 'primary' ? 'primary' : ''}`}
         aria-label={contribution.label}
         title={commandTooltip(contribution, shortcuts)}
         onPointerDown={contribution.preserveEditableFocus ? (event) => event.preventDefault() : undefined}

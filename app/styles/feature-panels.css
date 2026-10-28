@@ -636,7 +636,21 @@
   opacity: .52;
 }
 .cloud-sync-status:hover { background: var(--toolbar-hover); }
-.cloud-sync-status.is-active .echo-8-icon { animation: cloud-sync-logo-pulse 1.05s ease-in-out infinite; }
+.cloud-sync-status .echo-8-sync-mark { overflow: visible; }
+.cloud-sync-status .echo-8-sync-gap {
+  transform-box: view-box;
+  transform-origin: center;
+  will-change: transform;
+}
+.cloud-sync-status.is-active .echo-8-sync-gap-one {
+  animation: cloud-sync-gap-travel 1.08s ease-in-out -.31s infinite alternate;
+}
+.cloud-sync-status.is-active .echo-8-sync-gap-two {
+  animation: cloud-sync-gap-travel 1.42s ease-in-out -.79s infinite alternate;
+}
+.cloud-sync-status.is-active .echo-8-sync-gap-three {
+  animation: cloud-sync-gap-travel 1.83s ease-in-out -1.11s infinite alternate;
+}
 .cloud-sync-summary > i {
   width: 8px;
   height: 8px;
@@ -822,12 +836,13 @@
 .cloud-sync-data-boundary strong { color: var(--ink); }
 
 @keyframes cloud-sync-pulse { 50% { opacity: .38; transform: scale(.82); } }
-@keyframes cloud-sync-logo-pulse {
-  50% { opacity: .42; transform: scale(.88); }
+@keyframes cloud-sync-gap-travel {
+  from { transform: translateX(-34px); }
+  to { transform: translateX(34px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cloud-sync-status.is-active .echo-8-icon,
+  .cloud-sync-status.is-active .echo-8-sync-gap,
   .cloud-sync-summary.phase-connecting > i,
   .cloud-sync-summary.phase-syncing > i { animation: none; }
 }

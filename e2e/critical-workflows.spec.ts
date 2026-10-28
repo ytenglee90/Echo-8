@@ -498,6 +498,11 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
     headRevision: 0,
   };
   const renamedTo: string[] = [];
+  let holdNextSync = false;
+  let markHeldSyncStarted!: () => void;
+  const heldSyncStarted = new Promise<void>((resolve) => { markHeldSyncStarted = resolve; });
+  let releaseHeldSync!: () => void;
+  const heldSyncRelease = new Promise<void>((resolve) => { releaseHeldSync = resolve; });
   await page.route('**/api/cloud/status', (route) => route.fulfill({
     json: {
       configured: true,
@@ -563,6 +568,11 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
       return;
     }
     if (request.method() === 'POST' && url.pathname === `/v1/projects/${project.id}/sync`) {
+      if (holdNextSync) {
+        holdNextSync = false;
+        markHeldSyncStarted();
+        await heldSyncRelease;
+      }
       await route.fulfill({ json: {
         accepted: 0,
         headRevision: project.headRevision,
@@ -620,7 +630,8 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   const renamedLibraryRow = library.locator('.book-library-project-row').filter({ hasText: '书库重命名' });
   await renamedLibraryRow.click({ position: { x: 8, y: 35 } });
   await expect(library).toHaveCount(0);
-  const syncedStatus = page.getByRole('button', { name: /^云同步：已同步/u });
+  const syncedStatus = page.locator('.cloud-sync-status');
+  await expect(syncedStatus).toHaveAccessibleName(/^云同步：已同步/u);
   await expect(syncedStatus).toHaveClass(/is-synced/u);
   const syncedMark = syncedStatus.locator('[data-icon="echo-8"]');
   await expect(syncedMark).toHaveCSS('width', '58px');
@@ -639,6 +650,37 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   await expect(panel.getByRole('button', { name: '刷新云端书籍' }).locator('[data-icon="reset"]')).toBeVisible();
   await expect(panel.getByRole('button', { name: '返回书库' })).toHaveCount(0);
   await expect(panel.getByRole('button', { name: '新建云端书籍' })).toHaveCount(0);
+  holdNextSync = true;
+  await panel.getByRole('button', { name: '立即同步' }).click();
+  await heldSyncStarted;
+  await expect(syncedStatus).toHaveClass(/is-active/u);
+  const activeMark = syncedStatus.locator('svg.echo-8-sync-mark[data-icon="echo-8"]');
+  await expect(activeMark).toBeVisible();
+  await expect(activeMark).toHaveAttribute('viewBox', '0 0 594 263');
+  const activeMarkBox = await activeMark.boundingBox();
+  expect(activeMarkBox).not.toBeNull();
+  expect(activeMarkBox!.width / activeMarkBox!.height).toBeGreaterThan(2.2);
+  const movingGaps = activeMark.locator('.echo-8-sync-gap');
+  await expect(movingGaps).toHaveCount(3);
+  const gapAnimations = await movingGaps.evaluateAll((elements) => elements.map((element) => {
+    const style = getComputedStyle(element);
+    return {
+      name: style.animationName,
+      duration: style.animationDuration,
+      direction: style.animationDirection,
+    };
+  }));
+  expect(gapAnimations.every((animation) => animation.name === 'cloud-sync-gap-travel')).toBe(true);
+  expect(gapAnimations.every((animation) => animation.direction === 'alternate')).toBe(true);
+  expect(new Set(gapAnimations.map((animation) => animation.duration)).size).toBe(3);
+  await expect(activeMark.locator('.echo-8-sync-body')).toHaveCSS('animation-name', 'none');
+  releaseHeldSync();
+  await expect(syncedStatus).not.toHaveClass(/is-active/u);
+  await expect(syncedStatus.locator('svg.echo-8-sync-mark')).toHaveCount(0);
+  await expect.poll(() => syncedStatus.locator('[data-icon="echo-8"]').evaluate((element) => {
+    const style = getComputedStyle(element);
+    return style.getPropertyValue('mask-image') || style.getPropertyValue('-webkit-mask-image');
+  })).toContain('/favicon.svg');
   const panelName = panel.getByRole('button', { name: '重命名书籍：书库重命名' });
   await panelName.dblclick();
   const panelInput = panel.getByRole('textbox', { name: '修改书籍名称：书库重命名' });
@@ -1100,7 +1142,10 @@ test('toolbar palette changes only the selected object and opens beside it', asy
   await first.click();
 
   const appearanceGroup = page.getByRole('group', { name: '选中项工具', exact: true });
+  const createGroup = page.getByRole('group', { name: '新建', exact: true });
   const clipboardGroup = page.getByRole('group', { name: '剪贴板', exact: true });
+  const createTextButton = createGroup.getByRole('button', { name: '新建文本', exact: true });
+  const annotationButton = createGroup.getByRole('button', { name: '添加注释', exact: true });
   const connectionButton = appearanceGroup.getByRole('button', { name: /^连接两个节点/u });
   const arrangeButton = appearanceGroup.getByRole('button', { name: /^自动排列/u });
   const conversionButton = appearanceGroup.getByRole('button', {
@@ -1110,6 +1155,17 @@ test('toolbar palette changes only the selected object and opens beside it', asy
   const paletteButton = appearanceGroup.getByRole('button', { name: '修改选中项颜色', exact: true });
   const copyButton = clipboardGroup.getByRole('button', { name: /^复制/u });
   await expect(appearanceGroup.getByRole('button')).toHaveCount(4);
+  await expect(createTextButton).toHaveClass(/\bprimary\b/u);
+  await expect(conversionButton).toHaveClass(/\bprimary\b/u);
+  await expect(annotationButton).not.toHaveClass(/\bprimary\b/u);
+  const [createTextFill, conversionFill, annotationFill] = await Promise.all([
+    createTextButton.evaluate((element) => getComputedStyle(element).backgroundColor),
+    conversionButton.evaluate((element) => getComputedStyle(element).backgroundColor),
+    annotationButton.evaluate((element) => getComputedStyle(element).backgroundColor),
+  ]);
+  expect(conversionFill).toBe(createTextFill);
+  expect(annotationFill).not.toBe(createTextFill);
+  expect(annotationFill).toBe('rgba(0, 0, 0, 0)');
   const [connectionBox, arrangeBox, conversionBox, paletteBox, copyBox] = await Promise.all([
     connectionButton.boundingBox(),
     arrangeButton.boundingBox(),

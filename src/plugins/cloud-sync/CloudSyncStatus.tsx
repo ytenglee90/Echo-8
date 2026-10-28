@@ -34,7 +34,7 @@ export function CloudSyncStatus({ client }: { client: ViewClient }) {
       title={statusTitle(state)}
       aria-label={`云同步：${statusLabel(state)}`}
     >
-      <Icon name="echo-8" />
+      <Icon name="echo-8" motion={active ? 'sync' : 'none'} />
     </button>
   );
 }
