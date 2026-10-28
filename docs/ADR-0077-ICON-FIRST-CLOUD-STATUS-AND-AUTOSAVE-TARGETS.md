@@ -23,7 +23,8 @@ opened local file must never be silently converted into a cloud book.
 
 - The library brand, browser favicon and toolbar cloud affordance use the one
   canonical `public/favicon.svg` E8 asset; feature code does not redraw an E8
-  glyph. The canonical mark retains the original solid black E8 design. The
+  glyph. The canonical mark is the compact vector form of Echo-8's black
+  panel, paired white bars and offset diagonal cuts. The
   toolbar applies a state tint over that same mark without a separate state
   dot: green means the active book is fully
   synchronized, gray means signed out, unbound, offline or otherwise not
