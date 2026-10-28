@@ -24,12 +24,15 @@ opened local file must never be silently converted into a cloud book.
 - The library brand, browser favicon and toolbar cloud affordance use the one
   canonical `public/favicon.svg` E8 asset; feature code does not redraw an E8
   glyph. The canonical mark keeps Echo-8's wide rectangular proportion: a
-  transparent outer canvas around a rectangular outline with paired bars and
-  offset diagonal cuts. Runtime brand surfaces use that SVG as a monochrome
+  transparent outer canvas around one solid rectangular silhouette with paired
+  transparent channels and offset diagonal cut-outs. The dark body—not the
+  channels—is the logo. Runtime brand surfaces use that SVG as a monochrome
   mask filled by the semantic foreground of their actual surface, so the mark
   becomes dark on light chrome and light on dark chrome without adding a white
   or black backing panel. The standalone favicon also responds to the browser's
-  preferred color scheme. The library, loading surface and toolbar
+  preferred color scheme. Recoloring or theme inversion changes only the solid
+  body; the channels remain transparent and reveal the surrounding surface.
+  The library, loading surface and toolbar
   size it by that intrinsic ratio instead of forcing it into a square
   container. The
   toolbar keeps the canonical mark black and white without a colored outline,

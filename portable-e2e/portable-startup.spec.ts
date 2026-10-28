@@ -33,7 +33,7 @@ test('the generated single HTML starts from the library and edits without extern
   const libraryMarkBox = await libraryMark.boundingBox();
   expect(libraryMarkBox).not.toBeNull();
   expect(libraryMarkBox!.width / libraryMarkBox!.height).toBeGreaterThan(2.2);
-  const libraryMarkCornerAlpha = await libraryMark.evaluate(async () => {
+  const libraryMarkAlpha = await libraryMark.evaluate(async () => {
     const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     const image = new Image();
     image.src = favicon?.href ?? '';
@@ -43,9 +43,13 @@ test('the generated single HTML starts from the library and edits without extern
     canvas.height = image.naturalHeight;
     const context = canvas.getContext('2d');
     context?.drawImage(image, 0, 0);
-    return context?.getImageData(0, 0, 1, 1).data[3] ?? 255;
+    return {
+      outer: context?.getImageData(0, 0, 1, 1).data[3] ?? 255,
+      body: context?.getImageData(30, 30, 1, 1).data[3] ?? 0,
+      channel: context?.getImageData(100, 80, 1, 1).data[3] ?? 255,
+    };
   });
-  expect(libraryMarkCornerAlpha).toBe(0);
+  expect(libraryMarkAlpha).toEqual({ outer: 0, body: 255, channel: 0 });
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /^data:image\/svg\+xml,/u);
   await expect(library.getByText('单文件模式已保留云同步入口')).toBeVisible();
   await expect(library.getByRole('button', { name: '继续当前浏览器中的画布' })).toHaveCount(0);
