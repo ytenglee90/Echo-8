@@ -129,6 +129,12 @@
 .clipboard-actions button:disabled,
 .group-context-actions button:disabled { cursor: not-allowed; opacity: 0.28; }
 .ui-icon { display: block; pointer-events: none; }
+.echo-8-icon {
+  width: var(--echo-8-width);
+  height: var(--echo-8-height);
+  flex: 0 0 auto;
+  aspect-ratio: 594 / 263;
+}
 
 .selection-actions,
 .clipboard-actions,

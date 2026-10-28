@@ -43,7 +43,12 @@
   width: auto;
   height: auto;
 }
-.book-library-mark .echo-8-icon { display: block; width: 68px; height: auto; }
+.book-library-mark .echo-8-icon {
+  display: block;
+  width: 68px;
+  height: auto;
+  aspect-ratio: 594 / 263;
+}
 
 .book-library-account { justify-content: flex-end; gap: 9px; min-width: 0; }
 .book-library-account > span:not(.book-library-avatar) { min-width: 0; }
@@ -169,17 +174,23 @@
 }
 .book-library-project-row:hover { background: var(--control-hover); }
 .book-library-project-row.active,
-.book-library-project-row.active:hover { background: #18181a; color: #fff; }
-.book-library-project-row.active .book-library-project-copy small { color: rgba(255, 255, 255, .66); }
-.book-library-project-row.active .book-library-project-icon { background: rgba(255, 255, 255, .13); }
+.book-library-project-row.active:hover { background: var(--ink); color: var(--surface); }
+.book-library-project-row.active .book-library-project-copy small {
+  color: color-mix(in srgb, var(--surface) 66%, transparent);
+}
+.book-library-project-row.active .book-library-project-icon {
+  background: color-mix(in srgb, var(--surface) 13%, transparent);
+}
 .book-library-project-row.active .book-library-project-open,
-.book-library-project-row.active .book-library-project-delete { color: rgba(255, 255, 255, .76); }
+.book-library-project-row.active .book-library-project-delete {
+  color: color-mix(in srgb, var(--surface) 76%, transparent);
+}
 .book-library-project-row.active .book-library-project-open:hover,
 .book-library-project-row.active .book-library-project-open:focus-visible,
 .book-library-project-row.active .book-library-project-delete:hover,
 .book-library-project-row.active .book-library-project-delete:focus-visible {
-  background: rgba(255, 255, 255, .12);
-  color: #fff;
+  background: color-mix(in srgb, var(--surface) 12%, transparent);
+  color: var(--surface);
 }
 .book-library-project-copy { display: grid; align-content: center; gap: 2px; min-width: 0; }
 .book-library-project-copy small { color: var(--muted); font-size: 10px; }
@@ -195,6 +206,9 @@
   cursor: pointer;
 }
 .book-library-project-name {
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
   overflow: hidden;
   font-size: 12px;
   font-weight: 680;

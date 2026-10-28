@@ -1,7 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 594 263" role="img" aria-label="Echo-8">
-  <rect x="13" y="16" width="567" height="230" fill="#111113"/>
+  <style>
+    .echo-frame, .echo-lines { stroke: #111113; }
+    .echo-lines { fill: #111113; }
+    @media (prefers-color-scheme: dark) {
+      .echo-frame, .echo-lines { stroke: #f7f7f7; }
+      .echo-lines { fill: #f7f7f7; }
+    }
+  </style>
+  <rect
+    class="echo-frame"
+    x="20"
+    y="23"
+    width="554"
+    height="216"
+    rx="3"
+    fill="none"
+    stroke-width="12"
+  />
   <path
-    fill="#fff"
+    class="echo-lines"
     d="M81 69h145l30-53h20l-30 53h265v34H200l-31 54h342v33H276l-30 56h-20l30-56H81v-33h67l31-54H81V69Z"
   />
 </svg>

@@ -24,10 +24,12 @@ opened local file must never be silently converted into a cloud book.
 - The library brand, browser favicon and toolbar cloud affordance use the one
   canonical `public/favicon.svg` E8 asset; feature code does not redraw an E8
   glyph. The canonical mark keeps Echo-8's wide rectangular proportion: a
-  transparent outer canvas around a black panel with paired white bars and
-  offset diagonal cuts. The transparent edge removes a fixed white backing:
-  the dark panel supplies contrast on light chrome, while the white negative
-  bars remain visible on dark chrome. The library, loading surface and toolbar
+  transparent outer canvas around a rectangular outline with paired bars and
+  offset diagonal cuts. Runtime brand surfaces use that SVG as a monochrome
+  mask filled by the semantic foreground of their actual surface, so the mark
+  becomes dark on light chrome and light on dark chrome without adding a white
+  or black backing panel. The standalone favicon also responds to the browser's
+  preferred color scheme. The library, loading surface and toolbar
   size it by that intrinsic ratio instead of forcing it into a square
   container. The
   toolbar keeps the canonical mark black and white without a colored outline,
@@ -46,9 +48,11 @@ opened local file must never be silently converted into a cloud book.
 - The large Continue card is removed. New and Open remain the two explicit
   local entry points; a cloud-book row can also be opened by clicking its free
   row surface, while the title remains an isolated double-click rename control
-  and the explicit Open button remains keyboard-accessible. Book rows use
-  larger book and action icons, while the active book uses a solid near-black
-  row with white foregrounds. Account display names remove Cloudflare's
+  whose hit area is limited to the rendered title. The explicit Open button
+  remains keyboard-accessible. Book rows use larger book and action icons,
+  while the active book uses the theme's semantic ink as its background and
+  surface color as its foreground. It is therefore near-black in the light
+  theme and automatically reverses in the dark theme. Account display names remove Cloudflare's
   presentation-only English `’s Account` suffix without changing the
   authenticated account identity.
 - ADR-0075's confirmation remains mandatory for deletion. ADR-0076's

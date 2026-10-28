@@ -1,6 +1,6 @@
 'use client';
 
-import type { ButtonHTMLAttributes } from 'react';
+import type { ButtonHTMLAttributes, CSSProperties } from 'react';
 
 export type IconName =
   | 'add' | 'search' | 'palette' | 'sparkles' | 'file' | 'undo' | 'redo'
@@ -20,13 +20,22 @@ export function Icon({ name, size = 17 }: { name: IconName | string; size?: numb
   if (name === 'echo-8') {
     const width = Math.round(size * 594 / 263);
     return (
-      <img
+      <span
         className="ui-icon echo-8-icon"
-        width={width}
-        height={size}
-        src="/favicon.svg"
+        style={{
+          '--echo-8-width': `${width}px`,
+          '--echo-8-height': `${size}px`,
+          backgroundColor: 'currentColor',
+          WebkitMaskImage: 'url("/favicon.svg")',
+          maskImage: 'url("/favicon.svg")',
+          WebkitMaskPosition: 'center',
+          maskPosition: 'center',
+          WebkitMaskRepeat: 'no-repeat',
+          maskRepeat: 'no-repeat',
+          WebkitMaskSize: 'contain',
+          maskSize: 'contain',
+        } as CSSProperties}
         data-icon={name}
-        alt=""
         aria-hidden="true"
       />
     );

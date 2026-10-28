@@ -75,6 +75,7 @@
   display: block;
   width: 118px;
   height: auto;
+  aspect-ratio: 594 / 263;
 }
 
 .primary-actions {

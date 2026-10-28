@@ -628,6 +628,7 @@
   position: relative;
   width: 58px;
   height: auto;
+  aspect-ratio: 594 / 263;
   transition: filter 150ms ease, opacity 150ms ease, transform 150ms ease;
 }
 .cloud-sync-status.is-unsynced .echo-8-icon {

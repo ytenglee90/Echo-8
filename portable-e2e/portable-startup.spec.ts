@@ -25,12 +25,19 @@ test('the generated single HTML starts from the library and edits without extern
   await expect(library.locator('#cloud-books-title')).toHaveClass('sr-only');
   const libraryMark = library.locator('.book-library-brand [data-icon="echo-8"]');
   await expect(libraryMark).toBeVisible();
-  await expect(libraryMark).toHaveAttribute('src', /^data:image\/svg\+xml,/u);
+  const libraryMarkMask = await libraryMark.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return style.getPropertyValue('mask-image') || style.getPropertyValue('-webkit-mask-image');
+  });
+  expect(libraryMarkMask).toMatch(/^url\("data:image\/svg\+xml,/u);
   const libraryMarkBox = await libraryMark.boundingBox();
   expect(libraryMarkBox).not.toBeNull();
   expect(libraryMarkBox!.width / libraryMarkBox!.height).toBeGreaterThan(2.2);
-  const libraryMarkCornerAlpha = await libraryMark.evaluate((element) => {
-    const image = element as HTMLImageElement;
+  const libraryMarkCornerAlpha = await libraryMark.evaluate(async () => {
+    const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    const image = new Image();
+    image.src = favicon?.href ?? '';
+    await image.decode();
     const canvas = document.createElement('canvas');
     canvas.width = image.naturalWidth;
     canvas.height = image.naturalHeight;

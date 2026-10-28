@@ -346,12 +346,26 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   await expect(library.getByRole('heading', { name: '今天想打开哪一本？' })).toHaveCount(0);
   const libraryMark = library.locator('.book-library-brand [data-icon="echo-8"]');
   await expect(libraryMark).toBeVisible();
-  await expect(libraryMark).toHaveAttribute('src', '/favicon.svg');
+  const libraryMarkVisual = await libraryMark.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      mask: style.getPropertyValue('mask-image') || style.getPropertyValue('-webkit-mask-image'),
+      fill: style.backgroundColor,
+      ink: style.color,
+    };
+  });
+  expect(libraryMarkVisual).toMatchObject({
+    fill: 'rgb(24, 24, 26)',
+    ink: 'rgb(24, 24, 26)',
+  });
+  expect(libraryMarkVisual.mask).toContain('/favicon.svg');
   const libraryMarkBox = await libraryMark.boundingBox();
   expect(libraryMarkBox).not.toBeNull();
   expect(libraryMarkBox!.width / libraryMarkBox!.height).toBeGreaterThan(2.2);
-  const libraryMarkCornerAlpha = await libraryMark.evaluate((element) => {
-    const image = element as HTMLImageElement;
+  const libraryMarkCornerAlpha = await libraryMark.evaluate(async () => {
+    const image = new Image();
+    image.src = '/favicon.svg';
+    await image.decode();
     const canvas = document.createElement('canvas');
     canvas.width = image.naturalWidth;
     canvas.height = image.naturalHeight;
@@ -410,8 +424,11 @@ test('cloud sync stays out of the canvas layout until its governed panel is open
   const cloudStatus = page.getByRole('button', { name: /^云同步：/u });
   const cloudMark = cloudStatus.locator('[data-icon="echo-8"]');
   await expect(cloudMark).toBeVisible();
-  await expect(cloudMark).toHaveAttribute('src', '/favicon.svg');
-  await expect(cloudStatus.locator('span, b, i')).toHaveCount(0);
+  await expect.poll(() => cloudMark.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return style.getPropertyValue('mask-image') || style.getPropertyValue('-webkit-mask-image');
+  })).toContain('/favicon.svg');
+  await expect(cloudStatus.locator(':scope > :not([data-icon="echo-8"])')).toHaveCount(0);
   await expect(cloudStatus).toHaveClass(/is-unsynced/u);
   await expect(cloudStatus).toHaveCSS('width', '66px');
   await expect(cloudMark).toHaveCSS('width', '58px');
@@ -567,9 +584,27 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   expect(libraryIconBox?.width).toBeGreaterThanOrEqual(44);
   await libraryRow.evaluate((element) => element.classList.add('active'));
   await expect(libraryRow).toHaveCSS('background-color', 'rgb(24, 24, 26)');
-  await expect(libraryRow).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await expect(libraryRow).toHaveCSS('color', 'rgb(245, 245, 243)');
   const libraryName = library.getByRole('button', { name: '重命名书籍：初始书名' });
   await expect(libraryName).toBeVisible();
+  const [libraryRowBox, libraryNameBox] = await Promise.all([
+    libraryRow.boundingBox(),
+    libraryName.boundingBox(),
+  ]);
+  expect(libraryRowBox).not.toBeNull();
+  expect(libraryNameBox).not.toBeNull();
+  expect(libraryNameBox!.width).toBeLessThan(libraryRowBox!.width / 2);
+
+  await library.evaluate((element) => {
+    const shell = element.closest('.application-shell') as HTMLElement;
+    shell.dataset.theme = 'dark';
+    shell.style.setProperty('--surface', '#111214');
+    shell.style.setProperty('--ink', '#f2f2f3');
+  });
+  await expect(libraryRow).toHaveCSS('background-color', 'rgb(242, 242, 243)');
+  await expect(libraryRow).toHaveCSS('color', 'rgb(17, 18, 20)');
+  const darkLibraryMark = library.locator('.book-library-brand [data-icon="echo-8"]');
+  await expect(darkLibraryMark).toHaveCSS('background-color', 'rgb(242, 242, 243)');
   await libraryName.click();
   await expect(library).toBeVisible();
   await libraryName.dblclick();
