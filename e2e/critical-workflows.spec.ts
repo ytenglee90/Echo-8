@@ -347,6 +347,9 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   const libraryMark = library.locator('.book-library-brand [data-icon="echo-8"]');
   await expect(libraryMark).toBeVisible();
   await expect(libraryMark).toHaveAttribute('src', '/favicon.svg');
+  const libraryMarkBox = await libraryMark.boundingBox();
+  expect(libraryMarkBox).not.toBeNull();
+  expect(libraryMarkBox!.width / libraryMarkBox!.height).toBeGreaterThan(2.2);
   await expect(library.locator('#cloud-books-title')).toHaveClass('sr-only');
   await expect(library.getByRole('button', { name: /新建空白书籍/u })).toBeVisible();
   await expect(library.getByRole('button', { name: /打开本地书籍/u })).toBeVisible();
@@ -400,8 +403,11 @@ test('cloud sync stays out of the canvas layout until its governed panel is open
   await expect(cloudMark).toHaveAttribute('src', '/favicon.svg');
   await expect(cloudStatus.locator('span, b, i')).toHaveCount(0);
   await expect(cloudStatus).toHaveClass(/is-unsynced/u);
-  await expect(cloudStatus).toHaveCSS('width', '34px');
-  await expect(cloudMark).toHaveCSS('width', '27px');
+  await expect(cloudStatus).toHaveCSS('width', '54px');
+  await expect(cloudMark).toHaveCSS('width', '46px');
+  const cloudMarkBox = await cloudMark.boundingBox();
+  expect(cloudMarkBox).not.toBeNull();
+  expect(cloudMarkBox!.width / cloudMarkBox!.height).toBeGreaterThan(2.2);
   expect(await cloudStatus.evaluate((element) => getComputedStyle(element, '::after').content)).toBe('none');
   const commandButton = page.getByRole('button', { name: '命令面板' });
   const [cloudStatusBox, commandButtonBox] = await Promise.all([

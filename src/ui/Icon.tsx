@@ -18,10 +18,11 @@ export type IconName =
 
 export function Icon({ name, size = 17 }: { name: IconName | string; size?: number }) {
   if (name === 'echo-8') {
+    const width = Math.round(size * 594 / 263);
     return (
       <img
         className="ui-icon echo-8-icon"
-        width={size}
+        width={width}
         height={size}
         src="/favicon.svg"
         data-icon={name}

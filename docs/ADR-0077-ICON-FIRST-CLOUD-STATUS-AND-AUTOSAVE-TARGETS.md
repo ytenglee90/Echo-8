@@ -23,8 +23,10 @@ opened local file must never be silently converted into a cloud book.
 
 - The library brand, browser favicon and toolbar cloud affordance use the one
   canonical `public/favicon.svg` E8 asset; feature code does not redraw an E8
-  glyph. The canonical mark is the compact vector form of Echo-8's black
-  panel, paired white bars and offset diagonal cuts. The
+  glyph. The canonical mark keeps Echo-8's wide rectangular proportion: a
+  black panel with paired white bars and offset diagonal cuts. The library,
+  loading surface and toolbar size it by that intrinsic ratio instead of
+  forcing it into a square container. The
   toolbar applies a state tint over that same mark without a separate state
   dot: green means the active book is fully
   synchronized, gray means signed out, unbound, offline or otherwise not
@@ -78,8 +80,9 @@ opened local file must never be silently converted into a cloud book.
 - Kernel tests cover immediate automatic cloud binding for a new document, local-origin
   preservation and unchanged native-output suppression.
 - Hosted browser tests verify that the brand and E8-only toolbar status both
-  load `/favicon.svg`, that the toolbar has no separate dot and uses the larger
-  state-colored mark, that the homepage has only New and Open cards, and that
+  load `/favicon.svg`, retain a greater-than-2.2:1 rendered ratio, and that the
+  toolbar has no separate dot and uses the larger state-colored mark. They also
+  verify that the homepage has only New and Open cards and that
   a book row opens from its free surface without stealing the title's
   double-click rename gesture. Icon actions in both book lists retain deletion
   confirmation.

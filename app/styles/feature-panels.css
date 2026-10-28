@@ -615,8 +615,8 @@
   position: relative;
   display: grid;
   place-items: center;
-  width: 34px;
-  min-width: 34px;
+  width: 54px;
+  min-width: 54px;
   height: 34px;
   padding: 0;
   border: 0;
@@ -626,17 +626,16 @@
 }
 .cloud-sync-status .echo-8-icon {
   position: relative;
-  width: 27px;
-  height: 27px;
-  border-radius: 6px;
+  width: 46px;
+  height: auto;
   transition: filter 150ms ease, opacity 150ms ease, transform 150ms ease;
 }
 .cloud-sync-status::before {
   position: absolute;
   z-index: 1;
-  width: 27px;
-  height: 27px;
-  border-radius: 6px;
+  width: 46px;
+  aspect-ratio: 594 / 263;
+  border-radius: 2px;
   background: currentColor;
   content: '';
   mix-blend-mode: color;

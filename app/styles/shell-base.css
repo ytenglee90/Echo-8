@@ -45,8 +45,7 @@
 .brand-block strong { font-size: 13px; letter-spacing: -0.01em; }
 .brand-block span:not(.brand-mark) { color: var(--muted); font-size: 12px; }
 
-.brand-mark,
-.boot-mark {
+.brand-mark {
   display: grid;
   grid-template-columns: repeat(3, 5px);
   align-items: end;
@@ -58,11 +57,25 @@
   background: var(--ink);
 }
 
-.brand-mark i,
-.boot-mark i { display: block; width: 5px; border-radius: 4px; background: white; }
-.brand-mark i:nth-child(1), .boot-mark i:nth-child(1) { height: 8px; opacity: 0.7; }
-.brand-mark i:nth-child(2), .boot-mark i:nth-child(2) { height: 15px; }
-.brand-mark i:nth-child(3), .boot-mark i:nth-child(3) { height: 11px; opacity: 0.82; }
+.brand-mark i { display: block; width: 5px; border-radius: 4px; background: white; }
+.brand-mark i:nth-child(1) { height: 8px; opacity: 0.7; }
+.brand-mark i:nth-child(2) { height: 15px; }
+.brand-mark i:nth-child(3) { height: 11px; opacity: 0.82; }
+
+.boot-mark {
+  display: grid;
+  place-items: center;
+  width: auto;
+  height: auto;
+  padding: 0;
+  background: transparent;
+}
+
+.boot-mark .echo-8-icon {
+  display: block;
+  width: 118px;
+  height: auto;
+}
 
 .primary-actions {
   justify-content: flex-start;
@@ -226,4 +239,3 @@ kbd {
 
 .left-rail .rail-active { background: var(--ink); color: var(--panel); }
 .left-rail .rail-spacer { flex: 1; }
-

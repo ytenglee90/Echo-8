@@ -38,13 +38,12 @@
 .book-library-brand { gap: 10px; }
 .book-library-brand > strong { font-size: 15px; font-weight: 720; letter-spacing: -.025em; }
 .book-library-mark {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  width: auto;
+  height: auto;
 }
-.book-library-mark .echo-8-icon { width: 32px; height: 32px; border-radius: 8px; }
+.book-library-mark .echo-8-icon { display: block; width: 68px; height: auto; }
 
 .book-library-account { justify-content: flex-end; gap: 9px; min-width: 0; }
 .book-library-account > span:not(.book-library-avatar) { min-width: 0; }
