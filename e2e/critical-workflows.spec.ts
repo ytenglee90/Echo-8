@@ -5,7 +5,7 @@ import type { ProjectSource } from '../src/protocols/files.ts';
 async function openApplication(page: Page): Promise<void> {
   await page.goto('/');
   await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeVisible();
-  await page.getByRole('button', { name: '继续当前浏览器中的画布' }).click();
+  await executeCommand(page, '进入当前画布');
   await expect(page.getByRole('article', { name: /文本节点：/u })).toHaveCount(2);
 }
 
@@ -350,10 +350,8 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   await expect(library.locator('#cloud-books-title')).toHaveClass('sr-only');
   await expect(library.getByRole('button', { name: /新建空白书籍/u })).toBeVisible();
   await expect(library.getByRole('button', { name: /打开本地书籍/u })).toBeVisible();
-  const continueButton = library.getByRole('button', { name: '继续当前浏览器中的画布' });
-  await expect(continueButton.locator('[data-icon="play"]')).toHaveCount(0);
-  expect(await continueButton.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .not.toBe('rgba(0, 0, 0, 0)');
+  await expect(library.getByRole('button', { name: '继续当前浏览器中的画布' })).toHaveCount(0);
+  await expect(library.locator('.book-library-action-card')).toHaveCount(2);
   if (testInfo.project.name === 'chromium') {
     await expect(page).toHaveScreenshot('book-library-home.png', {
       animations: 'disabled',
@@ -423,6 +421,7 @@ test('cloud sync stays out of the canvas layout until its governed panel is open
   await expect(commandPalette).toBeVisible();
   await expect(commandPalette.getByRole('group', { name: '文件' }).locator('strong')).toHaveText([
     '返回首页（书库）',
+    '进入当前画布',
     '保存书籍',
     '另存本地副本',
     '打开书籍',
@@ -459,7 +458,7 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
     name: '初始书名',
     createdAt: Date.now() - 10_000,
     updatedAt: Date.now() - 5_000,
-    headRevision: 2,
+    headRevision: 0,
   };
   const renamedTo: string[] = [];
   await page.route('**/api/cloud/status', (route) => route.fulfill({
@@ -502,6 +501,44 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
       await route.fulfill({ json: { project } });
       return;
     }
+    if (request.method() === 'POST' && url.pathname === `/v1/projects/${project.id}/lease`) {
+      await route.fulfill({ json: {
+        lease: {
+          id: 'lease-rename-test',
+          deviceId: 'device-rename-test',
+          expiresAt: Date.now() + 90_000,
+          owned: true,
+        },
+      } });
+      return;
+    }
+    if (request.method() === 'GET' && url.pathname === `/v1/projects/${project.id}/bootstrap`) {
+      await route.fulfill({ json: {
+        project,
+        checkpointRevision: 0,
+        chunks: [],
+        operations: [],
+      } });
+      return;
+    }
+    if (request.method() === 'POST' && url.pathname === `/v1/projects/${project.id}/chunks`) {
+      await route.fulfill({ json: { stored: 2 } });
+      return;
+    }
+    if (request.method() === 'POST' && url.pathname === `/v1/projects/${project.id}/sync`) {
+      await route.fulfill({ json: {
+        accepted: 0,
+        headRevision: project.headRevision,
+        checkpointRevision: 0,
+        lease: {
+          id: 'lease-rename-test',
+          deviceId: 'device-rename-test',
+          expiresAt: Date.now() + 90_000,
+          owned: true,
+        },
+      } });
+      return;
+    }
     await route.fulfill({ status: 404, json: { error: '测试接口不存在' } });
   });
 
@@ -517,13 +554,17 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   await expect(libraryRow).toHaveCSS('color', 'rgb(255, 255, 255)');
   const libraryName = library.getByRole('button', { name: '重命名书籍：初始书名' });
   await expect(libraryName).toBeVisible();
+  await libraryName.click();
+  await expect(library).toBeVisible();
   await libraryName.dblclick();
   const libraryInput = library.getByRole('textbox', { name: '修改书籍名称：初始书名' });
   await libraryInput.fill('书库重命名');
   await libraryInput.press('Enter');
   await expect(library.getByRole('button', { name: '重命名书籍：书库重命名' })).toBeVisible();
 
-  await library.getByRole('button', { name: '继续当前浏览器中的画布' }).click();
+  const renamedLibraryRow = library.locator('.book-library-project-row').filter({ hasText: '书库重命名' });
+  await renamedLibraryRow.click({ position: { x: 8, y: 35 } });
+  await expect(library).toHaveCount(0);
   await page.getByRole('button', { name: /^云同步：/u }).click();
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   await expect(panel.getByRole('button', { name: '立即同步' }).locator('[data-icon="sync"]')).toBeVisible();
@@ -2043,7 +2084,7 @@ test('global color presets keep canvas strokes adaptive on dark and eye-care bac
   )).toBe('#fafaf9');
 });
 
-test('a selected connection with a local color stays shadow-free', async ({ page }) => {
+test('a selected custom-color connection matches its hover cue without a shadow', async ({ page }) => {
   await openApplication(page);
   const cards = page.locator('.text-node-card');
   await cards.nth(0).click({ position: { x: 80, y: 90 } });
@@ -2064,6 +2105,11 @@ test('a selected connection with a local color stays shadow-free', async ({ page
   await expect(renderedConnection).toHaveClass(/\bselected\b/u);
   await expect(renderedConnection).toHaveClass(/\bcustom-color\b/u);
   await expect(renderedConnection).toHaveCSS('filter', 'none');
+  const selectedStroke = await renderedConnection.evaluate((element) => getComputedStyle(element).stroke);
+  await page.keyboard.press('Escape');
+  await hitArea.hover({ force: true });
+  await expect.poll(() => renderedConnection.evaluate((element) => getComputedStyle(element).stroke))
+    .toBe(selectedStroke);
 });
 
 test('global color settings preview, save, undo and redo the connection curve color', async ({ page }) => {

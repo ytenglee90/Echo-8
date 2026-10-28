@@ -23,9 +23,9 @@ opened local file must never be silently converted into a cloud book.
 
 - The library brand, browser favicon and toolbar cloud affordance use the one
   canonical `public/favicon.svg` E8 asset; feature code does not redraw an E8
-  glyph. The canonical mark is a monochrome rounded E8: the continuous double
-  loop of the `8` also reads as infinity and echo. The toolbar colors the whole
-  mark without a separate state dot: green means the active book is fully
+  glyph. The canonical mark retains the original solid black E8 design. The
+  toolbar applies a state tint over that same mark without a separate state
+  dot: green means the active book is fully
   synchronized, gray means signed out, unbound, offline or otherwise not
   synchronized, and a bounded breathing animation indicates connecting,
   uploading or queued changes. The mark is intentionally one step larger than
@@ -36,11 +36,14 @@ opened local file must never be silently converted into a cloud book.
 - Repeated library headings and book-list action text are visually removed.
   Open, delete, refresh, sync and logout remain ordinary buttons with icons,
   stable accessible names, keyboard focus and native hover titles.
-- The large Continue card keeps its text action and accessible name without a
-  redundant play glyph. Book rows use larger book and action icons, while the
-  active book uses a solid near-black row with white foregrounds. Account
-  display names remove Cloudflare's presentation-only English `’s Account`
-  suffix without changing the authenticated account identity.
+- The large Continue card is removed. New and Open remain the two explicit
+  local entry points; a cloud-book row can also be opened by clicking its free
+  row surface, while the title remains an isolated double-click rename control
+  and the explicit Open button remains keyboard-accessible. Book rows use
+  larger book and action icons, while the active book uses a solid near-black
+  row with white foregrounds. Account display names remove Cloudflare's
+  presentation-only English `’s Account` suffix without changing the
+  authenticated account identity.
 - ADR-0075's confirmation remains mandatory for deletion. ADR-0076's
   requirement that the pre-confirmation Delete control itself be text-labelled
   is replaced by the accessible icon-button presentation above.
@@ -75,8 +78,10 @@ opened local file must never be silently converted into a cloud book.
   preservation and unchanged native-output suppression.
 - Hosted browser tests verify that the brand and E8-only toolbar status both
   load `/favicon.svg`, that the toolbar has no separate dot and uses the larger
-  state-colored mark, plus icon actions in both book lists while retaining
-  deletion confirmation.
+  state-colored mark, that the homepage has only New and Open cards, and that
+  a book row opens from its free surface without stealing the title's
+  double-click rename gesture. Icon actions in both book lists retain deletion
+  confirmation.
 - Portable browser tests verify that the same SVG is embedded as data URLs for
   both the page favicon and E8 brand while preserving the zero-network
   `file://` boundary.

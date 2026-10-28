@@ -28,7 +28,11 @@ test('the generated single HTML starts from the library and edits without extern
   await expect(libraryMark).toHaveAttribute('src', /^data:image\/svg\+xml,/u);
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /^data:image\/svg\+xml,/u);
   await expect(library.getByText('单文件模式已保留云同步入口')).toBeVisible();
-  await library.getByRole('button', { name: '继续当前浏览器中的画布' }).click();
+  await expect(library.getByRole('button', { name: '继续当前浏览器中的画布' })).toHaveCount(0);
+  await page.keyboard.press('Control+k');
+  const commandPalette = page.getByRole('dialog', { name: '命令面板' });
+  await commandPalette.getByRole('textbox', { name: '搜索命令' }).fill('进入当前画布');
+  await commandPalette.getByRole('option', { name: /^进入当前画布/u }).click();
   await expect(page.getByRole('article', { name: /文本节点：/u })).toHaveCount(2);
   await expect(page.getByRole('status').filter({ hasText: '纠错规则尚未导入' })).toBeVisible();
 

@@ -197,16 +197,6 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                 <Icon name="folder-open" />
                 <strong>{busy === 'open-local' ? '正在准备…' : '打开'}</strong>
               </button>
-              <button
-                className="book-library-action-card continue"
-                type="button"
-                aria-label="继续当前浏览器中的画布"
-                title="继续当前浏览器中的画布"
-                disabled={Boolean(busy)}
-                onClick={() => void client.dispatch('bookLibrary.enterCanvas')}
-              >
-                <strong>继续</strong>
-              </button>
             </div>
             <input
               ref={fileInput}
@@ -285,6 +275,11 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                       <div
                         className={`book-library-project-row${project.id === cloud.activeProjectId ? ' active' : ''}`}
                         key={project.id}
+                        onClick={(event) => {
+                          const target = event.target;
+                          if (target instanceof Element && target.closest('button, input')) return;
+                          void openProject(project);
+                        }}
                       >
                         <span className="book-library-project-icon"><Icon name="echo-file" /></span>
                         <span className="book-library-project-copy">
@@ -328,9 +323,7 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                             aria-label={`${project.id === cloud.activeProjectId ? '继续' : '打开'}书籍：${project.name}`}
                             title={project.id === cloud.activeProjectId ? '继续当前书籍' : '打开书籍'}
                             disabled={Boolean(busy) || editing}
-                            onClick={() => void run(`open:${project.id}`, () => client.dispatch('cloudSync.openProject', { projectId: project.id })).then((ok) => {
-                              if (ok) void client.dispatch('bookLibrary.enterCanvas');
-                            })}
+                            onClick={() => void openProject(project)}
                           ><Icon name={project.id === cloud.activeProjectId ? 'play' : 'folder-open'} /></button>
                           <button
                             className="book-library-project-delete"
@@ -356,6 +349,14 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
 
     </section>
   );
+
+  function openProject(project: CloudProjectSummary): Promise<void> {
+    return run(`open:${project.id}`, () => client.dispatch('cloudSync.openProject', {
+      projectId: project.id,
+    })).then((ok) => {
+      if (ok) return client.dispatch('bookLibrary.enterCanvas').then(() => undefined);
+    });
+  }
 }
 
 function LibraryNotice({ title, children }: { title: string; children: ReactNode }) {

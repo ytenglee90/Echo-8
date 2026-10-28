@@ -106,7 +106,7 @@
 
 .book-library-layout { display: grid; gap: 34px; }
 .book-library-quick-start { min-width: 0; }
-.book-library-local-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.book-library-local-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .book-library-action-card {
   display: grid;
   place-items: center;
@@ -166,6 +166,7 @@
   border-radius: 11px;
   background: transparent;
   text-align: left;
+  cursor: pointer;
 }
 .book-library-project-row:hover { background: var(--control-hover); }
 .book-library-project-row.active,
@@ -324,7 +325,7 @@
 
 @media (max-width: 720px) {
   .book-library-content { width: min(100% - 28px, 560px); padding-top: 48px; }
-  .book-library-local-actions { grid-template-columns: repeat(3, minmax(92px, 1fr)); gap: 9px; }
+  .book-library-local-actions { grid-template-columns: repeat(2, minmax(92px, 1fr)); gap: 9px; }
   .book-library-action-card { min-height: 122px; border-radius: 17px; }
   .book-library-action-card svg { width: 28px; height: 28px; }
 }
@@ -333,7 +334,7 @@
   .book-library-header { padding-inline: 16px; }
   .book-library-account > span:not(.book-library-avatar) { display: none; }
   .book-library-content { padding-top: 40px; }
-  .book-library-local-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .book-library-local-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .book-library-action-card { min-height: 104px; padding: 15px 8px; }
   .book-library-action-card strong { font-size: 12px; }
   .book-library-project-row { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 9px; padding-inline: 8px; }

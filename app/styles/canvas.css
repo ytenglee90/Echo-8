@@ -641,11 +641,6 @@
   stroke: var(--canvas-selection, var(--selection));
 }
 
-.connection-path.selected.custom-color {
-  fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
-  stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
-}
-
 .connection-path.draft {
   fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
   stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));

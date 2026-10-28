@@ -28,8 +28,8 @@ export function createBookLibraryPlugin(homeView?: unknown): PluginDefinition {
       signals: ['bookLibrary.updated', 'cloudSync.updated'],
       asks: ['cloudSync.state', 'cloudSync.projects'],
       ui: ['book-library.home'],
-      actions: ['book-library.open-action'],
-      shortcuts: ['book-library.open-shortcut'],
+      actions: ['book-library.open-action', 'book-library.enter-action'],
+      shortcuts: ['book-library.open-shortcut', 'book-library.enter-shortcut'],
       permissions: [
         'ui.welcome.contribute',
         'ui.action.register',
@@ -87,10 +87,24 @@ export function createBookLibraryPlugin(homeView?: unknown): PluginDefinition {
         keywords: ['主页', '首页', '新建', '打开', '切换'],
         priority: -400,
       });
+      context.ui.action({
+        id: 'book-library.enter-action',
+        label: '进入当前画布',
+        command: 'bookLibrary.enterCanvas',
+        category: '文件',
+        keywords: ['关闭书库', '当前画布', '恢复'],
+        priority: -399,
+      });
       context.ui.shortcut({
         id: 'book-library.open-shortcut',
         command: 'bookLibrary.show',
         label: '返回书库',
+        category: '书籍',
+      });
+      context.ui.shortcut({
+        id: 'book-library.enter-shortcut',
+        command: 'bookLibrary.enterCanvas',
+        label: '进入当前画布',
         category: '书籍',
       });
     },
