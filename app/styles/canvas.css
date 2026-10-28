@@ -641,6 +641,14 @@
   stroke: var(--canvas-selection, var(--selection));
 }
 
+.connection-hit-area:hover + .connection-path.custom-color,
+.connection-hit-area:focus-visible + .connection-path.custom-color,
+.connection-path.selected.custom-color {
+  fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
+  stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
+  stroke-width: calc(var(--connection-stroke-width, 1.5px) + 1.5px);
+}
+
 .connection-path.draft {
   fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
   stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));

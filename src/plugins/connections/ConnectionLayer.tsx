@@ -284,8 +284,8 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     const localPreview = previewIds.has(connection.id)
       ? linePreview?.color
       : undefined;
-    const source = localPreview ?? connection.lineColor ?? globalConnectionSourceColor;
-    return source ? ensureCanvasColorContrast(source, canvasColor) : globalConnectionLineColor;
+    const localSource = localPreview ?? connection.lineColor;
+    return localSource ?? globalConnectionLineColor;
   };
   const batchedPaths = useMemo(() => {
     if (!batchRendered) return [];

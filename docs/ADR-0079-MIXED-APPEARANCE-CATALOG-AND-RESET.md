@@ -19,7 +19,13 @@ Appearance owners additionally expose two optional versioned capabilities:
 
 The global-color panel places an icon-only Reset action beside Close. One click runs the document reset and then restores palette-owned personal workspace preferences to the built-in light defaults. These remain two explicit transactions because core forbids mixing document patches with personal-workspace patches: the document portion enters global history, while personal chrome preferences continue to use `history: false` as required by ADR-0005.
 
-A connection with a chosen local color remains visibly selected through its stable geometry and selection state, but does not add a drop-shadow filter. This avoids the blurred halo shown while color editing.
+A connection with a chosen local color renders that exact picker RGB value rather
+than applying the automatic global-line contrast correction. Hover, keyboard
+focus and selection retain the same color and use one bounded stroke-width cue;
+they do not add a drop-shadow filter or substitute the canvas selection color.
+This keeps pale and saturated object colors consistent with other recolored
+modules while avoiding the blurred halo shown during color editing. Automatic
+and global inherited connection colors retain their existing adaptive contrast.
 
 ## Compatibility and migration
 
@@ -27,11 +33,11 @@ The singular preview fields remain valid, so existing picker and editor producer
 
 ## Consequences
 
-- One palette commit can recolor different selected module kinds uniformly and undo them together.
+- One palette commit can recolor different selected module kinds uniformly, render the same chosen RGB value on each kind and undo them together.
 - The picker records colors from every active appearance owner instead of inferring them from node summaries.
 - Reset remains ownership-safe, revision-independent at the UI boundary and undoable for document appearance.
 - Personal interface colors intentionally do not enter document history or travel with the canvas.
 
 ## Verification
 
-Contract tests cover mixed node/connection/group updates, one-step undo, cross-owner color records, reset of global and local connection colors, node titles, document and range text colors, groups and annotations, personal preference defaults, and undo restoration. Browser tests cover the Reset control restoring canvas and toolbar defaults and selected locally colored connections remaining shadow-free. Type checking, linting, full contract, browser and portable-build suites remain release gates.
+Contract tests cover mixed node/connection/group updates, one-step undo, cross-owner color records, reset of global and local connection colors, node titles, document and range text colors, groups and annotations, personal preference defaults, and undo restoration. Browser tests cover the Reset control restoring canvas and toolbar defaults and a locally colored connection retaining the exact picker color in its ordinary, hovered and selected states without a shadow. Type checking, linting, full contract, browser and portable-build suites remain release gates.

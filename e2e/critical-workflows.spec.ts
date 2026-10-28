@@ -2084,7 +2084,7 @@ test('global color presets keep canvas strokes adaptive on dark and eye-care bac
   )).toBe('#fafaf9');
 });
 
-test('a selected custom-color connection matches its hover cue without a shadow', async ({ page }) => {
+test('a custom-color connection keeps the exact picker color through selection and hover', async ({ page }) => {
   await openApplication(page);
   const cards = page.locator('.text-node-card');
   await cards.nth(0).click({ position: { x: 80, y: 90 } });
@@ -2096,20 +2096,33 @@ test('a selected custom-color connection matches its hover cue without a shadow'
   await hitArea.click({ force: true });
   await page.getByRole('button', { name: '修改选中项颜色', exact: true }).click();
   const picker = page.getByRole('dialog', { name: '颜色选择器' });
-  await picker.getByRole('spinbutton', { name: 'R 通道数值' }).fill('28');
-  await picker.getByRole('spinbutton', { name: 'G 通道数值' }).fill('112');
+  await picker.getByRole('spinbutton', { name: 'R 通道数值' }).fill('255');
+  await picker.getByRole('spinbutton', { name: 'G 通道数值' }).fill('238');
   const blue = picker.getByRole('spinbutton', { name: 'B 通道数值' });
-  await blue.fill('84');
+  await blue.fill('0');
   await blue.press('Enter');
 
   await expect(renderedConnection).toHaveClass(/\bselected\b/u);
   await expect(renderedConnection).toHaveClass(/\bcustom-color\b/u);
   await expect(renderedConnection).toHaveCSS('filter', 'none');
-  const selectedStroke = await renderedConnection.evaluate((element) => getComputedStyle(element).stroke);
+  const selectedAppearance = await renderedConnection.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { fill: style.fill, stroke: style.stroke, width: style.strokeWidth };
+  });
+  expect(selectedAppearance.fill).toBe('rgb(255, 238, 0)');
+  expect(selectedAppearance.stroke).toBe('rgb(255, 238, 0)');
+  expect(Number.parseFloat(selectedAppearance.width)).toBeGreaterThan(1.5);
+
   await page.keyboard.press('Escape');
+  await expect(renderedConnection).not.toHaveClass(/\bselected\b/u);
+  await page.mouse.move(12, 12);
+  await expect(renderedConnection).toHaveCSS('stroke', 'rgb(255, 238, 0)');
+  await expect(renderedConnection).toHaveCSS('stroke-width', '1.5px');
   await hitArea.hover({ force: true });
-  await expect.poll(() => renderedConnection.evaluate((element) => getComputedStyle(element).stroke))
-    .toBe(selectedStroke);
+  await expect.poll(() => renderedConnection.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { fill: style.fill, stroke: style.stroke, width: style.strokeWidth };
+  })).toEqual(selectedAppearance);
 });
 
 test('global color settings preview, save, undo and redo the connection curve color', async ({ page }) => {
