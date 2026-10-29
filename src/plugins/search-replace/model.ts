@@ -54,6 +54,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
     manifest: defineManifest('search-replace', '查找替换', {
       namespaces: [SEARCH_NAMESPACE],
       namespaceDomains: { [SEARCH_NAMESPACE]: 'workspace' },
+      sessionOnlyWorkspace: { [SEARCH_NAMESPACE]: true },
       requiresCapabilities: ['content.search@2', 'content.replacePlan@2'],
       optionalCapabilities: [
         'editor.activeNode@1',

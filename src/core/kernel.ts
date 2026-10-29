@@ -51,6 +51,7 @@ import { UISurfaceArbiter } from './ui-surface-arbiter.ts';
 import { WorkerService, type ManagedWorkerFactory } from './worker-service.ts';
 import { NetworkAccessService } from './network-access.ts';
 import type { TextAssetReadRequest, TextAssetReadResult } from '../protocols/assets.ts';
+import { createWorkspacePersistencePolicy } from './workspace-persistence.ts';
 
 export class ApplicationKernel {
   readonly diagnostics = new DiagnosticsService();
@@ -106,6 +107,7 @@ export class ApplicationKernel {
         'core.persistence',
       ),
       this.workers,
+      createWorkspacePersistencePolicy(definitions.map((definition) => definition.manifest)),
     );
     this.plugins = new PluginManager({
       resources: this.resources,

@@ -5,6 +5,7 @@ export const DIAGNOSTIC_CENTER_NAMESPACE = 'diagnosticCenter';
 export const diagnosticCenterManifest = defineManifest('diagnostic-center', '诊断中心', {
   namespaces: [DIAGNOSTIC_CENTER_NAMESPACE],
   namespaceDomains: { [DIAGNOSTIC_CENTER_NAMESPACE]: 'workspace' },
+  sessionOnlyWorkspace: { [DIAGNOSTIC_CENTER_NAMESPACE]: true },
   optionalCapabilities: ['search.index.status@1'],
   commands: ['diagnostics.open', 'diagnostics.close'],
   queries: ['diagnostics.state'],

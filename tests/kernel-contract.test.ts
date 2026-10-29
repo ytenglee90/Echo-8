@@ -3073,6 +3073,58 @@ test('cloud books use cloud save by default, suppress local-location prompts, an
   );
 });
 
+test('a read-only cloud save opens cloud sync before reporting the takeover requirement', async () => {
+  let cloudPanelOpenCount = 0;
+  const cloudState = (): CloudSyncState => ({
+    panelOpen: cloudPanelOpenCount > 0,
+    phase: 'read-only',
+    configured: true,
+    authenticated: true,
+    accounts: [],
+    installations: [],
+    activeInstallationId: 'installation:readonly',
+    activeProjectId: 'project:readonly',
+    activeProjectName: '只读云端书籍',
+    headRevision: 4,
+    pendingCommits: 0,
+    upgradeAvailable: false,
+    error: '另一台设备正在编辑；你可以只读查看或明确接管',
+  });
+  const cloudPlugin: PluginDefinition = {
+    manifest: defineManifest('cloud-sync', '测试只读云同步', {
+      commands: ['cloudSync.open', 'cloudSync.syncNow'],
+      queries: ['cloudSync.state'],
+      signals: ['cloudSync.updated'],
+    }),
+    start(context) {
+      context.queries.register({ type: 'cloudSync.state', handle: cloudState });
+      context.commands.register({
+        type: 'cloudSync.open',
+        handle: () => {
+          cloudPanelOpenCount += 1;
+          return { result: cloudState() };
+        },
+      });
+      context.commands.register({
+        type: 'cloudSync.syncNow',
+        handle: () => ({ result: cloudState() }),
+      });
+    },
+  };
+  const kernel = new ApplicationKernel([cloudPlugin, textNodePlugin, createImportExportPlugin()]);
+  await kernel.start();
+  await waitFor(async () => (await kernel.capabilities.request<FileRuntimeState>('file.state@1')).cloudProjectActive
+    ? true
+    : undefined);
+
+  await assert.rejects(
+    () => kernel.router.dispatch('file.saveProject', undefined, 'core.test'),
+    /当前云端书籍为只读，请先接管编辑权/u,
+  );
+  await waitFor(async () => cloudPanelOpenCount === 1 ? true : undefined);
+  assert.equal(cloudPanelOpenCount, 1);
+});
+
 test('a new book gets a cloud target on the unified autosave request while a local book keeps local-save rules', async () => {
   let createCount = 0;
   let nativePickerCount = 0;

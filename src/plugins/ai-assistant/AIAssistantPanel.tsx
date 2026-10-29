@@ -95,12 +95,12 @@ function AIAssistantWindow({
   const [dismissedMemorySuggestion, setDismissedMemorySuggestion] = useState('');
   const feedRef = useRef<HTMLDivElement>(null);
   const pendingSentScroll = useRef(false);
-  const insertSourceReferenceRef = useRef<(sourceId: string) => void>(() => undefined);
+  const insertSourceReferencesRef = useRef<(sourceIds: readonly string[]) => void>(() => undefined);
   const activeSessionIdRef = useRef<string | undefined>(undefined);
   const transcriptNodeIdRef = useRef<string | undefined>(undefined);
   const dropOwner = `${AI_DROP_OWNER}:${assistantId}`;
-  const handleReferenceDrop = useCallback((sourceId: string) => {
-    insertSourceReferenceRef.current(sourceId);
+  const handleReferenceDrop = useCallback((sourceIds: readonly string[]) => {
+    insertSourceReferencesRef.current(sourceIds);
   }, []);
   const {
     prepared,
@@ -178,7 +178,7 @@ function AIAssistantWindow({
     textareaRef,
     composerHeight,
     composerProps,
-    insertSourceReference,
+    insertSourceReferences,
     cancelComposition,
   } = useAIComposerController({
     client,
@@ -208,8 +208,8 @@ function AIAssistantWindow({
     requestAnimationFrame(() => sent.scrollIntoView({ block: 'start', behavior: 'smooth' }));
   }, [transcript?.text]);
   useEffect(() => {
-    insertSourceReferenceRef.current = insertSourceReference;
-  }, [insertSourceReference]);
+    insertSourceReferencesRef.current = insertSourceReferences;
+  }, [insertSourceReferences]);
 
   if (!state.open) return null;
 

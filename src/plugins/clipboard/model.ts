@@ -24,6 +24,7 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
     manifest: defineManifest('clipboard', '内部剪贴板', {
       namespaces: [CLIPBOARD_NAMESPACE],
       namespaceDomains: { [CLIPBOARD_NAMESPACE]: 'workspace' },
+      sessionOnlyWorkspace: { [CLIPBOARD_NAMESPACE]: true },
       requiresCapabilities: ['selection.read@1', 'selection.resolve@1'],
       optionalCapabilities: ['clipboard.serialize@1', 'clipboard.instantiate@1'],
       providesCapabilities: ['clipboard.state@1'],

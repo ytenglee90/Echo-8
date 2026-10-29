@@ -66,6 +66,7 @@ export function createGroupsPlugin(
         [GROUP_NAMESPACE]: 'document',
         [GROUP_MEMBERSHIP_UI_NAMESPACE]: 'workspace',
       },
+      sessionOnlyWorkspace: { [GROUP_MEMBERSHIP_UI_NAMESPACE]: true },
       requiresCapabilities: [
         'content.summaries@1',
         'content.summariesById@1',

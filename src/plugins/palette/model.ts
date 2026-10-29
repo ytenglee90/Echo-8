@@ -112,6 +112,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
     manifest: defineManifest('palette', '全局颜色设置', {
       namespaces: [PALETTE_NAMESPACE],
       namespaceDomains: { [PALETTE_NAMESPACE]: 'workspace' },
+      sessionOnlyWorkspace: { [PALETTE_NAMESPACE]: ['open'] },
       optionalCapabilities: [
         'appearance.read@1',
         'appearance.updatePlan@1',

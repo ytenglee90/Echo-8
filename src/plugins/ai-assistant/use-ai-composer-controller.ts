@@ -150,19 +150,31 @@ export function useAIComposerController({
     });
   }, [caret, changePrompt, prompt, setPrepared]);
 
-  const insertSourceReference = useCallback((sourceId: string, replaceQuery = false) => {
+  const insertSourceReferences = useCallback((sourceIds: readonly string[], replaceQuery = false) => {
     if (!activeSession) return;
-    const source = catalog.sources.find((candidate) => candidate.sourceId === sourceId);
-    if (!source) return;
-    const duplicateTitle = catalog.sources.some((candidate) =>
-      candidate.sourceId !== source.sourceId && candidate.title === source.title);
-    const token = compactReferenceToken(source.title, source.sourceId, duplicateTitle);
+    const requestedIds = new Set(sourceIds);
+    const sources = [...new Set(sourceIds)]
+      .map((sourceId) => catalog.sources.find((candidate) => candidate.sourceId === sourceId))
+      .filter((source): source is AICatalogSnapshot['sources'][number] => Boolean(source));
+    if (sources.length === 0) return;
+    const references = sources.map((source) => {
+      const duplicateTitle = catalog.sources.some((candidate) =>
+        candidate.sourceId !== source.sourceId && candidate.title === source.title);
+      return {
+        token: compactReferenceToken(source.title, source.sourceId, duplicateTitle),
+        sourceId: source.sourceId,
+      };
+    });
     setInlineReferences((current) => [
-      ...current.filter((reference) => reference.sourceId !== source.sourceId),
-      { token, sourceId: source.sourceId },
+      ...current.filter((reference) => !requestedIds.has(reference.sourceId)),
+      ...references,
     ]);
-    applyPromptInsertion(token, replaceQuery);
+    applyPromptInsertion(references.map((reference) => reference.token).join(' '), replaceQuery);
   }, [activeSession, applyPromptInsertion, catalog.sources]);
+
+  const insertSourceReference = useCallback((sourceId: string, replaceQuery = false) => {
+    insertSourceReferences([sourceId], replaceQuery);
+  }, [insertSourceReferences]);
 
   const chooseMentionSuggestion = useCallback((suggestion: (typeof mentionSuggestions)[number]) => {
     if (suggestion.kind === 'source') insertSourceReference(suggestion.sourceId, true);
@@ -361,7 +373,7 @@ export function useAIComposerController({
     textareaRef,
     composerHeight,
     composerProps,
-    insertSourceReference,
+    insertSourceReferences,
     cancelComposition,
   };
 }

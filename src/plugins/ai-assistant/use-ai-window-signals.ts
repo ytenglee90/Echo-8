@@ -34,7 +34,7 @@ export function useAIWindowSignals({
   activeSessionIdRef: RefObject<string | undefined>;
   transcriptNodeIdRef: RefObject<string | undefined>;
   dropOwner: string;
-  onReferenceDrop: (sourceId: string) => void;
+  onReferenceDrop: (sourceIds: readonly string[]) => void;
 }) {
   const [prepared, setPrepared] = useState<AIPreparedContext>();
   const [status, setStatus] = useState<AIStatusSignal>({ state: 'idle', message: '输入要求后发送' });
@@ -153,7 +153,10 @@ export function useAIWindowSignals({
       (message) => {
         if (message.payload.targetOwner !== dropOwner) return;
         setReferenceDropReady(false);
-        referenceDropRef.current(message.payload.sourceId);
+        referenceDropRef.current([...new Set([
+          message.payload.sourceId,
+          ...(message.payload.sourceIds ?? []),
+        ].filter(Boolean))]);
       },
     );
     const removeComposerResize = client.subscribeSignal<{ assistantId?: string; height?: number; clear?: boolean }>(

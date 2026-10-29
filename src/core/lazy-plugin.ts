@@ -51,7 +51,7 @@ function assertCompatibleManifest(expected: PluginManifest, actual: PluginManife
   const fields: Array<keyof PluginManifest> = [
     'id', 'version', 'apiVersion', 'dataVersion', 'dependencies', 'optionalDependencies',
     'requiresCapabilities', 'optionalCapabilities', 'providesCapabilities',
-    'permissions', 'namespaces', 'namespaceDomains', 'commands', 'dispatches',
+    'permissions', 'namespaces', 'namespaceDomains', 'sessionOnlyWorkspace', 'commands', 'dispatches',
     'events', 'signals', 'queries', 'asks', 'ui', 'actions', 'shortcuts',
     'themes', 'workerJobs',
   ];

@@ -58,6 +58,7 @@ export function createAnnotationsPlugin(
         [ANNOTATION_NAMESPACE]: 'document',
         [ANNOTATION_UI_NAMESPACE]: 'workspace',
       },
+      sessionOnlyWorkspace: { [ANNOTATION_UI_NAMESPACE]: true },
       requiresCapabilities: ['selection.read@1'],
       optionalCapabilities: [
         'editor.selection@1',

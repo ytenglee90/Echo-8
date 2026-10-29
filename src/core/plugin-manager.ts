@@ -788,6 +788,23 @@ function validateManifest(manifest: PluginManifest): void {
   if (manifest.themes.length > 0) {
     assertPermission(manifest, 'ui.theme.manage', 'declare themes');
   }
+  for (const [namespace, declaration] of Object.entries(manifest.sessionOnlyWorkspace)) {
+    if (declaration === undefined) continue;
+    if (!manifest.namespaces.includes(namespace)) {
+      throw new Error(`Session-only workspace namespace ${namespace} is not owned by ${manifest.id}`);
+    }
+    if ((manifest.namespaceDomains[namespace] ?? 'document') !== 'workspace') {
+      throw new Error(`Session-only namespace ${namespace} must belong to the workspace domain`);
+    }
+    if (declaration !== true) {
+      if (declaration.length === 0 || declaration.some((key) => !key)) {
+        throw new Error(`Session-only workspace keys for ${namespace} are invalid`);
+      }
+      if (new Set(declaration).size !== declaration.length) {
+        throw new Error(`Duplicate session-only workspace key in ${manifest.id}.${namespace}`);
+      }
+    }
+  }
   for (const command of manifest.dispatches) assertCommandPermission(manifest, command);
   const lists = [
     manifest.dependencies,

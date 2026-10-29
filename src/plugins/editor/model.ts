@@ -51,6 +51,10 @@ export function createEditorPlugin(
         [EDITOR_NAMESPACE]: 'workspace',
         [EDITOR_METRICS_NAMESPACE]: 'workspace',
       },
+      sessionOnlyWorkspace: {
+        [EDITOR_NAMESPACE]: true,
+        [EDITOR_METRICS_NAMESPACE]: true,
+      },
       requiresCapabilities: [
         'content.summaries@1',
         'content.summariesById@1',

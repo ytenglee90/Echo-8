@@ -149,6 +149,10 @@ interface ResizeSession extends ResizePreview {
 
 const ECHO8_CONTENT_DRAG_TYPE = 'application/x-echo8-content';
 
+function referenceSourceIds(primaryId: string, positions: readonly NodePosition[]): string[] {
+  return [...new Set([primaryId, ...positions.map((position) => position.id)])];
+}
+
 export function CanvasSurface({
   client,
   renderSlot,
@@ -238,26 +242,32 @@ export function CanvasSurface({
       : undefined;
   }, []);
 
-  const syncReferenceDragPreview = useCallback((sourceId: string, clientX: number, clientY: number) => {
+  const syncReferenceDragPreview = useCallback((sourceIds: string[], clientX: number, clientY: number) => {
+    const sourceId = sourceIds[0];
+    if (!sourceId) return;
     const target = referenceTargetAt(clientX, clientY);
     client.emit('content.reference.drag.preview', target
       ? {
           sourceId,
+          sourceIds,
           targetOwner: target.owner,
           overTarget: true,
         } satisfies ContentReferenceDragPreview
-      : { sourceId, overTarget: false } satisfies ContentReferenceDragPreview);
+      : { sourceId, sourceIds, overTarget: false } satisfies ContentReferenceDragPreview);
   }, [client, referenceTargetAt]);
 
   const clearReferenceDragPreview = useCallback(() => {
     client.emit('content.reference.drag.preview', { clear: true } satisfies ContentReferenceDragPreview);
   }, [client]);
 
-  const commitReferenceDrop = useCallback((sourceId: string, clientX: number, clientY: number) => {
+  const commitReferenceDrop = useCallback((sourceIds: string[], clientX: number, clientY: number) => {
+    const sourceId = sourceIds[0];
+    if (!sourceId) return false;
     const target = referenceTargetAt(clientX, clientY);
     if (!target) return false;
     client.emit('content.reference.drop', {
       sourceId,
+      sourceIds,
       targetOwner: target.owner,
     } satisfies ContentReferenceDrop);
     clearReferenceDragPreview();
@@ -740,7 +750,7 @@ export function CanvasSurface({
           offset: { x: destination.x - origin.x, y: destination.y - origin.y },
         });
       }
-      if (commitReferenceDrop(primaryId, clientX, clientY)) return;
+      if (commitReferenceDrop(referenceSourceIds(primaryId, positions), clientX, clientY)) return;
       const surface = surfaceRef.current;
       if (!membershipActive || !surface) return moveNormally();
       const pointer = screenToWorld(clientX, clientY, cameraRef.current, surface);
@@ -823,7 +833,11 @@ export function CanvasSurface({
         positions: latest,
         duplicateOrigins: request.duplicateOnCommit ? origins : [],
       } satisfies DragPreview);
-      syncReferenceDragPreview(request.primaryId, request.latestX, request.latestY);
+      syncReferenceDragPreview(
+        referenceSourceIds(request.primaryId, origins),
+        request.latestX,
+        request.latestY,
+      );
       syncGroupMembershipPreview(
         request.primaryId,
         request.latestX,
@@ -981,7 +995,7 @@ export function CanvasSurface({
         pendingDrag.current.latestY - pendingDrag.current.startY,
       ) > 2) {
         syncReferenceDragPreview(
-          pendingDrag.current.primaryId,
+          [pendingDrag.current.primaryId],
           event.clientX,
           event.clientY,
         );
@@ -1091,7 +1105,11 @@ export function CanvasSurface({
         positions: drag.current.latest,
         duplicateOrigins: drag.current.duplicateOnCommit ? drag.current.origins : [],
       } satisfies DragPreview);
-      syncReferenceDragPreview(drag.current.primaryId, event.clientX, event.clientY);
+      syncReferenceDragPreview(
+        referenceSourceIds(drag.current.primaryId, drag.current.origins),
+        event.clientX,
+        event.clientY,
+      );
       syncGroupMembershipPreview(
         drag.current.primaryId,
         event.clientX,

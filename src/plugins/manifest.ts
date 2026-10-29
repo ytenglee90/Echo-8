@@ -20,6 +20,7 @@ export function defineManifest(
     permissions: [],
     namespaces: [],
     namespaceDomains: {},
+    sessionOnlyWorkspace: {},
     commands: [],
     dispatches: [],
     events: [],

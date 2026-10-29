@@ -9,6 +9,7 @@ export const pluginCenterPlugin: PluginDefinition = {
   manifest: defineManifest('plugin-center', '插件中心', {
     namespaces: [PLUGIN_CENTER_NAMESPACE],
     namespaceDomains: { [PLUGIN_CENTER_NAMESPACE]: 'workspace' },
+    sessionOnlyWorkspace: { [PLUGIN_CENTER_NAMESPACE]: true },
     commands: ['pluginCenter.open', 'pluginCenter.close'],
     dispatches: ['plugin.start', 'plugin.pause', 'plugin.stop', 'plugin.uninstall', 'pluginCenter.close'],
     queries: ['pluginCenter.state'],

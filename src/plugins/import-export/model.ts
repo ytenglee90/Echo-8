@@ -90,6 +90,7 @@ export function createImportExportPlugin(
       optionalDependencies: ['cloud-sync'],
       namespaces: [FILE_NAMESPACE],
       namespaceDomains: { [FILE_NAMESPACE]: 'workspace' },
+      sessionOnlyWorkspace: { [FILE_NAMESPACE]: true },
       optionalCapabilities: [
         'content.summaries@1',
         'content.read@1',
@@ -132,6 +133,7 @@ export function createImportExportPlugin(
         'system.recovery.restore',
         'file.commitImportedDocuments',
         'cloudSync.syncNow',
+        'cloudSync.open',
         'cloudSync.disconnectProject',
         'cloudSync.saveCurrentAsProject',
       ],
@@ -249,7 +251,10 @@ export function createImportExportPlugin(
       const saveActiveCloudProject = async (parent: MessageEnvelope): Promise<CloudSyncState | undefined> => {
         const before = await readCloudState();
         if (!before?.activeProjectId) return undefined;
-        if (before.phase === 'read-only') throw new Error('当前云端书籍为只读，请先接管编辑权');
+        if (before.phase === 'read-only') {
+          context.commands.defer('cloudSync.open');
+          throw new Error('当前云端书籍为只读，请先接管编辑权');
+        }
         if (before.phase === 'conflict') throw new Error('云端书籍存在版本冲突，请先在云同步面板处理');
         const next = await context.commands.invoke('cloudSync.syncNow');
         applyCloudState(next);

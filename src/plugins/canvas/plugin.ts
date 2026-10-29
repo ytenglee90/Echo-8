@@ -37,6 +37,7 @@ export const canvasPlugin: PluginDefinition = {
   manifest: defineManifest('canvas', 'Echo-8 画布', {
     namespaces: [VIEW_NAMESPACE, APPEARANCE_NAMESPACE],
     namespaceDomains: { [VIEW_NAMESPACE]: 'workspace', [APPEARANCE_NAMESPACE]: 'document' },
+    sessionOnlyWorkspace: { [VIEW_NAMESPACE]: true },
     requiresCapabilities: ['content.summaries@1', 'content.catalog@2', 'content.metrics@2'],
     optionalCapabilities: [
       'selection.read@1',

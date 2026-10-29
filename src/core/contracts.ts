@@ -205,6 +205,12 @@ export interface PluginManifest {
   permissions: string[];
   namespaces: string[];
   namespaceDomains: Partial<Record<string, WritableStoreDomain>>;
+  /**
+   * Workspace records that are useful during one loaded page but must never
+   * enter a recovery checkpoint or survive a browser refresh. `true` marks
+   * the complete namespace; a string list marks only those keys.
+   */
+  sessionOnlyWorkspace: Partial<Record<string, true | string[]>>;
   commands: string[];
   dispatches: string[];
   events: string[];

@@ -573,6 +573,119 @@ test('the brand returns home while cloud sync stays in its governed panel', asyn
   await panel.getByRole('button', { name: '关闭云同步' }).click();
 });
 
+test('refresh keeps book data and color preferences but closes every session-only panel', async ({ page }) => {
+  await openApplication(page);
+  const cards = page.locator('.text-node-card');
+  await cards.nth(0).click({ position: { x: 80, y: 90 } });
+  await cards.nth(1).click({ position: { x: 80, y: 90 }, modifiers: ['Shift'] });
+  await page.getByRole('button', { name: /^连接两个节点/u }).click();
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+
+  await executeCommand(page, '打开全局颜色设置');
+  const colorPanel = page.getByRole('region', { name: '全局颜色设置' });
+  await colorPanel.getByRole('button', { name: /^B 暗调/u }).click();
+  await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+  await page.getByRole('button', { name: '查找替换', exact: true }).click();
+  await expect(colorPanel).toBeVisible();
+  await expect(page.getByRole('region', { name: 'AI 助手' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '查找与替换' })).toBeVisible();
+  await expect.poll(() => page.locator('.application-shell').evaluate((element) =>
+    getComputedStyle(element).getPropertyValue('--toolbar').trim())).toBe('#141517');
+
+  await page.waitForTimeout(700);
+  await page.reload();
+  const library = page.getByRole('region', { name: 'Echo-8 书库' });
+  await expect(library).toBeVisible();
+  await expect(page.getByRole('region', { name: '全局颜色设置' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'AI 助手' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '查找与替换' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '文本编辑区' })).toHaveCount(0);
+  await expect.poll(() => page.locator('.application-shell').evaluate((element) =>
+    getComputedStyle(element).getPropertyValue('--toolbar').trim())).toBe('#141517');
+
+  await library.press('Escape');
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(0);
+});
+
+test('saving a read-only cloud book opens the takeover panel after the failure notice', async ({ page }) => {
+  const project = {
+    id: 'project-read-only-test',
+    name: '只读云端书籍',
+    createdAt: Date.now() - 10_000,
+    updatedAt: Date.now() - 5_000,
+    headRevision: 0,
+  };
+  await page.route('**/api/cloud/status', (route) => route.fulfill({
+    json: {
+      configured: true,
+      authenticated: true,
+      user: { id: 'user-read-only-test', name: 'reader@example.com' },
+      accounts: [],
+      installations: [{
+        id: 'installation-read-only-test',
+        accountId: 'account-read-only-test',
+        accountName: '测试账户',
+        workerUrl: 'http://localhost:3000',
+        workerVersion: 3,
+        latestWorkerVersion: 3,
+        upgradeAvailable: false,
+        status: 'ready',
+      }],
+    },
+  }));
+  await page.route('**/api/cloud/token', (route) => route.fulfill({
+    json: {
+      installationId: 'installation-read-only-test',
+      workerUrl: 'http://localhost:3000',
+      token: 'test-data-token',
+      expiresAt: Date.now() + 10 * 60_000,
+    },
+  }));
+  await page.route('**/v1/projects**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === 'GET' && url.pathname === '/v1/projects') {
+      await route.fulfill({ json: { projects: [project] } });
+      return;
+    }
+    if (request.method() === 'POST' && url.pathname === `/v1/projects/${project.id}/lease`) {
+      await route.fulfill({
+        status: 409,
+        json: {
+          error: 'lease-held',
+          lease: { deviceId: 'other-device', expiresAt: Date.now() + 90_000 },
+        },
+      });
+      return;
+    }
+    if (request.method() === 'GET' && url.pathname === `/v1/projects/${project.id}/bootstrap`) {
+      await route.fulfill({ json: {
+        project,
+        checkpointRevision: 0,
+        chunks: [],
+        operations: [],
+      } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: '测试接口不存在' } });
+  });
+
+  await page.goto('/');
+  const library = page.getByRole('region', { name: 'Echo-8 书库' });
+  await library.getByRole('button', { name: '打开书籍：只读云端书籍' }).click();
+  await expect(library).toHaveCount(0);
+  await executeCommand(page, '书籍与恢复设置');
+  const filePanel = page.getByRole('region', { name: '书籍与恢复' });
+  await expect(filePanel).toBeVisible();
+  await filePanel.getByRole('button', { name: '保存到云端' }).click();
+
+  await expect(page.getByRole('alert').filter({ hasText: '当前云端书籍为只读，请先接管编辑权' })).toBeVisible();
+  const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole('button', { name: '接管编辑权' })).toBeVisible();
+});
+
 test('cloud book names can be edited inline in the library and sync panel', async ({ page }) => {
   let project = {
     id: 'project-rename-test',
@@ -1277,6 +1390,54 @@ test('clicking one selected node collapses a multi-selection while dragging pres
     return Math.max(
       Math.abs(firstDelta.x - secondDelta.x),
       Math.abs(firstDelta.y - secondDelta.y),
+    );
+  }).toBeLessThan(1);
+});
+
+test('dragging one selected node into AI inserts every selected node reference', async ({ page }) => {
+  await openApplication(page);
+  const cards = page.getByRole('article', { name: /文本节点：/u });
+  const first = cards.nth(0);
+  const second = cards.nth(1);
+  await first.click({ position: { x: 70, y: 28 } });
+  await second.click({ position: { x: 70, y: 28 }, modifiers: ['Control'] });
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
+
+  const [firstBefore, secondBefore] = await Promise.all([first.boundingBox(), second.boundingBox()]);
+  expect(firstBefore).not.toBeNull();
+  expect(secondBefore).not.toBeNull();
+  await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+  const assistant = page.getByRole('region', { name: 'AI 助手' });
+  const composer = assistant.getByPlaceholder(/直接描述任务/u);
+  const [titleBox, composerBox] = await Promise.all([
+    first.locator('strong').boundingBox(),
+    composer.boundingBox(),
+  ]);
+  expect(titleBox).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+
+  await page.mouse.move(titleBox!.x + titleBox!.width / 2, titleBox!.y + titleBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    composerBox!.x + composerBox!.width / 2,
+    composerBox!.y + composerBox!.height / 2,
+    { steps: 12 },
+  );
+  await expect(assistant.locator('.ai-composer')).toHaveClass(/reference-drop-ready/u);
+  await page.mouse.up();
+
+  await expect.poll(() => composer.inputValue()).toContain('@[AI 助手使用指南]');
+  const prompt = await composer.inputValue();
+  expect(prompt).toContain('@[画布基本操作指南]');
+  expect(prompt.match(/@\[/gu)).toHaveLength(2);
+  await expect.poll(async () => {
+    const [firstAfter, secondAfter] = await Promise.all([first.boundingBox(), second.boundingBox()]);
+    if (!firstAfter || !secondAfter) return Number.POSITIVE_INFINITY;
+    return Math.max(
+      Math.abs(firstAfter.x - firstBefore!.x),
+      Math.abs(firstAfter.y - firstBefore!.y),
+      Math.abs(secondAfter.x - secondBefore!.x),
+      Math.abs(secondAfter.y - secondBefore!.y),
     );
   }).toBeLessThan(1);
 });

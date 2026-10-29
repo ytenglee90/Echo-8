@@ -16,6 +16,7 @@ export function createShortcutCenterPlugin(panel?: unknown): PluginDefinition {
     manifest: defineManifest('shortcut-center', '快捷键中心', {
       namespaces: [SHORTCUT_CENTER_NAMESPACE],
       namespaceDomains: { [SHORTCUT_CENTER_NAMESPACE]: 'workspace' },
+      sessionOnlyWorkspace: { [SHORTCUT_CENTER_NAMESPACE]: ['open'] },
       commands: [
         'shortcuts.open',
         'shortcuts.close',

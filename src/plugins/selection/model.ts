@@ -30,6 +30,7 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
     manifest: defineManifest('selection', '选择与批量操作', {
       namespaces: [SELECTION_NAMESPACE],
       namespaceDomains: { [SELECTION_NAMESPACE]: 'workspace' },
+      sessionOnlyWorkspace: { [SELECTION_NAMESPACE]: true },
       requiresCapabilities: ['content.summaries@1'],
       optionalCapabilities: [
         'entity.deletePlan@1',

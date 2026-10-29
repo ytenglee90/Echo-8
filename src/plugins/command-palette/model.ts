@@ -8,6 +8,7 @@ export function createCommandPalettePlugin(view?: unknown): PluginDefinition {
     manifest: defineManifest('command-palette', '命令面板', {
       namespaces: [COMMAND_PALETTE_NAMESPACE],
       namespaceDomains: { [COMMAND_PALETTE_NAMESPACE]: 'workspace' },
+      sessionOnlyWorkspace: { [COMMAND_PALETTE_NAMESPACE]: true },
       commands: ['commandPalette.open', 'commandPalette.close'],
       dispatches: ['system.action.execute'],
       queries: ['commandPalette.state'],

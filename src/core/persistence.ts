@@ -18,6 +18,7 @@ import {
 } from './checkpoint-preparation.ts';
 import { PERSISTENCE_PREPARE_CHECKPOINT_JOB } from './persistence-worker-jobs.ts';
 import { canMergePatchEntries, composePatchPairs } from './patch-composition.ts';
+import type { WorkspacePersistencePolicy } from './workspace-persistence.ts';
 
 export { externalizeContentChunks } from './checkpoint-preparation.ts';
 import type { TransactionCommitRecord } from '../protocols/state.ts';
@@ -104,6 +105,7 @@ export class PersistenceService {
   private readonly listeners = new Set<() => void>();
   private readonly onAutomaticCheckpoint?: (event: AutomaticCheckpointEvent) => void;
   private readonly onAutomaticSaveRequest?: (event: AutomaticSaveRequestEvent) => void;
+  private readonly workspacePersistence: WorkspacePersistencePolicy;
 
   constructor(
     store: StateStore,
@@ -113,6 +115,7 @@ export class PersistenceService {
     onAutomaticCheckpoint?: (event: AutomaticCheckpointEvent) => void,
     onAutomaticSaveRequest?: (event: AutomaticSaveRequestEvent) => void,
     workers?: WorkerService,
+    workspacePersistence?: WorkspacePersistencePolicy,
   ) {
     this.store = store;
     this.history = history;
@@ -121,6 +124,11 @@ export class PersistenceService {
     this.workers = workers;
     this.onAutomaticCheckpoint = onAutomaticCheckpoint;
     this.onAutomaticSaveRequest = onAutomaticSaveRequest;
+    this.workspacePersistence = workspacePersistence ?? {
+      isSessionOnly: () => false,
+      scrubStore: () => false,
+      scrubRecord: (record) => record,
+    };
   }
 
   subscribe(listener: () => void): () => void {
@@ -191,6 +199,7 @@ export class PersistenceService {
     }
     const outstanding = journal.filter((record) => record.timestamp > snapshot.savedAt);
     const recovered = replayApplication(snapshot, outstanding);
+    this.workspacePersistence.scrubStore(recovered.store);
     this.projectPlugins = structuredClone(recovered.projectPlugins ?? []);
     this.setStatus({
       state: 'saved',
@@ -206,7 +215,8 @@ export class PersistenceService {
   }
 
   enqueue(record: TransactionCommitRecord): void {
-    const next = structuredClone(record);
+    const next = this.workspacePersistence.scrubRecord(structuredClone(record));
+    if (!next) return;
     const previous = this.pendingRecords.at(-1);
     const merged = previous ? mergePendingJournalRecords(previous, next) : undefined;
     if (merged) {
@@ -320,7 +330,9 @@ export class PersistenceService {
     await this.ioTail;
     const record = await readValue<RecoveryPointRecord>(this.database, 'recovery', id);
     if (!record) throw new Error('恢复点已经不存在');
-    return hydrateStoredApplication(this.database, record.snapshot);
+    const application = await hydrateStoredApplication(this.database, record.snapshot);
+    this.workspacePersistence.scrubStore(application.store);
+    return application;
   }
 
   async setAutosaveInterval(intervalMs: number): Promise<PersistenceStatus> {
@@ -505,6 +517,7 @@ export class PersistenceService {
     // historical patch for a second time before worker preparation.
     scrubRetiredStoreInPlace(store);
     scrubRetiredHistoryInPlace(history);
+    this.workspacePersistence.scrubStore(store);
     return {
       formatVersion: 1,
       savedAt,

@@ -18,6 +18,7 @@ function manifest(id = 'lazy-probe'): PluginManifest {
     permissions: [],
     namespaces: [],
     namespaceDomains: {},
+    sessionOnlyWorkspace: {},
     commands: [],
     dispatches: [],
     events: [],

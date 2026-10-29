@@ -186,6 +186,16 @@ export function createAIAssistantPlugin(
         [AI_MEMORY_CANDIDATE_NAMESPACE]: 'document',
         [AI_UI_NAMESPACE]: 'workspace',
       },
+      sessionOnlyWorkspace: {
+        [AI_UI_NAMESPACE]: [
+          'assistants',
+          'open',
+          'panelRect',
+          'composerHeight',
+          'view',
+          'activeSessionId',
+        ],
+      },
       requiresCapabilities: [
         'content.createPlan@1',
         'content.clonePlan@1',

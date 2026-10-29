@@ -199,6 +199,8 @@ export interface ContentReferenceDropZone {
 
 export interface ContentReferenceDragPreview {
   sourceId?: string;
+  /** Ordered reference batch; absent for compatible single-source publishers. */
+  sourceIds?: string[];
   targetOwner?: string;
   overTarget?: boolean;
   clear?: boolean;
@@ -206,6 +208,8 @@ export interface ContentReferenceDragPreview {
 
 export interface ContentReferenceDrop {
   sourceId: string;
+  /** Primary source first, followed by the other dragged selected sources. */
+  sourceIds?: string[];
   targetOwner: string;
 }
 
