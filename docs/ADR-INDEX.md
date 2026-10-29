@@ -12,7 +12,7 @@
 |---|---|---|
 | [0001](ADR-0001-MICROKERNEL.md) | Headless microkernel with governed plugin runtime | 有效 |
 | [0002](ADR-0002-GROUPS-CLIPBOARD.md) | Flat groups and provider-planned internal clipboard | 有效；群组标题由 0022 补充 |
-| [0003](ADR-0003-SEARCH-STATISTICS.md) | Revisioned literal search and explicit text measures | 有效 |
+| [0003](ADR-0003-SEARCH-STATISTICS.md) | Revisioned literal search and explicit text measures | 有效；标题范围与导航由 0083 补充 |
 | [0004](ADR-0004-EDITOR-FORMATTING-METRICS.md) | Three-pane editor, document typography and writing metrics | 有效 |
 | [0005](ADR-0005-PALETTE-THEMES.md) | Semantic themes and owner-planned appearance changes | 有效 |
 | [0006](ADR-0006-FILES-RECOVERY.md) | Portable files, journal autosave and recovery boundaries | 有效；文件和检查点格式由 0030、0040、0060 补充 |
@@ -37,7 +37,7 @@
 | [0025](ADR-0025-RIGHT-SURFACE-ARBITRATION.md) | Core arbitration for editor and right-side panels | 有效 |
 | [0026](ADR-0026-SMART-GUIDES-GRID-LAYOUT.md) | Smart guides, snapping and selected-node grid layout | 有效 |
 | [0027](ADR-0027-OVERFLOW-SHORTCUT-PRESENTATION.md) | Overflow strips and live shortcut presentation | 有效 |
-| [0028](ADR-0028-SEARCH-NAVIGATION-QUEUE.md) | Search navigation command queue discipline | 有效 |
+| [0028](ADR-0028-SEARCH-NAVIGATION-QUEUE.md) | Search navigation command queue discipline | **部分被 0083 替代**；队列纪律保留，活动编辑区单一范围失效 |
 | [0029](ADR-0029-MANAGED-BACKGROUND-WORKERS.md) | Background computation is owned by the kernel | 有效 |
 | [0030](ADR-0030-DEDUPLICATED-LOCAL-CHECKPOINT-CHUNKS.md) | Local checkpoints deduplicate immutable text chunks | 有效 |
 | [0031](ADR-0031-INCREMENTAL-SEMANTIC-BLOCK-FINGERPRINTS.md) | Remote semantic cache reuses unchanged sampled blocks | 有效 |
@@ -92,4 +92,5 @@
 | [0080](ADR-0080-GOVERNED-INPUT-COMPOSITION-AND-PUBLIC-STATE-PROTOCOLS.md) | 受治理文件输入、唯一插件组合清单与公共状态协议 | 有效；补充 0001、0035、0038、0060、0074 |
 | [0081](ADR-0081-UNIFIED-AUTOSAVE-TARGET-SCHEDULING.md) | 统一自动保存目标调度、本机恢复与云端上传节拍 | 有效；补充 0006、0071，部分替代 0077 |
 | [0082](ADR-0082-COMPACT-BUILTIN-TEXT-ASSIST-OVERLAYS.md) | 书籍仅保存内置纠错规则版本引用与自定义覆盖 | 有效；补充 0006、0038、0061 |
+| [0083](ADR-0083-TITLE-SEARCH-AND-SELECTION-SCOPED-NAVIGATION.md) | 标题检索、画布选择联动与选中范围导航 | 有效；补充 0003，部分替代 0028 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

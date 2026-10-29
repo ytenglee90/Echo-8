@@ -43,6 +43,16 @@ test('custom connection colors retain their hue when visible and gain contrast w
   assert.ok(colorContrastRatio(adjustedDark, '#18191b') >= MIN_CANVAS_LINE_CONTRAST);
 });
 
+test('text-box display colors reach text contrast without mutating the preferred source color', () => {
+  const preferred = '#202124';
+  const darkCanvas = '#2a3a4a';
+  const rendered = ensureCanvasColorContrast(preferred, darkCanvas, 4.5);
+  assert.equal(preferred, '#202124');
+  assert.notEqual(rendered, preferred);
+  assert.ok(colorContrastRatio(rendered, darkCanvas) >= 4.5);
+  assert.equal(ensureCanvasColorContrast(preferred, '#efefec', 4.5), preferred);
+});
+
 test('global color presets expose distinct bright, dark and eye-care combinations', () => {
   assert.deepEqual(PALETTE_PRESETS.map((preset) => preset.key), ['A', 'B', 'C']);
   assert.deepEqual(PALETTE_PRESETS.map((preset) => preset.label), ['明调', '暗调', '护眼']);

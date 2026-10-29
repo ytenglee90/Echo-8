@@ -1,6 +1,7 @@
 import type { PluginDefinition } from '../../core/contracts.ts';
 import { defineManifest } from '../manifest.ts';
 import { PluginCenterPanel } from './PluginCenterPanel.tsx';
+import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 
 const PLUGIN_CENTER_NAMESPACE = 'pluginCenterUI';
 
@@ -33,6 +34,10 @@ export const pluginCenterPlugin: PluginDefinition = {
           key: 'open',
           value: open,
         }],
+        events: open ? [{
+          type: UI_SURFACE_REVEALED_EVENT,
+          payload: uiSurfaceRevealed('right.primary', 'plugin-center', 'plugin-center.panel'),
+        }] : undefined,
       },
     });
     context.commands.register({

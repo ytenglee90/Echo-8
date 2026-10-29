@@ -317,7 +317,12 @@ export interface PluginContext {
     shortcutOverrides(overrides: ShortcutOverride[]): void;
     theme(definition: ThemeDefinition): void;
     activateTheme(id: string, overrides?: ThemeTokenOverrides): void;
-    activateSurface(slot: UISlot, contributionId: string, closeCommand?: string): void;
+    activateSurface(
+      slot: UISlot,
+      contributionId: string,
+      closeCommand?: string,
+      yieldCommand?: string,
+    ): void;
     deactivateSurface(slot: UISlot, contributionId: string): void;
   };
   readonly tasks: {

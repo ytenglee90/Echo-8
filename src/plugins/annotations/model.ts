@@ -9,6 +9,7 @@ import type {
 } from '../../protocols/appearance.ts';
 import type {
   AnnotationCreateRequest,
+  AnnotationMarkerAnchorsPreview,
   AnnotationOpenRequest,
   AnnotationOpenState,
   AnnotationRecord,
@@ -46,6 +47,9 @@ export function createAnnotationsPlugin(
   popup?: unknown,
   immersivePopup?: unknown,
 ): PluginDefinition {
+  let markerAnchorSources = new Map<string, Map<string, MarkerAnchorEntry>>();
+  let markerAnchorSequence = 0;
+
   return {
     manifest: defineManifest('annotations', '注释', {
       dataVersion: 2,
@@ -104,6 +108,7 @@ export function createAnnotationsPlugin(
         'content.catalog.invalidated',
         'groups.invalidated',
         'appearance.color.preview',
+        'annotations.markerAnchors.preview',
       ],
       ui: ['annotations.create', 'annotations.markers', 'annotations.popup', 'annotations.immersive-popup'],
       actions: ['annotations.create-action'],
@@ -127,6 +132,8 @@ export function createAnnotationsPlugin(
     }],
 
     start(context) {
+      markerAnchorSources = new Map();
+      markerAnchorSequence = 0;
       const readRecords = () => context.store.readNamespace<Record<string, AnnotationRecord>>(ANNOTATION_NAMESPACE);
       const readOpenState = (): AnnotationOpenState | undefined => {
         const id = context.store.readValue<string>(ANNOTATION_UI_NAMESPACE, 'openId');
@@ -331,6 +338,21 @@ export function createAnnotationsPlugin(
           records: Object.values(readRecords()).sort((left, right) => left.createdAt - right.createdAt),
         }),
       });
+      context.signals.subscribe<AnnotationMarkerAnchorsPreview>(
+        'annotations.markerAnchors.preview',
+        (message) => {
+          const preview = message.payload;
+          if (!isMarkerAnchorsPreview(preview)) return;
+          if (preview.clear) {
+            markerAnchorSources.delete(preview.sourceId);
+            return;
+          }
+          markerAnchorSources.set(preview.sourceId, new Map((preview.anchors ?? []).map((anchor) => [
+            anchor.id,
+            { rect: anchor.rect, sequence: markerAnchorSequence += 1 },
+          ])));
+        },
+      );
       context.capabilities.provide<ContentAnchorTransformRequest, ContentAnchorTransformPlan>({
         key: 'content.anchorTransformPlan@1',
         invoke: (payload) => {
@@ -454,7 +476,6 @@ export function createAnnotationsPlugin(
           if (records.length === 0) return { targets: [] };
           const fallback = input.defaults?.['annotation-marker'] ?? '#ff9f0a';
           const colors = records.map((record) => record.color ?? fallback);
-          const open = readOpenState();
           return {
             targets: [{
               kind: 'annotation-marker',
@@ -467,7 +488,7 @@ export function createAnnotationsPlugin(
                 revision: record.revision,
                 expectedColor: colors[index],
               })),
-              anchor: open && selectedIds.has(open.id) ? open.rect : undefined,
+              anchor: resolveMarkerAnchor(markerAnchorSources, records.map((record) => record.id)),
             }],
           };
         },
@@ -702,6 +723,41 @@ function isAnnotationOpenRequest(value: unknown): value is AnnotationOpenRequest
   return isRecord(value) && typeof value.id === 'string' &&
     (value.anchor === undefined || isRecord(value.anchor) &&
       Number.isFinite(value.anchor.x) && Number.isFinite(value.anchor.y));
+}
+
+interface MarkerAnchorEntry {
+  rect: { x: number; y: number; width: number; height: number };
+  sequence: number;
+}
+
+function resolveMarkerAnchor(
+  sources: ReadonlyMap<string, ReadonlyMap<string, MarkerAnchorEntry>>,
+  ids: string[],
+): { x: number; y: number; width: number; height: number } | undefined {
+  const latest = new Map<string, MarkerAnchorEntry>();
+  for (const source of sources.values()) {
+    for (const id of ids) {
+      const candidate = source.get(id);
+      if (candidate && candidate.sequence > (latest.get(id)?.sequence ?? -1)) latest.set(id, candidate);
+    }
+  }
+  const rects = ids.flatMap((id) => latest.get(id)?.rect ?? []);
+  if (rects.length === 0) return undefined;
+  const left = Math.min(...rects.map((rect) => rect.x));
+  const top = Math.min(...rects.map((rect) => rect.y));
+  const right = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function isMarkerAnchorsPreview(value: unknown): value is AnnotationMarkerAnchorsPreview {
+  if (!isRecord(value) || typeof value.sourceId !== 'string' || value.sourceId.length === 0 ||
+    (value.clear !== undefined && typeof value.clear !== 'boolean') ||
+    (value.anchors !== undefined && !Array.isArray(value.anchors))) return false;
+  return value.anchors?.every((anchor) => isRecord(anchor) && typeof anchor.id === 'string' &&
+    isRecord(anchor.rect) && [anchor.rect.x, anchor.rect.y, anchor.rect.width, anchor.rect.height]
+      .every((number) => typeof number === 'number' && Number.isFinite(number)) &&
+    (anchor.rect.width as number) > 0 && (anchor.rect.height as number) > 0) ?? true;
 }
 
 function isAnnotationUpdateRequest(value: unknown): value is AnnotationUpdateRequest {

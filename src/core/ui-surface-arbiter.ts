@@ -9,6 +9,7 @@ import {
 
 const CONFLICTING_SURFACE_SLOTS: Partial<Record<UISlot, readonly UISlot[]>> = {
   'right.editor': ['right.primary'],
+  'right.primary': ['right.primary', 'right.editor'],
 };
 
 /**
@@ -42,14 +43,21 @@ export class UISurfaceArbiter {
 
   private reconcile(envelope: MessageEnvelope<UISurfaceRevealedEvent>): void {
     const slot = envelope.payload?.slot;
+    const owner = envelope.payload?.owner;
+    const contributionId = envelope.payload?.contributionId;
     const conflictingSlots = slot ? CONFLICTING_SURFACE_SLOTS[slot] : undefined;
-    if (!conflictingSlots) {
+    if (!conflictingSlots || !owner || !contributionId) {
       this.diagnostics.record('warn', 'core.ui', 'Ignored an invalid UI surface reveal event', envelope.payload);
       return;
     }
-    const surface = this.ui.topSurface([...conflictingSlots]);
+    const surface = this.ui.topSurface([...conflictingSlots], {
+      owner,
+      id: contributionId,
+      slot,
+    });
     if (!surface) return;
-    if (!surface.closeCommand) {
+    const yieldCommand = surface.yieldCommand ?? surface.closeCommand;
+    if (!yieldCommand) {
       this.diagnostics.record(
         'warn',
         'core.ui',
@@ -60,7 +68,7 @@ export class UISurfaceArbiter {
     const key = `${surface.owner}:${surface.id}`;
     if (this.pendingClosures.has(key)) return;
     this.pendingClosures.add(key);
-    void this.router.dispatch(surface.closeCommand, undefined, 'core.ui', envelope)
+    void this.router.dispatch(yieldCommand, undefined, 'core.ui', envelope)
       .catch((error) => {
         this.diagnostics.record(
           'error',

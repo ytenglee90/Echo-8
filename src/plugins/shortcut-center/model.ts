@@ -6,6 +6,7 @@ import {
 } from '../../core/contracts.ts';
 import { defineManifest } from '../manifest.ts';
 import type { ShortcutCenterState } from './types.ts';
+import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 
 export const SHORTCUT_CENTER_NAMESPACE = 'shortcutCenter';
 const SHORTCUT_PREFERENCE_KEY = 'shortcut-center.overrides@1';
@@ -61,6 +62,10 @@ export function createShortcutCenterPlugin(panel?: unknown): PluginDefinition {
             key: 'open',
             value: open,
           }],
+          events: open ? [{
+            type: UI_SURFACE_REVEALED_EVENT,
+            payload: uiSurfaceRevealed('right.primary', 'shortcut-center', 'shortcut-center.panel'),
+          }] : undefined,
         },
       });
       const overridesTransaction = (label: string, overrides: ShortcutOverride[]) => ({

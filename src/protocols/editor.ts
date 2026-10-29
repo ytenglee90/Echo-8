@@ -4,9 +4,29 @@ import type { AnnotationClipboardItem } from './annotations.ts';
 
 export const EDITOR_OPEN_REQUESTED_EVENT = 'editor.open.requested';
 
+export type EditorOpenMode = 'replace' | 'add';
+
+export interface EditorOpenRequest {
+  id: string;
+  /** Ordinary entry points replace the dock; explicit additive entry points preserve it. */
+  mode?: EditorOpenMode;
+  /** Optional body range revealed by the same workspace operation that opens the pane. */
+  reveal?: {
+    start: number;
+    end: number;
+    revision?: number;
+  };
+}
+
+export interface EditorOpenResult {
+  status: 'opened' | 'activated' | 'replaced' | 'limit';
+  openPanes: string[];
+}
+
 export interface EditorOpenRequested {
   id: string;
   reason?: string;
+  mode?: EditorOpenMode;
 }
 
 export type WritingActivityKind = 'insert' | 'composition' | 'delete' | 'paste' | 'replace' | 'move';
@@ -123,6 +143,8 @@ export interface MoveContentRangeRequest {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'editor.open': CommandContract<EditorOpenRequest, EditorOpenResult>;
+    'editor.closeAll': CommandContract<undefined, boolean>;
     'content.applyDelta': CommandContract<ApplyContentDeltaRequest, ApplyContentDeltaResult>;
     'content.moveRange': CommandContract<MoveContentRangeRequest, ApplyContentDeltaResult>;
   }

@@ -60,7 +60,9 @@ import type {
   ContentReplaceRequest,
   ContentSearchRequest,
   ContentSearchResult,
+  ContentSearchResultV2,
   SearchHit,
+  SearchHitV2,
 } from '../../protocols/search.ts';
 import type {
   EntityDeletePlan,
@@ -70,6 +72,7 @@ import type { ContentStatistics } from '../../protocols/statistics.ts';
 import {
   createNodeTitleAllocator,
   isNodeTitleTaken,
+  nodeTitleKey,
   normalizeNodeTitle,
 } from './title-policy.ts';
 import {
@@ -80,14 +83,20 @@ import {
   contentChunkLengths,
   createContentStorageFromChunks,
   planContentDelta,
-  planContentReplacements,
+  planContentSubstitutions,
   readAllContentChunks,
   readContentChunk,
   readContentRange,
   readRange,
   type TextContentChunkRecord,
+  type ContentSubstitution,
   type TextContentRecord,
 } from './content-storage.ts';
+import {
+  findLinkedTitleHits,
+  isReferenceTitle,
+  MAX_TITLE_REFERENCE_REPLACEMENTS,
+} from './title-reference-sync.ts';
 import {
   FORMAT_MARK_NAMESPACE,
   FORMAT_NAMESPACE,
@@ -115,6 +124,7 @@ import {
   nodeHeight,
   searchChunks,
   searchContextNodes,
+  searchNodeTitle,
   toContextSource,
   validateAppearanceUpdate,
   validateSearchRequest,
@@ -126,6 +136,15 @@ import {
 
 interface NodeIndexSnapshot {
   nodes: TextNodeRecord[];
+}
+
+function rangesOverlap(
+  leftStart: number,
+  leftLength: number,
+  rightStart: number,
+  rightLength: number,
+): boolean {
+  return leftStart < rightStart + rightLength && rightStart < leftStart + leftLength;
 }
 
 interface ContentStatisticsCacheEntry {
@@ -1173,21 +1192,32 @@ export function registerTextNodeCapabilities({
       },
     });
 
-    context.capabilities.provide<ContentSearchRequest, ContentSearchResult>({
-      key: 'content.search@1',
-      invoke: async (input, signal) => {
+    const runContentSearch = async (
+      input: ContentSearchRequest,
+      signal: AbortSignal | undefined,
+      includeTitles: boolean,
+    ): Promise<ContentSearchResult | ContentSearchResultV2> => {
         validateSearchRequest(input);
         const allowed = input.nodeIds ? new Set(input.nodeIds) : undefined;
         const nodes = Object.values(readNodes())
           .filter(isCanvasTextNode)
           .filter((node) => !allowed || allowed.has(node.id));
-        const hits: SearchHit[] = [];
+        const hits: Array<SearchHit | SearchHitV2> = [];
         let scannedNodes = 0;
         let truncated = false;
         for (const node of nodes) {
           assertNotAborted(signal);
           const content = context.store.readValue<TextContentRecord>(CONTENT_NAMESPACE, node.contentId);
           if (!content) continue;
+          if (includeTitles) {
+            const titleResult = searchNodeTitle(node, input, input.maxResults - hits.length);
+            hits.push(...titleResult.hits);
+            if (titleResult.truncated || hits.length >= input.maxResults) {
+              truncated = true;
+              scannedNodes += 1;
+              break;
+            }
+          }
           const remaining = input.maxResults - hits.length;
           const result = await searchChunks(
             node,
@@ -1197,7 +1227,9 @@ export function registerTextNodeCapabilities({
             remaining,
             signal,
           );
-          hits.push(...result.hits);
+          hits.push(...(includeTitles
+            ? result.hits.map((hit) => ({ ...hit, field: 'body' as const }))
+            : result.hits));
           scannedNodes += 1;
           if (result.truncated || hits.length >= input.maxResults) {
             truncated = true;
@@ -1205,81 +1237,246 @@ export function registerTextNodeCapabilities({
           }
         }
         return { hits, scannedNodes, truncated };
-      },
+    };
+
+    context.capabilities.provide<ContentSearchRequest, ContentSearchResult>({
+      key: 'content.search@1',
+      invoke: (input, signal) => runContentSearch(input, signal, false) as Promise<ContentSearchResult>,
     });
 
-    context.capabilities.provide<ContentReplaceRequest, ContentReplacePlan>({
-      key: 'content.replacePlan@1',
-      invoke: (input) => {
-        if (!input || !Array.isArray(input.hits) || typeof input.replacement !== 'string') {
-          throw new Error('替换请求格式不正确');
+    context.capabilities.provide<ContentSearchRequest, ContentSearchResultV2>({
+      key: 'content.search@2',
+      invoke: (input, signal) => runContentSearch(input, signal, true) as Promise<ContentSearchResultV2>,
+    });
+
+    const createReplacePlan = async (
+      input: ContentReplaceRequest,
+      includeTitles: boolean,
+    ): Promise<ContentReplacePlan> => {
+      if (!input || !Array.isArray(input.hits) || typeof input.replacement !== 'string') {
+        throw new Error('替换请求格式不正确');
+      }
+      const nodes = readNodeIndex().nodes.filter(isCanvasTextNode);
+      const nodeById = new Map(nodes.map((node) => [node.id, node]));
+      const titleHitsByNode = new Map<string, SearchHit[]>();
+      const bodyHitsByNode = new Map<string, SearchHit[]>();
+      for (const hit of input.hits) {
+        const field = hit.field ?? 'body';
+        if (field === 'title' && !includeTitles) {
+          throw new Error('标题命中只用于定位，请选择正文命中进行替换');
         }
-        const byNode = new Map<string, SearchHit[]>();
-        for (const hit of input.hits) {
-          const list = byNode.get(hit.nodeId) ?? [];
-          list.push(hit);
-          byNode.set(hit.nodeId, list);
-        }
-        const patches: ContentReplacePlan['patches'] = [];
-        const events: NonNullable<ContentReplacePlan['events']> = [];
-        let replaced = 0;
-        for (const [nodeId, rawHits] of byNode) {
-          const node = context.store.readValue<TextNodeRecord>(NODE_NAMESPACE, nodeId);
-          if (!node) throw new Error(`搜索结果对应的节点已不存在：${nodeId}`);
-          const content = context.store.readValue<TextContentRecord>(CONTENT_NAMESPACE, node.contentId);
-          if (!content) throw new Error(`搜索结果对应的正文已不存在：${nodeId}`);
-          const hits = [...rawHits].sort((a, b) => a.start - b.start);
-          let previousEnd = -1;
-          for (const hit of hits) {
-            if (hit.revision !== content.revision) throw new Error(`节点“${node.title}”已修改，请重新查找`);
-            if (hit.start < previousEnd) throw new Error('替换范围发生重叠');
-            if (readContentRange(context, content, hit.start, hit.length) !== hit.matchedText) {
-              throw new Error(`节点“${node.title}”的匹配内容已变化，请重新查找`);
-            }
-            previousEnd = hit.start + hit.length;
+        const grouped = field === 'title' ? titleHitsByNode : bodyHitsByNode;
+        const list = grouped.get(hit.nodeId) ?? [];
+        list.push(hit);
+        grouped.set(hit.nodeId, list);
+      }
+
+      const finalTitles = new Map<string, string>();
+      for (const [nodeId, rawHits] of titleHitsByNode) {
+        const node = nodeById.get(nodeId);
+        if (!node) throw new Error(`搜索结果对应的节点已不存在：${nodeId}`);
+        const hits = [...rawHits].sort((left, right) => left.start - right.start);
+        let previousEnd = -1;
+        for (const hit of hits) {
+          if (hit.revision !== node.revision) throw new Error(`节点“${node.title}”标题已修改，请重新查找`);
+          if (hit.start < previousEnd) throw new Error('标题替换范围发生重叠');
+          if (node.title.slice(hit.start, hit.start + hit.length) !== hit.matchedText) {
+            throw new Error(`节点“${node.title}”的标题匹配已变化，请重新查找`);
           }
-          const mutation = planContentReplacements(context, content, hits, input.replacement);
-          const formatMutation = planFormattingEdits(
-            context,
-            node.id,
-            [...hits]
-              .sort((left, right) => right.start - left.start)
-              .map((hit) => ({
-                start: hit.start,
-                deleteCount: hit.length,
-                insertLength: input.replacement.length,
-              })),
-          );
-          const { length, revision } = mutation.content;
-          replaced += hits.length;
+          previousEnd = hit.start + hit.length;
+        }
+        let title = node.title;
+        for (const hit of [...hits].sort((left, right) => right.start - left.start)) {
+          title = `${title.slice(0, hit.start)}${input.replacement}${title.slice(hit.start + hit.length)}`;
+        }
+        finalTitles.set(nodeId, normalizeNodeTitle(title));
+      }
+
+      const titleOwners = new Map<string, string>();
+      for (const node of nodes) {
+        const title = finalTitles.get(node.id) ?? node.title;
+        const key = nodeTitleKey(title);
+        const occupiedBy = titleOwners.get(key);
+        if (occupiedBy && occupiedBy !== node.id) {
+          throw new Error(`替换后的标题“${title}”已经存在，请调整替换内容`);
+        }
+        titleOwners.set(key, node.id);
+      }
+
+      type ReplacementEdit = ContentSubstitution & {
+        matchedText: string;
+        source: 'search' | 'title-reference';
+      };
+      const contentEdits = new Map<string, ReplacementEdit[]>();
+      for (const [nodeId, rawHits] of bodyHitsByNode) {
+        const node = nodeById.get(nodeId);
+        if (!node) throw new Error(`搜索结果对应的节点已不存在：${nodeId}`);
+        const content = context.store.readValue<TextContentRecord>(CONTENT_NAMESPACE, node.contentId);
+        if (!content) throw new Error(`搜索结果对应的正文已不存在：${nodeId}`);
+        const hits = [...rawHits].sort((left, right) => left.start - right.start);
+        let previousEnd = -1;
+        for (const hit of hits) {
+          if (hit.revision !== content.revision) throw new Error(`节点“${node.title}”正文已修改，请重新查找`);
+          if (hit.start < previousEnd) throw new Error('正文替换范围发生重叠');
+          if (readContentRange(context, content, hit.start, hit.length) !== hit.matchedText) {
+            throw new Error(`节点“${node.title}”的正文匹配已变化，请重新查找`);
+          }
+          previousEnd = hit.start + hit.length;
+        }
+        contentEdits.set(nodeId, hits.map((hit) => ({
+          start: hit.start,
+          length: hit.length,
+          replacement: input.replacement,
+          matchedText: hit.matchedText,
+          source: 'search',
+        })));
+      }
+
+      const catalogTitles = nodes.map((node) => node.title.trim()).filter(isReferenceTitle);
+      let referenceReplacementCount = 0;
+      for (const [targetNodeId, finalTitle] of finalTitles) {
+        const targetNode = nodeById.get(targetNodeId)!;
+        if (finalTitle === targetNode.title || !isReferenceTitle(targetNode.title)) continue;
+        for (const referencingNode of nodes) {
+          if (referencingNode.id === targetNodeId) continue;
+          const content = context.store.readValue<TextContentRecord>(CONTENT_NAMESPACE, referencingNode.contentId);
+          if (!content) continue;
+          const remaining = MAX_TITLE_REFERENCE_REPLACEMENTS - referenceReplacementCount;
+          const found = await findLinkedTitleHits({
+            node: referencingNode,
+            content,
+            targetNodeId,
+            targetTitle: targetNode.title,
+            catalogTitles,
+            readChunk: (index) => readContentChunk(context, content, index),
+            limit: remaining + 1,
+          });
+          if (found.hits.length > remaining) {
+            throw new Error(`标题替换需要同步的正文关联超过 ${MAX_TITLE_REFERENCE_REPLACEMENTS} 处，请缩小替换范围`);
+          }
+          if (found.hits.length === 0) continue;
+          referenceReplacementCount += found.hits.length;
+          const edits = contentEdits.get(referencingNode.id) ?? [];
+          for (const hit of found.hits) {
+            const overlapsDirectHit = edits.some((edit) => edit.source === 'search' &&
+              rangesOverlap(edit.start, edit.length, hit.start, hit.length));
+            if (overlapsDirectHit) continue;
+            const duplicate = edits.some((edit) => edit.source === 'title-reference' &&
+              edit.start === hit.start && edit.length === hit.length && edit.replacement === finalTitle);
+            if (duplicate) continue;
+            if (edits.some((edit) => rangesOverlap(edit.start, edit.length, hit.start, hit.length))) {
+              throw new Error('标题关联替换范围发生重叠，请缩小替换范围');
+            }
+            edits.push({
+              start: hit.start,
+              length: hit.length,
+              replacement: finalTitle,
+              matchedText: hit.matchedText,
+              source: 'title-reference',
+            });
+          }
+          if (edits.length > 0) contentEdits.set(referencingNode.id, edits);
+        }
+      }
+
+      const patches: ContentReplacePlan['patches'] = [];
+      const events: NonNullable<ContentReplacePlan['events']> = [];
+      const contentMutations = new Map<string, {
+        content: TextContentRecord;
+        chunkPatches: PatchOperation[];
+        formatPatches: PatchOperation[];
+        formatRevision?: number;
+      }>();
+      for (const [nodeId, edits] of contentEdits) {
+        if (edits.length === 0) continue;
+        const node = nodeById.get(nodeId)!;
+        const content = context.store.readValue<TextContentRecord>(CONTENT_NAMESPACE, node.contentId)!;
+        const sorted = [...edits].sort((left, right) => left.start - right.start);
+        let previousEnd = -1;
+        for (const edit of sorted) {
+          if (edit.start < previousEnd) throw new Error('替换范围发生重叠');
+          previousEnd = edit.start + edit.length;
+        }
+        const mutation = planContentSubstitutions(context, content, sorted);
+        const formatMutation = planFormattingEdits(
+          context,
+          node.id,
+          [...sorted].sort((left, right) => right.start - left.start).map((edit) => ({
+            start: edit.start,
+            deleteCount: edit.length,
+            insertLength: edit.replacement.length,
+          })),
+        );
+        contentMutations.set(nodeId, {
+          content: mutation.content,
+          chunkPatches: mutation.chunkPatches,
+          formatPatches: formatMutation.patches,
+          formatRevision: formatMutation.revision,
+        });
+      }
+
+      const updatedAt = Date.now();
+      const touchedNodeIds = new Set([...finalTitles.keys(), ...contentMutations.keys()]);
+      for (const nodeId of touchedNodeIds) {
+        const node = nodeById.get(nodeId)!;
+        const finalTitle = finalTitles.get(nodeId) ?? node.title;
+        const contentMutation = contentMutations.get(nodeId);
+        const titleChanged = finalTitle !== node.title;
+        if (!titleChanged && !contentMutation) continue;
+        if (contentMutation) {
           patches.push(
-            ...mutation.chunkPatches.map((patch) => ({ ...patch, schemaOwner: 'text-node' as const })),
+            ...contentMutation.chunkPatches.map((patch) => ({ ...patch, schemaOwner: 'text-node' as const })),
             {
               op: 'set',
               domain: 'document',
               namespace: CONTENT_NAMESPACE,
-              key: content.id,
-              value: mutation.content,
+              key: node.contentId,
+              value: contentMutation.content,
               schemaOwner: 'text-node',
             },
-            {
-              op: 'set',
-              domain: 'document',
-              namespace: NODE_NAMESPACE,
-              key: node.id,
-              value: { ...node, revision: node.revision + 1, updatedAt: Date.now() },
-              schemaOwner: 'text-node',
-            },
-            ...formatMutation.patches.map((patch) => ({ ...patch, schemaOwner: 'text-node' as const })),
+            ...contentMutation.formatPatches.map((patch) => ({ ...patch, schemaOwner: 'text-node' as const })),
           );
-          events.push({ type: 'content.changed', payload: { nodeId, revision, length } });
-          if (formatMutation.revision !== undefined) events.push({
+        }
+        patches.push({
+          op: 'set',
+          domain: 'document',
+          namespace: NODE_NAMESPACE,
+          key: node.id,
+          value: { ...node, title: finalTitle, revision: node.revision + 1, updatedAt },
+          schemaOwner: 'text-node',
+        });
+        if (titleChanged) events.push({ type: 'node.renamed', payload: { id: node.id } });
+        if (contentMutation) {
+          events.push({
+            type: 'content.changed',
+            payload: {
+              nodeId,
+              revision: contentMutation.content.revision,
+              length: contentMutation.content.length,
+            },
+          });
+          if (contentMutation.formatRevision !== undefined) events.push({
             type: 'content.format.changed',
-            payload: { nodeId, revision: formatMutation.revision },
+            payload: { nodeId, revision: contentMutation.formatRevision },
           });
         }
-        return { patches, events, replaced, affectedNodes: byNode.size };
-      },
+      }
+      return {
+        patches,
+        events,
+        replaced: input.hits.length,
+        affectedNodes: new Set(input.hits.map((hit) => hit.nodeId)).size,
+      };
+    };
+
+    context.capabilities.provide<ContentReplaceRequest, ContentReplacePlan>({
+      key: 'content.replacePlan@1',
+      invoke: (input) => createReplacePlan(input, false),
+    });
+
+    context.capabilities.provide<ContentReplaceRequest, ContentReplacePlan>({
+      key: 'content.replacePlan@2',
+      invoke: (input) => createReplacePlan(input, true),
     });
 
     context.capabilities.provide<undefined, ContentStatistics>({

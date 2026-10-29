@@ -20,6 +20,8 @@ export interface CanvasEntityResizePreview {
 /** Read-only render/gesture environment supplied by the canvas host to entity renderers. */
 export interface CanvasEntityLayerRuntime {
   camera: CameraState;
+  /** Current rendered canvas background, including a live appearance preview. */
+  canvasColor: string;
   nodeById: ReadonlyMap<string, ContentSummary>;
   duplicateOrigins: NodePosition[];
   visibleNodes: ContentSummary[];

@@ -29,6 +29,7 @@ import type {
   SelectionSnapshot,
 } from '../../protocols/selection.ts';
 import type { ThemeDefinition } from '../../protocols/theme.ts';
+import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { defineManifest } from '../manifest.ts';
 
 const PALETTE_NAMESPACE = 'palette';
@@ -361,7 +362,12 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         type: 'palette.open',
         handle: () => {
           context.ui.activateSurface('right.primary', 'palette.panel', 'palette.close');
-          return workspaceStateTransaction('打开全局颜色设置', 'open', true);
+          return workspaceStateTransaction(
+            '打开全局颜色设置',
+            'open',
+            true,
+            uiSurfaceRevealed('right.primary', 'palette', 'palette.panel'),
+          );
         },
       });
       context.commands.register({
@@ -713,12 +719,20 @@ async function resolveSelectionAnchor(
   };
 }
 
-function workspaceStateTransaction(label: string, key: string, value: unknown) {
+function workspaceStateTransaction(
+  label: string,
+  key: string,
+  value: unknown,
+  revealed?: ReturnType<typeof uiSurfaceRevealed>,
+) {
   return {
     transaction: {
       label,
       history: false,
       patches: [{ op: 'set' as const, domain: 'workspace' as const, namespace: PALETTE_NAMESPACE, key, value }],
+      ...(revealed ? {
+        events: [{ type: UI_SURFACE_REVEALED_EVENT, payload: revealed }],
+      } : {}),
     },
   };
 }

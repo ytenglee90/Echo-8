@@ -35,6 +35,16 @@ export interface AnnotationOpenRequest {
   anchor?: { x: number; y: number };
 }
 
+/** Ephemeral screen geometry published by rendered annotation markers for adjacent overlays. */
+export interface AnnotationMarkerAnchorsPreview {
+  sourceId: string;
+  anchors?: Array<{
+    id: string;
+    rect: { x: number; y: number; width: number; height: number };
+  }>;
+  clear?: boolean;
+}
+
 export interface AnnotationUpdateRequest {
   id: string;
   body: string;

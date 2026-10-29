@@ -14,7 +14,7 @@ The command router deliberately serializes formal commands. A command handler th
 
 The continuation verifies that the source search request is still current before and after revealing. Plugin stop cancels the task through normal resource ownership. Navigation remains workspace-only derived state and never enters document history.
 
-Search navigation is constrained to hits belonging to the active open editor. Ordering is by source offset and previous/next wrap within that editor only.
+Search navigation was originally constrained to hits belonging to the active open editor. ADR-0083 replaces that range rule with a selected-text-node snapshot or, when no text node is selected, the full canvas result. The delayed continuation and no-nested-await rule in this ADR remain mandatory.
 
 ## Consequences
 

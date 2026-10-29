@@ -2,6 +2,7 @@ import type { MessageEnvelope, PluginDefinition } from '../../core/contracts.ts'
 import type { TransactionCommitRecord } from '../../protocols/state.ts';
 import type { PersonalTextAssetRecord } from '../../protocols/personal-assets.ts';
 import type {} from '../../protocols/cloud-sync.ts';
+import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import {
   DEFAULT_AUTOSAVE_INTERVAL_MS,
   PROJECT_FORMAT_VERSION,
@@ -415,7 +416,18 @@ export function createCloudSyncPlugin(
         handle: () => {
           context.ui.activateSurface('right.primary', 'cloud-sync.panel', 'cloudSync.close');
           update({ panelOpen: true });
-          return { result: { open: true } };
+          return {
+            result: { open: true },
+            transaction: {
+              label: '打开云同步面板',
+              history: false,
+              patches: [],
+              events: [{
+                type: UI_SURFACE_REVEALED_EVENT,
+                payload: uiSurfaceRevealed('right.primary', 'cloud-sync', 'cloud-sync.panel'),
+              }],
+            },
+          };
         },
       });
       context.commands.register({

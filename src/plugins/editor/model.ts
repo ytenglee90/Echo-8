@@ -3,7 +3,9 @@ import { countGraphemes } from '../../services/text-metrics.ts';
 import type {
   EditorContextSnapshot,
   EditorDocumentInvalidation,
+  EditorOpenRequest,
   EditorOpenRequested,
+  EditorOpenResult,
   EditorRevealRequest,
   EditorMetricsRequest,
   EditorMetricsSnapshot,
@@ -14,7 +16,7 @@ import type {
 } from '../../protocols/editor.ts';
 import { EDITOR_OPEN_REQUESTED_EVENT } from '../../protocols/editor.ts';
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
-import { UI_SURFACE_REVEALED_EVENT } from '../../protocols/ui.ts';
+import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { defineManifest } from '../manifest.ts';
 import {
   DEFAULT_EDITOR_DOCK_WIDTH,
@@ -29,7 +31,6 @@ const EDITOR_NAMESPACE = 'editor';
 const EDITOR_METRICS_NAMESPACE = 'editorMetrics';
 const DEFAULT_PANE_WIDTH = 520;
 const IDLE_TIMEOUT_MS = 60_000;
-const CANVAS_REVEAL_DELAY_MS = 40;
 
 interface StoredWritingMetrics extends WritingMetricsSnapshot {
   runtimeSessionId: string;
@@ -75,6 +76,7 @@ export function createEditorPlugin(
         'editor.open',
         'editor.openSelected',
         'editor.closeActive',
+        'editor.closeAll',
         'editor.activatePrevious',
         'editor.activateNext',
         'editor.toggleImmersive',
@@ -120,7 +122,6 @@ export function createEditorPlugin(
         'palette.colorPicker.close',
         'selection.set',
         'canvas.focusSelection',
-        'canvas.focusEntity',
         'textAssist.toggleCorrection',
         'textAssist.toggleCompletion',
         'editor.open',
@@ -151,6 +152,7 @@ export function createEditorPlugin(
         'editor.formatStep.requested',
         'appearance.color.preview',
         'annotations.invalidated',
+        'annotations.markerAnchors.preview',
         'palette.colorPicker.preview',
         'palette.colorPicker.result',
         'text.assist.invalidated',
@@ -232,23 +234,30 @@ export function createEditorPlugin(
         paneWindows: paneWindows(),
         paneRatios: paneRatios(),
       });
-      const revealCanvasEntity = (id: string) => {
-        context.resources.timeout(() => {
-          void context.commands.dispatch('canvas.focusEntity', { id }).catch((error) => {
-            context.diagnostics.warn('编辑器打开后无法重新定位画布节点', error);
-          });
-        }, CANVAS_REVEAL_DELAY_MS);
-      };
-
-      context.commands.register<{ id: string }>({
+      const activateEditorDock = () => context.ui.activateSurface(
+        'right.editor',
+        'editor.dock',
+        'editor.closeActive',
+        'editor.closeAll',
+      );
+      const editorSurfaceRevealed = () => uiSurfaceRevealed(
+        'right.editor',
+        'editor',
+        'editor.dock',
+      );
+      context.commands.register<EditorOpenRequest, EditorOpenResult>({
         type: 'editor.open',
-        validate: isNodeIdPayload,
+        validate: isEditorOpenRequest,
         handle: (payload, envelope) => {
-          context.ui.activateSurface('right.editor', 'editor.dock', 'editor.closeActive');
+          activateEditorDock();
           const current = openPanes();
           const recency = paneRecency();
+          const additive = payload.mode === 'add';
           const addedPane = !current.includes(payload.id);
-          if (addedPane && current.length >= 3) {
+          const requestedReveal: EditorRevealRequest | undefined = payload.reveal
+            ? { id: payload.id, ...payload.reveal, requestId: envelope.id }
+            : undefined;
+          if (additive && addedPane && current.length >= 3) {
             context.ui.activateSurface('overlay.modal', 'editor.replacePrompt', 'editor.cancelReplace');
             return {
               result: { status: 'limit', openPanes: current },
@@ -258,7 +267,54 @@ export function createEditorPlugin(
                 patches: [workspaceSet('pendingPane', payload.id)],
                 events: [
                   { type: 'editor.replace.requested', payload: { id: payload.id, openPanes: current } },
-                  { type: UI_SURFACE_REVEALED_EVENT, payload: { slot: 'right.editor' } },
+                  { type: UI_SURFACE_REVEALED_EVENT, payload: editorSurfaceRevealed() },
+                ],
+              },
+            };
+          }
+          if (!additive) {
+            const replacing = current.length > 0 && (current.length !== 1 || current[0] !== payload.id);
+            const windows = paneWindows();
+            const nextWindows = requestedReveal
+              ? { [payload.id]: revealWindowStart(requestedReveal.start) }
+              : payload.id in windows ? { [payload.id]: windows[payload.id] } : {};
+            const currentReveal = revealRequest();
+            const currentImmersive = immersivePane();
+            if (currentImmersive) context.ui.deactivateSurface('overlay.modal', 'editor.immersive');
+            if (pendingPane()) context.ui.deactivateSurface('overlay.modal', 'editor.replacePrompt');
+            const nextDockWidth = clampDockWidth(
+              current.length > 1 ? DEFAULT_EDITOR_DOCK_WIDTH : dockWidth(),
+              Number.MAX_SAFE_INTEGER,
+              1,
+            );
+            const next = [payload.id];
+            return {
+              result: {
+                status: replacing ? 'replaced' : addedPane ? 'opened' : 'activated',
+                openPanes: next,
+              },
+              transaction: {
+                label: replacing ? '替换文本编辑器' : addedPane ? '打开文本编辑器' : '激活文本编辑器',
+                history: false,
+                patches: [
+                  workspaceSet('openPanes', next),
+                  workspaceSet('activePane', payload.id),
+                  workspaceSet('paneRecency', { [payload.id]: envelope.timestamp }),
+                  workspaceSet('paneWindows', nextWindows),
+                  workspaceSet('paneRatios', { [payload.id]: 1 }),
+                  workspaceSet('dockWidth', nextDockWidth),
+                  ...(pendingPane() ? [workspaceDelete('pendingPane')] : []),
+                  ...(requestedReveal
+                    ? [workspaceSet('revealRequest', requestedReveal)]
+                    : currentReveal && currentReveal.id !== payload.id ? [workspaceDelete('revealRequest')] : []),
+                  ...(currentImmersive ? [workspaceDelete('immersivePane')] : []),
+                ],
+                events: [
+                  { type: 'editor.panes.changed', payload: { openPanes: next } },
+                  ...(requestedReveal
+                    ? [{ type: 'editor.range.revealed', payload: requestedReveal }]
+                    : []),
+                  { type: UI_SURFACE_REVEALED_EVENT, payload: editorSurfaceRevealed() },
                 ],
               },
             };
@@ -283,8 +339,14 @@ export function createEditorPlugin(
             workspaceSet('paneRatios', normalizePaneRatios(nextRatios, next)),
             workspaceSet('dockWidth', nextDockWidth),
             ...(pendingPane() ? [workspaceDelete('pendingPane')] : []),
+            ...(requestedReveal ? [
+              workspaceSet('paneWindows', {
+                ...paneWindows(),
+                [payload.id]: revealWindowStart(requestedReveal.start),
+              }),
+              workspaceSet('revealRequest', requestedReveal),
+            ] : []),
           ];
-          revealCanvasEntity(payload.id);
           return {
             result: { status: addedPane ? 'opened' : 'activated', openPanes: next },
             transaction: {
@@ -293,7 +355,10 @@ export function createEditorPlugin(
               patches,
               events: [
                 { type: 'editor.panes.changed', payload: { openPanes: next } },
-                { type: UI_SURFACE_REVEALED_EVENT, payload: { slot: 'right.editor' } },
+                ...(requestedReveal
+                  ? [{ type: 'editor.range.revealed', payload: requestedReveal }]
+                  : []),
+                { type: UI_SURFACE_REVEALED_EVENT, payload: editorSurfaceRevealed() },
               ],
             },
           };
@@ -303,11 +368,14 @@ export function createEditorPlugin(
       context.signals.subscribe<EditorOpenRequested>(EDITOR_OPEN_REQUESTED_EVENT, (message) => {
         if (!message.payload || typeof message.payload.id !== 'string') return;
         void Promise.resolve()
-          .then(() => context.commands.dispatch('editor.open', { id: message.payload.id }))
+          .then(() => context.commands.dispatch('editor.open', {
+            id: message.payload.id,
+            mode: message.payload.mode,
+          }))
           .catch((error) => context.diagnostics.warn('无法打开请求的文本编辑区', error));
       });
 
-      context.commands.register({
+      context.commands.register<undefined, boolean | EditorOpenResult>({
         type: 'editor.openSelected',
         handle: async () => {
           let selection: SelectionSnapshot;
@@ -348,7 +416,6 @@ export function createEditorPlugin(
           const wasImmersive = immersivePane() === payload.replaceId;
           if (wasImmersive) context.ui.deactivateSurface('overlay.modal', 'editor.immersive');
           context.ui.deactivateSurface('overlay.modal', 'editor.replacePrompt');
-          revealCanvasEntity(requested);
           return {
             result: true,
             transaction: {
@@ -369,7 +436,7 @@ export function createEditorPlugin(
                   type: 'editor.panes.changed',
                   payload: { openPanes: next, replacedId: payload.replaceId, openedId: requested },
                 },
-                { type: UI_SURFACE_REVEALED_EVENT, payload: { slot: 'right.editor' } },
+                { type: UI_SURFACE_REVEALED_EVENT, payload: editorSurfaceRevealed() },
               ],
             },
           };
@@ -466,6 +533,39 @@ export function createEditorPlugin(
         },
       });
 
+      context.commands.register({
+        type: 'editor.closeAll',
+        handle: async () => {
+          const current = openPanes();
+          const hadImmersivePane = Boolean(immersivePane());
+          if (current.length === 0 && !pendingPane() && !hadImmersivePane) return { result: false };
+          if (hadImmersivePane) {
+            await context.commands.invoke('editor.exitImmersive');
+            await context.commands.invoke('interaction.end', { mode: 'immersive' }).catch(() => undefined);
+          }
+          context.ui.deactivateSurface('overlay.modal', 'editor.replacePrompt');
+          context.ui.deactivateSurface('right.editor', 'editor.dock');
+          return {
+            result: true,
+            transaction: {
+              label: '关闭全部文本编辑器',
+              history: false,
+              patches: [
+                workspaceSet('openPanes', []),
+                workspaceDelete('activePane'),
+                workspaceDelete('pendingPane'),
+                workspaceDelete('revealRequest'),
+                workspaceSet('paneRecency', {}),
+                workspaceSet('paneWindows', {}),
+                workspaceSet('paneRatios', {}),
+                workspaceDelete('immersivePane'),
+              ],
+              events: [{ type: 'editor.panes.changed', payload: { openPanes: [] } }],
+            },
+          };
+        },
+      });
+
       const activateRelativePane = async (offset: -1 | 1) => {
         const panes = openPanes();
         if (panes.length < 2) return { result: false };
@@ -516,7 +616,7 @@ export function createEditorPlugin(
         validate: isNodeIdPayload,
         handle: (payload, envelope) => {
           if (!openPanes().includes(payload.id)) throw new Error(`Editor pane is not open: ${payload.id}`);
-          context.ui.activateSurface('right.editor', 'editor.dock', 'editor.closeActive');
+          activateEditorDock();
           if (activePane() === payload.id) return { result: true };
           return {
             result: true,
@@ -948,7 +1048,7 @@ export function createEditorPlugin(
         context.ui.activateSurface('overlay.modal', 'editor.replacePrompt', 'editor.cancelReplace');
       }
       if (openPanes().length > 0) {
-        context.ui.activateSurface('right.editor', 'editor.dock', 'editor.closeActive');
+        activateEditorDock();
       }
       void context.commands.dispatch('editor.migrateMetrics').catch((error) => {
         context.diagnostics.warn('旧码字统计清理失败', error);
@@ -1099,6 +1199,16 @@ function clampDockWidth(
 
 function isNodeIdPayload(payload: unknown): payload is { id: string } {
   return isRecord(payload) && typeof payload.id === 'string' && payload.id.length > 0;
+}
+
+function isEditorOpenRequest(payload: unknown): payload is EditorOpenRequest {
+  return isRecord(payload) && typeof payload.id === 'string' && payload.id.length > 0 &&
+    (payload.mode === undefined || payload.mode === 'replace' || payload.mode === 'add') &&
+    (payload.reveal === undefined || isRecord(payload.reveal) &&
+      Number.isInteger(payload.reveal.start) && (payload.reveal.start as number) >= 0 &&
+      Number.isInteger(payload.reveal.end) && (payload.reveal.end as number) > (payload.reveal.start as number) &&
+      (payload.reveal.revision === undefined ||
+        Number.isInteger(payload.reveal.revision) && (payload.reveal.revision as number) >= 0));
 }
 
 function isOptionalNodeIdPayload(payload: unknown): payload is { id?: string } {

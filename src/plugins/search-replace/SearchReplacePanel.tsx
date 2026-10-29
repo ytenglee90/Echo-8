@@ -12,6 +12,7 @@ import {
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { SearchNavigationSignal, SearchResult, SearchStatus } from '../../protocols/search.ts';
+import type { SelectionMode, SelectionSnapshot } from '../../protocols/selection.ts';
 import type { EditorContextSnapshot, EditorSelectionSnapshot } from '../../protocols/editor.ts';
 import type { FloatingPanelRect } from '../../protocols/floating.ts';
 import { FloatingPanel } from '../../ui/FloatingPanel.tsx';
@@ -60,7 +61,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
   const [result, setResult] = useState<SearchResult>();
   const [editorContext, setEditorContext] = useState<EditorContextSnapshot>({ openPanes: [] });
   const [editorSelection, setEditorSelection] = useState<EditorSelectionSnapshot>();
-  const [navigationState, setNavigationState] = useState<{ nodeId: string; index: number; total: number }>();
+  const [navigationState, setNavigationState] = useState<SearchNavigationSignal>();
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [lasso, setLasso] = useState<SearchLassoRect>();
   const selectionAnchor = useRef<number | undefined>(undefined);
@@ -96,7 +97,6 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
       if (message.payload.state === 'replaced') {
         setResult(undefined);
         setNavigationState(undefined);
-        setSelectedNodeIds([]);
         setLasso(undefined);
         selectionAnchor.current = undefined;
       }
@@ -108,7 +108,6 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     () => client.subscribeSignal<SearchResult>('search.results', (message) => {
       setResult(message.payload);
       setNavigationState(undefined);
-      setSelectedNodeIds([]);
       setLasso(undefined);
       selectionAnchor.current = undefined;
     }),
@@ -119,7 +118,6 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     () => client.subscribeSignal('search.results.clear', () => {
       setResult(undefined);
       setNavigationState(undefined);
-      setSelectedNodeIds([]);
       setLasso(undefined);
       selectionAnchor.current = undefined;
     }),
@@ -138,6 +136,11 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     () => client.subscribeSignal<SearchNavigationSignal>('search.navigation', (message) => {
       setNavigationState(message.payload);
     }),
+    [client],
+  );
+
+  useEffect(
+    () => client.subscribeSignal('search.navigation.clear', () => setNavigationState(undefined)),
     [client],
   );
 
@@ -161,6 +164,12 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     void client.request<EditorSelectionSnapshot | undefined>('editor.selection@1').then(
       (selection) => current && setEditorSelection(selection),
       () => current && setEditorSelection(undefined),
+    );
+    void client.request<SelectionSnapshot>('selection.read@1').then(
+      (selection) => current && setSelectedNodeIds(selection.items
+        .filter((item) => item.kind === 'text-node')
+        .map((item) => item.id)),
+      () => current && setSelectedNodeIds([]),
     );
     return () => {
       current = false;
@@ -197,6 +206,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
   );
   const currentEditorHit = useMemo(
     () => result?.hits.find((hit) => (
+      hit.field === 'body' &&
       hit.nodeId === editorContext.activePane &&
       hit.nodeId === editorSelection?.id &&
       hit.start === editorSelection.start &&
@@ -210,8 +220,30 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
 
   if (!open) return null;
 
-  const publishSelection = (nodeIds: string[], nextLasso?: SearchLassoRect) => {
+  const previewSelection = (nodeIds: string[], nextLasso?: SearchLassoRect) => {
     client.emit('search.selection.preview', { nodeIds: [...new Set(nodeIds)], lasso: nextLasso });
+  };
+  const resetNavigation = () => {
+    setNavigationState(undefined);
+    client.emit('search.navigation.reset', {});
+  };
+  const commitSelection = (
+    nodeIds: string[],
+    mode: SelectionMode = 'replace',
+    previewNodeIds = nodeIds,
+  ) => {
+    resetNavigation();
+    previewSelection(previewNodeIds);
+    const operation = nodeIds.length === 0 && mode === 'replace'
+      ? client.dispatch('selection.clear')
+      : client.dispatch('selection.set', {
+        items: nodeIds.map((id) => ({ id, kind: 'text-node' })),
+        mode,
+      });
+    void operation.catch((error) => setStatus({
+      state: 'error',
+      message: error instanceof Error ? error.message : '无法同步画布选择',
+    }));
   };
   const replaceTargets = () => {
     if (!result || replacementHits.length === 0 || result.truncated) return;
@@ -228,7 +260,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
   const navigate = (command: 'search.previous' | 'search.next') => {
     void client.dispatch(command).catch((error) => setStatus({
       state: 'error',
-      message: error instanceof Error ? error.message : '无法定位当前文本编辑区的查找结果',
+      message: error instanceof Error ? error.message : '无法定位画布查找结果',
     }));
   };
   const selectNode = (event: ReactMouseEvent<HTMLButtonElement>, index: number) => {
@@ -243,14 +275,14 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
       if (next.has(node.nodeId)) next.delete(node.nodeId);
       else next.add(node.nodeId);
       selectionAnchor.current = index;
-      publishSelection([...next]);
+      commitSelection([node.nodeId], 'toggle', [...next]);
     } else if (event.shiftKey && selectionAnchor.current !== undefined) {
       const start = Math.min(selectionAnchor.current, index);
       const end = Math.max(selectionAnchor.current, index);
-      publishSelection(nodeResults.slice(start, end + 1).map((item) => item.nodeId));
+      commitSelection(nodeResults.slice(start, end + 1).map((item) => item.nodeId));
     } else {
       selectionAnchor.current = index;
-      publishSelection([node.nodeId]);
+      commitSelection([node.nodeId]);
     }
   };
   const beginLasso = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -293,7 +325,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
       : intersected;
     gesture.latestNodeIds = next;
     const listRect = list.getBoundingClientRect();
-    publishSelection(next, {
+    previewSelection(next, {
       left: viewport.left - listRect.left + list.scrollLeft,
       top: viewport.top - listRect.top + list.scrollTop,
       width: viewport.right - viewport.left,
@@ -310,13 +342,30 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     if (!gesture.dragging) {
       if (!gesture.startedOnRow) {
         selectionAnchor.current = undefined;
-        publishSelection([]);
+        commitSelection([]);
       }
       return;
     }
     event.preventDefault();
     suppressClick.current = gesture.startedOnRow;
-    publishSelection(cancelled ? gesture.baseline : gesture.latestNodeIds);
+    if (cancelled) previewSelection(gesture.baseline);
+    else commitSelection(gesture.latestNodeIds);
+  };
+  const handleQueryKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    queryHistory.handleKeyDown(event);
+    if (event.defaultPrevented || event.key !== 'Enter' || event.shiftKey ||
+      event.ctrlKey || event.metaKey || event.altKey || queryComposing || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (!query) return;
+    void client.dispatch('search.run', {
+      query,
+      scope: 'canvas',
+      matchCase,
+      wholeWord,
+    }).catch((error) => setStatus({
+      state: 'error',
+      message: error instanceof Error ? error.message : '无法重新查找',
+    }));
   };
 
   return (
@@ -343,19 +392,19 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
           if (target.closest('button, input, textarea, label, .search-hit-list')) return;
           if (selectedNodeIds.length === 0) return;
           selectionAnchor.current = undefined;
-          publishSelection([]);
+          commitSelection([]);
         }}
       >
         <ResizableSearchTextarea
           id="search-query"
-          label="查找正文"
+          label="查找标题和正文"
           value={query}
           onChange={queryHistory.change}
-          onKeyDown={queryHistory.handleKeyDown}
+          onKeyDown={handleQueryKeyDown}
           onCompositionStart={queryHistory.startComposition}
           onCompositionEnd={queryHistory.endComposition}
           onCompositionChange={setQueryComposing}
-          placeholder="输入内容后自动查找"
+          placeholder="输入内容后自动查找；回车重新查找"
         />
         <ResizableSearchTextarea
           id="search-replacement"
@@ -372,12 +421,16 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
           <label><input type="checkbox" checked={wholeWord} onChange={(event) => setWholeWord(event.target.checked)} /> 完整词</label>
         </div>
         <div className="search-actions">
-          <div className="search-navigation" aria-label="当前文本编辑区查找结果导航">
+          <div className="search-navigation" aria-label="所选节点或全画布查找结果导航">
             <button type="button" disabled={!result?.hits.length} onClick={() => navigate('search.previous')}>
               <Icon name="chevron-left" size={16} />
               <span>上一个</span>
             </button>
-            <span>{navigationState ? `${navigationState.index + 1} / ${navigationState.total}` : '当前编辑区'}</span>
+            <span>{navigationState
+              ? `${navigationState.index + 1} / ${navigationState.total} · ${navigationState.scope === 'selection'
+                ? `已选 ${navigationState.scopeNodeCount} 个`
+                : '全画布'}`
+              : selectedNodeIds.length > 0 ? `已选 ${selectedNodeIds.length} 个` : '全画布'}</span>
             <button type="button" disabled={!result?.hits.length} onClick={() => navigate('search.next')}>
               <span>下一个</span>
               <Icon name="chevron-right" size={16} />
@@ -389,7 +442,9 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
             title={result?.truncated
               ? '结果达到上限，不能执行不完整的替换'
               : selectedNodeIds.length > 0
-                ? '替换结果列表中已选节点的全部命中'
+                ? selectedHits.length > 0
+                  ? '替换画布所选节点中的全部标题和正文命中'
+                  : '画布所选节点中没有可替换的匹配'
                 : currentEditorHit
                   ? '没有选择列表节点，将只替换当前文本编辑区选中的这一处'
                   : '请在当前文本编辑区选中一处查找结果，或在结果列表中选择节点'}
@@ -397,11 +452,11 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
             onClick={replaceTargets}
           >
             <Icon name="replace" size={17} />
-            <span>{selectedNodeIds.length > 0 ? '替换所选节点' : '替换当前一处'}</span>
+            <span>{selectedNodeIds.length > 0 ? '替换所选匹配' : '替换当前一处'}</span>
           </button>
         </div>
         <p className={`search-status ${status.state === 'error' ? 'error' : ''}`} aria-live="polite">
-          {status.message ?? '默认查找全画布正文；结果选择按节点生效。'}
+          {status.message ?? '默认查找全画布标题和正文；上一个/下一个优先使用画布所选节点。'}
         </p>
         {result && (
           <div className="search-results">
@@ -424,7 +479,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
                   event.preventDefault();
                   event.stopPropagation();
                   selectionAnchor.current = nodeResults.length > 0 ? 0 : undefined;
-                  publishSelection(nodeResults.map((node) => node.nodeId));
+                  commitSelection(nodeResults.map((node) => node.nodeId));
                 }
               }}
               onPointerDown={beginLasso}
@@ -436,6 +491,12 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
               {nodeResults.map((node, index) => {
                 const selected = selectedNodeSet.has(node.nodeId);
                 const firstHit = node.hits[0];
+                const titleHitCount = node.hits.filter((hit) => hit.field === 'title').length;
+                const bodyHitCount = node.hits.length - titleHitCount;
+                const hitSummary = [
+                  titleHitCount > 0 ? `标题 ${titleHitCount} 处` : '',
+                  bodyHitCount > 0 ? `正文 ${bodyHitCount} 处` : '',
+                ].filter(Boolean).join(' · ');
                 return (
                   <button
                     type="button"
@@ -450,7 +511,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
                   >
                     <strong>{node.title}</strong>
                     <span>{firstHit.preview}</span>
-                    <small>{node.hits.length} 处命中 · 首处位置 {firstHit.start}</small>
+                    <small>{hitSummary}{firstHit.field === 'body' ? ` · 正文首处位置 ${firstHit.start}` : ''}</small>
                   </button>
                 );
               })}

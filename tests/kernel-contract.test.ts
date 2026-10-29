@@ -97,6 +97,7 @@ import { createSearchReplacePlugin } from '../src/plugins/search-replace/model.t
 import { resolveSearchNavigation } from '../src/plugins/search-replace/navigation.ts';
 import { groupHitsByNode } from '../src/plugins/search-replace/result-order.ts';
 import { createSearchIndexPlugin } from '../src/plugins/search-index/model.ts';
+import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../src/protocols/ui.ts';
 import {
   SEMANTIC_PROVIDER_NAMESPACE,
   createSemanticProviderPlugin,
@@ -1835,6 +1836,10 @@ test('opening a text editor makes every governed right panel yield through core 
             key: 'open',
             value: open,
           }],
+          events: open ? [{
+            type: UI_SURFACE_REVEALED_EVENT,
+            payload: uiSurfaceRevealed('right.primary', 'generic-right-panel', 'generic-right-panel.view'),
+          }] : undefined,
         },
       });
       context.commands.register({
@@ -1875,8 +1880,12 @@ test('opening a text editor makes every governed right panel yield through core 
   await harness.router.dispatch('palette.open', undefined, 'core.test');
   assert.equal(harness.store.readValue('workspace', 'palette', 'open'), true);
 
-  await harness.router.dispatch('editor.open', { id: created.id }, 'core.test');
+  await harness.router.dispatch('genericRightPanel.open', undefined, 'core.test');
   await waitFor(async () => harness.store.readValue('workspace', 'palette', 'open') === false);
+  assert.equal(harness.store.readValue('workspace', 'genericRightPanel', 'open'), true);
+
+  await harness.router.dispatch('editor.open', { id: created.id }, 'core.test');
+  await waitFor(async () => harness.store.readValue('workspace', 'genericRightPanel', 'open') === false);
 
   assert.equal(harness.ui.topSurface(['right.primary']), undefined);
 
@@ -1886,6 +1895,22 @@ test('opening a text editor makes every governed right panel yield through core 
   await waitFor(async () => harness.store.readValue('workspace', 'genericRightPanel', 'open') === false);
 
   assert.equal(harness.ui.topSurface(['right.primary']), undefined);
+
+  await harness.router.dispatch('genericRightPanel.open', undefined, 'core.test');
+  await waitFor(async () => {
+    const editorState = await harness.router.ask<{ openPanes: string[] }>('editor.state', undefined, 'core.test');
+    return editorState.openPanes.length === 0;
+  });
+  assert.equal(harness.store.readValue('workspace', 'genericRightPanel', 'open'), true);
+
+  await harness.router.dispatch('editor.open', { id: created.id }, 'core.test');
+  await waitFor(async () => harness.store.readValue('workspace', 'genericRightPanel', 'open') === false);
+  await harness.router.dispatch('palette.open', undefined, 'core.test');
+  await waitFor(async () => {
+    const editorState = await harness.router.ask<{ openPanes: string[] }>('editor.state', undefined, 'core.test');
+    return editorState.openPanes.length === 0;
+  });
+  assert.equal(harness.store.readValue('workspace', 'palette', 'open'), true);
 });
 
 test('palette composes owner appearance plans into one undoable document transaction', async () => {
@@ -2219,6 +2244,7 @@ test('selection palette stores group and annotation overrides without changing g
   let picker = await harness.router.ask<{
     sessionId: string;
     appearancePreview?: { kind?: string };
+    anchor: { x: number; y: number; width: number; height: number };
   }>('palette.colorPicker.state', undefined, 'core.test');
   assert.equal(picker.appearancePreview?.kind, 'group-fill');
   await harness.router.dispatch('palette.colorPicker.commit', {
@@ -2238,6 +2264,13 @@ test('selection palette stores group and annotation overrides without changing g
     target: { kind: 'text-node', targetId: first.id },
     body: '局部注释色',
   }, 'core.test');
+  harness.router.emitSignal('annotations.markerAnchors.preview', {
+    sourceId: 'kernel-test-canvas-markers',
+    anchors: [{
+      id: annotation.id,
+      rect: { x: 318, y: 146, width: 25, height: 25 },
+    }],
+  }, 'annotations');
   await harness.router.dispatch('selection.set', {
     items: [{ id: annotation.id, kind: 'annotation' }],
     mode: 'replace',
@@ -2245,6 +2278,7 @@ test('selection palette stores group and annotation overrides without changing g
   await harness.router.dispatch('palette.selectionColor.open', undefined, 'core.test');
   picker = await harness.router.ask('palette.colorPicker.state', undefined, 'core.test');
   assert.equal(picker.appearancePreview?.kind, 'annotation-marker');
+  assert.deepEqual(picker.anchor, { x: 318, y: 146, width: 25, height: 25 });
   await harness.router.dispatch('palette.colorPicker.commit', {
     sessionId: picker.sessionId,
     color: '#c64f4f',
@@ -5432,6 +5466,130 @@ test('literal search finds a case-insensitive match split across content chunks'
   assert.equal(result.hits[0].matchedText, 'AbCdE');
 });
 
+test('title-and-body search reports title offsets without treating them as replaceable body ranges', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  await harness.plugins.start('text-node');
+  const node = await harness.router.dispatch<{ id: string }>(
+    'node.create',
+    { title: '发布检查清单', body: '正文中没有标题关键词' },
+    'core.test',
+  );
+
+  const result = await harness.capabilities.request<{
+    hits: Array<{ nodeId: string; field: 'title' | 'body'; start: number; matchedText: string }>;
+  }>('content.search@2', {
+    query: '检查',
+    nodeIds: [node.id],
+    matchCase: true,
+    wholeWord: false,
+    maxResults: 20,
+  });
+
+  assert.deepEqual(result.hits, [{
+    nodeId: node.id,
+    title: '发布检查清单',
+    field: 'title',
+    start: 2,
+    length: 2,
+    matchedText: '检查',
+    preview: '标题：发布检查清单',
+    revision: 1,
+  }]);
+  await assert.rejects(
+    () => harness.capabilities.request('content.replacePlan@1', {
+      hits: result.hits,
+      replacement: '核对',
+    }),
+    /标题命中只用于定位/u,
+  );
+});
+
+test('title-and-body replace changes every matched field and linked title reference in one undoable transaction', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSearchReplacePlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('search-replace');
+  const target = await harness.router.dispatch<{ id: string }>(
+    'node.create',
+    { title: '项目检查清单', body: '检查正文' },
+    'core.test',
+  );
+  const reference = await harness.router.dispatch<{ id: string }>(
+    'node.create',
+    { title: '引用节点', body: '请阅读项目检查清单；检查正文' },
+    'core.test',
+  );
+  const linkedOnly = await harness.router.dispatch<{ id: string }>(
+    'node.create',
+    { title: '未选引用', body: '关联项目检查清单；保留检查正文' },
+    'core.test',
+  );
+  const result = await harness.capabilities.request<SearchResult>('content.search@2', {
+    query: '检查',
+    nodeIds: [target.id, reference.id],
+    matchCase: true,
+    wholeWord: false,
+    maxResults: 20,
+  });
+  assert.deepEqual(result.hits.map((hit) => hit.field), ['title', 'body', 'body', 'body']);
+  const historyBefore = harness.history.getState().undoCount;
+
+  await harness.router.dispatch('search.replace', {
+    hits: result.hits,
+    replacement: '核对',
+  }, 'core.test');
+
+  assert.equal(harness.history.getState().undoCount, historyBefore + 1);
+  const summaries = await harness.capabilities.request<ContentSummary[]>('content.summariesById@1', {
+    nodeIds: [target.id],
+  });
+  const targetBody = await harness.capabilities.request<{ text: string }>('content.read@1', {
+    nodeId: target.id,
+    start: 0,
+    length: 100,
+  });
+  const referenceBody = await harness.capabilities.request<{ text: string }>('content.read@1', {
+    nodeId: reference.id,
+    start: 0,
+    length: 100,
+  });
+  const linkedOnlyBody = await harness.capabilities.request<{ text: string }>('content.read@1', {
+    nodeId: linkedOnly.id,
+    start: 0,
+    length: 100,
+  });
+  assert.equal(summaries[0]?.title, '项目核对清单');
+  assert.equal(targetBody.text, '核对正文');
+  assert.equal(referenceBody.text, '请阅读项目核对清单；核对正文');
+  assert.equal(linkedOnlyBody.text, '关联项目核对清单；保留检查正文');
+
+  await harness.transactions.undo();
+  const restored = await harness.capabilities.request<ContentSummary[]>('content.summariesById@1', {
+    nodeIds: [target.id],
+  });
+  const restoredTargetBody = await harness.capabilities.request<{ text: string }>('content.read@1', {
+    nodeId: target.id,
+    start: 0,
+    length: 100,
+  });
+  const restoredReferenceBody = await harness.capabilities.request<{ text: string }>('content.read@1', {
+    nodeId: reference.id,
+    start: 0,
+    length: 100,
+  });
+  const restoredLinkedOnlyBody = await harness.capabilities.request<{ text: string }>('content.read@1', {
+    nodeId: linkedOnly.id,
+    start: 0,
+    length: 100,
+  });
+  assert.equal(restored[0]?.title, '项目检查清单');
+  assert.equal(restoredTargetBody.text, '检查正文');
+  assert.equal(restoredReferenceBody.text, '请阅读项目检查清单；检查正文');
+  assert.equal(restoredLinkedOnlyBody.text, '关联项目检查清单；保留检查正文');
+});
+
 test('legacy inline text chunks migrate through a broadcast command without entering document history', async () => {
   const harness = createHarness();
   harness.plugins.register(textNodePlugin);
@@ -5765,7 +5923,7 @@ test('search result rows are unique and put active and open editor nodes first',
   assert.equal(rows.find((row) => row.nodeId === 'closed-a')?.hits.length, 2);
 });
 
-test('search navigation stays inside the active editor and wraps in document order', () => {
+test('search navigation follows the selected text-node scope and otherwise wraps across the canvas', () => {
   const hit = (nodeId: string, start: number): SearchHit => ({
     nodeId,
     title: nodeId,
@@ -5775,17 +5933,21 @@ test('search navigation stays inside the active editor and wraps in document ord
     preview: '目标',
     revision: 1,
   });
-  const hits = [hit('active', 12), hit('closed', 1), hit('active', 2), hit('active', 7)];
-  const first = resolveSearchNavigation(hits, 'active', undefined, 1);
+  const hits = [hit('active', 2), hit('active', 7), hit('active', 12), hit('closed', 1)];
+  const first = resolveSearchNavigation(hits, ['active'], undefined, 1);
   assert.deepEqual(first, {
-    hit: hits[2],
-    state: { nodeId: 'active', index: 0, total: 3 },
+    hit: hits[0],
+    state: { nodeId: 'active', index: 0, total: 3, scope: 'selection', scopeNodeCount: 1 },
   });
-  const second = resolveSearchNavigation(hits, 'active', first?.state, 1);
+  const second = resolveSearchNavigation(hits, ['active'], first?.state, 1);
   assert.equal(second?.hit.start, 7);
-  const wrappedPrevious = resolveSearchNavigation(hits, 'active', first?.state, -1);
+  const wrappedPrevious = resolveSearchNavigation(hits, ['active'], first?.state, -1);
   assert.equal(wrappedPrevious?.hit.start, 12);
-  assert.equal(resolveSearchNavigation(hits, 'missing', undefined, 1), undefined);
+  const canvasFirst = resolveSearchNavigation(hits, undefined, undefined, 1);
+  assert.deepEqual(canvasFirst?.state, {
+    nodeId: 'active', index: 0, total: 4, scope: 'canvas', scopeNodeCount: 0,
+  });
+  assert.equal(resolveSearchNavigation(hits, ['missing'], undefined, 1), undefined);
 });
 
 test('search query previews debounce through the task scheduler and only run the latest query', async () => {
@@ -5828,14 +5990,134 @@ test('search query previews debounce through the task scheduler and only run the
   assert.deepEqual(results.map((item) => item.query), ['second-query']);
 });
 
+test('search previous and next retain a multi-node selection scope while selecting each canvas result', async () => {
+  const harness = createHarness();
+  const editorPlugin = createEditorPlugin();
+  const searchPlugin = createSearchReplacePlugin();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSelectionPlugin());
+  harness.plugins.register(editorPlugin);
+  harness.plugins.register(searchPlugin);
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('selection');
+  await harness.plugins.start('editor');
+  await harness.plugins.start('search-replace');
+
+  const nodes: Array<{ id: string }> = [];
+  for (const title of ['范围 A', '范围 B', '范围 C']) {
+    nodes.push(await harness.router.dispatch<{ id: string }>(
+      'node.create',
+      { title, body: `${title} scope-token` },
+      'core.test',
+    ));
+  }
+  const searched = new Promise<SearchResult>((resolve) => {
+    const unsubscribe = harness.router.subscribeSignal('core.test', 'search.results', (message) => {
+      const result = message.payload as SearchResult;
+      if (result.query !== 'scope-token') return;
+      unsubscribe();
+      resolve(result);
+    });
+  });
+  await harness.router.dispatch('search.run', {
+    query: 'scope-token', scope: 'canvas', matchCase: true, wholeWord: false,
+  }, 'core.test');
+  assert.equal((await searched).hits.length, 3);
+
+  await harness.router.dispatch('selection.set', {
+    ids: [nodes[0].id, nodes[2].id], mode: 'replace',
+  }, 'core.test');
+  const first = await harness.router.dispatch<SearchNavigationSignal>('search.next', undefined, 'core.test');
+  assert.deepEqual(first, {
+    nodeId: nodes[0].id, index: 0, total: 2, scope: 'selection', scopeNodeCount: 2,
+  });
+  await waitFor(async () => {
+    const selection = await harness.capabilities.request<SelectionSnapshot>('selection.read@1');
+    return selection.ids[0] === nodes[0].id && selection.ids.length === 1 ? selection : undefined;
+  });
+  await waitFor(async () => {
+    const editor = await harness.router.ask<{
+      openPanes: string[];
+      activePane?: string;
+      revealRequest?: { id: string; start: number; end: number };
+    }>('editor.state', undefined, 'core.test');
+    return editor.activePane === nodes[0].id && editor.revealRequest?.id === nodes[0].id
+      ? editor
+      : undefined;
+  });
+
+  const second = await harness.router.dispatch<SearchNavigationSignal>('search.next', undefined, 'core.test');
+  assert.deepEqual(second, {
+    nodeId: nodes[2].id, index: 1, total: 2, scope: 'selection', scopeNodeCount: 2,
+  });
+  await waitFor(async () => {
+    const selection = await harness.capabilities.request<SelectionSnapshot>('selection.read@1');
+    return selection.ids[0] === nodes[2].id && selection.ids.length === 1 ? selection : undefined;
+  });
+  const secondEditor = await waitFor(async () => {
+    const editor = await harness.router.ask<{
+      openPanes: string[];
+      activePane?: string;
+      revealRequest?: { id: string };
+    }>('editor.state', undefined, 'core.test');
+    return editor.activePane === nodes[2].id && editor.revealRequest?.id === nodes[2].id
+      ? editor
+      : undefined;
+  });
+  assert.deepEqual(secondEditor.openPanes, [nodes[2].id]);
+
+  await harness.router.dispatch('selection.clear', undefined, 'core.test');
+  const canvas = await harness.router.dispatch<SearchNavigationSignal>('search.next', undefined, 'core.test');
+  assert.deepEqual(canvas, {
+    nodeId: nodes[0].id, index: 0, total: 3, scope: 'canvas', scopeNodeCount: 0,
+  });
+  await waitFor(async () => {
+    const editor = await harness.router.ask<{ activePane?: string }>('editor.state', undefined, 'core.test');
+    return editor.activePane === nodes[0].id ? editor : undefined;
+  });
+
+  const titleResult = new Promise<SearchResult>((resolve) => {
+    const unsubscribe = harness.router.subscribeSignal('core.test', 'search.results', (message) => {
+      const result = message.payload as SearchResult;
+      if (result.query !== '范围 B') return;
+      unsubscribe();
+      resolve(result);
+    });
+  });
+  await harness.router.dispatch('search.run', {
+    query: '范围 B', scope: 'canvas', matchCase: true, wholeWord: false,
+  }, 'core.test');
+  assert.equal((await titleResult).hits[0]?.field, 'title');
+  await harness.router.dispatch('selection.set', { ids: [nodes[1].id], mode: 'replace' }, 'core.test');
+  const titlePreview = new Promise<{ nodeId?: string; field?: string; start?: number; length?: number }>((resolve) => {
+    const unsubscribe = harness.router.subscribeSignal('core.test', 'search.match.preview', (message) => {
+      const preview = message.payload as { nodeId?: string; field?: string; start?: number; length?: number };
+      if (preview.field !== 'title') return;
+      unsubscribe();
+      resolve(preview);
+    });
+  });
+  await harness.router.dispatch('search.next', undefined, 'core.test');
+  assert.deepEqual(await titlePreview, {
+    nodeId: nodes[1].id,
+    field: 'title',
+    start: 0,
+    length: '范围 B'.length,
+  });
+  const titleEditor = await harness.router.ask<{ activePane?: string }>('editor.state', undefined, 'core.test');
+  assert.equal(titleEditor.activePane, nodes[0].id);
+});
+
 test('replace changes one selected editor hit or every hit in selected result nodes, then searches again', async () => {
   const harness = createHarness();
   const editorPlugin = createEditorPlugin();
   const searchPlugin = createSearchReplacePlugin();
   harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSelectionPlugin());
   harness.plugins.register(editorPlugin);
   harness.plugins.register(searchPlugin);
   await harness.plugins.start('text-node');
+  await harness.plugins.start('selection');
   await harness.plugins.start('editor');
   await harness.plugins.start('search-replace');
 
@@ -5876,6 +6158,7 @@ test('replace changes one selected editor hit or every hit in selected result no
     revision: number;
   }> };
   const currentHit = currentHits.hits.find((hit) => hit.nodeId === first.id)!;
+  await harness.router.dispatch('selection.set', { ids: [first.id], mode: 'replace' }, 'core.test');
   const navigation = await Promise.race([
     harness.router.dispatch<SearchNavigationSignal>('search.next', undefined, 'core.test'),
     new Promise<never>((_resolve, reject) => {
@@ -5883,7 +6166,13 @@ test('replace changes one selected editor hit or every hit in selected result no
       timer.unref?.();
     }),
   ]);
-  assert.deepEqual(navigation, { nodeId: first.id, index: 0, total: 2 });
+  assert.deepEqual(navigation, {
+    nodeId: first.id,
+    index: 0,
+    total: 2,
+    scope: 'selection',
+    scopeNodeCount: 1,
+  });
   const manualReveal = await waitFor(async () => {
     const state = await harness.router.ask<{
       revealRequest?: { id: string; start: number; end: number };
@@ -6520,6 +6809,40 @@ test('text color preview targets the exact selection and never mutates the docum
   }), document);
 });
 
+test('ordinary editor opens replace the dock while explicit additive opens preserve existing panes', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createEditorPlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('editor');
+  const ids: string[] = [];
+  for (const title of ['普通打开 A', '追加打开 B', '普通打开 C']) {
+    ids.push((await harness.router.dispatch<{ id: string }>('node.create', { title }, 'core.test')).id);
+  }
+
+  await harness.router.dispatch('editor.open', { id: ids[0] }, 'core.test');
+  await harness.router.dispatch('editor.open', { id: ids[1], mode: 'add' }, 'core.test');
+  let state = await harness.router.ask<{ openPanes: string[]; activePane?: string }>(
+    'editor.state', undefined, 'core.test',
+  );
+  assert.deepEqual(state.openPanes, [ids[0], ids[1]]);
+  assert.equal(state.activePane, ids[1]);
+
+  const replacement = await harness.router.dispatch<{ status: string; openPanes: string[] }>(
+    'editor.open', { id: ids[2] }, 'core.test',
+  );
+  assert.equal(replacement.status, 'replaced');
+  assert.deepEqual(replacement.openPanes, [ids[2]]);
+  state = await harness.router.ask('editor.state', undefined, 'core.test');
+  assert.deepEqual(state.openPanes, [ids[2]]);
+
+  await harness.router.dispatch('editor.open', { id: ids[0], mode: 'add' }, 'core.test');
+  await harness.router.dispatch('editor.open', { id: ids[2] }, 'core.test');
+  state = await harness.router.ask('editor.state', undefined, 'core.test');
+  assert.deepEqual(state.openPanes, [ids[2]]);
+  assert.equal(state.activePane, ids[2]);
+});
+
 test('editor workspace requires an explicit fourth-pane replacement and stays outside document history', async () => {
   const harness = createHarness();
   const editorPlugin = createEditorPlugin();
@@ -6534,15 +6857,15 @@ test('editor workspace requires an explicit fourth-pane replacement and stays ou
   const historyBefore = harness.history.getState().undoCount;
   await harness.router.dispatch('editor.open', { id: ids[0] }, 'core.test');
   await new Promise((resolve) => setTimeout(resolve, 2));
-  await harness.router.dispatch('editor.open', { id: ids[1] }, 'core.test');
+  await harness.router.dispatch('editor.open', { id: ids[1], mode: 'add' }, 'core.test');
   await new Promise((resolve) => setTimeout(resolve, 2));
-  await harness.router.dispatch('editor.open', { id: ids[2] }, 'core.test');
+  await harness.router.dispatch('editor.open', { id: ids[2], mode: 'add' }, 'core.test');
   await new Promise((resolve) => setTimeout(resolve, 2));
   await harness.router.dispatch('editor.activate', { id: ids[0] }, 'core.test');
   await new Promise((resolve) => setTimeout(resolve, 2));
   const fourth = await harness.router.dispatch<{ status: string; openPanes: string[] }>(
     'editor.open',
-    { id: ids[3] },
+    { id: ids[3], mode: 'add' },
     'core.test',
   );
   assert.equal(fourth.status, 'limit');
@@ -6611,7 +6934,7 @@ test('search navigation stays inside the active open editor and never opens anot
     { title: '定位目标', body: `${'x'.repeat(markerStart)}跨窗口定位` },
     'core.test',
   );
-  for (const id of openIds) await harness.router.dispatch('editor.open', { id }, 'core.test');
+  for (const id of openIds) await harness.router.dispatch('editor.open', { id, mode: 'add' }, 'core.test');
   const search = await harness.capabilities.request<{ hits: Array<{
     nodeId: string;
     title: string;
@@ -6645,7 +6968,7 @@ test('search navigation stays inside the active open editor and never opens anot
   assert.equal(unopenedState.pendingPane, undefined);
 
   await harness.router.dispatch('editor.close', { id: openIds[2] }, 'core.test');
-  await harness.router.dispatch('editor.open', { id: target.id }, 'search-replace');
+  await harness.router.dispatch('editor.open', { id: target.id, mode: 'add' }, 'search-replace');
   const navigation = await harness.router.dispatch<{ status: string }>(
     'editor.revealRange', revealPayload, 'search-replace',
   );
@@ -6699,7 +7022,7 @@ test('closing panes preserves the rendered widths of the panes that remain open'
   for (const title of ['尺寸 A', '尺寸 B', '尺寸 C']) {
     ids.push((await harness.router.dispatch<{ id: string }>('node.create', { title }, 'core.test')).id);
   }
-  for (const id of ids) await harness.router.dispatch('editor.open', { id }, 'core.test');
+  for (const id of ids) await harness.router.dispatch('editor.open', { id, mode: 'add' }, 'core.test');
   await harness.router.dispatch('editor.setDockWidth', { width: 1500, boundaryWidth: 1500 }, 'core.test');
   await harness.router.dispatch('editor.close', { id: ids[1], currentDockWidth: 1500 }, 'core.test');
   let state = await harness.router.ask<{ dockWidth: number; paneRatios: Record<string, number> }>(

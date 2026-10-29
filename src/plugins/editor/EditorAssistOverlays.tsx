@@ -4,12 +4,13 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   useEffect,
+  useId,
   useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
-import type { AnnotationRecord } from '../../protocols/annotations.ts';
+import type { AnnotationMarkerAnchorsPreview, AnnotationRecord } from '../../protocols/annotations.ts';
 import { appearancePreviewTarget, type AppearancePreview } from '../../protocols/appearance.ts';
 import type {
   TextCompletionCandidate,
@@ -63,6 +64,8 @@ export function EditorAnnotationMarkers({
   measurementBlockedRef: RefObject<boolean>;
   recordsRef?: MutableRefObject<AnnotationRecord[]>;
 }) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  const anchorSourceId = useId();
   const capabilityVersion = useSyncExternalStore(
     client.subscribeCapabilities,
     client.getCapabilityVersion,
@@ -144,8 +147,32 @@ export function EditorAnnotationMarkers({
     };
   }, [layoutRevision, measurementBlockedRef, records, rootRef, shellRef, windowLength, windowStart]);
 
+  const publishMarkerAnchors = () => {
+    const anchors = [...(layerRef.current?.querySelectorAll<HTMLElement>('[data-annotation-id]') ?? [])]
+      .map((marker) => ({ id: marker.dataset.annotationId ?? '', rect: marker.getBoundingClientRect() }))
+      .filter((anchor) => anchor.id && anchor.rect.width > 0 && anchor.rect.height > 0)
+      .map((anchor) => ({
+        id: anchor.id,
+        rect: {
+          x: anchor.rect.x,
+          y: anchor.rect.y,
+          width: anchor.rect.width,
+          height: anchor.rect.height,
+        },
+      }));
+    client.emit('annotations.markerAnchors.preview', {
+      sourceId: anchorSourceId,
+      anchors,
+    } satisfies AnnotationMarkerAnchorsPreview);
+  };
+  useEffect(publishMarkerAnchors);
+  useEffect(() => () => client.emit('annotations.markerAnchors.preview', {
+    sourceId: anchorSourceId,
+    clear: true,
+  } satisfies AnnotationMarkerAnchorsPreview), [anchorSourceId, client]);
+
   return (
-    <div className="editor-annotation-layer" aria-label="正文注释">
+    <div className="editor-annotation-layer" aria-label="正文注释" ref={layerRef}>
       {records.map((record) => {
         const position = positions[record.id];
         if (!position?.visible) return null;
@@ -159,6 +186,7 @@ export function EditorAnnotationMarkers({
             type="button"
             key={record.id}
             className="editor-annotation-marker"
+            data-annotation-id={record.id}
             data-annotation-offset={record.target.kind === 'text-range' ? record.target.offset : undefined}
             style={{
               left: position.left,
@@ -168,21 +196,27 @@ export function EditorAnnotationMarkers({
                 '--annotation-ink': contrastingInk(color),
               } : {}),
             } as CSSProperties}
-            title={record.body || '打开注释'}
-            aria-label={`打开注释${record.body ? `：${record.body.slice(0, 40)}` : ''}`}
+            title={record.body || '双击打开注释'}
+            aria-label={`双击打开注释${record.body ? `：${record.body.slice(0, 40)}` : ''}`}
             onPointerDown={(event) => {
               event.preventDefault();
               event.stopPropagation();
             }}
             onClick={(event) => {
               event.stopPropagation();
+              publishMarkerAnchors();
               void client.dispatch('selection.set', {
                 items: [{ id: record.id, kind: 'annotation' }],
                 mode: 'replace',
-              }).then(() => client.dispatch('annotation.open', {
-                  id: record.id,
-                  anchor: { x: event.clientX, y: event.clientY },
-                }));
+              });
+            }}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              publishMarkerAnchors();
+              void client.dispatch('annotation.open', {
+                id: record.id,
+                anchor: { x: event.clientX, y: event.clientY },
+              });
             }}
           >
             <Icon name="comment" size={9} />

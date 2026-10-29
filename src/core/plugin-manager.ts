@@ -613,13 +613,16 @@ export class PluginManager {
           assertPermission(manifest, 'ui.theme.manage', `activate theme ${id}`);
           this.ui.activateTheme(owner, id, overrides);
         },
-        activateSurface: (slot, contributionId, closeCommand) => {
+        activateSurface: (slot, contributionId, closeCommand, yieldCommand) => {
           assertDeclared(manifest.ui, contributionId, 'UI contribution');
           assertSlotPermission(manifest, slot);
           if (closeCommand && !this.canDispatch(owner, closeCommand)) {
             throw new Error(`${owner} did not declare close command ${closeCommand}`);
           }
-          this.ui.activateSurface(owner, slot, contributionId, closeCommand);
+          if (yieldCommand && !this.canDispatch(owner, yieldCommand)) {
+            throw new Error(`${owner} did not declare yield command ${yieldCommand}`);
+          }
+          this.ui.activateSurface(owner, slot, contributionId, closeCommand, yieldCommand);
         },
         deactivateSurface: (slot, contributionId) => {
           assertDeclared(manifest.ui, contributionId, 'UI contribution');

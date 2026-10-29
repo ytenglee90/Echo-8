@@ -1,15 +1,17 @@
 import type {
   CSSProperties,
 } from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
+import type { SearchMatchPreview } from '../../protocols/search.ts';
 import {
   useCanvasEntityLayerRuntime,
   type CanvasEntityCharacterCount,
 } from '../../ui/canvas-entity-layer-runtime.tsx';
 import { Icon } from '../../ui/Icon.tsx';
 import { alignCanvasRectToDevicePixels } from '../../ui/canvas-pixel-alignment.ts';
+import { ensureCanvasColorContrast } from '../../ui/canvas-contrast.ts';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import { endEllipsis, nodeTitleLimit } from '../../ui/title-ellipsis.ts';
 
@@ -34,6 +36,7 @@ export function TextNodeCanvasLayer({ client }: TextNodeCanvasLayerProps) {
 function TextNodeCanvasLayerView({
   client,
   camera,
+  canvasColor,
   nodeById,
   duplicateOrigins,
   visibleNodes,
@@ -57,6 +60,13 @@ function TextNodeCanvasLayerView({
     original: string;
     value: string;
   }>();
+  const [searchMatch, setSearchMatch] = useState<SearchMatchPreview>();
+  useEffect(
+    () => client.subscribeSignal<SearchMatchPreview>('search.match.preview', (message) => {
+      setSearchMatch(message.payload.clear ? undefined : message.payload);
+    }),
+    [client],
+  );
   const finishTitleEdit = (save: boolean) => {
     const edit = titleEdit;
     if (!edit) return;
@@ -77,6 +87,9 @@ function TextNodeCanvasLayerView({
           : node.titleColor;
         const titleInk = contrastTextColor(titleColor);
         const isTextBox = node.presentation === 'text-box';
+        const renderedTextBoxColor = isTextBox
+          ? ensureCanvasColorContrast(titleColor, canvasColor, 4.5)
+          : titleColor;
         const renderedTitle = isTextBox
           ? node.title
           : endEllipsis(node.title, nodeTitleLimit(node.width, node.height, detail === 'title-only'));
@@ -95,9 +108,9 @@ function TextNodeCanvasLayerView({
               height: renderedFrame.height,
               transform: `translate(${renderedFrame.x}px, ${renderedFrame.y}px)`,
               backgroundColor: !isTextBox && detail === 'title-only' ? titleColor : undefined,
-              color: isTextBox ? titleColor : undefined,
+              color: isTextBox ? renderedTextBoxColor : undefined,
               '--node-title-ink': titleInk,
-              '--text-box-color': titleColor,
+              '--text-box-color': renderedTextBoxColor,
             } as CSSProperties}
             aria-hidden="true"
           >
@@ -128,9 +141,18 @@ function TextNodeCanvasLayerView({
           ? appearancePreview?.color ?? node.titleColor
           : node.titleColor;
         const titleInk = contrastTextColor(renderedTitleColor);
+        const renderedTextBoxColor = isTextBox
+          ? ensureCanvasColorContrast(renderedTitleColor, canvasColor, 4.5)
+          : renderedTitleColor;
         const renderedTitle = isTextBox
           ? node.title
           : endEllipsis(node.title, nodeTitleLimit(size.width, size.height, detail === 'title-only'));
+        const titleMatch = searchMatch?.field === 'title' && searchMatch.nodeId === node.id
+          ? searchMatch
+          : undefined;
+        const titleLimit = isTextBox
+          ? node.title.length
+          : nodeTitleLimit(size.width, size.height, detail === 'title-only');
         const renderedFrame = alignCanvasRectToDevicePixels({
           x: position.x,
           y: position.y,
@@ -146,9 +168,9 @@ function TextNodeCanvasLayerView({
               height: renderedFrame.height,
               transform: `translate(${renderedFrame.x}px, ${renderedFrame.y}px)`,
               backgroundColor: !isTextBox && detail === 'title-only' ? renderedTitleColor : undefined,
-              color: isTextBox ? renderedTitleColor : undefined,
+              color: isTextBox ? renderedTextBoxColor : undefined,
               '--node-title-ink': titleInk,
-              '--text-box-color': renderedTitleColor,
+              '--text-box-color': renderedTextBoxColor,
             } as CSSProperties}
             onPointerDown={(event) => beginNodeDrag(event, node)}
             onDoubleClick={(event) => {
@@ -158,7 +180,10 @@ function TextNodeCanvasLayerView({
                 setTitleEdit({ id: node.id, original: node.title, value: node.title });
                 return;
               }
-              void client.dispatch('editor.open', { id: node.id }).catch(() => undefined);
+              void client.dispatch('editor.open', {
+                id: node.id,
+                mode: event.shiftKey ? 'add' : 'replace',
+              }).catch(() => undefined);
             }}
             onKeyDown={(event) => {
               if (event.key !== 'Enter' || event.target !== event.currentTarget) return;
@@ -197,13 +222,27 @@ function TextNodeCanvasLayerView({
                   }}
                 />
               ) : (
-                <strong className="text-box-title" title={node.title}>{renderedTitle}</strong>
+                <strong className="text-box-title" title={node.title}>
+                  <NodeTitleSearchMatch
+                    title={node.title}
+                    fallback={renderedTitle}
+                    maximum={titleLimit}
+                    match={titleMatch}
+                  />
+                </strong>
               )
             ) : detail === 'preview' ? (
               <>
                 <header style={{ backgroundColor: renderedTitleColor, color: titleInk }}>
                   <span className="node-type-dot" />
-                  <strong title={node.title}>{renderedTitle}</strong>
+                  <strong title={node.title}>
+                    <NodeTitleSearchMatch
+                      title={node.title}
+                      fallback={renderedTitle}
+                      maximum={titleLimit}
+                      match={titleMatch}
+                    />
+                  </strong>
                   <span
                     className="node-count"
                     title="正文字数：包含标点和组合 Emoji，不含空格、制表符和换行"
@@ -215,7 +254,12 @@ function TextNodeCanvasLayerView({
               </>
             ) : (
               <strong className="node-zoom-title" style={{ color: titleInk }} title={node.title}>
-                {renderedTitle}
+                <NodeTitleSearchMatch
+                  title={node.title}
+                  fallback={renderedTitle}
+                  maximum={titleLimit}
+                  match={titleMatch}
+                />
               </strong>
             )}
             {connectionsAvailable && (
@@ -265,6 +309,63 @@ function TextNodeCanvasLayerView({
       })}
     </div>
   );
+}
+
+function NodeTitleSearchMatch({
+  title,
+  fallback,
+  maximum,
+  match,
+}: {
+  title: string;
+  fallback: string;
+  maximum: number;
+  match?: SearchMatchPreview;
+}) {
+  if (!match || !Number.isInteger(match.start) || !Number.isInteger(match.length) ||
+    match.start! < 0 || match.length! <= 0 || match.start! + match.length! > title.length) {
+    return fallback;
+  }
+  const start = match.start!;
+  const end = start + match.length!;
+  const budget = Math.max(match.length! + 2, Math.max(3, Math.floor(maximum)));
+  let before = Math.min(start, Math.floor((budget - match.length!) / 2));
+  let after = Math.min(title.length - end, budget - match.length! - before);
+  before = Math.min(start, budget - match.length! - after);
+  after = Math.min(title.length - end, budget - match.length! - before);
+  const sliceStart = safeUtf16Start(title, start - before);
+  const sliceEnd = safeUtf16End(title, end + after);
+  return (
+    <>
+      {sliceStart > 0 && '…'}
+      {title.slice(sliceStart, start)}
+      <mark className="node-title-search-hit">{title.slice(start, end)}</mark>
+      {title.slice(end, sliceEnd)}
+      {sliceEnd < title.length && '…'}
+    </>
+  );
+}
+
+function safeUtf16Start(value: string, index: number): number {
+  const bounded = Math.max(0, Math.min(value.length, index));
+  return bounded > 0 && bounded < value.length && isLowSurrogate(value.charCodeAt(bounded))
+    ? bounded - 1
+    : bounded;
+}
+
+function safeUtf16End(value: string, index: number): number {
+  const bounded = Math.max(0, Math.min(value.length, index));
+  return bounded > 0 && bounded < value.length && isHighSurrogate(value.charCodeAt(bounded - 1))
+    ? bounded + 1
+    : bounded;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
 }
 
 function canvasNodeDetail(zoom: number): 'title-only' | 'preview' {

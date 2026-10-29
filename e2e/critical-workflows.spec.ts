@@ -36,6 +36,25 @@ function connectionArrowScreenMetrics(element: Element): { length: number; width
   };
 }
 
+async function selectedNodeOverlayStyle(node: Locator): Promise<{
+  borderColor: string;
+  borderRadius: string;
+  borderWidth: string;
+  inset: string;
+  pointerEvents: string;
+}> {
+  return node.evaluate((element) => {
+    const style = getComputedStyle(element, '::after');
+    return {
+      borderColor: style.borderTopColor,
+      borderRadius: style.borderRadius,
+      borderWidth: style.borderTopWidth,
+      inset: `${style.top} ${style.right} ${style.bottom} ${style.left}`,
+      pointerEvents: style.pointerEvents,
+    };
+  });
+}
+
 function connectionStrokeScreenWidth(element: Element): number {
   const path = element as SVGPathElement;
   const matrix = path.getScreenCTM();
@@ -1210,6 +1229,95 @@ test('toolbar creation, global undo and redo remain routed and responsive', asyn
   await expect(cards.nth(2)).not.toHaveAttribute('aria-label', /^已选中，/u);
 });
 
+test('clicking one selected node collapses a multi-selection while dragging preserves it', async ({ page }) => {
+  await openApplication(page);
+  const cards = page.getByRole('article', { name: /文本节点：/u });
+  const first = cards.nth(0);
+  const second = cards.nth(1);
+
+  await first.click({ position: { x: 70, y: 28 } });
+  await second.click({ position: { x: 70, y: 28 }, modifiers: ['Control'] });
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
+
+  await first.click({ position: { x: 70, y: 28 } });
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(1);
+  await expect(first).toHaveClass(/\bselected\b/u);
+  await expect(second).not.toHaveClass(/\bselected\b/u);
+
+  await second.click({ position: { x: 70, y: 28 }, modifiers: ['Control'] });
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
+  const [firstBefore, secondBefore, firstTitle] = await Promise.all([
+    first.boundingBox(),
+    second.boundingBox(),
+    first.locator('strong').boundingBox(),
+  ]);
+  expect(firstBefore).not.toBeNull();
+  expect(secondBefore).not.toBeNull();
+  expect(firstTitle).not.toBeNull();
+
+  const startX = firstTitle!.x + firstTitle!.width / 2;
+  const startY = firstTitle!.y + firstTitle!.height / 2;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 84, startY + 54, { steps: 6 });
+  await page.mouse.up();
+
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
+  await expect.poll(async () => {
+    const [firstAfter, secondAfter] = await Promise.all([first.boundingBox(), second.boundingBox()]);
+    if (!firstAfter || !secondAfter) return Number.POSITIVE_INFINITY;
+    const firstDelta = {
+      x: firstAfter.x - firstBefore!.x,
+      y: firstAfter.y - firstBefore!.y,
+    };
+    const secondDelta = {
+      x: secondAfter.x - secondBefore!.x,
+      y: secondAfter.y - secondBefore!.y,
+    };
+    return Math.max(
+      Math.abs(firstDelta.x - secondDelta.x),
+      Math.abs(firstDelta.y - secondDelta.y),
+    );
+  }).toBeLessThan(1);
+});
+
+test('double-clicking a text node opens the editor without focusing the canvas', async ({ page }) => {
+  await openApplication(page);
+  const card = page.getByRole('article', { name: /文本节点：/u }).first();
+  const world = page.locator('.canvas-world').first();
+  const cameraBefore = await world.evaluate((element) => (element as HTMLElement).style.transform);
+
+  await card.getByRole('paragraph').dblclick({ position: { x: 80, y: 80 } });
+  await expect(page.getByRole('region', { name: '文本编辑区' })).toBeVisible();
+  await page.waitForTimeout(150);
+  await expect.poll(() => world.evaluate((element) =>
+    (element as HTMLElement).style.transform)).toBe(cameraBefore);
+});
+
+test('ordinary and Shift double-clicks arbitrate editor panes and right-side panels', async ({ page }) => {
+  await openApplication(page);
+  const cards = page.locator('.text-node-card:not(.text-box)');
+  const firstPreview = cards.nth(0).getByRole('paragraph');
+  const secondPreview = cards.nth(1).getByRole('paragraph');
+  const panes = page.locator('.editor-pane-list > .editor-pane');
+
+  await firstPreview.dblclick({ position: { x: 80, y: 80 } });
+  await expect(panes).toHaveCount(1);
+  await secondPreview.dispatchEvent('dblclick', { shiftKey: true });
+  await expect(panes).toHaveCount(2);
+
+  await firstPreview.dispatchEvent('dblclick');
+  await expect(panes).toHaveCount(1);
+
+  await executeCommand(page, '打开全局颜色设置');
+  await expect(page.getByRole('region', { name: '全局颜色设置' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '文本编辑区' })).toHaveCount(0);
+
+  await firstPreview.dispatchEvent('dblclick');
+  await expect(page.getByRole('region', { name: '文本编辑区' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '全局颜色设置' })).toHaveCount(0);
+});
+
 test('node resize shows edge guides and snaps the resized frame to nearby nodes', async ({ page }) => {
   await openApplication(page);
   const first = page.locator('.text-node-card').filter({
@@ -1332,7 +1440,7 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
     height: Number.parseFloat((element as HTMLElement).style.height),
   }));
   const sharedNodeRadius = await card.evaluate((element) => getComputedStyle(element).borderRadius);
-  expect(sharedNodeRadius).toBe('16px');
+  expect(sharedNodeRadius).toBe('18px');
   const titleColor = await card.locator('header').evaluate((element) => getComputedStyle(element).backgroundColor);
   const headerButtons = card.locator('header button');
   await expect(headerButtons).toHaveCount(0);
@@ -1346,9 +1454,15 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
     name: `已选中，文本节点：${originalTitle}`,
     exact: true,
   });
-  await expect(selectedCard).toHaveCSS('border-top-width', '4px');
-  await expect(selectedCard.locator('header')).toHaveCSS('border-top-left-radius', '12px');
-  await expect(selectedCard.locator('header')).toHaveCSS('border-top-right-radius', '12px');
+  await expect(selectedCard).toHaveCSS('border-top-width', '1px');
+  await expect(selectedCard.locator('header')).toHaveCSS('border-top-left-radius', '17px');
+  await expect(selectedCard.locator('header')).toHaveCSS('border-top-right-radius', '17px');
+  expect(await selectedNodeOverlayStyle(selectedCard)).toMatchObject({
+    borderRadius: '20px',
+    borderWidth: '4px',
+    inset: '-2px -2px -2px -2px',
+    pointerEvents: 'none',
+  });
   await conversionButton.click();
   let textBox = page.getByRole('article', { name: new RegExp(`文本框：${originalTitle}$`, 'u') });
   await page.locator('.canvas-surface').click({ position: { x: 24, y: 24 } });
@@ -1376,6 +1490,26 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
   await canvasBlue.fill('74');
   await expect(canvas).toHaveCSS('background-color', 'rgb(42, 58, 74)');
   await expect(textBox).toHaveCSS('background-color', 'rgb(42, 58, 74)');
+  const adjustedTextBoxColor = await textBox.locator('.text-box-title').evaluate((element) => {
+    const parse = (color: string) => color.match(/[\d.]+/gu)?.slice(0, 3).map(Number) ?? [0, 0, 0];
+    const luminance = (color: string) => {
+      const channels = parse(color).map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.04045
+          ? normalized / 12.92
+          : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    };
+    const foreground = getComputedStyle(element).color;
+    const background = getComputedStyle(element.closest('.text-node-card')!).backgroundColor;
+    const lighter = Math.max(luminance(foreground), luminance(background));
+    const darker = Math.min(luminance(foreground), luminance(background));
+    return { foreground, ratio: (lighter + 0.05) / (darker + 0.05) };
+  });
+  expect(adjustedTextBoxColor.foreground).not.toBe(titleColor);
+  expect(adjustedTextBoxColor.ratio).toBeGreaterThanOrEqual(4.5);
+  await expect(textBox).toHaveCSS('border-color', adjustedTextBoxColor.foreground);
   await canvasBlue.press('Enter');
   await expect(canvasPicker).toHaveCount(0);
   await expect(textBox).toHaveCSS('background-color', 'rgb(42, 58, 74)');
@@ -1384,7 +1518,7 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
   await textBox.locator('.text-box-title').click();
   await expect(textBox).toHaveAttribute('aria-label', /^已选中，/u);
   expect(await textBox.evaluate((element) => {
-    const style = getComputedStyle(element);
+    const style = getComputedStyle(element, '::after');
     const probe = element.ownerDocument.createElement('span');
     probe.style.color = style.getPropertyValue('--canvas-selection');
     element.ownerDocument.body.appendChild(probe);
@@ -1393,7 +1527,13 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
     return style.borderTopColor === selectionColor;
   })).toBe(true);
   await expect(textBox).toHaveCSS('outline-style', 'none');
-  await expect(textBox).toHaveCSS('border-top-width', '4px');
+  await expect(textBox).toHaveCSS('border-top-width', '2px');
+  expect(await selectedNodeOverlayStyle(textBox)).toMatchObject({
+    borderRadius: '21px',
+    borderWidth: '4px',
+    inset: '-3px -3px -3px -3px',
+    pointerEvents: 'none',
+  });
   await expect(textBox).toHaveCSS('border-radius', sharedNodeRadius);
   expect(await textBox.evaluate((element) => {
     const frame = element.getBoundingClientRect();
@@ -1467,10 +1607,12 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
   const restoredCard = page.getByRole('article', { name: new RegExp(`文本节点：${editedTitle}$`, 'u') });
   await expect(restoredCard.getByRole('paragraph')).toBeVisible();
   await expect(restoredCard).toHaveCSS('border-radius', sharedNodeRadius);
-  await expect(restoredCard).toHaveCSS('border-top-width', '4px');
+  await expect(restoredCard).toHaveCSS('border-top-width', '1px');
   await expect(restoredCard).toHaveCSS('outline-style', 'none');
-  await expect(restoredCard.locator('header')).toHaveCSS('border-top-left-radius', '12px');
-  await expect(restoredCard.locator('header')).toHaveCSS('border-top-right-radius', '12px');
+  await expect(restoredCard.locator('header')).toHaveCSS('border-top-left-radius', '17px');
+  await expect(restoredCard.locator('header')).toHaveCSS('border-top-right-radius', '17px');
+  await expect(restoredCard.locator('header')).toHaveCSS('background-color', titleColor);
+  expect(await selectedNodeOverlayStyle(restoredCard)).toMatchObject({ borderWidth: '4px' });
   await expect(restoredCard.locator('header button')).toHaveCount(0);
   await expect.poll(() => restoredCard.evaluate((element) => ({
     width: Number.parseFloat((element as HTMLElement).style.width),
@@ -1532,7 +1674,8 @@ test('title-bar ports create persistent connections before the title dot', async
   await page.mouse.down();
   await expect(source).toHaveAttribute('aria-label', /^已选中，/u);
   await expect(source).toHaveCSS('outline-style', 'none');
-  await expect(source).toHaveCSS('border-top-width', '4px');
+  await expect(source).toHaveCSS('border-top-width', '1px');
+  expect(await selectedNodeOverlayStyle(source)).toMatchObject({ borderWidth: '4px' });
   await page.mouse.move(
     sourceTitleBox!.x + sourceTitleBox!.width / 2 + 280,
     sourceTitleBox!.y + sourceTitleBox!.height / 2 + 140,
@@ -2026,6 +2169,47 @@ test('dragging selected editor text to another input copies without changing the
   await expect(searchInput).toHaveValue('乙丙');
 });
 
+test('search navigation highlights title hits and opens the matching body editor', async ({ page }) => {
+  await openApplication(page);
+  await page.getByRole('button', { name: '查找替换', exact: true }).click();
+  const panel = page.getByRole('region', { name: '查找与替换' });
+  const searchInput = panel.getByRole('textbox', { name: '查找标题和正文' });
+  await searchInput.fill('画布基本操作指南');
+  await searchInput.press('Enter');
+  await expect(searchInput).toHaveValue('画布基本操作指南');
+
+  const result = panel.getByRole('option').filter({ hasText: '画布基本操作指南' });
+  await expect(result).toBeVisible();
+  await expect(result).toContainText('标题 1 处');
+  await result.click();
+
+  const card = page.getByRole('article', { name: '已选中，文本节点：画布基本操作指南', exact: true });
+  await expect(card).toHaveClass(/selected/u);
+  await expect(result).toHaveAttribute('aria-selected', 'true');
+
+  await panel.getByRole('button', { name: '下一个', exact: true }).click();
+  const titleMatch = card.locator('.node-title-search-hit');
+  await expect(titleMatch).toHaveText('画布基本操作指南');
+  await expect(titleMatch).toHaveCSS('background-color', 'rgb(10, 132, 255)');
+  await expect(page.getByRole('region', { name: '文本编辑区' })).toHaveCount(0);
+
+  await panel.getByRole('textbox', { name: '替换为' }).fill('画布操作手册');
+  await panel.getByRole('button', { name: '替换所选匹配', exact: true }).click();
+  const renamedCard = page.getByRole('article', { name: '已选中，文本节点：画布操作手册', exact: true });
+  await expect(renamedCard).toBeVisible();
+  await expect(panel.getByRole('option').filter({ hasText: '画布基本操作指南' })).toHaveCount(0);
+
+  const bodyQuery = '新节点会出现在当前视图中间';
+  await searchInput.fill(bodyQuery);
+  await searchInput.press('Enter');
+  await expect(panel.getByRole('option').filter({ hasText: '画布操作手册' })).toContainText('正文 1 处');
+  await panel.getByRole('button', { name: '下一个', exact: true }).click();
+  await expect(page.getByRole('region', { name: '文本编辑区' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '节点标题' })).toHaveValue('画布操作手册');
+  const editor = page.locator('.editor-writing-area').first();
+  await expect.poll(() => editor.evaluate(() => globalThis.getSelection()?.toString() ?? '')).toBe(bodyQuery);
+});
+
 test('dragging selected editor text to the canvas creates a copy without changing the source', async ({ page }) => {
   await openApplication(page);
   await page.getByRole('button', { name: '新建文本', exact: true }).click();
@@ -2350,8 +2534,11 @@ test('global color presets keep canvas strokes adaptive on bright, dark and eye-
   )).toBe('#66666b');
   const selectedCard = page.locator('.text-node-card').first();
   await selectedCard.click({ position: { x: 80, y: 28 } });
-  await expect(selectedCard).toHaveCSS('border-color', 'rgb(102, 102, 107)');
-  await expect(selectedCard).toHaveCSS('border-top-width', '4px');
+  await expect.poll(() => selectedNodeOverlayStyle(selectedCard)).toMatchObject({
+    borderColor: 'rgb(102, 102, 107)',
+    borderWidth: '4px',
+  });
+  await expect(selectedCard).toHaveCSS('border-top-width', '1px');
 
   await panel.getByRole('button', { name: /^B 暗调/u }).click();
   await expect(canvas).toHaveCSS('background-color', 'rgb(24, 25, 27)');
@@ -2394,7 +2581,9 @@ test('global color presets keep canvas strokes adaptive on bright, dark and eye-
     getComputedStyle(element).getPropertyValue('--canvas-selection').trim()
   )).toBe('#66666b');
   await selectedCard.click({ position: { x: 80, y: 28 } });
-  await expect(selectedCard).toHaveCSS('border-color', 'rgb(102, 102, 107)');
+  await expect.poll(() => selectedNodeOverlayStyle(selectedCard)).toMatchObject({
+    borderColor: 'rgb(102, 102, 107)',
+  });
 
   await panel.getByRole('button', { name: '重置全部颜色', exact: true }).click();
   await expect(canvas).toHaveCSS('background-color', 'rgb(239, 239, 236)');
@@ -2489,10 +2678,11 @@ test('a selected canvas node creates a visible annotation marker and editor', as
   await expect(card).toHaveCSS('box-shadow', 'none');
   await expect(card).toHaveCSS('outline-style', 'none');
   await expect(card).toHaveCSS('border-top-style', 'solid');
-  await expect(card).toHaveCSS('border-top-width', '4px');
+  await expect(card).toHaveCSS('border-top-width', '1px');
+  expect(await selectedNodeOverlayStyle(card)).toMatchObject({ borderWidth: '4px' });
   await page.getByRole('button', { name: '添加注释', exact: true }).click();
   const annotationPanel = page.getByRole('region', { name: '注释' });
-  const annotationMarker = page.getByRole('button', { name: /^打开注释/u });
+  const annotationMarker = page.getByRole('button', { name: /^双击打开注释/u });
   await expect(annotationPanel).toBeVisible();
   await expect(annotationPanel).toHaveCSS('box-shadow', 'none');
   await expect(annotationMarker).toBeVisible();
@@ -2596,7 +2786,7 @@ test('immersive writing can create and reopen inline annotations without leaving
   await expect(page.getByRole('button', { name: '在当前光标位置添加注释' })).toBeVisible();
   const marker = immersive.locator('.editor-annotation-marker').first();
   await expect(marker).toBeVisible();
-  await marker.click();
+  await marker.dblclick();
   await expect(page.getByRole('region', { name: '注释' })).toBeVisible();
   await page.getByRole('button', { name: '关闭注释', exact: true }).click();
   await expect(immersive).toBeVisible();
@@ -2730,8 +2920,27 @@ test('a selected group creates a visible annotation pinned to its frame', async 
   await expect(group).toBeVisible();
   await group.click({ position: { x: 8, y: 8 } });
   await page.getByRole('button', { name: '添加注释', exact: true }).click();
-  await expect(page.getByRole('region', { name: '注释' })).toBeVisible();
-  await expect(page.locator('.annotation-canvas-marker')).toBeVisible();
+  const annotationPopup = page.getByRole('region', { name: '注释' });
+  await expect(annotationPopup).toBeVisible();
+  const marker = page.locator('.annotation-canvas-marker');
+  await expect(marker).toBeVisible();
+  await page.getByRole('button', { name: '关闭注释', exact: true }).click();
+
+  await marker.click();
+  await expect(annotationPopup).toHaveCount(0);
+  await page.getByRole('button', { name: '修改选中项颜色', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: '颜色选择器' });
+  await expect(picker).toBeVisible();
+  const [markerBox, pickerBox] = await Promise.all([marker.boundingBox(), picker.boundingBox()]);
+  expect(markerBox).not.toBeNull();
+  expect(pickerBox).not.toBeNull();
+  expect(Math.abs(pickerBox!.y - markerBox!.y - markerBox!.height - 8)).toBeLessThan(2);
+  expect(pickerBox!.x).toBeLessThan(markerBox!.x + markerBox!.width);
+  expect(pickerBox!.x + pickerBox!.width).toBeGreaterThan(markerBox!.x);
+  await page.keyboard.press('Escape');
+
+  await marker.dblclick();
+  await expect(annotationPopup).toBeVisible();
 });
 
 test('Alt dragging a connected node keeps its existing connection anchored to the original', async ({ page }) => {

@@ -16,6 +16,7 @@ import type {
 } from '../../protocols/files.ts';
 import type { CloudSyncState } from '../../cloud/contracts.ts';
 import { PROJECT_FILE_EXTENSION, PROJECT_RELATED_DIRECTORY_CAPABILITY } from '../../protocols/files.ts';
+import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { PRODUCT_NAME } from '../../product.ts';
 import { defineManifest } from '../manifest.ts';
 import { parseProject, serializeProject } from './codec.ts';
@@ -378,6 +379,10 @@ export function createImportExportPlugin(
             key: 'open',
             value: open,
           }],
+          events: open ? [{
+            type: UI_SURFACE_REVEALED_EVENT,
+            payload: uiSurfaceRevealed('right.primary', 'import-export', 'file.panel'),
+          }] : undefined,
         },
       });
 

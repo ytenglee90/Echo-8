@@ -159,7 +159,9 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       'clipboard.serialize@1',
       'clipboard.instantiate@1',
       'content.search@1',
+      'content.search@2',
       'content.replacePlan@1',
+      'content.replacePlan@2',
       'content.statistics@1',
       'content.formatting@1',
       'content.formatting@2',
@@ -202,7 +204,7 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       'history.changed',
       'document.replaced',
     ],
-    signals: ['content.catalog.invalidated'],
+    signals: ['content.catalog.invalidated', 'search.match.preview'],
     ui: [
       'text-node.canvas-layer',
       'text-node.empty-state',

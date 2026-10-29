@@ -25,7 +25,7 @@ import type {
   AppearanceUpdateRequest,
 } from '../../protocols/appearance.ts';
 import type { TextFormatMark } from '../../protocols/formatting.ts';
-import type { ContentSearchRequest, SearchHit } from '../../protocols/search.ts';
+import type { ContentSearchRequest, SearchHit, SearchHitV2 } from '../../protocols/search.ts';
 import { GRID_NODE_HEIGHT, GRID_NODE_WIDTH } from './grid-layout.ts';
 import {
   contentChunkLengths,
@@ -533,6 +533,33 @@ export function validateSearchRequest(input: ContentSearchRequest): void {
   if (input.nodeIds && (!Array.isArray(input.nodeIds) || input.nodeIds.some((id) => typeof id !== 'string'))) {
     throw new Error('查找节点范围不正确');
   }
+}
+
+export function searchNodeTitle(
+  node: TextNodeRecord,
+  request: ContentSearchRequest,
+  limit: number,
+): { hits: SearchHitV2[]; truncated: boolean } {
+  if (limit <= 0) return { hits: [], truncated: true };
+  const hits: SearchHitV2[] = [];
+  const expression = new RegExp(escapeRegExp(request.query), request.matchCase ? 'gu' : 'giu');
+  for (const match of node.title.matchAll(expression)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (request.wholeWord && !hasWordBoundaries(node.title, start, end, request.query)) continue;
+    hits.push({
+      nodeId: node.id,
+      title: node.title,
+      field: 'title',
+      start,
+      length: match[0].length,
+      matchedText: match[0],
+      preview: `标题：${node.title}`,
+      revision: node.revision,
+    });
+    if (hits.length >= limit) return { hits, truncated: true };
+  }
+  return { hits, truncated: false };
 }
 
 export async function searchChunks(

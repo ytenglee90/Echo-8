@@ -46,7 +46,7 @@ import type {
   GroupMembershipDropRequest,
   GroupMembershipPreview,
 } from '../../protocols/groups.ts';
-import type { SelectionResolution, SelectionSnapshot } from '../../protocols/selection.ts';
+import type { SelectionMode, SelectionResolution, SelectionSnapshot } from '../../protocols/selection.ts';
 import type {
   SmartResizeSnapRequest,
   SmartResizeSnapResult,
@@ -93,6 +93,7 @@ const SNAP_THRESHOLD_PX = 18;
 
 interface DragSession {
   primaryId: string;
+  selectionMode: SelectionMode;
   pointerX: number;
   pointerY: number;
   latestClientX: number;
@@ -105,6 +106,7 @@ interface DragSession {
 
 interface PendingNodeDrag {
   primaryId: string;
+  selectionMode: SelectionMode;
   pointerId: number;
   startX: number;
   startY: number;
@@ -799,12 +801,13 @@ export function CanvasSurface({
         );
       } else {
         clearReferenceDragPreview();
-        void client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined);
+        finishNodeClick(request.primaryId, request.selectionMode);
       }
       return;
     }
     drag.current = {
       primaryId: request.primaryId,
+      selectionMode: request.selectionMode,
       pointerX: request.startX,
       pointerY: request.startY,
       latestClientX: request.latestX,
@@ -840,6 +843,7 @@ export function CanvasSurface({
     event.currentTarget.setPointerCapture(event.pointerId);
     const request: PendingNodeDrag = {
       primaryId: node.id,
+      selectionMode: mode,
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
@@ -891,6 +895,17 @@ export function CanvasSurface({
       client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
       clearReferenceDragPreview();
     });
+  };
+
+  const finishNodeClick = (nodeId: string, mode: SelectionMode) => {
+    const selection = mode === 'replace'
+      ? client.dispatch('selection.set', {
+          items: [{ id: nodeId, kind: 'text-node' }],
+          mode: 'replace',
+        })
+      : Promise.resolve();
+    void selection.catch(() => undefined).finally(() =>
+      client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined));
   };
 
   const beginSurfaceGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1175,7 +1190,7 @@ export function CanvasSurface({
         );
       } else {
         clearReferenceDragPreview();
-        void client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined);
+        finishNodeClick(current.primaryId, current.selectionMode);
       }
     }
     if (pan.current) {
@@ -1434,6 +1449,7 @@ export function CanvasSurface({
       </span>
       <CanvasEntityLayerProvider value={{
         camera,
+        canvasColor: renderedCanvasColor,
         nodeById,
         duplicateOrigins,
         visibleNodes,

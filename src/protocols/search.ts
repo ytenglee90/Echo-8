@@ -1,6 +1,7 @@
 import type { EventDeclaration, PatchOperation } from './state.ts';
 
 export type SearchScope = 'current' | 'canvas';
+export type SearchField = 'title' | 'body';
 
 export interface ContentSearchRequest {
   query: string;
@@ -13,6 +14,8 @@ export interface ContentSearchRequest {
 export interface SearchHit {
   nodeId: string;
   title: string;
+  /** Version-one hits omit this field and always refer to body text. */
+  field?: SearchField;
   start: number;
   length: number;
   matchedText: string;
@@ -20,10 +23,19 @@ export interface SearchHit {
   revision: number;
 }
 
+export interface SearchHitV2 extends SearchHit {
+  field: SearchField;
+}
+
 export interface ContentSearchResult {
   hits: SearchHit[];
   scannedNodes: number;
   truncated: boolean;
+}
+
+/** Title-and-body search result. Title offsets and revisions belong to the node title. */
+export interface ContentSearchResultV2 extends Omit<ContentSearchResult, 'hits'> {
+  hits: SearchHitV2[];
 }
 
 export interface SearchRequest {
@@ -37,7 +49,7 @@ export interface SearchQueryPreview extends Omit<SearchRequest, 'scope'> {
   composing: boolean;
 }
 
-export interface SearchResult extends ContentSearchResult {
+export interface SearchResult extends ContentSearchResultV2 {
   requestId: string;
   query: string;
   scope: SearchScope;
@@ -53,6 +65,17 @@ export interface SearchNavigationSignal {
   nodeId: string;
   index: number;
   total: number;
+  scope: 'selection' | 'canvas';
+  scopeNodeCount: number;
+}
+
+/** Ephemeral exact match presented by the canvas owner during previous/next navigation. */
+export interface SearchMatchPreview {
+  nodeId?: string;
+  field?: SearchField;
+  start?: number;
+  length?: number;
+  clear?: boolean;
 }
 
 export interface ContentReplaceRequest {

@@ -22,6 +22,8 @@ Select All obtains the current world pointer through optional `canvas.pointer@1`
 
 Pointer tracking is an ephemeral coalesced `canvas.pointer.preview` signal. Canvas and group views publish world coordinates; the canvas model owns the current snapshot and capability. It never enters document state, workspace persistence or history, and stopping the canvas releases the capability.
 
+Point selection distinguishes a click from a drag after pointer movement is known. Pressing an already selected node preserves the current direct selection long enough to drag every selected node together. Releasing without crossing the drag threshold replaces that multi-selection with the clicked node; additive, subtractive and toggle modifiers retain their explicit selection meanings.
+
 ## Consequences
 
 - There is one visual group frame and no canvas title bar, divider or title text.
@@ -29,7 +31,8 @@ Pointer tracking is an ephemeral coalesced `canvas.pointer.preview` signal. Canv
 - A directly selected group still expands to all members for move, copy, cut and delete.
 - Box selection and Select All have deterministic spatial behavior without importing another feature implementation.
 - Stored legacy titles continue to round-trip through old and new project files but are intentionally invisible.
+- A plain click on one node after Select All or multi-selection leaves exactly that node selected, while dragging the same node continues to move the complete selection.
 
 ## Verification
 
-Contracts cover partial member lasso, full-container lasso, connection precedence, group-scoped Select All, canvas-wide collapsed Select All, absence of member highlights by direct ID, rejection of ungroup when only all members are selected, member-only clipboard serialization, direct-group clipboard remapping, uniform title-independent group bounds and global undo behavior.
+Contracts cover partial member lasso, full-container lasso, connection precedence, group-scoped Select All, canvas-wide collapsed Select All, absence of member highlights by direct ID, rejection of ungroup when only all members are selected, member-only clipboard serialization, direct-group clipboard remapping, uniform title-independent group bounds and global undo behavior. Browser coverage also verifies that a plain click collapses a multi-selection to one node without changing multi-node drag behavior.

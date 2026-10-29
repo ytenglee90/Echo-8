@@ -7,15 +7,17 @@ export interface SearchNavigationTarget {
 
 export function resolveSearchNavigation(
   allHits: readonly SearchHit[],
-  activeNodeId: string,
+  selectedNodeIds: readonly string[] | undefined,
   current: SearchNavigationSignal | undefined,
   direction: -1 | 1,
 ): SearchNavigationTarget | undefined {
-  const hits = allHits
-    .filter((hit) => hit.nodeId === activeNodeId)
-    .sort((left, right) => left.start - right.start || left.length - right.length);
+  const selected = selectedNodeIds?.length ? new Set(selectedNodeIds) : undefined;
+  const hits = selected ? allHits.filter((hit) => selected.has(hit.nodeId)) : [...allHits];
   if (hits.length === 0) return undefined;
-  const currentIndex = current?.nodeId === activeNodeId && current.total === hits.length
+  const currentIndex = current?.total === hits.length &&
+    current.scope === (selected ? 'selection' : 'canvas') &&
+    current.scopeNodeCount === (selected?.size ?? 0) &&
+    hits[current.index]?.nodeId === current.nodeId
     ? current.index
     : -1;
   const index = currentIndex < 0
@@ -23,6 +25,12 @@ export function resolveSearchNavigation(
     : (currentIndex + direction + hits.length) % hits.length;
   return {
     hit: hits[index],
-    state: { nodeId: activeNodeId, index, total: hits.length },
+    state: {
+      nodeId: hits[index].nodeId,
+      index,
+      total: hits.length,
+      scope: selected ? 'selection' : 'canvas',
+      scopeNodeCount: selected?.size ?? 0,
+    },
   };
 }

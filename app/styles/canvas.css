@@ -263,7 +263,7 @@
 
 @scope ([data-ui-contribution="text-node:text-node.canvas-layer"]) {
 .text-node-card {
-  --canvas-node-radius: 16px;
+  --canvas-node-radius: 18px;
   --canvas-node-border-width: 1px;
   position: absolute;
   box-sizing: border-box;
@@ -340,10 +340,24 @@
 }
 
 .text-node-card.selected {
-  --canvas-node-border-width: 4px;
   z-index: 2;
-  border-color: var(--canvas-selection, var(--selection));
   outline: none;
+}
+
+.text-node-card.selected::after {
+  position: absolute;
+  z-index: 1;
+  inset: -2px;
+  box-sizing: border-box;
+  border: 4px solid var(--canvas-selection, var(--selection));
+  border-radius: calc(var(--canvas-node-radius) + 2px);
+  content: '';
+  pointer-events: none;
+}
+
+.text-node-card.text-box.selected::after {
+  inset: -3px;
+  border-radius: calc(var(--canvas-node-radius) + 3px);
 }
 
 .text-node-card.duplicate-origin {
@@ -397,6 +411,14 @@
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.node-title-search-hit {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: #0a84ff;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #0a84ff 72%, white);
+  color: #ffffff;
 }
 
 .node-type-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.7; }

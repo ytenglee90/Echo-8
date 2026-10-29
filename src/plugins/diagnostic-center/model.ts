@@ -1,4 +1,5 @@
 import type { PluginDefinition } from '../../core/contracts.ts';
+import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { DIAGNOSTIC_CENTER_NAMESPACE, diagnosticCenterManifest } from './manifest.ts';
 
 export { DIAGNOSTIC_CENTER_NAMESPACE } from './manifest.ts';
@@ -19,6 +20,10 @@ export function createDiagnosticCenterPlugin(panel?: unknown): PluginDefinition 
             key: 'open',
             value: open,
           }],
+          events: open ? [{
+            type: UI_SURFACE_REVEALED_EVENT,
+            payload: uiSurfaceRevealed('right.primary', 'diagnostic-center', 'diagnostic-center.panel'),
+          }] : undefined,
         },
       });
       context.commands.register({

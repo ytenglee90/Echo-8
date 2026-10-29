@@ -1,8 +1,8 @@
 'use client';
 
-import { type CSSProperties, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { type CSSProperties, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
-import type { AnnotationRecord } from '../../protocols/annotations.ts';
+import type { AnnotationMarkerAnchorsPreview, AnnotationRecord } from '../../protocols/annotations.ts';
 import { appearancePreviewTarget, type AppearancePreview } from '../../protocols/appearance.ts';
 import type { CameraState, DragPreview } from '../../protocols/canvas.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
@@ -17,6 +17,8 @@ import { ANNOTATION_NAMESPACE } from './model.ts';
 const DEFAULT_CAMERA: CameraState = { x: 0, y: 0, zoom: 1 };
 
 export function AnnotationLayer({ client }: { client: ViewClient }) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  const anchorSourceId = useId();
   const annotationVersion = useSyncExternalStore(
     client.subscribeState,
     () => client.getOwnStateVersion(ANNOTATION_NAMESPACE),
@@ -106,9 +108,32 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
   const groupMap = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
   const targetOrder = new Map<string, number>();
+  const publishMarkerAnchors = () => {
+    const anchors = [...(layerRef.current?.querySelectorAll<HTMLElement>('[data-annotation-id]') ?? [])]
+      .map((marker) => ({ id: marker.dataset.annotationId ?? '', rect: marker.getBoundingClientRect() }))
+      .filter((anchor) => anchor.id && anchor.rect.width > 0 && anchor.rect.height > 0)
+      .map((anchor) => ({
+        id: anchor.id,
+        rect: {
+          x: anchor.rect.x,
+          y: anchor.rect.y,
+          width: anchor.rect.width,
+          height: anchor.rect.height,
+        },
+      }));
+    client.emit('annotations.markerAnchors.preview', {
+      sourceId: anchorSourceId,
+      anchors,
+    } satisfies AnnotationMarkerAnchorsPreview);
+  };
+  useEffect(publishMarkerAnchors);
+  useEffect(() => () => client.emit('annotations.markerAnchors.preview', {
+    sourceId: anchorSourceId,
+    clear: true,
+  } satisfies AnnotationMarkerAnchorsPreview), [anchorSourceId, client]);
 
   return (
-    <div className="annotation-layer" aria-label="画布注释">
+    <div className="annotation-layer" aria-label="画布注释" ref={layerRef}>
       {annotations.flatMap((annotation) => {
         if (annotation.target.kind === 'text-range') return [];
         const targetKey = `${annotation.target.kind}:${annotation.target.targetId}`;
@@ -134,6 +159,7 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
             type="button"
             className={`annotation-canvas-marker ${selected.has(annotation.id) ? 'selected' : ''}`}
             key={annotation.id}
+            data-annotation-id={annotation.id}
             style={{
               left,
               top,
@@ -143,18 +169,24 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
                 '--annotation-ink': contrastingInk(color),
               } : {}),
             } as CSSProperties}
-            title={annotation.body || '打开注释'}
-            aria-label={`打开注释${annotation.body ? `：${annotation.body.slice(0, 40)}` : ''}`}
+            title={annotation.body || '双击打开注释'}
+            aria-label={`双击打开注释${annotation.body ? `：${annotation.body.slice(0, 40)}` : ''}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
+              publishMarkerAnchors();
               void client.dispatch('selection.set', {
                 items: [{ id: annotation.id, kind: 'annotation' }],
                 mode: 'replace',
-              }).then(() => client.dispatch('annotation.open', {
-                  id: annotation.id,
-                  anchor: { x: event.clientX, y: event.clientY },
-                }));
+              });
+            }}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              publishMarkerAnchors();
+              void client.dispatch('annotation.open', {
+                id: annotation.id,
+                anchor: { x: event.clientX, y: event.clientY },
+              });
             }}
           >
             <Icon name="comment" size={12} />

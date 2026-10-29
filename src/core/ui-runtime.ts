@@ -92,6 +92,7 @@ export class UIRuntime {
   private readonly themes = new Map<string, OwnedTheme>();
   private readonly surfaceStacks = new Map<UISlot, string[]>();
   private readonly surfaceCloseCommands = new Map<string, string>();
+  private readonly surfaceYieldCommands = new Map<string, string>();
   private readonly surfaceActivationOrder = new Map<string, number>();
   private surfaceSequence = 0;
   private activeTheme: ActiveTheme = CORE_THEME;
@@ -202,7 +203,13 @@ export class UIRuntime {
     };
   }
 
-  activateSurface(owner: string, slot: UISlot, contributionId: string, closeCommand?: string): void {
+  activateSurface(
+    owner: string,
+    slot: UISlot,
+    contributionId: string,
+    closeCommand?: string,
+    yieldCommand?: string,
+  ): void {
     if (!allowedSlots.has(slot)) throw new Error(`Unknown UI slot: ${slot}`);
     const key = `${owner}:${contributionId}`;
     const contribution = this.contributions.get(key);
@@ -211,15 +218,18 @@ export class UIRuntime {
     }
     const globalTop = this.closableSurfaces()[0];
     const existingCloseCommand = this.surfaceCloseCommands.get(key);
+    const existingYieldCommand = this.surfaceYieldCommands.get(key);
     if (
       this.surfaceStacks.get(slot)?.at(-1) === key &&
       globalTop?.owner === owner && globalTop.id === contributionId && globalTop.slot === slot &&
-      (!closeCommand || closeCommand === existingCloseCommand)
+      (!closeCommand || closeCommand === existingCloseCommand) &&
+      (!yieldCommand || yieldCommand === existingYieldCommand)
     ) return;
     const stack = (this.surfaceStacks.get(slot) ?? []).filter((item) => item !== key);
     stack.push(key);
     this.surfaceStacks.set(slot, stack);
     if (closeCommand) this.surfaceCloseCommands.set(key, closeCommand);
+    if (yieldCommand) this.surfaceYieldCommands.set(key, yieldCommand);
     this.surfaceActivationOrder.set(key, ++this.surfaceSequence);
     this.bump();
   }
@@ -233,6 +243,7 @@ export class UIRuntime {
     else this.surfaceStacks.delete(slot);
     if (![...this.surfaceStacks.values()].some((items) => items.includes(key))) {
       this.surfaceCloseCommands.delete(key);
+      this.surfaceYieldCommands.delete(key);
       this.surfaceActivationOrder.delete(key);
     }
     this.bump();
@@ -246,24 +257,31 @@ export class UIRuntime {
     });
   }
 
-  topSurface(slots: UISlot[]): {
+  topSurface(slots: UISlot[], exclude?: { owner: string; id: string; slot: UISlot }): {
     owner: string;
     id: string;
     slot: UISlot;
     closeCommand?: string;
+    yieldCommand?: string;
   } | undefined {
+    const excludedKey = exclude ? `${exclude.owner}:${exclude.id}` : undefined;
     const candidates = slots.flatMap((slot) => {
-      const key = this.surfaceStacks.get(slot)?.at(-1);
+      const stack = this.surfaceStacks.get(slot) ?? [];
+      const key = [...stack].reverse().find((candidate) =>
+        candidate !== excludedKey || slot !== exclude?.slot);
       return key ? [{ slot, key, order: this.surfaceActivationOrder.get(key) ?? 0 }] : [];
     });
     const top = candidates.sort((left, right) => right.order - left.order)[0];
     if (!top) return undefined;
     const separator = top.key.indexOf(':');
+    const closeCommand = this.surfaceCloseCommands.get(top.key);
+    const yieldCommand = this.surfaceYieldCommands.get(top.key);
     return {
       owner: top.key.slice(0, separator),
       id: top.key.slice(separator + 1),
       slot: top.slot,
-      closeCommand: this.surfaceCloseCommands.get(top.key),
+      ...(closeCommand ? { closeCommand } : {}),
+      ...(yieldCommand ? { yieldCommand } : {}),
     };
   }
 
@@ -479,6 +497,7 @@ export class UIRuntime {
       else this.surfaceStacks.delete(slot);
     }
     this.surfaceCloseCommands.delete(key);
+    this.surfaceYieldCommands.delete(key);
     this.surfaceActivationOrder.delete(key);
   }
 

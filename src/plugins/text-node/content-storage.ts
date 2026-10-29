@@ -149,15 +149,38 @@ export function planContentReplacements(
   hits: SearchHit[],
   replacement: string,
 ): { content: TextContentRecord; chunkPatches: PatchOperation[] } {
-  const projectedLength = hits.reduce(
-    (length, hit) => length - hit.length + replacement.length,
+  return planContentSubstitutions(
+    context,
+    content,
+    hits.map((hit) => ({ start: hit.start, length: hit.length, replacement })),
+  );
+}
+
+export interface ContentSubstitution {
+  start: number;
+  length: number;
+  replacement: string;
+}
+
+export function planContentSubstitutions(
+  context: PluginContext,
+  content: TextContentRecord,
+  substitutions: ContentSubstitution[],
+): { content: TextContentRecord; chunkPatches: PatchOperation[] } {
+  const projectedLength = substitutions.reduce(
+    (length, substitution) => length - substitution.length + substitution.replacement.length,
     content.length,
   );
   if (projectedLength > MAX_DOCUMENT_LENGTH) throw new Error('替换结果超过单节点 3200 万字符上限');
   if (!isVersionTwoContent(content)) {
     let chunks = content.chunks ?? [''];
-    for (const hit of [...hits].sort((left, right) => right.start - left.start)) {
-      chunks = applyDeltaToChunks(chunks, hit.start, hit.length, replacement);
+    for (const substitution of [...substitutions].sort((left, right) => right.start - left.start)) {
+      chunks = applyDeltaToChunks(
+        chunks,
+        substitution.start,
+        substitution.length,
+        substitution.replacement,
+      );
     }
     return createContentStorageFromChunks(content.id, chunks, content.revision + 1);
   }
@@ -170,8 +193,14 @@ export function planContentReplacements(
     const pending = staged.get(id);
     return pending?.text ?? readContentChunk(context, candidate, index);
   };
-  for (const hit of [...hits].sort((left, right) => right.start - left.start)) {
-    const mutation = planVersionTwoDelta(working, hit.start, hit.length, replacement, readChunk);
+  for (const substitution of [...substitutions].sort((left, right) => right.start - left.start)) {
+    const mutation = planVersionTwoDelta(
+      working,
+      substitution.start,
+      substitution.length,
+      substitution.replacement,
+      readChunk,
+    );
     for (const patch of mutation.chunkPatches) {
       if (patch.op === 'set') staged.set(patch.key, patch.value as TextContentChunkRecord);
     }
