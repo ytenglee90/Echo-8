@@ -22,6 +22,11 @@ gain hosted account or cloud-installation dependencies.
 - The hosted composition contributes a `book-library` plugin to the governed
   `application.welcome` slot. The library is the first surface on each hosted
   page load and can be reopened from a centrally registered toolbar action.
+  The persistent E8 brand mark in the navigation bar dispatches that same
+  `bookLibrary.show` command; it does not open a feature-property side panel.
+  Escape dismisses the library back to the already mounted canvas. The
+  internal close command is not exposed as an “进入当前画布” catalog action or
+  shortcut because the command palette is itself a canvas surface.
   Its open/closed state is ephemeral and never enters document history.
 - The library uses only public typed commands and asks. Local opening remains
   owned by `import-export`; account status, login, installation, upgrades and
@@ -47,6 +52,10 @@ gain hosted account or cloud-installation dependencies.
   Cloudflare Worker module or server-render scope.
 - The original portable exclusion is retained here as historical context and
   superseded by ADR-0076. The `.echo8` cross-session boundary remains unchanged.
+- The command palette presents public actions under stable task groups rather
+  than plugin-specific labels: book/file/cloud actions share “书籍与同步”,
+  canvas/node/connection actions share “画布与节点”, and selection/group/layout
+  actions share “选择与排列”. The palette does not list its own open command.
 
 ## Consequences
 
@@ -66,6 +75,7 @@ gain hosted account or cloud-installation dependencies.
 - Architecture and CSS tests enforce the public-command, governed-slot and
   stylesheet ownership boundaries. The hosted-runtime boundary test also
   prevents kernel construction from returning to a server-render initializer.
-- Browser tests verify that the library gates the canvas, can be entered and
-  can be reopened from the toolbar. Portable startup coverage is updated by
+- Browser tests verify that the library gates the canvas, can be dismissed with
+  Escape and can be reopened from the navigation brand or command catalog.
+  They also lock the task-group labels and absence of self-referential actions. Portable startup coverage is updated by
   ADR-0076.

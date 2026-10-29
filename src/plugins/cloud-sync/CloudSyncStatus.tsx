@@ -31,9 +31,9 @@ export function CloudSyncStatus({ client }: { client: ViewClient }) {
     <button
       type="button"
       className={`cloud-sync-status ${synced ? 'is-synced' : 'is-unsynced'}${active ? ' is-active' : ''}`}
-      onClick={() => void client.dispatch('cloudSync.open')}
-      title={statusTitle(state)}
-      aria-label={`云同步：${statusLabel(state)}`}
+      onClick={() => void client.dispatch('bookLibrary.show')}
+      title={`返回首页 · 云同步：${statusTitle(state)}`}
+      aria-label="返回首页"
     >
       <Icon name="echo-8" motion={active ? 'sync' : 'none'} />
     </button>

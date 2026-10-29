@@ -9,6 +9,7 @@ import {
   type CanvasEntityCharacterCount,
 } from '../../ui/canvas-entity-layer-runtime.tsx';
 import { Icon } from '../../ui/Icon.tsx';
+import { alignCanvasRectToDevicePixels } from '../../ui/canvas-pixel-alignment.ts';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import { endEllipsis, nodeTitleLimit } from '../../ui/title-ellipsis.ts';
 
@@ -66,7 +67,7 @@ function TextNodeCanvasLayerView({
   return (
     <div
       className="canvas-world"
-      style={{ transform: `translate3d(${camera.x}px, ${camera.y}px, 0) scale(${camera.zoom})` }}
+      style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}
     >
       {duplicateOrigins.map((origin) => {
         const node = nodeById.get(origin.id);
@@ -79,14 +80,20 @@ function TextNodeCanvasLayerView({
         const renderedTitle = isTextBox
           ? node.title
           : endEllipsis(node.title, nodeTitleLimit(node.width, node.height, detail === 'title-only'));
+        const renderedFrame = alignCanvasRectToDevicePixels({
+          x: origin.x,
+          y: origin.y,
+          width: node.width,
+          height: node.height,
+        }, camera);
         return (
           <article
             className={`text-node-card duplicate-origin ${isTextBox ? 'text-box' : ''} ${!isTextBox && detail === 'title-only' ? 'compact' : ''}`}
             key={`duplicate-origin:${node.id}`}
             style={{
-              width: node.width,
-              height: node.height,
-              transform: `translate3d(${origin.x}px, ${origin.y}px, 0)`,
+              width: renderedFrame.width,
+              height: renderedFrame.height,
+              transform: `translate(${renderedFrame.x}px, ${renderedFrame.y}px)`,
               backgroundColor: !isTextBox && detail === 'title-only' ? titleColor : undefined,
               color: isTextBox ? titleColor : undefined,
               '--node-title-ink': titleInk,
@@ -124,14 +131,20 @@ function TextNodeCanvasLayerView({
         const renderedTitle = isTextBox
           ? node.title
           : endEllipsis(node.title, nodeTitleLimit(size.width, size.height, detail === 'title-only'));
+        const renderedFrame = alignCanvasRectToDevicePixels({
+          x: position.x,
+          y: position.y,
+          width: size.width,
+          height: size.height,
+        }, camera);
         return (
           <article
             className={`text-node-card ${isTextBox ? 'text-box' : ''} ${selected.has(node.id) ? 'selected' : ''} ${connectionTargetId === node.id ? 'connection-target' : ''} ${!isTextBox && detail === 'title-only' ? 'compact' : ''}`}
             key={node.id}
             style={{
-              width: size.width,
-              height: size.height,
-              transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
+              width: renderedFrame.width,
+              height: renderedFrame.height,
+              transform: `translate(${renderedFrame.x}px, ${renderedFrame.y}px)`,
               backgroundColor: !isTextBox && detail === 'title-only' ? renderedTitleColor : undefined,
               color: isTextBox ? renderedTitleColor : undefined,
               '--node-title-ink': titleInk,

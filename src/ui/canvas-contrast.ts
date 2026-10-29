@@ -6,23 +6,32 @@ export interface CanvasContrastColors {
 }
 
 export const MIN_CANVAS_LINE_CONTRAST = 3;
+export const MIN_CANVAS_SELECTION_CONTRAST = 4.5;
+
+const LIGHT_CANVAS_SELECTION: RGB = [102, 102, 107];
 
 /**
  * Derives canvas-only semantic colors from the actual document background.
  * The opaque line color meets WCAG's 3:1 non-text contrast target while the
- * stronger selection color always uses the higher-contrast black/white pole.
+ * stronger selection color uses a medium gray on light canvases when it meets
+ * the selection contrast floor, otherwise the higher-contrast black/white pole.
  */
 export function canvasContrastColors(background: string): CanvasContrastColors {
   const backgroundChannels = parseColor(background) ?? [239, 239, 236];
   const black: RGB = [0, 0, 0];
   const white: RGB = [255, 255, 255];
-  const selectionChannels = contrastRatioForChannels(backgroundChannels, white) >=
+  const poleChannels = contrastRatioForChannels(backgroundChannels, white) >=
       contrastRatioForChannels(backgroundChannels, black)
     ? white
     : black;
+  const selectionChannels = poleChannels === black &&
+      contrastRatioForChannels(backgroundChannels, LIGHT_CANVAS_SELECTION) >=
+        MIN_CANVAS_SELECTION_CONTRAST
+    ? LIGHT_CANVAS_SELECTION
+    : poleChannels;
   const lineChannels = mixUntilContrast(
     backgroundChannels,
-    selectionChannels,
+    poleChannels,
     MIN_CANVAS_LINE_CONTRAST,
   );
   const selection = toHex(selectionChannels);

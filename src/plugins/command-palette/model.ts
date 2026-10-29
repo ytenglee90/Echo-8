@@ -13,7 +13,6 @@ export function createCommandPalettePlugin(view?: unknown): PluginDefinition {
       queries: ['commandPalette.state'],
       asks: ['commandPalette.state', 'system.actions', 'system.shortcuts'],
       ui: ['command-palette.open-button', 'command-palette.view'],
-      actions: ['command-palette.open-action'],
       shortcuts: ['command-palette.open-shortcut', 'command-palette.close-shortcut'],
       permissions: [
         'store.own.read',
@@ -82,14 +81,6 @@ export function createCommandPalettePlugin(view?: unknown): PluginDefinition {
       if (context.store.readValue<boolean>(COMMAND_PALETTE_NAMESPACE, 'open')) {
         context.ui.activateSurface('command.palette', 'command-palette.view', 'commandPalette.close');
       }
-      context.ui.action({
-        id: 'command-palette.open-action',
-        label: '打开命令面板',
-        command: 'commandPalette.open',
-        category: '系统',
-        keywords: ['命令', '快速', 'command'],
-        priority: -100,
-      });
       context.ui.shortcut({
         id: 'command-palette.open-shortcut',
         chord: 'mod+k',

@@ -62,7 +62,9 @@ test('the generated single HTML starts from the library and edits without extern
   await page.keyboard.press('Control+k');
   const commandPalette = page.getByRole('dialog', { name: '命令面板' });
   await commandPalette.getByRole('textbox', { name: '搜索命令' }).fill('进入当前画布');
-  await commandPalette.getByRole('option', { name: /^进入当前画布/u }).click();
+  await expect(commandPalette.getByRole('option', { name: /^进入当前画布/u })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await library.press('Escape');
   await expect(page.getByRole('article', { name: /文本节点：/u })).toHaveCount(2);
   await expect(page.getByRole('status').filter({ hasText: '纠错规则尚未导入' })).toBeVisible();
 

@@ -9,7 +9,7 @@ import { ProcessingIndicator } from '../ui/ProcessingIndicator.tsx';
 const MAX_VISIBLE_NOTICES = 3;
 
 interface AutosaveNotice {
-  state: 'saving' | 'saved' | 'error';
+  state: 'saving' | 'error';
   title: string;
   detail: string;
 }
@@ -63,7 +63,7 @@ export function TaskNoticeCenter({
             <small>{autosave.detail}</small>
           </span>
           <span className="task-notice-progress-label">
-            {autosave.state === 'saving' ? '写入中' : autosave.state === 'saved' ? '完成' : '异常'}
+            {autosave.state === 'saving' ? '写入中' : '异常'}
           </span>
           <progress
             className="task-notice-progress"
@@ -118,7 +118,6 @@ function useActionFailureNotice(client: ViewClient): ActionFailureNotice | undef
 
 function useAutosaveNotice(persistence: PersistenceService): AutosaveNotice | undefined {
   const [notice, setNotice] = useState<AutosaveNotice>();
-  const previousCheckpointAt = useRef(persistence.snapshot().checkpointAt);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
@@ -136,24 +135,6 @@ function useAutosaveNotice(persistence: PersistenceService): AutosaveNotice | un
     };
     const unsubscribe = persistence.subscribe(() => {
       const status = persistence.snapshot();
-      const previousCheckpoint = previousCheckpointAt.current;
-      previousCheckpointAt.current = status.checkpointAt;
-      if (status.state === 'saved' && status.checkpointAt !== undefined &&
-        status.checkpointAt !== previousCheckpoint) {
-        const time = new Date(status.checkpointAt).toLocaleTimeString('zh-CN', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          hour12: false,
-        });
-        setNotice({
-          state: 'saved',
-          title: '会话恢复副本已更新',
-          detail: `${time} · 仅用于当前打开期间，长期保留请保存书籍`,
-        });
-        dismissAfter(1_800);
-        return;
-      }
       if (status.state === 'error') {
         setNotice({
           state: 'error',

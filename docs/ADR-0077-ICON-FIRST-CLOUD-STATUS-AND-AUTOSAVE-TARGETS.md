@@ -42,9 +42,10 @@ opened local file must never be silently converted into a cloud book.
   signed out, unbound, offline or otherwise not synchronized. During connecting,
   uploading or queued changes, the mark retains the same full neutral foreground
   without tint, grayscale or opacity changes. The solid body and two horizontal
-  channels stay fixed while the three slanted transparent gaps travel through a
-  wider horizontal range at different speeds. Their angle and the mark's intrinsic
-  aspect ratio do not change; reduced-motion environments keep the gaps static. The
+  channels stay fixed while the three slanted transparent gaps travel at different
+  speeds inside the horizontal channel bounds. Their motion range and an SVG clip
+  keep every complete gap between the left and right interior channel edges; their angle and the
+  mark's intrinsic aspect ratio do not change. Reduced-motion environments keep the gaps static. The
   mark is intentionally wider and one clear step larger than
   adjacent toolbar glyphs so the compact status remains legible.
   The button's accessible name and hover title always state the exact phase,
@@ -59,7 +60,8 @@ opened local file must never be silently converted into a cloud book.
   static semantic indicators. Visible text and `aria-live`/`aria-busy` continue
   to name the exact operation, so motion is never the only signal. Reduced-motion
   environments retain the fixed E8 silhouette and channels while disabling the
-  moving gaps.
+  moving gaps. Large loading marks add no separate progress underline beneath the
+  canonical silhouette.
 - Repeated library headings and book-list action text are visually removed.
   Open, delete, refresh, sync and logout remain ordinary buttons with icons,
   stable accessible names, keyboard focus and native hover titles.
@@ -110,8 +112,9 @@ opened local file must never be silently converted into a cloud book.
   transparent corner rather than a fixed white backing, and that the
   toolbar has no separate dot, colored brand outline, status backdrop or square
   crop. Active synchronization retains the steady mark's exact foreground,
-  keeps the body fixed and moves three slanted gaps through a wider horizontal
-  range at unequal speeds without changing angle or aspect ratio.
+  keeps the body fixed and moves three slanted gaps through a bounded horizontal
+  range at unequal speeds without crossing the left or right interior channel edges or changing
+  angle or aspect ratio. Brand-loading surfaces have no separate underline.
   They also
   verify that the homepage has only New and Open cards and that
   a book row opens from its free surface without stealing the title's

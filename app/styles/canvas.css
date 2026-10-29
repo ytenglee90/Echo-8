@@ -60,7 +60,6 @@
   inset: 0;
   transform-origin: 0 0;
   pointer-events: none;
-  will-change: transform;
 }
 
 .annotation-layer {
@@ -264,7 +263,10 @@
 
 @scope ([data-ui-contribution="text-node:text-node.canvas-layer"]) {
 .text-node-card {
+  --canvas-node-radius: 16px;
+  --canvas-node-border-width: 1px;
   position: absolute;
+  box-sizing: border-box;
   z-index: 0;
   top: 0;
   left: 0;
@@ -272,26 +274,24 @@
   grid-template-rows: auto minmax(0, 1fr);
   overflow: visible;
   min-height: 158px;
-  border: 1px solid var(--border);
-  border-radius: 15px;
+  border: var(--canvas-node-border-width) solid var(--border);
+  border-radius: var(--canvas-node-radius);
   background: var(--node-surface);
   box-shadow: none;
   cursor: default;
   pointer-events: auto;
   user-select: none;
-  will-change: transform;
 }
 
 .text-node-card:hover { border-color: var(--border-strong); }
 
 .text-node-card.text-box {
+  --canvas-node-border-width: 2px;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 48px;
-  border-width: 3px;
   border-color: var(--text-box-color);
-  border-radius: 10px;
   background: var(--document-canvas-background, var(--canvas-background));
   color: var(--text-box-color);
 }
@@ -340,13 +340,10 @@
 }
 
 .text-node-card.selected {
+  --canvas-node-border-width: 4px;
   z-index: 2;
-  border: 2px solid var(--canvas-selection, var(--selection));
+  border-color: var(--canvas-selection, var(--selection));
   outline: none;
-}
-
-.text-node-card.text-box.selected {
-  border-width: 3px;
 }
 
 .text-node-card.duplicate-origin {
@@ -384,7 +381,10 @@
   gap: 8px;
   min-height: 42px;
   padding: 0 13px;
-  border-radius: 14px 14px 0 0;
+  border-radius:
+    calc(var(--canvas-node-radius) - var(--canvas-node-border-width))
+    calc(var(--canvas-node-radius) - var(--canvas-node-border-width))
+    0 0;
   color: var(--node-title-ink, white);
 }
 
@@ -521,7 +521,6 @@
   position: absolute;
   inset: 0;
   transform-origin: 0 0;
-  will-change: transform;
 }
 
 .group-frame {

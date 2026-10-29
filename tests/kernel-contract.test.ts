@@ -1281,13 +1281,29 @@ test('nonexclusive floating surfaces remain visible while tracking one most-rece
 test('command palette groups public actions by function with deterministic separators and ordering', () => {
   const groups = groupActionsByCategory([
     { category: '系统', label: '诊断', priority: 20 },
+    { category: '文本格式', label: '字号', priority: 20 },
     { category: '编辑', label: '粘贴', priority: 30 },
     { category: '文件', label: '保存', priority: 20 },
+    { category: '云同步', label: '立即同步', priority: 30 },
     { category: '编辑', label: '撤销', priority: 10 },
     { category: '画布', label: '聚焦', priority: 10 },
+    { category: '节点与连线', label: '连接', priority: 20 },
+    { category: '选择', label: '全选', priority: 10 },
     { category: 'AI', label: '助手', priority: 10 },
   ]);
-  assert.deepEqual(groups.map((group) => group.category), ['文件', '画布', '编辑', 'AI', '系统']);
+  assert.deepEqual(groups.map((group) => group.category), [
+    '书籍与同步',
+    '画布与节点',
+    '选择与排列',
+    '编辑',
+    '文本编辑',
+    'AI',
+    '系统',
+  ]);
+  assert.deepEqual(
+    groups.find((group) => group.category === '书籍与同步')?.actions.map((action) => action.label),
+    ['保存', '立即同步'],
+  );
   assert.deepEqual(groups.find((group) => group.category === '编辑')?.actions.map((action) => action.label), [
     '撤销',
     '粘贴',

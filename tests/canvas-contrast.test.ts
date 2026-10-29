@@ -5,6 +5,7 @@ import {
   colorContrastRatio,
   ensureCanvasColorContrast,
   MIN_CANVAS_LINE_CONTRAST,
+  MIN_CANVAS_SELECTION_CONTRAST,
 } from '../src/ui/canvas-contrast.ts';
 import { PALETTE_PRESETS } from '../src/plugins/palette/presets.ts';
 
@@ -20,10 +21,16 @@ test('canvas strokes remain visible across light, dark, saturated and middle-ton
       `${background} -> ${colors.line}`,
     );
     assert.ok(
-      colorContrastRatio(background, colors.selection) >= 4.5,
+      colorContrastRatio(background, colors.selection) >= MIN_CANVAS_SELECTION_CONTRAST,
       `${background} -> ${colors.selection}`,
     );
   }
+});
+
+test('light canvas presets use the shared medium-gray selection color', () => {
+  assert.equal(canvasContrastColors('#efefec').selection, '#66666b');
+  assert.equal(canvasContrastColors('#e4e8da').selection, '#66666b');
+  assert.equal(canvasContrastColors('#18191b').selection, '#ffffff');
 });
 
 test('custom connection colors retain their hue when visible and gain contrast when necessary', () => {

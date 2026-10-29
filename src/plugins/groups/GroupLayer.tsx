@@ -408,7 +408,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     >
       <div
         className="group-world"
-        style={{ transform: `translate3d(${camera.x}px, ${camera.y}px, 0) scale(${camera.zoom})` }}
+        style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}
       >
         {visibleGroups.map((group) => {
           let previewMemberIds = group.memberIds;

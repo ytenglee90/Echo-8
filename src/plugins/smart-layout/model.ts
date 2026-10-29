@@ -213,13 +213,13 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
         chord: 'mod+shift+l',
         command: 'node.arrangeSelectedCycle',
         label: '自动排列选中文字节点（宫格、横排、竖排）',
-        category: '画布',
+        category: '选择与排列',
       });
       context.ui.action({
         id: 'smart-layout.arrange-grid-action',
         label: '自动排列选中文字节点（宫格、横排、竖排）',
         command: 'node.arrangeSelectedCycle',
-        category: '画布',
+        category: '选择与排列',
         keywords: ['排列', '宫格', '网格', '横排', '竖排', '对齐', '恢复大小', 'arrange', 'grid'],
         priority: 67,
       });

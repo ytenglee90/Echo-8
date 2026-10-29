@@ -70,7 +70,9 @@ export function Icon({
 
 function Echo8MotionIcon({ size, motion }: { size: number; motion: 'sync' | 'processing' }) {
   const width = Math.round(size * 594 / 263);
-  const maskId = `echo-8-sync-${useId().replace(/[^a-zA-Z0-9_-]/gu, '')}`;
+  const id = useId().replace(/[^a-zA-Z0-9_-]/gu, '');
+  const maskId = `echo-8-sync-${id}`;
+  const motionClipId = `echo-8-motion-clip-${id}`;
   return (
     <svg
       className={`ui-icon echo-8-icon echo-8-sync-mark echo-8-${motion}-mark`}
@@ -83,12 +85,17 @@ function Echo8MotionIcon({ size, motion }: { size: number; motion: 'sync' | 'pro
       aria-hidden="true"
     >
       <defs>
+        <clipPath id={motionClipId} clipPathUnits="userSpaceOnUse">
+          <rect className="echo-8-motion-bounds" x="81" y="16" width="430" height="230" />
+        </clipPath>
         <mask id={maskId} maskUnits="userSpaceOnUse" x="13" y="16" width="567" height="230">
           <rect x="13" y="16" width="567" height="230" fill="#fff" />
           <path fill="#000" d="M81 69h430v34H81zM81 157h430v33H81z" />
-          <path className="echo-8-sync-gap echo-8-sync-gap-one" fill="#000" d="m226 69 30-53h20l-30 53Z" />
-          <path className="echo-8-sync-gap echo-8-sync-gap-two" fill="#000" d="m179 103h21l-31 54h-21Z" />
-          <path className="echo-8-sync-gap echo-8-sync-gap-three" fill="#000" d="m256 190h20l-30 56h-20Z" />
+          <g clipPath={`url(#${motionClipId})`}>
+            <path className="echo-8-sync-gap echo-8-sync-gap-one" fill="#000" d="m226 69 30-53h20l-30 53Z" />
+            <path className="echo-8-sync-gap echo-8-sync-gap-two" fill="#000" d="m179 103h21l-31 54h-21Z" />
+            <path className="echo-8-sync-gap echo-8-sync-gap-three" fill="#000" d="m256 190h20l-30 56h-20Z" />
+          </g>
         </mask>
       </defs>
       <rect

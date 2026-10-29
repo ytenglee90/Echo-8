@@ -151,7 +151,18 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
   const openingBook = busy === 'open-local' || busy.startsWith('open:');
 
   return (
-    <section className="book-library-home" aria-label="Echo-8 书库" aria-busy={processing || undefined}>
+    <section
+      className="book-library-home"
+      aria-label="Echo-8 书库"
+      aria-busy={processing || undefined}
+      autoFocus
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || busy) return;
+        event.preventDefault();
+        void client.dispatch('bookLibrary.enterCanvas');
+      }}
+    >
       <header className="book-library-header">
         <div className="book-library-brand">
           <span className="book-library-mark" aria-hidden="true">

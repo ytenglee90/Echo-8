@@ -799,7 +799,7 @@ export function createGroupsPlugin(
         id: 'groups.toggle-action',
         label: '群组或解组选中项',
         command: 'group.toggleSelection',
-        category: '画布',
+        category: '选择与排列',
         keywords: ['群组', '解组', '组合', 'group', 'ungroup'],
         priority: 64,
       });
@@ -807,7 +807,7 @@ export function createGroupsPlugin(
         id: 'groups.membership-action',
         label: '加入或移出已有群组',
         command: 'group.membership.open',
-        category: '画布',
+        category: '选择与排列',
         keywords: ['加入群组', '移出群组', '成员', 'membership'],
         priority: 65,
       });
@@ -815,7 +815,7 @@ export function createGroupsPlugin(
         id: 'groups.create-action',
         label: '将选中节点建立群组',
         command: 'group.create',
-        category: '画布',
+        category: '选择与排列',
         keywords: ['群组', '组合', 'group'],
         priority: 66,
       });
@@ -853,7 +853,7 @@ export function createGroupsPlugin(
         id: 'groups.ungroup-action',
         label: '取消选中的群组',
         command: 'group.ungroupSelection',
-        category: '画布',
+        category: '选择与排列',
         keywords: ['取消群组', '解组', 'ungroup'],
         priority: 67,
       });

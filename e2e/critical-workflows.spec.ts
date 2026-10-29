@@ -4,8 +4,9 @@ import type { ProjectSource } from '../src/protocols/files.ts';
 
 async function openApplication(page: Page): Promise<void> {
   await page.goto('/');
-  await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeVisible();
-  await executeCommand(page, '进入当前画布');
+  const library = page.getByRole('region', { name: 'Echo-8 书库' });
+  await expect(library).toBeVisible();
+  await library.press('Escape');
   await expect(page.getByRole('article', { name: /文本节点：/u })).toHaveCount(2);
 }
 
@@ -344,7 +345,10 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   } satisfies ProjectSource);
   await page.addInitScript(() => {
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined });
-    const runtimeWindow = window as typeof window & { __echo8BootMotion?: string };
+    const runtimeWindow = window as typeof window & {
+      __echo8BootMotion?: string;
+      __echo8BootUnderline?: string;
+    };
     const observeBoot = () => {
       const root = document.documentElement;
       if (!root) {
@@ -355,6 +359,10 @@ test('book library switches books without the in-canvas unsaved confirmation', a
         const mark = document.querySelector('.boot-screen .brand-loading-mark .echo-8-processing-mark');
         if (!(mark instanceof HTMLElement || mark instanceof SVGElement)) return;
         runtimeWindow.__echo8BootMotion = getComputedStyle(mark).animationName;
+        const loadingMark = mark.closest('.brand-loading-mark');
+        runtimeWindow.__echo8BootUnderline = loadingMark
+          ? getComputedStyle(loadingMark, '::after').content
+          : 'missing';
         observer.disconnect();
       };
       const observer = new MutationObserver(inspect);
@@ -370,6 +378,9 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   expect(await page.evaluate(() => (
     window as typeof window & { __echo8BootMotion?: string }
   ).__echo8BootMotion)).toContain('echo-8-brand-breathe');
+  expect(await page.evaluate(() => (
+    window as typeof window & { __echo8BootUnderline?: string }
+  ).__echo8BootUnderline)).toBe('none');
   await expect(library.getByRole('heading', { name: '今天想打开哪一本？' })).toHaveCount(0);
   const libraryMark = library.locator('.book-library-brand [data-icon="echo-8"]');
   await expect(libraryMark).toBeVisible();
@@ -469,9 +480,9 @@ test('starts with governed plugin views and no runtime isolation failure', async
   expect(failures).toEqual([]);
 });
 
-test('cloud sync stays out of the canvas layout until its governed panel is opened', async ({ page }) => {
+test('the brand returns home while cloud sync stays in its governed panel', async ({ page }) => {
   await openApplication(page);
-  const cloudStatus = page.getByRole('button', { name: /^云同步：/u });
+  const cloudStatus = page.getByRole('button', { name: '返回首页', exact: true });
   const cloudMark = cloudStatus.locator('[data-icon="echo-8"]');
   await expect(cloudMark).toBeVisible();
   await expect.poll(() => cloudMark.evaluate((element) => {
@@ -495,24 +506,32 @@ test('cloud sync stays out of the canvas layout until its governed panel is open
   expect(commandButtonBox).not.toBeNull();
   expect(cloudStatusBox!.x).toBeLessThan(commandButtonBox!.x);
   const toolbar = page.getByRole('navigation', { name: '主工具栏' });
-  await expect(toolbar.getByRole('button', { name: '返回首页' })).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: '返回首页', exact: true })).toHaveCount(1);
   await expect(toolbar.getByRole('button', { name: /^保存书籍/u })).toHaveCount(0);
   await expect(toolbar.getByRole('button', { name: '另存本地副本' })).toHaveCount(0);
   await expect(toolbar.getByRole('button', { name: '打开书籍' })).toHaveCount(0);
   await commandButton.click();
   const commandPalette = page.getByRole('dialog', { name: '命令面板' });
   await expect(commandPalette).toBeVisible();
-  await expect(commandPalette.getByRole('group', { name: '文件' }).locator('strong')).toHaveText([
+  await expect(commandPalette.getByRole('group', { name: '书籍与同步' }).locator('strong')).toHaveText([
     '返回首页（书库）',
-    '进入当前画布',
     '保存书籍',
     '另存本地副本',
     '打开书籍',
     '书籍与恢复设置',
+    '立即保存当前云端书籍',
+    '打开 Cloudflare 云同步',
   ]);
+  await expect(commandPalette.getByRole('option', { name: /进入当前画布/u })).toHaveCount(0);
+  await expect(commandPalette.getByRole('option', { name: /打开命令面板/u })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('region', { name: 'Cloudflare 云同步' })).toHaveCount(0);
   await cloudStatus.click();
+  const library = page.getByRole('region', { name: 'Echo-8 书库' });
+  await expect(library).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Cloudflare 云同步' })).toHaveCount(0);
+  await library.press('Escape');
+  await executeCommand(page, '打开 Cloudflare 云同步');
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   await expect(panel).toBeVisible();
   await expect(panel.getByText('部署端还没有配置 OAuth')).toBeVisible();
@@ -530,7 +549,7 @@ test('cloud sync stays out of the canvas layout until its governed panel is open
   await expect(panel.getByRole('button', { name: '返回书库' })).toHaveCount(0);
   await panel.getByRole('button', { name: '关闭云同步' }).click();
   await expect(panel).toHaveCount(0);
-  await cloudStatus.click();
+  await executeCommand(page, '打开 Cloudflare 云同步');
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: '关闭云同步' }).click();
 });
@@ -677,7 +696,7 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   await renamedLibraryRow.click({ position: { x: 8, y: 35 } });
   await expect(library).toHaveCount(0);
   const syncedStatus = page.locator('.cloud-sync-status');
-  await expect(syncedStatus).toHaveAccessibleName(/^云同步：已同步/u);
+  await expect(syncedStatus).toHaveAccessibleName('返回首页');
   await expect(syncedStatus).toHaveClass(/is-synced/u);
   const syncedMark = syncedStatus.locator('[data-icon="echo-8"]');
   await expect(syncedMark).toHaveCSS('width', '58px');
@@ -690,7 +709,7 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
     };
   });
   expect(syncedVisual.beforeContent).toBe('none');
-  await syncedStatus.click();
+  await executeCommand(page, '打开 Cloudflare 云同步');
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   await expect(panel.getByRole('button', { name: '立即保存到云端' }).locator('[data-icon="sync"]')).toBeVisible();
   await expect(panel.getByRole('button', { name: '退出账户' }).locator('[data-icon="logout"]')).toBeVisible();
@@ -708,6 +727,35 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   expect(processingBox!.width / processingBox!.height).toBeGreaterThan(2.2);
   const processingGaps = processingMark.locator('.echo-8-sync-gap');
   await expect(processingGaps).toHaveCount(3);
+  const processingMotionBounds = await processingMark.evaluate((element) => {
+    const bounds = element.querySelector<SVGRectElement>('.echo-8-motion-bounds');
+    const paths = [...element.querySelectorAll<SVGPathElement>('.echo-8-sync-gap')];
+    if (!bounds) return undefined;
+    const left = bounds.x.baseVal.value;
+    const right = left + bounds.width.baseVal.value;
+    return {
+      left,
+      right,
+      paths: paths.map((path) => {
+        const box = path.getBBox();
+        const shifts = path.getAnimations().flatMap((animation) => {
+          if (!(animation.effect instanceof KeyframeEffect)) return [];
+          return animation.effect.getKeyframes().map((frame) => {
+            const transform = typeof frame.transform === 'string' ? frame.transform : 'none';
+            return transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m41;
+          });
+        });
+        return {
+          left: box.x + Math.min(0, ...shifts),
+          right: box.x + box.width + Math.max(0, ...shifts),
+        };
+      }),
+    };
+  });
+  expect(processingMotionBounds).toBeDefined();
+  expect(processingMotionBounds!.paths.every((path) => (
+    path.left >= processingMotionBounds!.left && path.right <= processingMotionBounds!.right
+  ))).toBe(true);
   const activeMark = syncedStatus.locator('svg.echo-8-sync-mark[data-icon="echo-8"]');
   await expect(activeMark).toBeVisible();
   await expect(activeMark).toHaveAttribute('viewBox', '0 0 594 263');
@@ -736,8 +784,8 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
       ? animation.effect.getKeyframes().map((frame) => String(frame.transform))
       : [];
   });
-  expect(travelKeyframes).toContain('translateX(-96px)');
-  expect(travelKeyframes).toContain('translateX(96px)');
+  expect(travelKeyframes).toContain('translateX(-64px)');
+  expect(travelKeyframes).toContain('translateX(64px)');
   await expect(activeMark.locator('.echo-8-sync-body')).toHaveCSS('animation-name', 'none');
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await expect(processingGaps.first()).toHaveCSS('animation-name', 'none');
@@ -884,7 +932,7 @@ test('cloud books can be confirmed and deleted from the library and sync panel',
   await library.locator('.book-library-project-row').filter({ hasText: '同步页待删除' })
     .getByRole('button', { name: '打开书籍：同步页待删除' }).click();
   await expect(library).toHaveCount(0);
-  await page.getByRole('button', { name: /^云同步：/u }).click();
+  await executeCommand(page, '打开 Cloudflare 云同步');
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   const panelDelete = panel.getByRole('button', { name: '删除书籍：同步页待删除' });
   await expect(panelDelete.locator('[data-icon="trash"]')).toBeVisible();
@@ -1283,6 +1331,8 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
     width: Number.parseFloat((element as HTMLElement).style.width),
     height: Number.parseFloat((element as HTMLElement).style.height),
   }));
+  const sharedNodeRadius = await card.evaluate((element) => getComputedStyle(element).borderRadius);
+  expect(sharedNodeRadius).toBe('16px');
   const titleColor = await card.locator('header').evaluate((element) => getComputedStyle(element).backgroundColor);
   const headerButtons = card.locator('header button');
   await expect(headerButtons).toHaveCount(0);
@@ -1292,6 +1342,13 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
   });
 
   await card.click();
+  const selectedCard = page.getByRole('article', {
+    name: `已选中，文本节点：${originalTitle}`,
+    exact: true,
+  });
+  await expect(selectedCard).toHaveCSS('border-top-width', '4px');
+  await expect(selectedCard.locator('header')).toHaveCSS('border-top-left-radius', '12px');
+  await expect(selectedCard.locator('header')).toHaveCSS('border-top-right-radius', '12px');
   await conversionButton.click();
   let textBox = page.getByRole('article', { name: new RegExp(`文本框：${originalTitle}$`, 'u') });
   await page.locator('.canvas-surface').click({ position: { x: 24, y: 24 } });
@@ -1301,7 +1358,8 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
   const initialCanvasBackground = await canvas.evaluate((element) => getComputedStyle(element).backgroundColor);
   await expect(textBox).toHaveCSS('background-color', initialCanvasBackground);
   await expect(textBox).toHaveCSS('border-color', titleColor);
-  await expect(textBox).toHaveCSS('border-top-width', '3px');
+  await expect(textBox).toHaveCSS('border-top-width', '2px');
+  await expect(textBox).toHaveCSS('border-radius', sharedNodeRadius);
   await expect(textBox.locator('.text-box-title')).toHaveCSS('color', titleColor);
   await expect(textBox.locator('.text-box-title')).toHaveCSS('font-size', '18px');
   await expect(textBox.getByRole('paragraph')).toHaveCount(0);
@@ -1335,6 +1393,23 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
     return style.borderTopColor === selectionColor;
   })).toBe(true);
   await expect(textBox).toHaveCSS('outline-style', 'none');
+  await expect(textBox).toHaveCSS('border-top-width', '4px');
+  await expect(textBox).toHaveCSS('border-radius', sharedNodeRadius);
+  expect(await textBox.evaluate((element) => {
+    const frame = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      width: frame.width,
+      height: frame.height,
+      styledWidth: Number.parseFloat(style.width),
+      styledHeight: Number.parseFloat(style.height),
+    };
+  })).toEqual({
+    width: 240,
+    height: 64,
+    styledWidth: 240,
+    styledHeight: 64,
+  });
   await expect(textBox.getByRole('button', { name: /转换为文本/u })).toHaveCount(0);
 
   const titleFontSize = await textBox.locator('.text-box-title').evaluate((element) => getComputedStyle(element).fontSize);
@@ -1391,6 +1466,11 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
   await conversionButton.click();
   const restoredCard = page.getByRole('article', { name: new RegExp(`文本节点：${editedTitle}$`, 'u') });
   await expect(restoredCard.getByRole('paragraph')).toBeVisible();
+  await expect(restoredCard).toHaveCSS('border-radius', sharedNodeRadius);
+  await expect(restoredCard).toHaveCSS('border-top-width', '4px');
+  await expect(restoredCard).toHaveCSS('outline-style', 'none');
+  await expect(restoredCard.locator('header')).toHaveCSS('border-top-left-radius', '12px');
+  await expect(restoredCard.locator('header')).toHaveCSS('border-top-right-radius', '12px');
   await expect(restoredCard.locator('header button')).toHaveCount(0);
   await expect.poll(() => restoredCard.evaluate((element) => ({
     width: Number.parseFloat((element as HTMLElement).style.width),
@@ -1442,7 +1522,7 @@ test('title-bar ports create persistent connections before the title dot', async
   const sourceTitleBox = await source.locator('strong').boundingBox();
   expect(sourceTitleBox).not.toBeNull();
   const sourceBeforeMove = await source.evaluate((element) => {
-    const match = /translate3d\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
+    const match = /translate(?:3d)?\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
     return { x: Number(match?.[1]), y: Number(match?.[2]) };
   });
   await page.mouse.move(
@@ -1452,7 +1532,7 @@ test('title-bar ports create persistent connections before the title dot', async
   await page.mouse.down();
   await expect(source).toHaveAttribute('aria-label', /^已选中，/u);
   await expect(source).toHaveCSS('outline-style', 'none');
-  await expect(source).toHaveCSS('border-top-width', '2px');
+  await expect(source).toHaveCSS('border-top-width', '4px');
   await page.mouse.move(
     sourceTitleBox!.x + sourceTitleBox!.width / 2 + 280,
     sourceTitleBox!.y + sourceTitleBox!.height / 2 + 140,
@@ -1460,7 +1540,7 @@ test('title-bar ports create persistent connections before the title dot', async
   );
   await page.mouse.up();
   await expect.poll(() => source.evaluate((element) => {
-    const match = /translate3d\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
+    const match = /translate(?:3d)?\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
     return Number(match?.[1]);
   })).toBeGreaterThan(sourceBeforeMove.x + 200);
   const sourcePort = source.getByRole('button', { name: '从AI 助手使用指南标题栏连接', exact: true });
@@ -1499,11 +1579,11 @@ test('title-bar ports create persistent connections before the title dot', async
   expect(arrowScreenHeight).toBeLessThanOrEqual(15);
   const [sourcePosition, targetPosition, path] = await Promise.all([
     source.evaluate((element) => {
-      const match = /translate3d\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
+      const match = /translate(?:3d)?\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
       return { x: Number(match?.[1]), y: Number(match?.[2]) };
     }),
     target.evaluate((element) => {
-      const match = /translate3d\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
+      const match = /translate(?:3d)?\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
       return { x: Number(match?.[1]), y: Number(match?.[2]) };
     }),
     connection.getAttribute('d'),
@@ -2132,8 +2212,9 @@ test('command palette and Escape close surfaces without leaking shortcuts into e
   await page.keyboard.press('Control+k');
   const commandPalette = page.getByRole('dialog', { name: '命令面板' });
   await expect(commandPalette).toBeVisible();
-  await expect(commandPalette.getByRole('group', { name: '文件' })).toBeVisible();
-  await expect(commandPalette.getByRole('group', { name: '画布' })).toBeVisible();
+  await expect(commandPalette.getByRole('group', { name: '书籍与同步' })).toBeVisible();
+  await expect(commandPalette.getByRole('group', { name: '画布与节点' })).toBeVisible();
+  await expect(commandPalette.getByRole('group', { name: '选择与排列' })).toBeVisible();
   await expect(commandPalette.getByRole('group', { name: 'AI' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(commandPalette).toHaveCount(0);
@@ -2257,13 +2338,22 @@ test('governed panels, popup controls and notices follow the panel background lu
   expect(failures).toEqual([]);
 });
 
-test('global color presets keep canvas strokes adaptive on dark and eye-care backgrounds', async ({ page }) => {
+test('global color presets keep canvas strokes adaptive on bright, dark and eye-care backgrounds', async ({ page }) => {
   await openApplication(page);
   await executeCommand(page, '打开全局颜色设置');
   const panel = page.getByRole('region', { name: '全局颜色设置' });
+  const canvas = page.locator('.canvas-surface');
+
+  await expect(canvas).toHaveCSS('background-color', 'rgb(239, 239, 236)');
+  await expect.poll(() => canvas.evaluate((element) =>
+    getComputedStyle(element).getPropertyValue('--canvas-selection').trim()
+  )).toBe('#66666b');
+  const selectedCard = page.locator('.text-node-card').first();
+  await selectedCard.click({ position: { x: 80, y: 28 } });
+  await expect(selectedCard).toHaveCSS('border-color', 'rgb(102, 102, 107)');
+  await expect(selectedCard).toHaveCSS('border-top-width', '4px');
 
   await panel.getByRole('button', { name: /^B 暗调/u }).click();
-  const canvas = page.locator('.canvas-surface');
   await expect(canvas).toHaveCSS('background-color', 'rgb(24, 25, 27)');
   await expect.poll(() => canvas.evaluate((element) => ({
     line: getComputedStyle(element).getPropertyValue('--canvas-line').trim(),
@@ -2302,10 +2392,9 @@ test('global color presets keep canvas strokes adaptive on dark and eye-care bac
   await expect(canvas).toHaveCSS('background-color', 'rgb(228, 232, 218)');
   await expect.poll(() => canvas.evaluate((element) =>
     getComputedStyle(element).getPropertyValue('--canvas-selection').trim()
-  )).toBe('#000000');
-  const selectedCard = page.locator('.text-node-card').first();
+  )).toBe('#66666b');
   await selectedCard.click({ position: { x: 80, y: 28 } });
-  await expect(selectedCard).toHaveCSS('border-color', 'rgb(0, 0, 0)');
+  await expect(selectedCard).toHaveCSS('border-color', 'rgb(102, 102, 107)');
 
   await panel.getByRole('button', { name: '重置全部颜色', exact: true }).click();
   await expect(canvas).toHaveCSS('background-color', 'rgb(239, 239, 236)');
@@ -2400,7 +2489,7 @@ test('a selected canvas node creates a visible annotation marker and editor', as
   await expect(card).toHaveCSS('box-shadow', 'none');
   await expect(card).toHaveCSS('outline-style', 'none');
   await expect(card).toHaveCSS('border-top-style', 'solid');
-  await expect(card).toHaveCSS('border-top-width', '2px');
+  await expect(card).toHaveCSS('border-top-width', '4px');
   await page.getByRole('button', { name: '添加注释', exact: true }).click();
   const annotationPanel = page.getByRole('region', { name: '注释' });
   const annotationMarker = page.getByRole('button', { name: /^打开注释/u });
@@ -2874,9 +2963,8 @@ test('unsaved books clearly distinguish browser recovery from a real book file',
   await autosaveInterval.selectOption('1000');
   await expect(autosaveInterval).toHaveValue('1000');
   await filePanel.getByRole('button', { name: '创建手动恢复点' }).click();
-  const recoveryNotice = page.getByRole('status').filter({ hasText: '会话恢复副本已更新' });
-  await expect(recoveryNotice).toBeVisible();
-  await expect(recoveryNotice).toContainText('长期保留请保存书籍');
+  await expect(filePanel.getByText(/本机恢复副本已更新/u)).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: '会话恢复副本已更新' })).toHaveCount(0);
 });
 
 test('AI connection form keeps the routine connection path clear', async ({ page }) => {

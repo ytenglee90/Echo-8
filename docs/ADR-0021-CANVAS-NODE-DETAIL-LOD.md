@@ -18,6 +18,8 @@ The interactive camera is clamped to `0.4–2.4` (40%–240%) at every entry poi
 
 Both node detail levels use the same grapheme-aware end-ellipsis rule: when a title exceeds its available presentation budget, the visible beginning remains and the first omitted position is marked by one trailing ellipsis. The hidden ending is not repeated. A blurred editor title field uses the same rule, while focus restores the complete editable title. This is derived presentation only and never shortens stored title data.
 
+The DOM renderer also keeps node frames sharp at rest without changing durable geometry. It derives a presentation-only rectangle whose four screen-space edges are aligned to the current device-pixel grid, uses two-dimensional transforms, and does not permanently promote every node or world layer with `will-change`. The card uses `border-box`, so the normal and selected borders occupy the same governed frame. Arbitrary camera zoom can still require glyph antialiasing, but node edges no longer inherit avoidable half-pixel placement or a stale pre-scaled compositor texture. Drag previews, hit testing, connection geometry, saved positions and history continue to use the original world-space values.
+
 Connections keep their independent adaptive SVG renderer: ordinary visible edges remain accessible elements and dense visible sets collapse into a compound path with spatial hit testing. A future Canvas 2D, WebGL or WebGPU renderer must remain behind the same content, selection and connection protocols and requires measurements showing that culling, batched edges and node LOD cannot meet the supported envelope.
 
 ## Consequences
@@ -29,4 +31,4 @@ Connections keep their independent adaptive SVG renderer: ordinary visible edges
 
 ## Verification
 
-A pure contract test locks the threshold. The existing 2,000-node viewport-culling, spatial-index, connection-rendering, pointer-transaction and portable-build checks remain required.
+Pure contract tests lock the detail threshold and device-pixel edge alignment. The existing 2,000-node viewport-culling, spatial-index, connection-rendering, pointer-transaction and portable-build checks remain required.
