@@ -7,9 +7,14 @@ import type {
   CloudProjectSummary,
   CloudSyncState,
 } from '../../cloud/contracts.ts';
-import { PROJECT_OPEN_ACCEPT, type FileSaveTarget } from '../../protocols/files.ts';
+import {
+  AUTOSAVE_DISABLED_INTERVAL_MS,
+  PROJECT_OPEN_ACCEPT,
+  type FileSaveTarget,
+} from '../../protocols/files.ts';
 import { chooseNativeProjectOpen } from '../../ui/native-save.ts';
 import { Icon } from '../../ui/Icon.tsx';
+import { BrandLoadingMark, ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
 const INITIAL: CloudSyncState = {
   phase: 'connecting', configured: false, authenticated: false, accounts: [], installations: [],
@@ -142,12 +147,16 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
     cloud.user?.email || cloud.user?.name || installation?.accountName,
   );
   const isLocalFile = globalThis.location.protocol === 'file:';
+  const processing = Boolean(busy) || cloud.phase === 'connecting' || cloud.phase === 'syncing';
+  const openingBook = busy === 'open-local' || busy.startsWith('open:');
 
   return (
-    <section className="book-library-home" aria-label="Echo-8 书库">
+    <section className="book-library-home" aria-label="Echo-8 书库" aria-busy={processing || undefined}>
       <header className="book-library-header">
         <div className="book-library-brand">
-          <span className="book-library-mark" aria-hidden="true"><Icon name="echo-8" /></span>
+          <span className="book-library-mark" aria-hidden="true">
+            <Icon name="echo-8" motion={processing ? 'processing' : 'none'} />
+          </span>
           <strong>Echo-8</strong>
         </div>
         <div className="book-library-account">
@@ -155,7 +164,9 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
             <>
               <span className="book-library-avatar" aria-hidden="true">{accountInitial(accountLabel)}</span>
               <span><strong>{accountLabel || 'Cloudflare 账户'}</strong></span>
-              <button type="button" disabled={Boolean(busy)} onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}>退出</button>
+              <button type="button" disabled={Boolean(busy)} onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}>
+                {busy === 'logout' && <ProcessingIndicator size={9} />}退出
+              </button>
             </>
           ) : (
             <>
@@ -183,7 +194,7 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                 disabled={Boolean(busy)}
                 onClick={() => void run('new-local', () => client.dispatch('bookLibrary.createLocal'))}
               >
-                <Icon name="add" />
+                {busy === 'new-local' ? <ProcessingIndicator size={18} /> : <Icon name="add" />}
                 <strong>{busy === 'new-local' ? '正在新建…' : '新建'}</strong>
               </button>
               <button
@@ -194,7 +205,7 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                 disabled={Boolean(busy)}
                 onClick={() => void openLocalPicker()}
               >
-                <Icon name="folder-open" />
+                {busy === 'open-local' ? <ProcessingIndicator size={18} /> : <Icon name="folder-open" />}
                 <strong>{busy === 'open-local' ? '正在准备…' : '打开'}</strong>
               </button>
             </div>
@@ -222,7 +233,7 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                   title="刷新云端书籍"
                   disabled={Boolean(busy)}
                   onClick={() => void run('refresh', () => client.dispatch('cloudSync.listProjects'))}
-                ><Icon name="reset" /></button>
+                >{busy === 'refresh' ? <ProcessingIndicator size={11} /> : <Icon name="reset" />}</button>
               )}
             </div>
 
@@ -251,7 +262,7 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                     onClick={() => void run(`install:${account.id}`, () => client.dispatch('cloudSync.install', { accountId: account.id }))}
                   >
                     <span><strong>{account.name}</strong><small>{account.id.slice(0, 12)}…</small></span>
-                    <b>{busy === `install:${account.id}` ? '正在安装…' : '安装'}</b>
+                    <b>{busy === `install:${account.id}` && <ProcessingIndicator size={9} />}{busy === `install:${account.id}` ? '正在安装…' : '安装'}</b>
                   </button>
                 ))}
               </div>
@@ -265,12 +276,13 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                       type="button"
                       disabled={Boolean(busy)}
                       onClick={() => void run('upgrade', () => client.dispatch('cloudSync.upgrade', { installationId: upgrade.id }))}
-                    >{busy === 'upgrade' ? '升级中…' : '一键升级'}</button>
+                    >{busy === 'upgrade' && <ProcessingIndicator size={9} />}{busy === 'upgrade' ? '升级中…' : '一键升级'}</button>
                   </div>
                 )}
                 <div className="book-library-project-list">
                   {projects.map((project) => {
                     const editing = editingProjectId === project.id;
+                    const projectBusy = busy === `open:${project.id}` || busy === `rename:${project.id}`;
                     return (
                       <div
                         className={`book-library-project-row${project.id === cloud.activeProjectId ? ' active' : ''}`}
@@ -281,7 +293,9 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                           void openProject(project);
                         }}
                       >
-                        <span className="book-library-project-icon"><Icon name="echo-file" /></span>
+                        <span className="book-library-project-icon">
+                          {projectBusy ? <ProcessingIndicator size={12} /> : <Icon name="echo-file" />}
+                        </span>
                         <span className="book-library-project-copy">
                           {editing ? (
                             <input
@@ -338,7 +352,7 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                     );
                   })}
                   {projects.length === 0 && cloud.phase !== 'connecting' && (
-                    <p className="book-library-empty">还没有云端书籍。新建空白书籍并开始编辑，自动保存时会加入这里。</p>
+                    <p className="book-library-empty">还没有云端书籍。新建空白书籍并保存后会加入这里。</p>
                   )}
                 </div>
               </>
@@ -346,6 +360,20 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
           </section>
         </div>
       </main>
+
+      {openingBook && (
+        <div
+          className="book-library-opening"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-label="正在打开书籍"
+        >
+          <BrandLoadingMark size={64} />
+          <strong>正在打开书籍</strong>
+          <span>加载内容 · 校验数据 · 进入画布</span>
+        </div>
+      )}
 
     </section>
   );
@@ -389,7 +417,10 @@ function formatTime(value: number): string {
 
 function projectStatus(project: CloudProjectSummary, state: CloudSyncState): string {
   if (project.id !== state.activeProjectId) return '未打开';
-  if (state.phase === 'syncing' || state.phase === 'connecting' || state.pendingCommits > 0) return '当前书籍 · 同步中';
+  if (state.phase === 'syncing' || state.phase === 'connecting') return '当前书籍 · 保存中';
+  if (state.pendingCommits > 0) return state.autosaveIntervalMs === AUTOSAVE_DISABLED_INTERVAL_MS
+    ? '当前书籍 · 等待手动保存'
+    : '当前书籍 · 等待自动保存';
   if (state.phase === 'read-only') return '当前书籍 · 只读';
   if (state.phase === 'conflict' || state.phase === 'error') return '当前书籍 · 需要处理';
   if (state.phase === 'offline') return '当前书籍 · 等待同步';

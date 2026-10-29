@@ -10,7 +10,10 @@ import type {
   RecoveryPreview,
 } from '../../protocols/files.ts';
 import {
+  AUTOSAVE_DISABLED_INTERVAL_MS,
   AUTOSAVE_INTERVAL_OPTIONS,
+  AUTOSAVE_REALTIME_INTERVAL_MS,
+  DEFAULT_AUTOSAVE_INTERVAL_MS,
   PROJECT_FILE_EXTENSION,
   PROJECT_OPEN_ACCEPT,
   type PersistenceSnapshot,
@@ -18,6 +21,7 @@ import {
 } from '../../protocols/files.ts';
 import { PRODUCT_NAME } from '../../product.ts';
 import { Icon, IconButton } from '../../ui/Icon.tsx';
+import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import {
   chooseNativeTextExport,
   chooseNativeTextExportDirectory,
@@ -246,12 +250,18 @@ export function FilePanel({ client }: { client: ViewClient }) {
 
       <div className="file-section">
         <div className="file-section-title">
-          <strong>自动保存与恢复</strong>
-          <span>{persistenceLabel(
-            persistence,
-            fileState?.hasProjectDestination === true,
-            fileState?.cloudProjectActive === true,
-          )}</span>
+          <strong>保存与恢复</strong>
+          <span>{!persistence || persistence.state === 'saving' || persistence.state === 'pending'
+            ? <ProcessingLabel size={9}>{persistenceLabel(
+                persistence,
+                fileState?.hasProjectDestination === true,
+                fileState?.cloudProjectActive === true,
+              )}</ProcessingLabel>
+            : persistenceLabel(
+                persistence,
+                fileState?.hasProjectDestination === true,
+                fileState?.cloudProjectActive === true,
+              )}</span>
         </div>
         <div className="persistence-detail">
           <span>待合并日志 {persistence?.journalEntries ?? 0} 条</span>
@@ -259,10 +269,10 @@ export function FilePanel({ client }: { client: ViewClient }) {
           <span>{persistence?.checkpointAt ? `完整检查点 ${formatTime(persistence.checkpointAt)}` : '尚无完整检查点'}</span>
         </div>
         <label className="autosave-interval-control">
-          <span>完整检查点间隔</span>
+          <span>自动保存当前目标</span>
           <select
-            aria-label="自动保存完整检查点间隔"
-            value={persistence?.autosaveIntervalMs ?? 60_000}
+            aria-label="自动保存当前目标的间隔"
+            value={persistence?.autosaveIntervalMs ?? DEFAULT_AUTOSAVE_INTERVAL_MS}
             disabled={!persistence}
             onChange={(event) => {
               const intervalMs = Number(event.target.value);
@@ -277,11 +287,19 @@ export function FilePanel({ client }: { client: ViewClient }) {
             ))}
           </select>
         </label>
-        <p className="file-note autosave-interval-note">{fileState?.cloudProjectActive
-          ? '浏览器会持续更新本机恢复副本，并自动把编辑同步到当前云端书籍；不需要确认本地保存地址。'
-          : fileState?.hasProjectDestination
-            ? '浏览器会先更新本机恢复副本，再按上方设定时间覆盖当前书籍文件。'
-            : '当前尚未选择书籍保存位置：后台只更新本机浏览器恢复副本（IndexedDB），不会生成 .echo8 文件、不会写入任何文件夹；应用下次按新会话启动时会清理它。要长期保留，请点击“保存书籍”。'}</p>
+        <p className="file-note autosave-interval-note">{
+          persistence?.autosaveIntervalMs === AUTOSAVE_DISABLED_INTERVAL_MS
+            ? fileState?.cloudProjectActive
+              ? '自动保存已关闭；本机恢复仍持续记录，云端书籍只在手动保存、切换书籍或退出当前绑定时刷新。'
+              : fileState?.hasProjectDestination
+                ? '自动保存已关闭；本机恢复仍持续记录，当前书籍文件只在手动保存时覆盖。'
+                : '自动保存已关闭；后台仍更新本机浏览器恢复副本，但不会生成或覆盖 .echo8 文件。'
+            : fileState?.cloudProjectActive
+              ? '浏览器会持续更新本机恢复副本，并按上方间隔把编辑保存到当前云端书籍。'
+              : fileState?.hasProjectDestination
+                ? '浏览器会持续更新本机恢复副本，并按上方间隔覆盖当前书籍文件。'
+                : '当前尚未选择书籍保存位置：后台只更新本机浏览器恢复副本（IndexedDB），不会生成 .echo8 文件、不会写入任何文件夹；要长期保留，请点击“保存书籍”。'
+        }</p>
         {settingsError && <p className="autosave-settings-error" role="alert">{settingsError}</p>}
         <IconButton icon="snapshot" label="创建手动恢复点" className="icon-button recovery-create" disabled={busy} onClick={() => void client.dispatch('file.createRecoveryPoint')} />
         <div className="recovery-list">
@@ -327,7 +345,12 @@ export function FilePanel({ client }: { client: ViewClient }) {
 
       {status && (
         <div className={`file-status ${status.state}`} aria-live="polite">
-          <div><strong>{status.message}</strong><span>{status.progress === undefined ? '' : `${Math.round(status.progress * 100)}%`}</span></div>
+          <div>
+            <strong>{status.state === 'running'
+              ? <ProcessingLabel size={10}>{status.message}</ProcessingLabel>
+              : status.message}</strong>
+            <span>{status.progress === undefined ? '' : `${Math.round(status.progress * 100)}%`}</span>
+          </div>
           {status.state === 'running' && <progress max={1} value={status.progress ?? 0} />}
         </div>
       )}
@@ -514,17 +537,22 @@ function persistenceLabel(
 ): string {
   if (!status) return '正在读取状态';
   if (status.state === 'memory-only') return '浏览器不支持持久存储';
+  const automaticSaveDisabled = status.autosaveIntervalMs === AUTOSAVE_DISABLED_INTERVAL_MS;
   if (cloudProjectActive) {
     if (status.state === 'error') return '本机恢复更新异常';
     if (status.state === 'saving') return '正在更新本机恢复副本';
     if (status.state === 'pending') return '等待更新本机恢复副本';
-    if (status.state === 'saved') return '本机恢复正常 · 云端自动同步';
+    if (status.state === 'saved') return automaticSaveDisabled
+      ? '本机恢复正常 · 云端手动保存'
+      : '本机恢复正常 · 云端自动保存';
     return '等待首次修改';
   }
   if (status.state === 'error') return hasProjectDestination ? '自动保存异常' : '本机恢复更新异常';
   if (status.state === 'saving') return hasProjectDestination ? '正在自动保存书籍' : '正在更新本机恢复副本';
   if (status.state === 'pending') return hasProjectDestination ? '等待自动保存书籍' : '等待更新本机恢复副本';
-  if (status.state === 'saved') return hasProjectDestination ? '自动保存书籍正常' : '本机恢复副本已更新（未保存书籍）';
+  if (status.state === 'saved') return hasProjectDestination
+    ? automaticSaveDisabled ? '本机恢复正常 · 书籍手动保存' : '自动保存书籍正常'
+    : '本机恢复副本已更新（未保存书籍）';
   return '等待首次修改';
 }
 
@@ -538,6 +566,8 @@ function formatTime(timestamp: number): string {
 }
 
 function formatAutosaveInterval(intervalMs: number): string {
+  if (intervalMs === AUTOSAVE_DISABLED_INTERVAL_MS) return '关闭';
+  if (intervalMs === AUTOSAVE_REALTIME_INTERVAL_MS) return '实时';
   if (intervalMs < 60_000) return `${intervalMs / 1000} 秒`;
   return `${intervalMs / 60_000} 分钟`;
 }

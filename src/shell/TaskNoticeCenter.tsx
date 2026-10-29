@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import type { PersistenceService } from '../core/persistence.ts';
 import type { ViewClient } from '../core/contracts.ts';
 import type { ScheduledTaskSnapshot, TaskScheduler } from '../core/task-scheduler.ts';
+import { ProcessingIndicator } from '../ui/ProcessingIndicator.tsx';
 
 const MAX_VISIBLE_NOTICES = 3;
 
@@ -54,7 +55,9 @@ export function TaskNoticeCenter({
       )}
       {autosave && (
         <article className={`task-notice autosave-notice autosave-notice-${autosave.state}`} role="status">
-          <span className="autosave-notice-indicator" aria-hidden="true" />
+          {autosave.state === 'saving'
+            ? <ProcessingIndicator size={13} />
+            : <span className="autosave-notice-indicator" aria-hidden="true" />}
           <span className="task-notice-copy">
             <strong>{autosave.title}</strong>
             <small>{autosave.detail}</small>
@@ -72,7 +75,7 @@ export function TaskNoticeCenter({
       )}
       {visible.slice(0, taskLimit).map((task) => (
         <article className={`task-notice task-notice-${task.state}`} role="status" key={task.id}>
-          <span className="task-notice-spinner" aria-hidden="true" />
+          <ProcessingIndicator size={13} paused={task.state === 'paused'} />
           <span className="task-notice-copy">
             <strong>{task.label}</strong>
             <small>{taskStateLabel(task)} · 数据量较大时可能需要一些时间</small>
@@ -86,7 +89,11 @@ export function TaskNoticeCenter({
           />
         </article>
       ))}
-      {hidden > 0 && <div className="task-notice-more" role="status">另有 {hidden} 项后台任务正在处理</div>}
+      {hidden > 0 && (
+        <div className="task-notice-more" role="status">
+          <ProcessingIndicator size={9} />另有 {hidden} 项后台任务正在处理
+        </div>
+      )}
     </section>
   );
 }

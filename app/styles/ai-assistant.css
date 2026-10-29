@@ -51,7 +51,7 @@
   content: "";
 }
 .text-assist-toggle.rules-ready::after { background: var(--success); }
-.text-assist-toggle.rules-loading::after { background: var(--faint); }
+.text-assist-toggle.rules-loading::after { display: none; }
 .text-assist-toggle.rules-warning::after { background: var(--danger); }
 .ai-chat-topbar select,
 .ai-proposal-actions select,

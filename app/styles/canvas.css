@@ -63,14 +63,6 @@
   will-change: transform;
 }
 
-.canvas-selected-node-proxy {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
 .annotation-layer {
   position: absolute;
   z-index: 21;

@@ -1,5 +1,14 @@
-import type { LocalModelAsset, LocalModelAssetData } from './network-access.ts';
+import type { LocalModelAsset, LocalModelAssetData } from '../protocols/network.ts';
 import type { ThemeDefinition, ThemeTokenOverrides } from '../protocols/theme.ts';
+import type { EventDeclaration, PatchOperation, WritableStoreDomain } from '../protocols/state.ts';
+export type {
+  DomainSnapshot,
+  EventDeclaration,
+  PatchOperation,
+  StoreDomain,
+  StoreSnapshot,
+  WritableStoreDomain,
+} from '../protocols/state.ts';
 import type {
   CommandDeferrer,
   CommandDispatcher,
@@ -21,34 +30,6 @@ export type PluginStatus =
   | 'uninstalling'
   | 'removed'
   | 'faulted';
-
-export type StoreDomain = 'document' | 'workspace' | 'ephemeral' | 'derived';
-export type WritableStoreDomain = Extract<StoreDomain, 'document' | 'workspace'>;
-
-export interface DomainSnapshot {
-  revision: number;
-  namespaces: Record<string, Record<string, unknown>>;
-}
-
-export interface StoreSnapshot {
-  formatVersion: 1;
-  document: DomainSnapshot;
-  workspace: DomainSnapshot;
-}
-
-export interface PatchOperation {
-  op: 'set' | 'delete';
-  domain: WritableStoreDomain;
-  namespace: string;
-  key: string;
-  value?: unknown;
-  schemaOwner?: string;
-}
-
-export interface EventDeclaration {
-  type: string;
-  payload: unknown;
-}
 
 export interface TransactionProposal {
   label: string;

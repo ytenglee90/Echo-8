@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { AnnotationOpenState, AnnotationRecord } from '../../protocols/annotations.ts';
 import { FloatingPanel } from '../../ui/FloatingPanel.tsx';
 import { IconButton } from '../../ui/Icon.tsx';
+import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 
 interface AnnotationState {
   open?: AnnotationOpenState;
@@ -30,12 +31,22 @@ export function AnnotationPopup({
   const recordRef = useRef<AnnotationRecord | undefined>(undefined);
   const draftRef = useRef('');
   const dirty = useRef(false);
-  const saving = useRef(false);
+  const savePromise = useRef<Promise<boolean> | undefined>(undefined);
   const composing = useRef(false);
+  const mounted = useRef(true);
   const [compositionRevision, setCompositionRevision] = useState(0);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      dirty.current = false;
+    };
+  }, []);
 
   const refresh = () => {
     void client.request<AnnotationState>('annotations.state@1').then((next) => {
+      if (!mounted.current) return;
       setState(next);
       const record = next.open ? next.records.find((item) => item.id === next.open?.id) : undefined;
       recordRef.current = record;
@@ -43,7 +54,9 @@ export function AnnotationPopup({
         draftRef.current = record?.body ?? '';
         setDraft(draftRef.current);
       }
-    }).catch(() => setState({ records: [] }));
+    }).catch(() => {
+      if (mounted.current) setState({ records: [] });
+    });
   };
 
   useEffect(() => {
@@ -56,36 +69,46 @@ export function AnnotationPopup({
     [client],
   );
 
-  const save = async () => {
-    const record = recordRef.current;
-    if (!record || !dirty.current || saving.current || composing.current) return;
-    const body = draftRef.current;
-    saving.current = true;
-    setStatus('保存中…');
-    try {
-      const result = await client.dispatch('annotation.update', {
-        id: record.id,
-        body,
-        expectedRevision: record.revision,
-      });
-      recordRef.current = { ...record, body, revision: result.revision, updatedAt: Date.now() };
-      dirty.current = draftRef.current !== body;
-      setStatus(dirty.current ? '未保存' : '已保存');
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : '保存失败');
-    } finally {
-      saving.current = false;
-      if (dirty.current) globalThis.setTimeout(() => void save(), 0);
-    }
-  };
+  const save = useCallback((): Promise<boolean> => {
+    if (savePromise.current) return savePromise.current;
+    const run = async () => {
+      if (dirty.current && composing.current) {
+        if (mounted.current) setStatus('请先结束输入法组合文本');
+        return false;
+      }
+      while (mounted.current && dirty.current && !composing.current) {
+        const record = recordRef.current;
+        if (!record) return false;
+        const body = draftRef.current;
+        setStatus('保存中…');
+        try {
+          const result = await client.dispatch('annotation.update', {
+            id: record.id,
+            body,
+            expectedRevision: record.revision,
+          });
+          recordRef.current = { ...record, body, revision: result.revision, updatedAt: Date.now() };
+          dirty.current = draftRef.current !== body;
+          if (mounted.current) setStatus(dirty.current ? '未保存' : '已保存');
+        } catch (error) {
+          if (mounted.current) setStatus(error instanceof Error ? error.message : '保存失败');
+          return false;
+        }
+      }
+      return mounted.current && !dirty.current;
+    };
+    const pending = run().finally(() => {
+      if (savePromise.current === pending) savePromise.current = undefined;
+    });
+    savePromise.current = pending;
+    return pending;
+  }, [client]);
 
   useEffect(() => {
     if (!dirty.current || !state.open) return;
     const timer = globalThis.setTimeout(() => void save(), 700);
     return () => globalThis.clearTimeout(timer);
-    // The save routine deliberately commits the latest local draft after the quiet period.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compositionRevision, draft, state.open?.id]);
+  }, [compositionRevision, draft, save, state.open]);
 
   const open = state.open;
   const record = open ? state.records.find((item) => item.id === open.id) : undefined;
@@ -110,13 +133,16 @@ export function AnnotationPopup({
       onActivate={() => void client.dispatch('annotation.focus')}
       onCommit={(rect) => void client.dispatch('annotation.setPanelRect', rect)}
       onClose={() => {
-        void save().finally(() => client.dispatch('annotation.close'));
+        void save().then((saved) => saved ? client.dispatch('annotation.close') : undefined);
       }}
       headerActions={(
         <IconButton
           icon="trash"
           label="删除注释"
-          onClick={() => void client.dispatch('annotation.delete', { id: record.id })}
+          onClick={() => {
+            dirty.current = false;
+            void client.dispatch('annotation.delete', { id: record.id });
+          }}
         />
       )}
     >
@@ -146,7 +172,9 @@ export function AnnotationPopup({
           }}
           onBlur={() => void save()}
         />
-        <span className="annotation-save-state" aria-live="polite">{status}</span>
+        <span className="annotation-save-state" aria-live="polite">
+          {status === '保存中…' ? <ProcessingLabel size={9}>{status}</ProcessingLabel> : status}
+        </span>
       </div>
     </FloatingPanel>
   );

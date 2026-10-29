@@ -23,10 +23,10 @@ export function Icon({
 }: {
   name: IconName | string;
   size?: number;
-  motion?: 'none' | 'sync';
+  motion?: 'none' | 'sync' | 'processing';
 }) {
   if (name === 'echo-8') {
-    if (motion === 'sync') return <Echo8SyncIcon size={size} />;
+    if (motion !== 'none') return <Echo8MotionIcon size={size} motion={motion} />;
     const width = Math.round(size * 594 / 263);
     return (
       <span
@@ -68,12 +68,12 @@ export function Icon({
   );
 }
 
-function Echo8SyncIcon({ size }: { size: number }) {
+function Echo8MotionIcon({ size, motion }: { size: number; motion: 'sync' | 'processing' }) {
   const width = Math.round(size * 594 / 263);
   const maskId = `echo-8-sync-${useId().replace(/[^a-zA-Z0-9_-]/gu, '')}`;
   return (
     <svg
-      className="ui-icon echo-8-icon echo-8-sync-mark"
+      className={`ui-icon echo-8-icon echo-8-sync-mark echo-8-${motion}-mark`}
       style={{
         '--echo-8-width': `${width}px`,
         '--echo-8-height': `${size}px`,
@@ -107,15 +107,24 @@ function Echo8SyncIcon({ size }: { size: number }) {
 export function IconButton({
   icon,
   label,
+  busy = false,
   className = 'icon-button',
   ...props
 }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'title' | 'aria-label'> & {
   icon: IconName | string;
   label: string;
+  busy?: boolean;
 }) {
   return (
-    <button {...props} className={className} type={props.type ?? 'button'} aria-label={label} title={label}>
-      <Icon name={icon} />
+    <button
+      {...props}
+      className={className}
+      type={props.type ?? 'button'}
+      aria-label={label}
+      aria-busy={busy || undefined}
+      title={label}
+    >
+      <Icon name={busy ? 'echo-8' : icon} size={busy ? 13 : 17} motion={busy ? 'processing' : 'none'} />
     </button>
   );
 }

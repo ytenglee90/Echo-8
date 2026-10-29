@@ -78,13 +78,28 @@ export interface TextAssistEnsureResourcesResult {
   missing: TextAssistResourceRole[];
 }
 
+export const TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL = 'text.assist.rules-file.requested';
+
+export interface TextAssistImportRulesFileRequest {
+  name: string;
+  text: string;
+}
+
+export interface TextAssistImportRulesFileResult {
+  loaded: true;
+  name: string;
+  ensured: TextAssistEnsureResourcesResult;
+}
+
 export interface TextAssistResourceBinding {
-  schemaVersion: 3;
+  schemaVersion: 4;
   role: TextAssistResourceRole;
   nodeId: string;
   createdAt: number;
   updatedAt: number;
   defaultRuleVersion: number;
+  /** Built-in rules are referenced by version; only the user overlay travels with the book. */
+  ruleStorage: 'builtin-overlay' | 'embedded';
 }
 
 export interface TextAssistCorrectionRule {
@@ -167,6 +182,11 @@ export interface TextAssistResourceStatus {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'textAssist.loadRulesFile': CommandContract<undefined, { requested: true }>;
+    'textAssist.importRulesFile': CommandContract<
+      TextAssistImportRulesFileRequest,
+      TextAssistImportRulesFileResult
+    >;
     'textAssist.ensureResources': CommandContract<
       TextAssistEnsureResourcesRequest | undefined,
       TextAssistEnsureResourcesResult

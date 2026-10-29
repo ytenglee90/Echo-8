@@ -34,12 +34,26 @@ test('a real browser opens, culls and edits the supported extreme canvas envelop
   const canvas = page.getByLabel('Echo-8 无限画布');
   await canvas.click({ position: { x: 8, y: 8 } });
   await page.keyboard.press('Control+a');
-  await expect(page.getByRole('article', { name: /已选中，文本节点：/u })).toHaveCount(NODE_COUNT, {
-    timeout: FULL_SELECTION_BUDGET_MS,
-  });
+  await expect(page.locator('[data-canvas-selection-count]')).toHaveAttribute(
+    'data-canvas-selection-count',
+    String(NODE_COUNT),
+    {
+      timeout: FULL_SELECTION_BUDGET_MS,
+    },
+  );
+  await expect(page.locator('[data-canvas-selection-count]')).toContainText('已选择 2,000 个画布项目');
+  const mountedAfterFullSelection = await page.getByRole('article', { name: /文本节点：/u }).count();
+  expect(mountedAfterFullSelection).toBeLessThan(200);
+  await expect(page.getByRole('article', { name: /已选中，文本节点：/u })).toHaveCount(
+    mountedAfterFullSelection,
+    {
+      timeout: FULL_SELECTION_BUDGET_MS,
+    },
+  );
   expect(performance.now() - selectedAt).toBeLessThan(FULL_SELECTION_BUDGET_MS);
 
   await canvas.click({ position: { x: 8, y: 8 } });
+  await expect(page.locator('[data-canvas-selection-count]')).toHaveAttribute('data-canvas-selection-count', '0');
   await expect(page.getByRole('article', { name: /已选中，文本节点：/u })).toHaveCount(0);
   await hugeNode.click();
   await expect(page.getByRole('article', { name: /已选中，文本节点：/u })).toHaveCount(1);
@@ -72,7 +86,7 @@ async function openApplication(page: Page): Promise<void> {
   });
   await page.goto('/');
   await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeVisible();
-  await page.getByRole('button', { name: '继续当前浏览器中的画布' }).click();
+  await page.getByRole('button', { name: '新建空白书籍' }).click();
   await expect(page.getByRole('article', { name: /文本节点：/u })).toHaveCount(2);
 }
 

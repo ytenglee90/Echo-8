@@ -14,6 +14,7 @@ import type {
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import type { EditorContextSnapshot, EditorSelectionSnapshot } from '../../protocols/editor.ts';
 import { normalizeFloatingRect, type FloatingPanelRect } from '../../protocols/floating.ts';
+import { isAbortError } from '../../services/abort.ts';
 import { defineManifest } from '../manifest.ts';
 import { resolveSearchNavigation } from './navigation.ts';
 
@@ -671,10 +672,6 @@ function sameSearchHit(
     left.length === right.length &&
     left.revision === right.revision &&
     left.matchedText === right.matchedText;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function isFloatingRect(value: unknown): value is FloatingPanelRect {

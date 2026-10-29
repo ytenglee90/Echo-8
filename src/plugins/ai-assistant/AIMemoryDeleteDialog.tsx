@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import { Icon, IconButton } from '../../ui/Icon.tsx';
+import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
 interface PendingMemoryDeletion {
   sourceId: string;
@@ -76,7 +77,8 @@ export function AIMemoryDeleteDialog({ client }: { client: ViewClient }) {
         <footer>
           <button type="button" disabled={deleting} onClick={cancel}>取消</button>
           <button type="button" className="ai-memory-delete-confirm" disabled={deleting} onClick={confirm}>
-            <Icon name="trash" size={15} />{deleting ? '正在删除…' : '删除记忆'}
+            {deleting ? <ProcessingIndicator size={11} /> : <Icon name="trash" size={15} />}
+            {deleting ? '正在删除…' : '删除记忆'}
           </button>
         </footer>
       </section>

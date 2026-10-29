@@ -86,7 +86,10 @@
 | [0074](ADR-0074-PLUGIN-BOUNDARIES-AND-CANVAS-COMPOSITION.md) | 插件边界、画布组合与运行时资源归属 | 有效；补充 0001、0025、0029、0032、0045、0060，部分替代 0062 的目录决定 |
 | [0075](ADR-0075-CONFIRMED-CLOUD-BOOK-DELETION.md) | 首页与同步面板共用的云端书籍删除确认 | 有效；补充 0067、0070、0073 |
 | [0076](ADR-0076-PORTABLE-LIBRARY-AND-CONDITIONAL-CLOUD-CONTROL.md) | 便携版书库入口与按来源启用的云控制面 | **部分被 0077 替代**；便携版边界保留，删除按钮的文字呈现要求失效 |
-| [0077](ADR-0077-ICON-FIRST-CLOUD-STATUS-AND-AUTOSAVE-TARGETS.md) | 图标优先的云状态与按来源选择自动保存目标 | 有效；补充 0006、0071、0075，部分替代 0073、0076 |
+| [0077](ADR-0077-ICON-FIRST-CLOUD-STATUS-AND-AUTOSAVE-TARGETS.md) | 图标优先的云状态与按来源选择自动保存目标 | **部分被 0081 替代**；目标来源与图标语义保留，即时云端绑定/上传触发失效 |
 | [0078](ADR-0078-SELECTION-SCOPED-APPEARANCE.md) | 选中对象与连接线部件的局部调色 | 有效；补充 0005、0017、0019、0060、0065 |
 | [0079](ADR-0079-MIXED-APPEARANCE-CATALOG-AND-RESET.md) | 混合模块调色、全画布颜色记录与恢复初始颜色 | 有效；补充 0005、0078，替代 0078 的单一外观类型限制 |
+| [0080](ADR-0080-GOVERNED-INPUT-COMPOSITION-AND-PUBLIC-STATE-PROTOCOLS.md) | 受治理文件输入、唯一插件组合清单与公共状态协议 | 有效；补充 0001、0035、0038、0060、0074 |
+| [0081](ADR-0081-UNIFIED-AUTOSAVE-TARGET-SCHEDULING.md) | 统一自动保存目标调度、本机恢复与云端上传节拍 | 有效；补充 0006、0071，部分替代 0077 |
+| [0082](ADR-0082-COMPACT-BUILTIN-TEXT-ASSIST-OVERLAYS.md) | 书籍仅保存内置纠错规则版本引用与自定义覆盖 | 有效；补充 0006、0038、0061 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

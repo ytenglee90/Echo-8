@@ -6,6 +6,7 @@ import type {
   AIContextSearchRequest,
   AIContextSource,
 } from '../../protocols/ai.ts';
+import { isAbortError } from '../../services/abort.ts';
 import { defineManifest } from '../manifest.ts';
 import {
   SEARCH_INDEX_ANALYZE_JOB,
@@ -486,10 +487,6 @@ function validateSearchRequest(input: AIContextSearchRequest): void {
 
 function assertNotAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function isIndexReady(status: SearchIndexStatus): boolean {

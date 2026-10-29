@@ -10,6 +10,9 @@ async function openApplication(page: Page): Promise<void> {
 }
 
 async function executeCommand(page: Page, label: string): Promise<void> {
+  const commandButton = page.getByRole('button', { name: '命令面板' });
+  await expect(commandButton).toBeVisible();
+  await commandButton.focus();
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: '命令面板' });
   await expect(palette).toBeVisible();
@@ -170,11 +173,14 @@ async function dispatchEditorClipboard(
   return editor.evaluate((element, input) => {
     const transfer = new DataTransfer();
     for (const [mime, value] of input.entries) transfer.setData(mime, value);
-    element.dispatchEvent(new ClipboardEvent(input.type, {
+    const event = new Event(input.type, {
       bubbles: true,
       cancelable: true,
-      clipboardData: transfer,
-    }));
+    });
+    // Gecko ignores the ClipboardEventInit clipboardData value for synthetic
+    // events; an own property keeps the same controlled event path testable.
+    Object.defineProperty(event, 'clipboardData', { value: transfer });
+    element.dispatchEvent(event);
     return Array.from(transfer.types, (mime) => [mime, transfer.getData(mime)] as [string, string]);
   }, { type, entries });
 }
@@ -338,11 +344,32 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   } satisfies ProjectSource);
   await page.addInitScript(() => {
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined });
+    const runtimeWindow = window as typeof window & { __echo8BootMotion?: string };
+    const observeBoot = () => {
+      const root = document.documentElement;
+      if (!root) {
+        requestAnimationFrame(observeBoot);
+        return;
+      }
+      const inspect = () => {
+        const mark = document.querySelector('.boot-screen .brand-loading-mark .echo-8-processing-mark');
+        if (!(mark instanceof HTMLElement || mark instanceof SVGElement)) return;
+        runtimeWindow.__echo8BootMotion = getComputedStyle(mark).animationName;
+        observer.disconnect();
+      };
+      const observer = new MutationObserver(inspect);
+      observer.observe(root, { childList: true, subtree: true });
+      inspect();
+    };
+    observeBoot();
   });
   await page.goto('/');
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   const unsavedNotice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' });
   await expect(library).toBeVisible();
+  expect(await page.evaluate(() => (
+    window as typeof window & { __echo8BootMotion?: string }
+  ).__echo8BootMotion)).toContain('echo-8-brand-breathe');
   await expect(library.getByRole('heading', { name: '今天想打开哪一本？' })).toHaveCount(0);
   const libraryMark = library.locator('.book-library-brand [data-icon="echo-8"]');
   await expect(libraryMark).toBeVisible();
@@ -377,7 +404,10 @@ test('book library switches books without the in-canvas unsaved confirmation', a
       channel: context?.getImageData(100, 80, 1, 1).data[3] ?? 255,
     };
   });
-  expect(libraryMarkAlpha).toEqual({ outer: 0, body: 255, channel: 0 });
+  expect(libraryMarkAlpha).toMatchObject({ outer: 0, body: 255 });
+  // Gecko's offscreen SVG decoder reports luminance-mask cutouts as opaque,
+  // although the actual CSS mask remains transparent and is snapshot-tested.
+  if (testInfo.project.name !== 'firefox') expect(libraryMarkAlpha.channel).toBe(0);
   await expect(library.locator('#cloud-books-title')).toHaveClass('sr-only');
   await expect(library.getByRole('button', { name: /新建空白书籍/u })).toBeVisible();
   await expect(library.getByRole('button', { name: /打开本地书籍/u })).toBeVisible();
@@ -399,11 +429,27 @@ test('book library switches books without the in-canvas unsaved confirmation', a
   await library.getByRole('button', { name: /打开本地书籍/u }).click();
   const chooser = await chooserPromise;
   await expect(unsavedNotice).toHaveCount(0);
+  const transitionSeen = page.evaluate(() => new Promise<string>((resolve) => {
+    const inspect = () => {
+      const mark = document.querySelector('.book-library-opening .brand-loading-mark .echo-8-processing-mark');
+      if (!(mark instanceof HTMLElement || mark instanceof SVGElement)) return;
+      observer.disconnect();
+      resolve(getComputedStyle(mark).animationName);
+    };
+    const observer = new MutationObserver(inspect);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    inspect();
+    setTimeout(() => {
+      observer.disconnect();
+      resolve('not-seen');
+    }, 10_000);
+  }));
   await chooser.setFiles({
     name: '从书库打开.echo8',
     mimeType: targetBlob.type,
     buffer: Buffer.from(await targetBlob.arrayBuffer()),
   });
+  expect(await transitionSeen).toContain('echo-8-brand-breathe');
   await expect(library).toHaveCount(0, { timeout: 15_000 });
   await expect(unsavedNotice).toHaveCount(0);
 });
@@ -646,15 +692,22 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   expect(syncedVisual.beforeContent).toBe('none');
   await syncedStatus.click();
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
-  await expect(panel.getByRole('button', { name: '立即同步' }).locator('[data-icon="sync"]')).toBeVisible();
+  await expect(panel.getByRole('button', { name: '立即保存到云端' }).locator('[data-icon="sync"]')).toBeVisible();
   await expect(panel.getByRole('button', { name: '退出账户' }).locator('[data-icon="logout"]')).toBeVisible();
   await expect(panel.getByRole('button', { name: '刷新云端书籍' }).locator('[data-icon="reset"]')).toBeVisible();
   await expect(panel.getByRole('button', { name: '返回书库' })).toHaveCount(0);
   await expect(panel.getByRole('button', { name: '新建云端书籍' })).toHaveCount(0);
   holdNextSync = true;
-  await panel.getByRole('button', { name: '立即同步' }).click();
+  await panel.getByRole('button', { name: '立即保存到云端' }).click();
   await heldSyncStarted;
   await expect(syncedStatus).toHaveClass(/is-active/u);
+  const processingMark = panel.locator('.cloud-sync-summary svg.echo-8-processing-mark[data-icon="echo-8"]');
+  await expect(processingMark).toBeVisible();
+  const processingBox = await processingMark.boundingBox();
+  expect(processingBox).not.toBeNull();
+  expect(processingBox!.width / processingBox!.height).toBeGreaterThan(2.2);
+  const processingGaps = processingMark.locator('.echo-8-sync-gap');
+  await expect(processingGaps).toHaveCount(3);
   const activeMark = syncedStatus.locator('svg.echo-8-sync-mark[data-icon="echo-8"]');
   await expect(activeMark).toBeVisible();
   await expect(activeMark).toHaveAttribute('viewBox', '0 0 594 263');
@@ -686,6 +739,9 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   expect(travelKeyframes).toContain('translateX(-96px)');
   expect(travelKeyframes).toContain('translateX(96px)');
   await expect(activeMark.locator('.echo-8-sync-body')).toHaveCSS('animation-name', 'none');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(processingGaps.first()).toHaveCSS('animation-name', 'none');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   releaseHeldSync();
   await expect(syncedStatus).not.toHaveClass(/is-active/u);
   await expect(syncedStatus.locator('svg.echo-8-sync-mark')).toHaveCount(0);
@@ -2612,7 +2668,16 @@ test('Alt dragging a connected node keeps its existing connection anchored to th
 
   const connection = page.locator('.connection-path').first();
   await expect(connection).toBeVisible();
-  const pathBeforeDrag = await connection.getAttribute('d');
+  await page.waitForTimeout(500);
+  let previousPath: string | null = null;
+  let stableSamples = 0;
+  await expect.poll(async () => {
+    const nextPath = await connection.getAttribute('d');
+    stableSamples = nextPath !== null && nextPath === previousPath ? stableSamples + 1 : 0;
+    previousPath = nextPath;
+    return stableSamples;
+  }).toBeGreaterThanOrEqual(2);
+  const pathBeforeDrag = previousPath;
   expect(pathBeforeDrag).not.toBeNull();
   const titleBox = await source.locator('strong').boundingBox();
   expect(titleBox).not.toBeNull();
@@ -2797,8 +2862,17 @@ test('unsaved books clearly distinguish browser recovery from a real book file',
   await executeCommand(page, '书籍与恢复设置');
   const filePanel = page.getByRole('region', { name: '书籍与恢复' });
   await expect(filePanel).toBeVisible();
+  const autosaveInterval = filePanel.getByRole('combobox', { name: '自动保存当前目标的间隔' });
+  await expect(autosaveInterval).toBeVisible();
+  await expect(autosaveInterval.locator('option')).toHaveText([
+    '实时', '30 秒', '1 分钟', '2 分钟', '5 分钟', '10 分钟', '30 分钟', '关闭',
+  ]);
   await expect(filePanel.getByText(/当前尚未选择书籍保存位置/u)).toBeVisible();
   await expect(filePanel.getByText(/不会生成 \.echo8 文件/u)).toBeVisible();
+  await autosaveInterval.selectOption('0');
+  await expect(filePanel.getByText(/自动保存已关闭/u)).toBeVisible();
+  await autosaveInterval.selectOption('1000');
+  await expect(autosaveInterval).toHaveValue('1000');
   await filePanel.getByRole('button', { name: '创建手动恢复点' }).click();
   const recoveryNotice = page.getByRole('status').filter({ hasText: '会话恢复副本已更新' });
   await expect(recoveryNotice).toBeVisible();

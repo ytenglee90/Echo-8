@@ -7,6 +7,7 @@ import type {
   StatisticsContribution,
   StatisticsSnapshot,
 } from '../../protocols/statistics.ts';
+import { isAbortError } from '../../services/abort.ts';
 import { defineManifest } from '../manifest.ts';
 
 const RECOMPUTE_EVENTS = [
@@ -156,10 +157,6 @@ function emptySnapshot(): StatisticsSnapshot {
     computedAt: 0,
     status: 'idle',
   };
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function cancellableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {

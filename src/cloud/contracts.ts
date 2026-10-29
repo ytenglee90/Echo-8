@@ -1,6 +1,5 @@
-import type { DomainSnapshot } from '../core/contracts.ts';
 import type { ProjectPluginDescriptor } from '../protocols/files.ts';
-import type { TransactionCommitRecord } from '../core/transaction-manager.ts';
+import type { DomainSnapshot, TransactionCommitRecord } from '../protocols/state.ts';
 
 export const CLOUD_API_VERSION = 1 as const;
 /**
@@ -121,6 +120,8 @@ export interface CloudSyncState {
   activeProjectName?: string;
   headRevision: number;
   pendingCommits: number;
+  /** Current automatic-save cadence; 0 keeps changes local until an explicit save. */
+  autosaveIntervalMs?: number;
   upgradeAvailable: boolean;
   lastSyncedAt?: number;
   leaseExpiresAt?: number;

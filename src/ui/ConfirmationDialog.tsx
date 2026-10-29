@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { Icon, IconButton } from './Icon.tsx';
+import { ProcessingIndicator } from './ProcessingIndicator.tsx';
 
 export interface ConfirmationDialogProps {
   titleId: string;
@@ -58,7 +59,8 @@ export function ConfirmationDialog({
             disabled={busy}
             onClick={onConfirm}
           >
-            <Icon name="trash" size={15} />{busy ? busyLabel : confirmLabel}
+            {busy ? <ProcessingIndicator size={12} /> : <Icon name="trash" size={15} />}
+            {busy ? busyLabel : confirmLabel}
           </button>
         </footer>
       </section>

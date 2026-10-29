@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { CloudSyncState } from '../../cloud/contracts.ts';
+import { AUTOSAVE_DISABLED_INTERVAL_MS } from '../../protocols/files.ts';
 import { Icon } from '../../ui/Icon.tsx';
 
 const INITIAL: CloudSyncState = {
@@ -24,7 +25,7 @@ export function CloudSyncStatus({ client }: { client: ViewClient }) {
   }, [client]);
 
   const synced = state.phase === 'ready' && Boolean(state.activeProjectId) && state.pendingCommits === 0;
-  const active = state.phase === 'connecting' || state.phase === 'syncing' || state.pendingCommits > 0;
+  const active = state.phase === 'connecting' || state.phase === 'syncing';
 
   return (
     <button
@@ -51,7 +52,13 @@ function statusLabel(state: CloudSyncState): string {
     case 'offline': return '离线保存';
     case 'conflict': return '需要处理';
     case 'error': return '同步异常';
-    default: return state.activeProjectName ? `已同步 · ${state.activeProjectName}` : '未连接书籍';
+    default:
+      if (state.pendingCommits > 0) {
+        return state.autosaveIntervalMs === AUTOSAVE_DISABLED_INTERVAL_MS
+          ? '自动保存已关闭'
+          : '等待自动保存';
+      }
+      return state.activeProjectName ? `已同步 · ${state.activeProjectName}` : '未连接书籍';
   }
 }
 

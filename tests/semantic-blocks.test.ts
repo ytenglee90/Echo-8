@@ -7,7 +7,7 @@ import {
   partitionSemanticText,
   semanticBlockAround,
   stratifiedSemanticAnchors,
-} from '../src/ai/semantic-blocks.ts';
+} from '../src/services/semantic-blocks.ts';
 
 test('semantic text blocks prefer complete paragraph boundaries and retain absolute offsets', () => {
   const first = '第一段说明。'.repeat(120);

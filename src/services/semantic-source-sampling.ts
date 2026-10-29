@@ -24,7 +24,7 @@ export interface SemanticSourceSamples {
 
 /**
  * Reads only sources that the content providers explicitly permit for automatic retrieval.
- * It is shared by local and remote semantic providers so their range, privacy and large-text
+ * This service is shared by local and remote semantic providers so their range, privacy and large-text
  * behavior cannot drift.
  */
 export async function readSemanticCatalog(context: PluginContext, signal: AbortSignal): Promise<AIContextSource[]> {

@@ -1,19 +1,10 @@
 import { createId, type DomainSnapshot, type MessageEnvelope, type PatchOperation, type TransactionProposal } from './contracts.ts';
+import type { TransactionCommitRecord } from '../protocols/state.ts';
 import { HistoryService, type HistoryEntry, type HistorySnapshot, validateHistorySnapshot } from './history.ts';
 import { StateStore } from './store.ts';
 import { scrubRetiredDocument, scrubRetiredHistory } from './legacy-migrations.ts';
 
-export interface TransactionCommitRecord {
-  id: string;
-  label: string;
-  timestamp: number;
-  forward: PatchOperation[];
-  inverse: PatchOperation[];
-  sourceMessageId: string;
-  historyAction: 'record' | 'undo' | 'redo' | 'none';
-  mergeKey?: string;
-  mergeWindowMs?: number;
-}
+export type { TransactionCommitRecord } from '../protocols/state.ts';
 
 type EventPublisher = (type: string, payload: unknown, source: string, causationId?: string) => Promise<void>;
 type PersistenceSink = (record: TransactionCommitRecord) => void;

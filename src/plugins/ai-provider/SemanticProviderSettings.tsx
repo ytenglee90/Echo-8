@@ -11,6 +11,7 @@ import {
   type SemanticProviderProfileState,
 } from '../../protocols/semantic.ts';
 import { IconButton } from '../../ui/Icon.tsx';
+import { ProcessingIndicator, ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import {
   applySemanticProviderPreset,
   matchSemanticProviderPreset,
@@ -46,6 +47,7 @@ export function SemanticProviderSettings({ client }: { client: ViewClient }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [presetId, setPresetId] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const applyState = useCallback((next: SemanticProviderPanelState, preferredId?: string) => {
     setState(next);
@@ -89,12 +91,15 @@ export function SemanticProviderSettings({ client }: { client: ViewClient }) {
 
   const run = async (operation: () => Promise<unknown>, success: string, preferredId?: string) => {
     setError('');
+    setBusy(true);
     try {
       await operation();
       setMessage(success);
       await refresh(preferredId);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
     }
   };
   const selectProfile = (profileId: string) => {
@@ -122,7 +127,7 @@ export function SemanticProviderSettings({ client }: { client: ViewClient }) {
   const cacheLabel = semanticCacheLabel(state);
 
   return (
-    <section className="semantic-provider-settings" aria-label="云端语义检索">
+    <section className="semantic-provider-settings" aria-label="云端语义检索" aria-busy={busy || undefined}>
       <details>
         <summary>
           <span>
@@ -153,7 +158,7 @@ export function SemanticProviderSettings({ client }: { client: ViewClient }) {
             setDraft({ ...EMPTY_DRAFT });
             setApiKey('');
             setPresetId('');
-            setMessage('正在添加新的语义检索连接');
+            setMessage('请填写新的语义检索连接');
             setError('');
           }}
         />
@@ -169,7 +174,7 @@ export function SemanticProviderSettings({ client }: { client: ViewClient }) {
           </div>
 
           <div className={`ai-provider-state ${selected?.configured ? 'ready' : ''}`}>
-        <i />{selected?.configured ? `当前连接已就绪 · ${cacheLabel}` : draft.id
+        {state.cache.status === 'indexing' ? <ProcessingIndicator size={10} /> : <i />}{selected?.configured ? `当前连接已就绪 · ${cacheLabel}` : draft.id
           ? '还缺少参数、KEY 或远程内容授权'
           : '填写并保存新的语义检索连接'}
           </div>
@@ -286,7 +291,9 @@ export function SemanticProviderSettings({ client }: { client: ViewClient }) {
           </div>
           <p className="ai-provider-note">首次检索会建立临时向量索引。没有云端连接时，AI 仍会使用本机理解检索或 BM25。</p>
           {presetId && <p className="ai-provider-note">{SEMANTIC_PROVIDER_PRESETS.find((item) => item.id === presetId)?.note}</p>}
-          {message && <p className="ai-message">{message}</p>}
+          {busy
+            ? <p className="ai-message" role="status"><ProcessingLabel size={9}>正在处理语义连接设置…</ProcessingLabel></p>
+            : message && <p className="ai-message">{message}</p>}
           {error && <p className="ai-error" role="alert">{error}</p>}
         </div>
       </details>

@@ -1,5 +1,5 @@
 import type { PluginDefinition } from '../../core/contracts.ts';
-import { SpatialHashIndex } from '../../core/spatial-index.ts';
+import { SpatialHashIndex } from '../../services/spatial-index.ts';
 import type {
   ArrangeMode,
   GridArrangePlan,

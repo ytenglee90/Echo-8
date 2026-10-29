@@ -23,14 +23,12 @@ export interface CanvasEntityLayerRuntime {
   nodeById: ReadonlyMap<string, ContentSummary>;
   duplicateOrigins: NodePosition[];
   visibleNodes: ContentSummary[];
-  offscreenSelectedNodes: ContentSummary[];
   previews: Record<string, NodePosition>;
   resizePreviews: Record<string, CanvasEntityResizePreview>;
   appearancePreview?: AppearancePreview;
   previewEntities: ReadonlySet<string>;
   nodeCharacterCounts: ReadonlyMap<string, CanvasEntityCharacterCount>;
   selected: ReadonlySet<string>;
-  selectedIds: string[];
   connectionTargetId?: string;
   beginNodeDrag(event: ReactPointerEvent<HTMLElement>, node: ContentSummary): void;
   handleConnectionPort(

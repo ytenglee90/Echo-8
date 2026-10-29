@@ -20,6 +20,7 @@ import type {
 } from '../../protocols/content.ts';
 import { normalizeFloatingRect, type FloatingPanelRect } from '../../protocols/floating.ts';
 import {
+  AUTOSAVE_DISABLED_INTERVAL_MS,
   PROJECT_RELATED_DIRECTORY_CAPABILITY,
   type FileDirectoryTarget,
   type PersistenceSnapshot,
@@ -416,6 +417,10 @@ export function createAIAssistantPlugin(
         if (existingDelay && !reschedule) return;
         existingDelay?.cancel();
         const persistence = await context.queries.ask<PersistenceSnapshot>('system.persistence');
+        if (persistence.autosaveIntervalMs === AUTOSAVE_DISABLED_INTERVAL_MS) {
+          autoSaveDelayTasks.delete(sessionId);
+          return;
+        }
         const task = context.tasks.schedule<void>({
           category: 'ai-conversation-autosave-delay',
           label: '等待自动保存 AI 对话',

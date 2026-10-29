@@ -257,6 +257,7 @@ export function PalettePanel({ client }: { client: ViewClient }) {
           <IconButton
             icon="reset"
             label={resetting ? '正在重置全部颜色' : '重置全部颜色'}
+            busy={resetting}
             disabled={resetting || applyingPreset !== undefined}
             onClick={() => void resetColors()}
           />

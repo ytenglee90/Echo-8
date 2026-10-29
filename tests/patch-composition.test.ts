@@ -5,7 +5,7 @@ import type { PatchOperation } from '../src/core/contracts.ts';
 import { HistoryService } from '../src/core/history.ts';
 import { composePatchPairs } from '../src/core/patch-composition.ts';
 import { mergePendingJournalRecords } from '../src/core/persistence.ts';
-import type { TransactionCommitRecord } from '../src/core/transaction-manager.ts';
+import type { TransactionCommitRecord } from '../src/protocols/state.ts';
 
 const target = (key: string, op: PatchOperation['op'], value?: unknown): PatchOperation => ({
   op,

@@ -1,4 +1,5 @@
 import { createId, type TaskHandle, type TaskOptions } from './contracts.ts';
+import { isAbortError } from '../services/abort.ts';
 
 export type TaskState = 'queued' | 'running' | 'paused' | 'retrying';
 
@@ -392,8 +393,4 @@ async function runWithGuards<TResult>(
 
 function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException('Task cancelled', 'AbortError');
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
 }

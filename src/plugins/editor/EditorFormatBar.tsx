@@ -92,6 +92,7 @@ export function FormatBar({
             icon="spellcheck"
             label={correctionStatusLabel(textAssist)}
             className={`icon-button text-assist-toggle ${textAssist.settings.correctionEnabled ? 'active' : ''} ${resourceStatusClass(textAssist.resources)}`}
+            busy={resourceStatusClass(textAssist.resources) === 'rules-loading'}
             aria-pressed={textAssist.settings.correctionEnabled}
             onClick={() => void client.dispatch('textAssist.toggleCorrection').catch(() => undefined)}
           />

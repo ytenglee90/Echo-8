@@ -9,6 +9,7 @@ import {
   type LocalSemanticProviderPanelState,
 } from '../../protocols/local-semantic.ts';
 import { Icon } from '../../ui/Icon.tsx';
+import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
 const EMPTY_STATE: LocalSemanticProviderPanelState = {
   enabled: true,
@@ -84,7 +85,7 @@ export function LocalSemanticProviderSettings({ client }: { client: ViewClient }
       <strong className="local-semantic-badge">{localAvailabilityLabel(state)}</strong>
     </header>
     <div className={`local-semantic-status status-${state.cache.status}`} role="status">
-      <i />
+      {busy ? <ProcessingIndicator size={12} /> : <i />}
       <span><strong>{presentation.title}</strong><small>{presentation.detail}</small></span>
     </div>
     <div className="local-semantic-primary-actions">

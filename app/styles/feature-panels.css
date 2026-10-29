@@ -699,6 +699,10 @@
 .cloud-sync-warning p { margin: 4px 0 9px; color: var(--muted); }
 .cloud-sync-warning button,
 .cloud-primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 34px;
   padding: 0 12px;
   border: 0;
@@ -761,7 +765,7 @@
 .cloud-project-name { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .cloud-account-list small,
 .cloud-project-copy small { color: var(--muted); font-size: 10px; }
-.cloud-account-list b { color: var(--muted); font-size: 11px; }
+.cloud-account-list b { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
 .cloud-project-name,
 .cloud-project-open {
   min-width: 0;
@@ -840,10 +844,6 @@
 .cloud-sync-data-boundary strong { color: var(--ink); }
 
 @keyframes cloud-sync-pulse { 50% { opacity: .38; transform: scale(.82); } }
-@keyframes cloud-sync-gap-travel {
-  from { transform: translateX(-96px); }
-  to { transform: translateX(96px); }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .cloud-sync-status.is-active .echo-8-sync-gap,

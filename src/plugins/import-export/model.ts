@@ -143,7 +143,7 @@ export function createImportExportPlugin(
         'file.status', 'file.artifact.ready', 'file.recovery.changed',
         'file.save-state.changed', 'file.save-location.required', 'file.text-export-state.changed',
         'file.open-confirmation.changed',
-        'system.persistence.automaticCheckpoint.completed', 'cloudSync.updated',
+        'system.persistence.automaticSave.requested', 'cloudSync.updated',
       ],
       ui: ['file.panel', 'file.artifact-host'],
       actions: [
@@ -876,7 +876,6 @@ export function createImportExportPlugin(
         context.signals.emit('file.recovery.changed');
         context.signals.emit('file.save-state.changed', fileState());
         context.signals.emit('file.text-export-state.changed', { all: true });
-        if (documentOrigin === 'new') beginAutomaticCloudSave(false);
       });
       context.signals.subscribe<CloudSyncState>('cloudSync.updated', (message) => applyCloudState(message.payload));
       void readCloudState();
@@ -1113,7 +1112,7 @@ export function createImportExportPlugin(
         });
       };
       context.signals.subscribe<{ documentRevision: number }>(
-        'system.persistence.automaticCheckpoint.completed',
+        'system.persistence.automaticSave.requested',
         scheduleAutomaticOutputs,
       );
       context.capabilities.provide({ key: 'file.state@1', invoke: fileState });

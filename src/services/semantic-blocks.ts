@@ -8,7 +8,7 @@ export const MAX_SEMANTIC_BLOCKS_PER_SOURCE = 128;
 export const FULL_SEMANTIC_COVERAGE_LENGTH =
   SEMANTIC_BLOCK_LENGTH * MAX_SEMANTIC_BLOCKS_PER_SOURCE;
 
-/** Splits one bounded source buffer at paragraph/sentence boundaries without losing absolute offsets. */
+/** Shared semantic-service partitioning that preserves absolute source offsets. */
 export function partitionSemanticText(
   text: string,
   absoluteStart = 0,

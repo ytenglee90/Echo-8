@@ -1,6 +1,7 @@
-import type { PluginSnapshot, RegisteredAction, RegisteredShortcut, StoreDomain } from '../core/contracts.ts';
-import type { DiagnosticRecord } from '../core/diagnostics.ts';
+import type { PluginSnapshot, RegisteredAction, RegisteredShortcut } from '../core/contracts.ts';
+import type { DiagnosticRecord } from './diagnostics.ts';
 import type { PersistenceSnapshot } from './files.ts';
+import type { StoreDomain } from './state.ts';
 
 export interface RuntimeStoreSummary {
   domain: StoreDomain;

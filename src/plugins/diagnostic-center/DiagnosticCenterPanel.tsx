@@ -5,6 +5,7 @@ import type { ViewClient } from '../../core/contracts.ts';
 import type { RuntimeSnapshot } from '../../protocols/runtime.ts';
 import { DIAGNOSTIC_CENTER_NAMESPACE } from './model.ts';
 import { IconButton } from '../../ui/Icon.tsx';
+import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 
 interface SearchIndexStatus {
   state: 'idle' | 'building' | 'ready' | 'error';
@@ -69,7 +70,7 @@ export function DiagnosticCenterPanel({ client }: { client: ViewClient }) {
       </div>
       <p className="panel-copy">这里只读取内核公开的规模、队列和健康状态，不读取节点正文或插件私有内容。打开时每两秒刷新。</p>
       {error && <p className="diagnostic-error">{error}</p>}
-      {!snapshot ? <p className="diagnostic-empty">正在读取运行状态…</p> : (
+      {!snapshot ? <p className="diagnostic-empty"><ProcessingLabel size={10}>正在读取运行状态…</ProcessingLabel></p> : (
         <>
           <div className="diagnostic-cards">
             <Metric label="活动插件" value={`${activePlugins}/${snapshot.plugins.length}`} tone={faultedPlugins.length ? 'danger' : 'good'} />

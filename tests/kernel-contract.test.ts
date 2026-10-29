@@ -10,7 +10,7 @@ import { InteractionStateMachine } from '../src/core/interaction-machine.ts';
 import { scrubRetiredHistory, scrubRetiredStore } from '../src/core/legacy-migrations.ts';
 import { ApplicationKernel } from '../src/core/kernel.ts';
 import { MessageRouter } from '../src/core/message-router.ts';
-import { SpatialHashIndex } from '../src/core/spatial-index.ts';
+import { SpatialHashIndex } from '../src/services/spatial-index.ts';
 import { canvasNodeDetail, NODE_PREVIEW_MIN_ZOOM } from '../src/plugins/canvas/lod.ts';
 import {
   clampCanvasZoom,
@@ -139,7 +139,9 @@ import type {
 import type { AIContextSearchContribution } from '../src/protocols/ai.ts';
 import type { ContentCatalogDelta, ContentMutationPlan, ContentSummary } from '../src/protocols/content.ts';
 import {
+  AUTOSAVE_DISABLED_INTERVAL_MS,
   AUTOSAVE_INTERVAL_OPTIONS,
+  AUTOSAVE_REALTIME_INTERVAL_MS,
   isEcho8ProjectFile,
   PROJECT_KIND,
   PROJECT_MEDIA_TYPE,
@@ -646,7 +648,26 @@ test('text assistance bootstraps one correction-rule resource and preserves it a
   assert.equal(resourceStatus.association.state, 'same-origin');
   assert.ok(resourceStatus.correctionCount > 0);
 
+  let fileRequestSignals = 0;
+  const unsubscribeFileRequest = harness.router.subscribeSignal(
+    'core.test',
+    'text.assist.rules-file.requested',
+    () => { fileRequestSignals += 1; },
+  );
+  assert.deepEqual(
+    await harness.router.dispatch('textAssist.loadRulesFile', undefined, 'core.test'),
+    { requested: true },
+  );
+  assert.equal(fileRequestSignals, 1);
+  unsubscribeFileRequest();
+  await assert.rejects(
+    harness.router.dispatch('textAssist.importRulesFile', { name: 'rules.json', text: '{}' }, 'core.test'),
+    /Invalid command payload/u,
+  );
+
   const rules = harness.store.readValue<Record<string, unknown>>('document', 'textAssistResource', 'rules')!;
+  assert.equal(rules.schemaVersion, 4);
+  assert.equal(rules.ruleStorage, 'builtin-overlay');
   const rulesNodeId = rules.nodeId as string;
   const rulesSummary = (await harness.capabilities.request<ContentSummary[]>('content.summariesById@1', {
     nodeIds: [rulesNodeId],
@@ -668,6 +689,7 @@ test('text assistance bootstraps one correction-rule resource and preserves it a
     start: 0,
     length: 1,
   });
+  assert.ok(rulesContent.totalLength < 1_024);
   await harness.router.dispatch('content.applyDelta', {
     nodeId: rulesNodeId,
     start: rulesSummary.length,
@@ -688,7 +710,88 @@ test('text assistance bootstraps one correction-rule resource and preserves it a
   assert.equal(afterStop.filter((node) => resourceTitles.has(node.title)).length, 0);
 });
 
-test('text assistance upgrades an existing rule node once through an automatic no-history command', async () => {
+test('six nodes and connections serialize without embedding the bundled correction dictionary', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(textAssistPlugin);
+  harness.plugins.register(createSelectionPlugin());
+  harness.plugins.register(createConnectionsPlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('text-assist');
+  await harness.plugins.start('selection');
+  await harness.plugins.start('connections');
+
+  const nodes = [];
+  for (let index = 0; index < 6; index += 1) {
+    nodes.push(await harness.router.dispatch<{ id: string }>('node.create', {
+      title: `体积测试 ${index + 1}`,
+      body: `第 ${index + 1} 个节点的短正文`,
+      x: index * 240,
+      y: (index % 2) * 180,
+    }, 'core.test'));
+  }
+  for (let index = 1; index < nodes.length; index += 1) {
+    await harness.router.dispatch('connection.create', {
+      from: { nodeId: nodes[index - 1]!.id, side: 'right' },
+      to: { nodeId: nodes[index]!.id, side: 'left' },
+    }, 'core.test');
+  }
+
+  const file = await serializeProject({
+    document: harness.store.snapshot().document,
+    plugins: [],
+  });
+  assert.ok(file.size < 32 * 1_024, `expected a compact book, received ${file.size} bytes`);
+});
+
+test('an existing bundled correction dictionary is compacted to a versioned overlay', async () => {
+  const harness = createHarness();
+  const bundledRules = readFileSync(
+    new URL('../public/Echo-8-text-assist-rules.txt', import.meta.url),
+    'utf8',
+  );
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(textAssistPlugin);
+  await harness.plugins.start('text-node');
+  const existing = await harness.router.dispatch<{ id: string }>('node.create', {
+    title: '纠错与补全规则',
+    body: bundledRules,
+  }, 'core.test');
+  const now = Date.now();
+  await harness.transactions.commit({
+    label: '注入完整内置规则',
+    history: false,
+    patches: [{
+      op: 'set',
+      domain: 'document',
+      namespace: 'textAssistResource',
+      key: 'rules',
+      value: {
+        schemaVersion: 3,
+        role: 'rules',
+        nodeId: existing.id,
+        createdAt: now,
+        updatedAt: now,
+        defaultRuleVersion: 4,
+      },
+      schemaOwner: 'text-assist',
+    }],
+  }, testEnvelope('full-default-rule-resource'), 'text-assist');
+
+  await harness.plugins.start('text-assist');
+  const compact = await harness.capabilities.request<{ text: string; totalLength: number }>('content.read@1', {
+    nodeId: existing.id,
+    start: 0,
+    length: 2_048,
+  });
+  assert.ok(compact.totalLength < 1_024);
+  assert.match(compact.text, /不重复写入书籍/u);
+  const binding = harness.store.readValue<Record<string, unknown>>('document', 'textAssistResource', 'rules')!;
+  assert.equal(binding.schemaVersion, 4);
+  assert.equal(binding.ruleStorage, 'builtin-overlay');
+});
+
+test('text assistance upgrades an existing rule node without copying bundled rules into the book', async () => {
   const harness = createHarness();
   harness.plugins.register(textNodePlugin);
   harness.plugins.register(textAssistPlugin);
@@ -734,11 +837,12 @@ test('text assistance upgrades an existing rule node once through an automatic n
   }
   const upgraded = pieces.join('');
   assert.match(upgraded, /因该 => 应当/u);
-  assert.match(upgraded, /\[同音候选\]/u);
-  assert.match(upgraded, /\[形近候选\]/u);
+  assert.doesNotMatch(upgraded, /\[同音候选\]/u);
+  assert.ok(upgraded.length < 1_024);
   const binding = harness.store.readValue<Record<string, unknown>>('document', 'textAssistResource', 'rules')!;
-  assert.equal(binding.schemaVersion, 3);
+  assert.equal(binding.schemaVersion, 4);
   assert.equal(binding.defaultRuleVersion, 4);
+  assert.equal(binding.ruleStorage, 'embedded');
   assert.equal(
     harness.store.readValue<Record<string, unknown>>('document', 'textNode', existing.id)?.placement,
     'system',
@@ -1508,7 +1612,35 @@ test('portable file URL text assets require explicit association without attempt
   }
 });
 
-test('autosave checkpoint interval is a validated personal persistence setting outside document history', async () => {
+test('text-assist imports a bounded TXT through its typed command after UI selection', async () => {
+  const kernel = new ApplicationKernel([textNodePlugin, textAssistPlugin]);
+  await kernel.start();
+  const baseRules = readFileSync(
+    new URL('../public/Echo-8-text-assist-rules.txt', import.meta.url),
+    'utf8',
+  );
+  const importedRules = baseRules.replace(
+    '[固定纠错]',
+    '[固定纠错]\n量子化布 => 量子画布 | 提示=测试导入',
+  );
+  const result = await kernel.router.dispatch<{ loaded: true; name: string }>(
+    'textAssist.importRulesFile',
+    { name: 'my-rules.txt', text: importedRules },
+    'core.test',
+  );
+  assert.equal(result.loaded, true);
+  assert.equal(result.name, 'my-rules.txt');
+  const status = await kernel.capabilities.request<TextAssistResourceStatus>('text.assist.resources@3');
+  assert.deepEqual(status.association, { state: 'stored', fileName: 'my-rules.txt' });
+  assert.equal(status.bindings.rules?.ruleStorage, 'embedded');
+  const analysis = await kernel.capabilities.request<{ completions: Array<{ label: string }> }>(
+    'text.assist.analyze@2',
+    { nodeId: 'ordinary', revision: 1, text: '量子化布', windowStart: 0, cursor: 4 },
+  );
+  assert.ok(analysis.completions.some((candidate) => candidate.label === '量子画布'));
+});
+
+test('automatic-save cadence is a validated personal setting outside document history', async () => {
   const kernel = new ApplicationKernel([]);
   await kernel.start();
   const before = await kernel.router.ask<PersistenceSnapshot>('system.persistence', undefined, 'core.test');
@@ -1522,6 +1654,13 @@ test('autosave checkpoint interval is a validated personal persistence setting o
   );
   assert.equal(after.autosaveIntervalMs, selected);
   assert.equal(kernel.history.getState().undoCount, historyBefore);
+  assert.equal(AUTOSAVE_INTERVAL_OPTIONS.includes(AUTOSAVE_REALTIME_INTERVAL_MS), true);
+  const disabled = await kernel.router.dispatch<PersistenceSnapshot>(
+    'system.persistence.setAutosaveInterval',
+    { intervalMs: AUTOSAVE_DISABLED_INTERVAL_MS },
+    'core.test',
+  );
+  assert.equal(disabled.autosaveIntervalMs, AUTOSAVE_DISABLED_INTERVAL_MS);
   await assert.rejects(
     () => kernel.router.dispatch(
       'system.persistence.setAutosaveInterval',
@@ -1530,6 +1669,39 @@ test('autosave checkpoint interval is a validated personal persistence setting o
     ),
     /Invalid command payload/u,
   );
+});
+
+test('real-time target saving is debounced and off keeps later document commits local', async () => {
+  const kernel = new ApplicationKernel([textNodePlugin]);
+  await kernel.start();
+  const requests: Array<{ documentRevision: number }> = [];
+  const unsubscribe = kernel.router.subscribeSignal(
+    'core.test',
+    'system.persistence.automaticSave.requested',
+    (message) => { requests.push(message.payload as { documentRevision: number }); },
+  );
+  await kernel.router.dispatch(
+    'system.persistence.setAutosaveInterval',
+    { intervalMs: AUTOSAVE_REALTIME_INTERVAL_MS },
+    'core.test',
+  );
+  await kernel.router.dispatch('node.create', { title: '实时保存调度' }, 'core.test');
+  await kernel.router.dispatch('node.create', { title: '连续修改只触发一次' }, 'core.test');
+  await waitFor(async () => requests.length === 1 ? true : undefined, 2_500);
+  const revision = await kernel.router.ask<{ revision: number }>(
+    'system.document.revision', undefined, 'core.test',
+  );
+  assert.equal(requests[0].documentRevision, revision.revision);
+
+  await kernel.router.dispatch(
+    'system.persistence.setAutosaveInterval',
+    { intervalMs: AUTOSAVE_DISABLED_INTERVAL_MS },
+    'core.test',
+  );
+  await kernel.router.dispatch('node.create', { title: '只进入本机恢复日志' }, 'core.test');
+  await new Promise((resolve) => setTimeout(resolve, AUTOSAVE_REALTIME_INTERVAL_MS + 150));
+  assert.equal(requests.length, 1);
+  unsubscribe();
 });
 
 test('large personal text assets bypass preference limits without entering the canvas document', async () => {
@@ -2726,7 +2898,7 @@ test('opening a native book binds it as the automatic-save destination immediate
 
   const openedState = await kernel.capabilities.request<FileRuntimeState>('file.state@1');
   kernel.router.emitSignal(
-    'system.persistence.automaticCheckpoint.completed',
+    'system.persistence.automaticSave.requested',
     { documentRevision: openedState.savedDocumentRevision! },
     'core.persistence',
   );
@@ -2737,7 +2909,7 @@ test('opening a native book binds it as the automatic-save destination immediate
     'system.document.revision', undefined, 'core.test',
   );
   kernel.router.emitSignal(
-    'system.persistence.automaticCheckpoint.completed',
+    'system.persistence.automaticSave.requested',
     { documentRevision: changedRevision.revision },
     'core.persistence',
   );
@@ -2807,7 +2979,7 @@ test('cloud books use cloud save by default, suppress local-location prompts, an
     () => { saveLocationNotices += 1; },
   );
   kernel.router.emitSignal(
-    'system.persistence.automaticCheckpoint.completed', { documentRevision: 1 }, 'core.persistence',
+    'system.persistence.automaticSave.requested', { documentRevision: 1 }, 'core.persistence',
   );
   assert.equal(saveLocationNotices, 0);
 
@@ -2851,7 +3023,7 @@ test('cloud books use cloud save by default, suppress local-location prompts, an
   );
 });
 
-test('a new book automatically gets a cloud target while an opened local book keeps local-save rules', async () => {
+test('a new book gets a cloud target on the unified autosave request while a local book keeps local-save rules', async () => {
   let createCount = 0;
   let nativePickerCount = 0;
   let activeProjectId: string | undefined;
@@ -2934,6 +3106,15 @@ test('a new book automatically gets a cloud target while an opened local book ke
     const kernel = new ApplicationKernel([cloudPlugin, textNodePlugin, createImportExportPlugin()]);
     await kernel.start();
     await kernel.router.dispatch('system.document.new', undefined, 'core.test');
+    assert.equal(createCount, 0);
+    const beforeAutomaticSave = await kernel.router.ask<{ revision: number }>(
+      'system.document.revision', undefined, 'core.test',
+    );
+    kernel.router.emitSignal(
+      'system.persistence.automaticSave.requested',
+      { documentRevision: beforeAutomaticSave.revision },
+      'core.persistence',
+    );
     await waitFor(async () => createCount === 1 ? true : undefined);
     const initialRevision = await kernel.router.ask<{ revision: number }>(
       'system.document.revision', undefined, 'core.test',
@@ -2948,7 +3129,7 @@ test('a new book automatically gets a cloud target while an opened local book ke
       'system.document.revision', undefined, 'core.test',
     );
     kernel.router.emitSignal(
-      'system.persistence.automaticCheckpoint.completed',
+      'system.persistence.automaticSave.requested',
       { documentRevision: revision.revision },
       'core.persistence',
     );
@@ -2978,7 +3159,7 @@ test('a new book automatically gets a cloud target while an opened local book ke
       'system.document.revision', undefined, 'core.test',
     );
     kernel.router.emitSignal(
-      'system.persistence.automaticCheckpoint.completed',
+      'system.persistence.automaticSave.requested',
       { documentRevision: localRevision.revision },
       'core.persistence',
     );
@@ -3440,7 +3621,7 @@ test('renaming an exported node updates its document heading and native filename
   );
   assert.equal(renamedState.renameRequired, true);
   harness.router.emitSignal(
-    'system.persistence.automaticCheckpoint.completed', { documentRevision: 1 }, 'core.persistence',
+    'system.persistence.automaticSave.requested', { documentRevision: 1 }, 'core.persistence',
   );
   await waitFor(async () => movedNames.includes('新标题.txt') ? true : undefined);
   await waitFor(async () => (await saved.text()).startsWith('新标题\n\n') ? true : undefined);
@@ -3499,14 +3680,14 @@ test('whole-canvas TXT bindings overwrite prior files and retire the old filenam
     expectedRevision: summary.revision,
   }, 'core.test');
   harness.router.emitSignal(
-    'system.persistence.automaticCheckpoint.completed', { documentRevision: 1 }, 'core.persistence',
+    'system.persistence.automaticSave.requested', { documentRevision: 1 }, 'core.persistence',
   );
   await waitFor(async () => (await savedFiles.get('全画布原名.txt')?.text())
     ?.endsWith('第一版更新') ? true : undefined);
 
   await harness.router.dispatch('node.rename', { id: created.id, title: '全画布新名' }, 'core.test');
   harness.router.emitSignal(
-    'system.persistence.automaticCheckpoint.completed', { documentRevision: 2 }, 'core.persistence',
+    'system.persistence.automaticSave.requested', { documentRevision: 2 }, 'core.persistence',
   );
   await waitFor(async () => savedFiles.has('全画布新名.txt') && !savedFiles.has('全画布原名.txt')
     ? true : undefined);
@@ -3581,7 +3762,7 @@ test('automatic canvas save and text export coalesce without overlapping one nat
   }, 'core.test');
   blockNext = true;
   harness.router.emitSignal(
-    'system.persistence.automaticCheckpoint.completed', { documentRevision: 2 }, 'core.persistence',
+    'system.persistence.automaticSave.requested', { documentRevision: 2 }, 'core.persistence',
   );
   await writeStarted.promise;
   summary = (await harness.capabilities.request<ContentSummary[]>(
@@ -3595,7 +3776,7 @@ test('automatic canvas save and text export coalesce without overlapping one nat
     expectedRevision: summary.revision,
   }, 'core.test');
   harness.router.emitSignal(
-    'system.persistence.automaticCheckpoint.completed', { documentRevision: 3 }, 'core.persistence',
+    'system.persistence.automaticSave.requested', { documentRevision: 3 }, 'core.persistence',
   );
   releaseWrite.resolve();
   await waitFor(async () => writes.length >= 3 ? true : undefined, 2_000);
@@ -8144,6 +8325,13 @@ test('AI keeps exact transcript, creates reviewable proposals and accepts output
   const rescheduledAutosave = await waitFor(async () => harness.tasks.snapshot().tasks.find((task) =>
     task.category === 'ai-conversation-autosave-delay' && task.id !== autosaveTask.id));
   assert.equal(rescheduledAutosave.delayMs, 120_000);
+  await harness.router.dispatch(
+    'system.persistence.setAutosaveInterval',
+    { intervalMs: AUTOSAVE_DISABLED_INTERVAL_MS },
+    'core.test',
+  );
+  await waitFor(async () => harness.tasks.snapshot().tasks.some((task) =>
+    task.category === 'ai-conversation-autosave-delay') ? undefined : true);
   const nodesBefore = (await harness.capabilities.request<Array<{ id: string }>>('content.summaries@1')).length;
   const historyBefore = harness.history.getState().undoCount;
   await assert.rejects(

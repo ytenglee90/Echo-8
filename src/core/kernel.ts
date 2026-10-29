@@ -100,6 +100,11 @@ export class ApplicationKernel {
         event,
         'core.persistence',
       ),
+      (event) => this.router.emitSignal(
+        'system.persistence.automaticSave.requested',
+        event,
+        'core.persistence',
+      ),
       this.workers,
     );
     this.plugins = new PluginManager({

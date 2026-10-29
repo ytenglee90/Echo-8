@@ -369,7 +369,7 @@
 .task-notice {
   position: relative;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
   grid-template-rows: auto 3px;
   align-items: center;
   gap: 8px 10px;
@@ -384,15 +384,6 @@
   backdrop-filter: blur(14px);
 }
 
-.task-notice-spinner {
-  width: 15px;
-  height: 15px;
-  border: 1.5px solid var(--border-strong);
-  border-top-color: var(--ink);
-  border-radius: 50%;
-  animation: task-notice-spin 800ms linear infinite;
-}
-
 .autosave-notice-indicator {
   display: grid;
   place-items: center;
@@ -400,10 +391,6 @@
   height: 16px;
   border: 1.5px solid var(--border-strong);
   border-radius: 50%;
-}
-.autosave-notice-saving .autosave-notice-indicator {
-  border-top-color: var(--ink);
-  animation: task-notice-spin 800ms linear infinite;
 }
 .autosave-notice-saved .autosave-notice-indicator {
   border-color: var(--ink);
@@ -433,7 +420,6 @@
 .autosave-notice-error .task-notice-progress::-webkit-progress-value { background: var(--danger); }
 .autosave-notice-error .task-notice-progress::-moz-progress-bar { background: var(--danger); }
 
-.task-notice-paused .task-notice-spinner { animation-play-state: paused; opacity: 0.5; }
 .task-notice-copy { display: grid; min-width: 0; gap: 2px; }
 .task-notice-copy strong { overflow: hidden; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .task-notice-copy small { overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
@@ -451,6 +437,9 @@
 .task-notice-progress::-webkit-progress-value { border-radius: 999px; background: var(--ink); }
 .task-notice-progress::-moz-progress-bar { border-radius: 999px; background: var(--ink); }
 .task-notice-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   justify-self: center;
   padding: 6px 10px;
   border: 1px solid var(--border);
@@ -460,8 +449,6 @@
   font-size: 12px;
   box-shadow: 0 7px 22px rgba(24, 24, 27, 0.08);
 }
-
-@keyframes task-notice-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 720px) {
   .application-shell,

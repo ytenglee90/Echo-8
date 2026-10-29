@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { AIPromptTemplateCatalog, AIPromptTemplateRecord } from '../../protocols/ai.ts';
 import { IconButton } from '../../ui/Icon.tsx';
+import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import {
   chooseNativePromptTemplateOpen,
   chooseNativePromptTemplateSave,
@@ -33,19 +34,23 @@ export function AIPromptTemplateCenter({
   );
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setError('');
+    setBusy(true);
     try {
       await operation();
       setMessage(success);
     } catch (reason) {
       setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <section className="ai-prompt-center" aria-label="AI Prompt 模板">
+    <section className="ai-prompt-center" aria-label="AI Prompt 模板" aria-busy={busy || undefined}>
       <header>
         <div><span className="eyebrow">个人工作区</span><h3>Prompt 模板</h3></div>
         <div>
@@ -54,7 +59,7 @@ export function AIPromptTemplateCenter({
             label="新建 Prompt 模板"
             onClick={() => {
               setDraft(EMPTY_PROMPT_DRAFT);
-              setMessage('正在新建模板');
+              setMessage('请填写新模板');
               setError('');
             }}
           />
@@ -154,7 +159,9 @@ export function AIPromptTemplateCenter({
         可用变量：{'{{operation}}'}、{'{{sourceKinds}}'}、{'{{sourceCount}}'}。内容类型插件还可以通过
         <code>ai.promptPolicy@1</code> 提供自己的动态规则。
       </small>
-      {message && <p className="ai-message">{message}</p>}
+      {busy
+        ? <p className="ai-message" role="status"><ProcessingLabel size={9}>正在处理 Prompt 模板…</ProcessingLabel></p>
+        : message && <p className="ai-message">{message}</p>}
       {error && <p className="ai-error" role="alert">{error}</p>}
     </section>
   );

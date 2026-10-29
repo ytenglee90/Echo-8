@@ -12,6 +12,7 @@ import {
 } from 'react';
 import type { UISlot, ViewClient } from '../../core/contracts.ts';
 import { FloatingPanel } from '../../ui/FloatingPanel.tsx';
+import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import { AIMemoryCenter } from './AIMemoryViews.tsx';
 import { AIAssistantWindowActions } from './AIAssistantWindowActions.tsx';
@@ -322,7 +323,12 @@ function AIAssistantWindow({
                 />
               ) : <AICommandHints />}
               <div className="ai-status-row">
-                <div className={`ai-status ai-status-${status.state}`} role="status"><i />{status.message}</div>
+                <div className={`ai-status ai-status-${status.state}`} role="status">
+                  {status.state === 'preparing' || status.state === 'indexing' || status.state === 'generating'
+                    ? <ProcessingIndicator size={10} />
+                    : <i />}
+                  {status.message}
+                </div>
                 {generationAction && (
                   <AIGenerationFollowupButton
                     kind={generationAction.kind}

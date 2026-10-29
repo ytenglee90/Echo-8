@@ -1,4 +1,4 @@
-import type { EventDeclaration, PatchOperation } from '../core/contracts.ts';
+import type { EventDeclaration, PatchOperation } from './state.ts';
 
 export type SearchScope = 'current' | 'canvas';
 

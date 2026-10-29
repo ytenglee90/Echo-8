@@ -8,7 +8,7 @@ import {
 import { decryptJson, encryptJson, signCompactJson, signDataToken, verifyCompactJson } from '../src/server/cloud/crypto.ts';
 import { ensureControlSchema } from '../src/server/cloud/control-store.ts';
 import { externalizeCloudCommit, hydrateRemoteDocument } from '../src/plugins/cloud-sync/model.ts';
-import type { TransactionCommitRecord } from '../src/core/transaction-manager.ts';
+import type { TransactionCommitRecord } from '../src/protocols/state.ts';
 
 test('cloud control cryptography signs sessions, encrypts grants and issues installation-scoped tokens', async () => {
   const secret = 'test-secret-that-is-long-enough-for-a-local-contract-test';

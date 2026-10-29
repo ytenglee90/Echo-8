@@ -1,4 +1,4 @@
-import type { EventDeclaration, PatchOperation } from '../core/contracts.ts';
+import type { EventDeclaration, PatchOperation } from './state.ts';
 import type { CanvasSnapGuide } from './canvas.ts';
 import type { CommandContract } from './commands.ts';
 import type { WorldBounds } from './viewport.ts';

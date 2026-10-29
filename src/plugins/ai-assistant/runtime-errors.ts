@@ -1,6 +1,4 @@
-export function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
-}
+export { isAbortError } from '../../services/abort.ts';
 
 export function isCapabilityUnavailable(error: unknown, key: string): boolean {
   return error instanceof Error && (

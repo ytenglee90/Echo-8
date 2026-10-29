@@ -3,8 +3,9 @@ import type {
   PluginDefinition,
   TaskHandle,
 } from '../../core/contracts.ts';
-import type { LocalModelAsset } from '../../core/network-access.ts';
+import type { LocalModelAsset } from '../../protocols/network.ts';
 import type { PersonalTextAssetRecord } from '../../protocols/personal-assets.ts';
+import { isAbortError } from '../../services/abort.ts';
 import type {
   AIContextSearchContribution,
   AIContextSearchRequest,
@@ -17,12 +18,12 @@ import {
   type LocalSemanticProviderConfiguration,
   type LocalSemanticProviderPanelState,
 } from '../../protocols/local-semantic.ts';
-import { SEMANTIC_BLOCK_LENGTH } from '../../ai/semantic-blocks.ts';
+import { SEMANTIC_BLOCK_LENGTH } from '../../services/semantic-blocks.ts';
 import {
   readSemanticCatalog,
   sampleSemanticSource,
   semanticPreview,
-} from '../../ai/semantic-source-sampling.ts';
+} from '../../services/semantic-source-sampling.ts';
 import { localSemanticProviderManifest, LOCAL_SEMANTIC_PROVIDER_NAMESPACE } from './manifest.ts';
 import {
   LOCAL_SEMANTIC_DECODE_CACHE_JOB,
@@ -619,10 +620,6 @@ function assertNotAborted(signal: AbortSignal): void {
 
 function abortError(): DOMException {
   return new DOMException('Local semantic retrieval aborted', 'AbortError');
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

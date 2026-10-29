@@ -1,4 +1,4 @@
-import type { DomainSnapshot, PatchOperation } from '../core/contracts.ts';
+import type { DomainSnapshot, PatchOperation } from './state.ts';
 import type { CommandContract } from './commands.ts';
 
 export const PROJECT_KIND = 'echo-8-project' as const;
@@ -200,13 +200,19 @@ export interface CheckpointPerformanceSnapshot {
   usedWorker: boolean;
 }
 
+export const AUTOSAVE_DISABLED_INTERVAL_MS = 0;
+export const AUTOSAVE_REALTIME_INTERVAL_MS = 1_000;
+export const DEFAULT_AUTOSAVE_INTERVAL_MS = 60_000;
+
 export const AUTOSAVE_INTERVAL_OPTIONS = [
+  AUTOSAVE_REALTIME_INTERVAL_MS,
   30_000,
-  60_000,
+  DEFAULT_AUTOSAVE_INTERVAL_MS,
   120_000,
   300_000,
   600_000,
   1_800_000,
+  AUTOSAVE_DISABLED_INTERVAL_MS,
 ] as const;
 
 export interface FileArtifact {

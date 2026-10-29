@@ -1,6 +1,7 @@
 'use client';
 
 import type { WritingMetricsSnapshot } from '../../protocols/editor.ts';
+import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 
 export function EditorMetrics({
   totalCharacters,
@@ -22,7 +23,9 @@ export function EditorMetrics({
   return (
     <footer className="editor-metrics">
       <span title="按 Unicode 可见字符统计：包含标点和组合 Emoji，不含空格、制表符和换行。">
-        字数 {totalCharactersPending ? '统计中…' : formatInteger(totalCharacters)}
+        {totalCharactersPending
+          ? <ProcessingLabel size={9}>字数统计中…</ProcessingLabel>
+          : <>字数 {formatInteger(totalCharacters)}</>}
       </span>
       <span title="选区使用相同的可见字符统计口径。">
         选中 {formatInteger(selectionCharacters)}

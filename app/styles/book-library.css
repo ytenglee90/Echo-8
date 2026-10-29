@@ -15,6 +15,29 @@
   color: var(--ink);
 }
 
+.book-library-opening {
+  position: fixed;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  color: var(--ink);
+  cursor: progress;
+  backdrop-filter: blur(12px);
+}
+.book-library-opening .brand-loading-mark { margin-bottom: 5px; }
+.book-library-opening .echo-8-icon {
+  display: block;
+  width: 118px;
+  height: auto;
+  aspect-ratio: 594 / 263;
+}
+.book-library-opening > strong { font-size: 16px; font-weight: 720; }
+.book-library-opening > span:last-child { color: var(--muted); font-size: 12px; }
+
 .book-library-header {
   position: sticky;
   z-index: 2;
@@ -62,8 +85,10 @@
 }
 .book-library-account button,
 .book-library-refresh {
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   min-width: 32px;
   min-height: 32px;
   padding: 0 11px;
@@ -136,6 +161,7 @@
 .book-library-action-card.primary:hover { border-color: var(--ink); }
 .book-library-action-card:disabled { cursor: wait; opacity: .5; transform: none; box-shadow: none; }
 .book-library-action-card svg { width: 32px; height: 32px; stroke-width: 1.55; }
+.book-library-action-card .echo-8-icon { width: 41px; height: 18px; }
 .book-library-action-card strong { font-size: 13px; font-weight: 680; letter-spacing: -.01em; }
 
 .book-library-section { min-width: 0; padding: 0; border: 0; background: transparent; }
@@ -272,6 +298,7 @@
   background: var(--control-surface);
 }
 .book-library-project-icon svg { width: 24px; height: 24px; }
+.book-library-project-icon .echo-8-icon { width: 30px; height: 13px; }
 .book-library-empty { margin: 16px 12px; color: var(--muted); font-size: 11px; line-height: 1.6; text-align: center; }
 
 .book-library-notice {
@@ -289,6 +316,9 @@
 .book-library-notice p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .book-library-notice button,
 .book-library-upgrade button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   justify-self: start;
   min-height: 32px;
   padding: 0 11px;
@@ -320,7 +350,7 @@
 .book-library-install > button span { display: grid; gap: 2px; }
 .book-library-install > button strong { font-size: 11px; }
 .book-library-install > button small { color: var(--muted); font-size: 9px; }
-.book-library-install > button b { font-size: 10px; }
+.book-library-install > button b { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; }
 .book-library-upgrade {
   justify-content: space-between;
   gap: 14px;

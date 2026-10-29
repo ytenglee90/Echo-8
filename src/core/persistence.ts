@@ -20,9 +20,12 @@ import { PERSISTENCE_PREPARE_CHECKPOINT_JOB } from './persistence-worker-jobs.ts
 import { canMergePatchEntries, composePatchPairs } from './patch-composition.ts';
 
 export { externalizeContentChunks } from './checkpoint-preparation.ts';
-import type { TransactionCommitRecord } from './transaction-manager.ts';
+import type { TransactionCommitRecord } from '../protocols/state.ts';
 import {
+  AUTOSAVE_DISABLED_INTERVAL_MS,
   AUTOSAVE_INTERVAL_OPTIONS,
+  AUTOSAVE_REALTIME_INTERVAL_MS,
+  DEFAULT_AUTOSAVE_INTERVAL_MS,
   type PersistenceSnapshot,
   type ProjectPluginDescriptor,
   type RecoveryPointSummary,
@@ -60,7 +63,12 @@ export interface AutomaticCheckpointEvent {
   documentRevision: number;
 }
 
-const DEFAULT_AUTOSAVE_INTERVAL_MS = 60_000;
+export interface AutomaticSaveRequestEvent {
+  requestedAt: number;
+  documentRevision: number;
+}
+
+const RECOVERY_CHECKPOINT_INTERVAL_MS = 60_000;
 const AUTOSAVE_INTERVAL_META_KEY = 'autosave-interval-ms';
 const PERSONAL_PREFERENCE_PREFIX = 'preference:';
 const PERSONAL_ASSET_PREFIX = 'asset:';
@@ -76,6 +84,7 @@ export class PersistenceService {
   private readonly workers?: WorkerService;
   private database?: IDBDatabase;
   private journalTimer?: ReturnType<typeof setTimeout>;
+  private autosaveTimer?: ReturnType<typeof setTimeout>;
   private checkpointTimer?: ReturnType<typeof setTimeout>;
   private checkpointTask?: TaskHandle<void>;
   private ioTail: Promise<void> = Promise.resolve();
@@ -85,6 +94,7 @@ export class PersistenceService {
   private readonly memoryPersonalAssets = new Map<string, PersonalTextAssetRecord>();
   private readonly persistedContentChunkIds = new Set<string>();
   private autosaveIntervalMs = DEFAULT_AUTOSAVE_INTERVAL_MS;
+  private autosaveDirty = false;
   private status: PersistenceStatus = {
     state: 'idle',
     journalEntries: 0,
@@ -93,6 +103,7 @@ export class PersistenceService {
   };
   private readonly listeners = new Set<() => void>();
   private readonly onAutomaticCheckpoint?: (event: AutomaticCheckpointEvent) => void;
+  private readonly onAutomaticSaveRequest?: (event: AutomaticSaveRequestEvent) => void;
 
   constructor(
     store: StateStore,
@@ -100,6 +111,7 @@ export class PersistenceService {
     diagnostics: DiagnosticsService,
     tasks: TaskScheduler,
     onAutomaticCheckpoint?: (event: AutomaticCheckpointEvent) => void,
+    onAutomaticSaveRequest?: (event: AutomaticSaveRequestEvent) => void,
     workers?: WorkerService,
   ) {
     this.store = store;
@@ -108,6 +120,7 @@ export class PersistenceService {
     this.tasks = tasks;
     this.workers = workers;
     this.onAutomaticCheckpoint = onAutomaticCheckpoint;
+    this.onAutomaticSaveRequest = onAutomaticSaveRequest;
   }
 
   subscribe(listener: () => void): () => void {
@@ -201,6 +214,10 @@ export class PersistenceService {
     } else {
       this.pendingRecords.push(next);
     }
+    if (next.forward.some((patch) => patch.domain === 'document')) {
+      this.autosaveDirty = true;
+      this.scheduleAutomaticSaveRequest();
+    }
     this.setStatus({ ...this.status, state: this.database ? 'pending' : 'memory-only', error: undefined });
     if (!this.database) return;
     if (this.journalTimer) clearTimeout(this.journalTimer);
@@ -242,7 +259,7 @@ export class PersistenceService {
       if (allowAutomaticCheckpoint && isAutosaveCheckpointDue(
         this.status.checkpointAt,
         savedAt,
-        this.autosaveIntervalMs,
+        RECOVERY_CHECKPOINT_INTERVAL_MS,
       )) {
         try {
           await this.scheduleCheckpoint();
@@ -311,7 +328,8 @@ export class PersistenceService {
     if (this.database) await writeValue(this.database, 'meta', AUTOSAVE_INTERVAL_META_KEY, intervalMs);
     this.autosaveIntervalMs = intervalMs;
     this.setStatus({ ...this.status });
-    this.scheduleCheckpointDeadline();
+    this.clearAutomaticSaveRequest();
+    this.scheduleAutomaticSaveRequest();
     return this.snapshot();
   }
 
@@ -505,7 +523,7 @@ export class PersistenceService {
     this.clearCheckpointDeadline();
     if (!this.database || this.status.journalEntries <= 0) return;
     const checkpointAt = this.status.checkpointAt ?? Date.now();
-    const delay = Math.max(0, checkpointAt + this.autosaveIntervalMs - Date.now());
+    const delay = Math.max(0, checkpointAt + RECOVERY_CHECKPOINT_INTERVAL_MS - Date.now());
     this.checkpointTimer = setTimeout(() => {
       this.checkpointTimer = undefined;
       void this.scheduleCheckpoint().catch((error) => {
@@ -518,6 +536,30 @@ export class PersistenceService {
     if (!this.checkpointTimer) return;
     clearTimeout(this.checkpointTimer);
     this.checkpointTimer = undefined;
+  }
+
+  private scheduleAutomaticSaveRequest(): void {
+    if (!this.autosaveDirty || this.autosaveIntervalMs === AUTOSAVE_DISABLED_INTERVAL_MS) return;
+    if (this.autosaveTimer) {
+      if (this.autosaveIntervalMs !== AUTOSAVE_REALTIME_INTERVAL_MS) return;
+      clearTimeout(this.autosaveTimer);
+    }
+    this.autosaveTimer = setTimeout(() => {
+      this.autosaveTimer = undefined;
+      if (!this.autosaveDirty || this.autosaveIntervalMs === AUTOSAVE_DISABLED_INTERVAL_MS) return;
+      this.autosaveDirty = false;
+      this.onAutomaticSaveRequest?.({
+        requestedAt: Date.now(),
+        documentRevision: this.store.getDomainRevision('document'),
+      });
+    }, this.autosaveIntervalMs);
+    (this.autosaveTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
+  }
+
+  private clearAutomaticSaveRequest(): void {
+    if (!this.autosaveTimer) return;
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = undefined;
   }
 }
 

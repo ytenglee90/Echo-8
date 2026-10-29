@@ -9,7 +9,7 @@ import {
   useState,
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
-import { SpatialHashIndex } from '../../core/spatial-index.ts';
+import { SpatialHashIndex } from '../../services/spatial-index.ts';
 import { appearancePreviewTarget, type AppearancePreview } from '../../protocols/appearance.ts';
 import type { CanvasWheelZoomRequest } from '../../protocols/canvas.ts';
 import {

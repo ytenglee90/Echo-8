@@ -32,6 +32,63 @@ test('feature plugins do not import another feature implementation', () => {
   assert.deepEqual(violations, []);
 });
 
+test('feature implementations depend on the public plugin SDK, protocols, UI, and services only', () => {
+  const violations: string[] = [];
+  for (const file of sourceFiles(pluginRoot)) {
+    const relativeFile = relative(pluginRoot, file);
+    if (!relativeFile.includes(sep)) continue;
+    const source = readFileSync(file, 'utf8');
+    for (const specifier of importSpecifiers(source)) {
+      const coreIndex = specifier.indexOf('/core/');
+      if (coreIndex < 0) continue;
+      if (specifier.slice(coreIndex + '/core/'.length) !== 'contracts.ts') {
+        violations.push(`${relativeFile} -> ${specifier}`);
+      }
+    }
+  }
+  assert.deepEqual(violations, []);
+});
+
+test('cloud wire contracts do not depend on kernel implementations', () => {
+  const source = readFileSync(join(sourceRoot, 'cloud', 'contracts.ts'), 'utf8');
+  assert.deepEqual(importSpecifiers(source).filter((specifier) => specifier.includes('/core/')), []);
+});
+
+test('public protocols do not import kernel implementation modules', () => {
+  const violations: string[] = [];
+  for (const file of sourceFiles(join(sourceRoot, 'protocols'))) {
+    for (const specifier of importSpecifiers(readFileSync(file, 'utf8'))) {
+      const coreIndex = specifier.indexOf('/core/');
+      if (coreIndex >= 0 && specifier.slice(coreIndex + '/core/'.length) !== 'contracts.ts') {
+        violations.push(`${relative(sourceRoot, file)} -> ${specifier}`);
+      }
+    }
+  }
+  assert.deepEqual(violations, []);
+});
+
+test('feature code does not construct raw browser file-picker DOM', () => {
+  const violations: string[] = [];
+  for (const file of sourceFiles(pluginRoot)) {
+    const source = readFileSync(file, 'utf8');
+    if (/showOpenFilePicker|document\.createElement\(['"]input['"]\)/u.test(source)) {
+      violations.push(relative(pluginRoot, file));
+    }
+  }
+  assert.deepEqual(violations, []);
+});
+
+test('annotation autosave has one tracked debounce and no detached retry timer', () => {
+  const source = readFileSync(
+    join(pluginRoot, 'annotations', 'AnnotationPopup.tsx'),
+    'utf8',
+  );
+  assert.equal([...source.matchAll(/\bsetTimeout\(/gu)].length, 1);
+  assert.match(source, /clearTimeout\(timer\)/u);
+  assert.match(source, /savePromise/u);
+  assert.doesNotMatch(source, /finally\([\s\S]{0,200}setTimeout/u);
+});
+
 test('headless core has no dependency on shell or feature plugins', () => {
   const violations: string[] = [];
   for (const file of sourceFiles(join(sourceRoot, 'core'))) {
@@ -116,11 +173,17 @@ test('shipped application starts from a fresh persistence session', () => {
 });
 
 test('portable composition keeps the library and cloud UI without file-origin network access', () => {
-  const composition = readFileSync(join(sourceRoot, 'plugins', 'index.ts'), 'utf8');
+  const composition = readFileSync(join(sourceRoot, 'plugins', 'composition.ts'), 'utf8');
+  const portable = readFileSync(join(sourceRoot, 'plugins', 'index.ts'), 'utf8');
+  const hosted = readFileSync(join(sourceRoot, 'plugins', 'hosted-lazy.ts'), 'utf8');
   const cloud = readFileSync(join(sourceRoot, 'plugins', 'cloud-sync', 'model.ts'), 'utf8');
   assert.match(composition, /import \{ cloudSyncPlugin \} from '\.\/cloud-sync\/plugin\.ts'/u);
   assert.match(composition, /import \{ bookLibraryPlugin \} from '\.\/book-library\/plugin\.ts'/u);
   assert.ok(composition.lastIndexOf('cloudSyncPlugin,') < composition.lastIndexOf('bookLibraryPlugin,'));
+  assert.match(portable, /composeBuiltInPlugins\(semanticProviderPlugin\)/u);
+  assert.match(hosted, /composeBuiltInPlugins\(lazySemanticProvider\)/u);
+  assert.doesNotMatch(portable, /cloudSyncPlugin|bookLibraryPlugin/u);
+  assert.doesNotMatch(hosted, /cloudSyncPlugin|bookLibraryPlugin/u);
   assert.match(cloud, /url\.protocol === 'http:' \|\| url\.protocol === 'https:'/u);
   assert.match(cloud, /if \(controlOrigin\) \{[\s\S]*?refreshControlStatus/u);
   assert.match(cloud, /else \{\s*update\(\{ phase: 'disabled', configured: false/u);
@@ -162,9 +225,10 @@ function sourceFiles(root: string): string[] {
 }
 
 function importSpecifiers(source: string): string[] {
-  return [...source.matchAll(/(?:import|export)\s+(?:[^'";]+?\s+from\s+)?['"]([^'"]+)['"]/g)].map(
-    (match) => match[1],
-  );
+  return [
+    ...source.matchAll(/(?:import|export)\s+(?:[^'";]+?\s+from\s+)?['"]([^'"]+)['"]/gu),
+    ...source.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/gu),
+  ].map((match) => match[1]);
 }
 
 function contributionCommands(source: string, kind: 'action' | 'shortcut'): string[] {

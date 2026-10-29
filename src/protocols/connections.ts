@@ -1,4 +1,4 @@
-import type { EventDeclaration, PatchOperation } from '../core/contracts.ts';
+import type { EventDeclaration, PatchOperation } from './state.ts';
 import type { CommandContract } from './commands.ts';
 
 export const MAX_CONNECTION_LABEL_LENGTH = 200;

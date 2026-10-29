@@ -10,6 +10,7 @@ import type {
 import { safeLocalFilename } from '../../protocols/files.ts';
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import { DEFAULT_TEXT_DOCUMENT_FORMAT, type TextFormattingSnapshot } from '../../protocols/formatting.ts';
+import { isAbortError } from '../../services/abort.ts';
 import { writeProjectToWritable } from './codec.ts';
 import { createDocx } from './docx.ts';
 import { readDocxPlainText } from './docx-import.ts';
@@ -610,9 +611,7 @@ export function nextTaskTurn(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-export function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
-}
+export { isAbortError } from '../../services/abort.ts';
 
 export function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';

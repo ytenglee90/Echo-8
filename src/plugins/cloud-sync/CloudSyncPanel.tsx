@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { CloudProjectSummary, CloudSyncState } from '../../cloud/contracts.ts';
+import { AUTOSAVE_DISABLED_INTERVAL_MS } from '../../protocols/files.ts';
 import { Icon, IconButton } from '../../ui/Icon.tsx';
+import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
 const INITIAL: CloudSyncState = {
   phase: 'connecting', configured: false, authenticated: false, accounts: [], installations: [],
@@ -22,6 +24,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
     (item) => item.id === state.activeInstallationId && item.status === 'ready' && item.upgradeAvailable,
   ) ?? state.installations.find((item) => item.status === 'ready' && item.upgradeAvailable);
   const isLocalFile = globalThis.location.protocol === 'file:';
+  const processing = Boolean(busy) || state.phase === 'connecting' || state.phase === 'syncing';
 
   const refresh = useCallback(async () => {
     const [next, nextProjects] = await Promise.all([
@@ -94,7 +97,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
   if (!state.panelOpen) return null;
 
   return (
-    <section className="cloud-sync-panel" aria-label="Cloudflare 云同步">
+    <section className="cloud-sync-panel" aria-label="Cloudflare 云同步" aria-busy={processing || undefined}>
       <div className="panel-heading">
         <div>
           <span className="eyebrow">BYOC · 用户自有云</span>
@@ -104,7 +107,8 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
           {state.authenticated && state.installations.some((item) => item.status === 'ready') && (
             <IconButton
               icon="sync"
-              label="立即同步"
+              label="立即保存到云端"
+              busy={busy === 'sync'}
               disabled={Boolean(busy) || !state.activeProjectId || state.phase === 'read-only'}
               onClick={() => void run('sync', () => client.dispatch('cloudSync.syncNow'))}
             />
@@ -113,6 +117,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
             <IconButton
               icon="logout"
               label="退出账户"
+              busy={busy === 'logout'}
               disabled={Boolean(busy)}
               onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}
             />
@@ -122,7 +127,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
       </div>
 
       <div className={`cloud-sync-summary phase-${state.phase}`} role="status">
-        <i aria-hidden="true" />
+        {processing ? <ProcessingIndicator size={11} /> : <i aria-hidden="true" />}
         <div>
           <strong>{phaseLabel(state)}</strong>
           <span>{summaryLine(state)}</span>
@@ -166,7 +171,10 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
                   onClick={() => void run(`install:${account.id}`, () => client.dispatch('cloudSync.install', { accountId: account.id }))}
                 >
                   <span><strong>{account.name}</strong><small>{account.id.slice(0, 12)}…</small></span>
-                  <b>{busy === `install:${account.id}` ? '正在安装…' : installation?.status === 'error' ? '重试安装' : '安装'}</b>
+                  <b>
+                    {busy === `install:${account.id}` && <ProcessingIndicator size={9} />}
+                    {busy === `install:${account.id}` ? '正在安装…' : installation?.status === 'error' ? '重试安装' : '安装'}
+                  </b>
                 </button>
               );
             })}
@@ -189,7 +197,10 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
                 onClick={() => void run('upgrade', () => client.dispatch('cloudSync.upgrade', {
                   installationId: upgradeInstallation.id,
                 }))}
-              >{busy === 'upgrade' ? '正在升级…' : '一键升级'}</button>
+              >
+                {busy === 'upgrade' && <ProcessingIndicator size={9} />}
+                {busy === 'upgrade' ? '正在升级…' : '一键升级'}
+              </button>
             </div>
           )}
           <div className="cloud-sync-section">
@@ -198,6 +209,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
               <IconButton
                 icon="reset"
                 label="刷新云端书籍"
+                busy={busy === 'refresh'}
                 className="cloud-section-refresh"
                 disabled={Boolean(busy)}
                 onClick={() => void run('refresh', () => client.dispatch('cloudSync.listProjects'))}
@@ -253,7 +265,11 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
                         title={project.id === state.activeProjectId ? '当前书籍' : '打开书籍'}
                         disabled={Boolean(busy) || editing}
                         onClick={() => void run(`open:${project.id}`, () => client.dispatch('cloudSync.openProject', { projectId: project.id }))}
-                      ><Icon name={project.id === state.activeProjectId ? 'check' : 'folder-open'} /></button>
+                      >
+                        {busy === `open:${project.id}`
+                          ? <ProcessingIndicator size={11} />
+                          : <Icon name={project.id === state.activeProjectId ? 'check' : 'folder-open'} />}
+                      </button>
                       <button
                         className="cloud-project-delete"
                         type="button"
@@ -276,7 +292,10 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
             <div className="cloud-sync-warning">
               <strong>另一台设备持有编辑权</strong>
               <p>当前可安全查看。接管后，原设备的下一次写入会停止。</p>
-              <button type="button" disabled={Boolean(busy)} onClick={() => void run('takeover', () => client.dispatch('cloudSync.takeover'))}>接管编辑权</button>
+              <button type="button" disabled={Boolean(busy)} onClick={() => void run('takeover', () => client.dispatch('cloudSync.takeover'))}>
+                {busy === 'takeover' && <ProcessingIndicator size={9} />}
+                {busy === 'takeover' ? '正在接管…' : '接管编辑权'}
+              </button>
             </div>
           )}
 
@@ -284,7 +303,10 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
             <div className="cloud-sync-warning danger">
               <strong>本机与云端都有新修改</strong>
               <p>系统不会覆盖本机内容。继续前会建立本机恢复点，然后载入云端版本。</p>
-              <button type="button" disabled={Boolean(busy)} onClick={() => void run('remote', () => client.dispatch('cloudSync.acceptRemote'))}>保存恢复点并载入云端</button>
+              <button type="button" disabled={Boolean(busy)} onClick={() => void run('remote', () => client.dispatch('cloudSync.acceptRemote'))}>
+                {busy === 'remote' && <ProcessingIndicator size={9} />}
+                {busy === 'remote' ? '正在载入云端…' : '保存恢复点并载入云端'}
+              </button>
             </div>
           )}
 
@@ -307,6 +329,11 @@ function phaseLabel(state: CloudSyncState): string {
     connecting: '正在连接', ready: '已连接并可编辑', syncing: '正在上传修改', 'read-only': '只读模式',
     offline: '离线保存中', conflict: '需要处理版本冲突', error: '云同步异常',
   };
+  if (state.phase === 'ready' && state.pendingCommits > 0) {
+    return state.autosaveIntervalMs === AUTOSAVE_DISABLED_INTERVAL_MS
+      ? '自动保存已关闭'
+      : '等待自动保存';
+  }
   return labels[state.phase];
 }
 

@@ -1,10 +1,12 @@
 import type { MessageEnvelope, PluginDefinition } from '../../core/contracts.ts';
-import type { TransactionCommitRecord } from '../../core/transaction-manager.ts';
+import type { TransactionCommitRecord } from '../../protocols/state.ts';
 import type { PersonalTextAssetRecord } from '../../protocols/personal-assets.ts';
 import type {} from '../../protocols/cloud-sync.ts';
 import {
+  DEFAULT_AUTOSAVE_INTERVAL_MS,
   PROJECT_FORMAT_VERSION,
   PROJECT_KIND,
+  type PersistenceSnapshot,
   type ProjectOpenPayload,
   type ProjectSource,
 } from '../../protocols/files.ts';
@@ -24,7 +26,6 @@ import { defineManifest } from '../manifest.ts';
 const LOCAL_STATE_KEY = 'cloud-session';
 const QUEUE_ASSET_KEY = 'cloud-pending-commits';
 const CHUNK_REFERENCE = '__echo8ContentChunkRef';
-const SYNC_DELAY_MS = 900;
 const CHECKPOINT_INTERVAL_MS = 30_000;
 const LEASE_RENEW_MS = 45_000;
 
@@ -54,7 +55,6 @@ export function createCloudSyncPlugin(
   let deletingProjectId: string | undefined;
   let access: CloudDataAccess | undefined;
   let leaseId: string | undefined;
-  let cancelSyncTimer: (() => void) | undefined;
   let cancelRenewalTimer: (() => void) | undefined;
   let stopped = false;
   let syncTail: Promise<void> = Promise.resolve();
@@ -75,11 +75,14 @@ export function createCloudSyncPlugin(
         'system.document.new', 'system.persistence.checkpoint', 'bookLibrary.show',
       ],
       events: ['transaction.committed'],
-      signals: ['cloudSync.updated', 'cloudSync.deleteConfirmation.changed'],
       queries: ['cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation'],
       asks: [
         'system.preferences.get', 'system.personalAssets.get', 'system.project.source',
-        'cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation',
+        'system.persistence', 'cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation',
+      ],
+      signals: [
+        'cloudSync.updated', 'cloudSync.deleteConfirmation.changed',
+        'system.persistence.automaticSave.requested', 'system.persistence.autosaveInterval.changed',
       ],
       ui: ['cloud-sync.status', 'cloud-sync.panel', 'cloud-sync.delete-dialog'],
       actions: ['cloud-sync.open-action', 'cloud-sync.now-action'],
@@ -187,16 +190,20 @@ export function createCloudSyncPlugin(
         };
       };
 
-      const runSync = async (forceCheckpoint = false, parent?: MessageEnvelope) => {
+      const runSync = async (
+        forceCheckpoint = false,
+        parent?: MessageEnvelope,
+        includePending = true,
+      ) => {
         if (!local.projectId || !leaseId || !['ready', 'syncing', 'offline'].includes(state.phase)) return;
         if (deletingProjectId === local.projectId) return;
-        const commits = pending.slice(0, 200).map(externalizeCloudCommit);
-        const shouldCheckpoint = forceCheckpoint || !local.checkpointAt ||
-          Date.now() - local.checkpointAt >= CHECKPOINT_INTERVAL_MS;
+        const commits = includePending ? pending.slice(0, 200).map(externalizeCloudCommit) : [];
+        const shouldCheckpoint = includePending && (forceCheckpoint || !local.checkpointAt ||
+          Date.now() - local.checkpointAt >= CHECKPOINT_INTERVAL_MS);
         const captured = shouldCheckpoint ? await captureCheckpoint() : undefined;
         const commitChunks = commits.flatMap((item) => item.chunks);
         const chunks = dedupeChunks([...(captured?.chunks ?? []), ...commitChunks]);
-        update({ phase: 'syncing', error: undefined });
+        if (includePending) update({ phase: 'syncing', error: undefined });
         try {
           for (const batch of chunkBatches(chunks)) {
             await dataRequest(`/v1/projects/${encodeURIComponent(local.projectId)}/chunks`, jsonInit({
@@ -218,19 +225,21 @@ export function createCloudSyncPlugin(
             checkpoint: captured?.checkpoint,
             chunks: [],
           }));
-          pending.splice(0, result.accepted);
+          if (includePending) pending.splice(0, result.accepted);
           local.headRevision = result.headRevision;
           if (captured) local.checkpointAt = Date.now();
           update({
             phase: 'ready',
             headRevision: result.headRevision,
             pendingCommits: pending.length,
-            lastSyncedAt: Date.now(),
+            lastSyncedAt: includePending ? Date.now() : state.lastSyncedAt,
             leaseExpiresAt: result.lease.expiresAt,
             error: undefined,
           });
           await persistLocal(parent);
-          if (pending.length) scheduleSync();
+          if (includePending && pending.length) {
+            context.resources.timeout(() => void enqueueSync(false), 0);
+          }
         } catch (error) {
           if (isHttpStatus(error, 409)) {
             update({ phase: 'conflict', pendingCommits: pending.length, error: '云端版本已变化；本机修改仍保留在恢复队列中' });
@@ -242,20 +251,18 @@ export function createCloudSyncPlugin(
           }
         }
       };
-      const enqueueSync = (forceCheckpoint = false, parent?: MessageEnvelope) => {
-        syncTail = syncTail.then(() => runSync(forceCheckpoint, parent), () => runSync(forceCheckpoint, parent));
+      const enqueueSync = (
+        forceCheckpoint = false,
+        parent?: MessageEnvelope,
+        includePending = true,
+      ) => {
+        syncTail = syncTail.then(
+          () => runSync(forceCheckpoint, parent, includePending),
+          () => runSync(forceCheckpoint, parent, includePending),
+        );
         return syncTail;
       };
-      const scheduleSync = () => {
-        cancelSyncTimer?.();
-        cancelSyncTimer = context.resources.timeout(() => {
-          cancelSyncTimer = undefined;
-          void enqueueSync(false);
-        }, SYNC_DELAY_MS);
-      };
       const disconnectProject = async (parent?: MessageEnvelope) => {
-        cancelSyncTimer?.();
-        cancelSyncTimer = undefined;
         const projectId = local.projectId;
         const currentLeaseId = leaseId;
         if (projectId && currentLeaseId) {
@@ -577,8 +584,6 @@ export function createCloudSyncPlugin(
           const target = pendingDeletion;
           const detachedCurrent = local.projectId === target.projectId;
           deletingProjectId = target.projectId;
-          cancelSyncTimer?.();
-          cancelSyncTimer = undefined;
           try {
             await syncTail;
             if (detachedCurrent) {
@@ -685,7 +690,11 @@ export function createCloudSyncPlugin(
           leaseId = undefined;
           projects = [];
           local = { ...local, projectId: undefined, projectName: undefined, headRevision: 0, checkpointAt: undefined };
-          update({ ...emptyState(), configured: state.configured });
+          update({
+            ...emptyState(),
+            configured: state.configured,
+            autosaveIntervalMs: state.autosaveIntervalMs,
+          });
           await persistLocal(envelope);
           return { result: { loggedOut: true } };
         },
@@ -696,13 +705,25 @@ export function createCloudSyncPlugin(
         if (!record || !record.forward.some((patch) => patch.domain === 'document')) return;
         if (!local.projectId || !leaseId || state.phase === 'read-only' || state.phase === 'conflict') return;
         if (!pending.some((item) => item.id === record.id)) pending.push(structuredClone(record));
-        update({ pendingCommits: pending.length, phase: state.phase === 'offline' ? 'offline' : 'ready' });
+        update({
+          pendingCommits: pending.length,
+          phase: state.phase === 'offline' ? 'offline' : state.phase === 'syncing' ? 'syncing' : 'ready',
+        });
         context.resources.timeout(
           () => void persistLocal().catch((error) => context.diagnostics.error('云同步队列保存失败', error)),
           0,
         );
-        scheduleSync();
       });
+      context.signals.subscribe<{ documentRevision: number }>(
+        'system.persistence.automaticSave.requested',
+        () => {
+          if (pending.length > 0) void enqueueSync(false);
+        },
+      );
+      context.signals.subscribe<{ intervalMs: number }>(
+        'system.persistence.autosaveInterval.changed',
+        (message) => update({ autosaveIntervalMs: message.payload.intervalMs }),
+      );
 
       context.ui.contribute({
         id: 'cloud-sync.status', slot: 'top.primary', kind: 'view', label: 'Cloudflare 云同步',
@@ -721,14 +742,14 @@ export function createCloudSyncPlugin(
         category: '云同步', keywords: ['cloudflare', '跨设备', '账户'], priority: 95,
       });
       context.ui.action({
-        id: 'cloud-sync.now-action', label: '立即同步到云端', command: 'cloudSync.syncNow',
+        id: 'cloud-sync.now-action', label: '立即保存当前云端书籍', command: 'cloudSync.syncNow',
         category: '云同步', keywords: ['保存', '上传', '同步'], priority: 94,
       });
       context.ui.shortcut({
         id: 'cloud-sync.open-shortcut', chord: 'mod+alt+s', command: 'cloudSync.open', label: '打开云同步',
       });
       context.ui.shortcut({
-        id: 'cloud-sync.now-shortcut', command: 'cloudSync.syncNow', label: '立即同步到云端', category: '云同步',
+        id: 'cloud-sync.now-shortcut', command: 'cloudSync.syncNow', label: '立即保存当前云端书籍', category: '云同步',
       });
 
       const saved = await context.queries.ask<LocalCloudState | undefined>('system.preferences.get', { key: LOCAL_STATE_KEY });
@@ -737,7 +758,12 @@ export function createCloudSyncPlugin(
         'system.personalAssets.get', { key: QUEUE_ASSET_KEY },
       );
       pending = parsePendingQueue(queueAsset?.text);
-      update({ pendingCommits: pending.length, headRevision: local.headRevision });
+      const persistence = await context.queries.ask<PersistenceSnapshot>('system.persistence');
+      update({
+        pendingCommits: pending.length,
+        headRevision: local.headRevision,
+        autosaveIntervalMs: persistence.autosaveIntervalMs,
+      });
       if (controlOrigin) {
         try {
           await refreshControlStatus(controlRequest, update);
@@ -749,15 +775,15 @@ export function createCloudSyncPlugin(
       }
 
       cancelRenewalTimer = context.resources.interval(() => {
-        if (!stopped && leaseId && local.projectId && state.phase === 'ready') void enqueueSync(false);
+        if (!stopped && leaseId && local.projectId && state.phase === 'ready') {
+          void enqueueSync(false, undefined, false);
+        }
       }, LEASE_RENEW_MS);
     },
 
     stop() {
       stopped = true;
-      cancelSyncTimer?.();
       cancelRenewalTimer?.();
-      cancelSyncTimer = undefined;
       cancelRenewalTimer = undefined;
       leaseId = undefined;
       access = undefined;
@@ -791,7 +817,8 @@ export function createCloudSyncPlugin(
 function emptyState(): CloudSyncState {
   return {
     phase: 'connecting', configured: false, authenticated: false, accounts: [], installations: [],
-    headRevision: 0, pendingCommits: 0, upgradeAvailable: false, panelOpen: false,
+    headRevision: 0, pendingCommits: 0, autosaveIntervalMs: DEFAULT_AUTOSAVE_INTERVAL_MS,
+    upgradeAvailable: false, panelOpen: false,
   };
 }
 

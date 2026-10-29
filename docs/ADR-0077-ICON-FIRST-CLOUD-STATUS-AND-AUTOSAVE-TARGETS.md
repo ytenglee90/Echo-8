@@ -4,7 +4,8 @@
 
 Accepted — 2026-10-28. Supplements ADR-0006, ADR-0071 and ADR-0075, partially
 supersedes the first-manual-Save trigger in ADR-0073, and supersedes the
-text-labelled Delete presentation requirement in ADR-0076.
+text-labelled Delete presentation requirement in ADR-0076. Its immediate
+cloud-binding and per-commit upload trigger is partially superseded by ADR-0081.
 
 ## Context
 
@@ -49,6 +50,16 @@ opened local file must never be silently converted into a cloud book.
   The button's accessible name and hover title always state the exact phase,
   pending count and latest sync detail, so color and motion are not the only
   signals.
+- The same canonical moving-gap mark is the UI foundation's only active
+  processing/loading indicator. Boot, task notices, file and recovery work,
+  statistics, AI preparation/generation/indexing, model preparation, plugin
+  lifecycle changes and feature-local busy controls reuse one
+  `ProcessingIndicator`; feature plugins keep ownership of their state and do
+  not implement their own spinner. Success, warning and failure keep their
+  static semantic indicators. Visible text and `aria-live`/`aria-busy` continue
+  to name the exact operation, so motion is never the only signal. Reduced-motion
+  environments retain the fixed E8 silhouette and channels while disabling the
+  moving gaps.
 - Repeated library headings and book-list action text are visually removed.
   Open, delete, refresh, sync and logout remain ordinary buttons with icons,
   stable accessible names, keyboard focus and native hover titles.
@@ -106,6 +117,9 @@ opened local file must never be silently converted into a cloud book.
   a book row opens from its free surface without stealing the title's
   double-click rename gesture. Icon actions in both book lists retain deletion
   confirmation.
+- Hosted browser tests also hold a real sync operation open, verify the shared
+  processing mark's canonical aspect ratio and three independently moving gaps,
+  and verify that reduced-motion disables those gap animations.
 - Portable browser tests verify that the same SVG is embedded as data URLs for
   both the page favicon and E8 brand while preserving the zero-network
   `file://` boundary.

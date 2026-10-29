@@ -1,4 +1,5 @@
 import { Icon } from '../../ui/Icon.tsx';
+import { ProcessingIndicator, ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import { AI_OPERATION_COMMANDS } from './command-parser.ts';
 import { AI_MEMORY_DIRECTIVE_COMMANDS } from './memory-protocol.ts';
 import { memoryDirectiveLabel, type MemorySuggestion } from './memory-suggestion.ts';
@@ -15,7 +16,7 @@ const AI_COMMAND_HINT_GROUPS = [
 export function AIChatEmptyState() {
   return (
     <div className="ai-empty-state">
-      <Icon name="sparkles" size={24} />
+      <ProcessingIndicator size={20} />
       <strong>正在准备当前对话</strong>
       <span>聊天原文会持续记录；保存后进入 AI 记忆中心，不占用画布。</span>
     </div>
@@ -41,7 +42,7 @@ export function AICommandHints() {
 export function AIStreamingResponse({ text, reasoning }: { text: string; reasoning: string }) {
   return (
     <article className="ai-streaming-response ai-chat-bubble assistant" aria-label="AI 正在流式生成" aria-live="polite">
-      <header><strong>正在生成</strong><span>{text.length.toLocaleString()} 字符</span></header>
+      <header><strong><ProcessingLabel size={10}>正在生成</ProcessingLabel></strong><span>{text.length.toLocaleString()} 字符</span></header>
       {reasoning && <details className="ai-reasoning-block">
         <summary>思考过程</summary>
         <p>{reasoning}</p>

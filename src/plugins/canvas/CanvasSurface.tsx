@@ -57,7 +57,7 @@ import { isEcho8ProjectFile } from '../../protocols/files.ts';
 import { boundsIntersect, clientPointInWorld, worldViewport } from '../../protocols/viewport.ts';
 import { IconButton } from '../../ui/Icon.tsx';
 import { canvasContrastVariables } from '../../ui/canvas-contrast.ts';
-import { SpatialHashIndex } from '../../core/spatial-index.ts';
+import { SpatialHashIndex } from '../../services/spatial-index.ts';
 import { useCommandAvailability, useContentCatalog } from '../../ui/runtime-hooks.ts';
 import { CanvasEntityLayerProvider } from '../../ui/canvas-entity-layer-runtime.tsx';
 import { canvasNodeDetail } from './lod.ts';
@@ -618,13 +618,6 @@ export function CanvasSurface({
       );
     });
   }, [camera, nodeById, nodeIndex, previews, resizePreviews, surfaceSize]);
-  const offscreenSelectedNodes = useMemo(() => {
-    const visibleIds = new Set(visibleNodes.map((node) => node.id));
-    return selectedIds.flatMap((id) => {
-      const node = visibleIds.has(id) ? undefined : nodeById.get(id);
-      return node ? [node] : [];
-    });
-  }, [nodeById, selectedIds, visibleNodes]);
   const nodeMetricTargets = useMemo(() => {
     if (canvasNodeDetail(camera.zoom) !== 'preview') return [];
     const viewport = worldViewport(camera, surfaceSize, CULL_MARGIN);
@@ -1431,19 +1424,25 @@ export function CanvasSurface({
         </div>
       )}
       {!unavailable && nodes.length === 0 ? renderSlot?.('canvas.empty') : null}
+      <span
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        data-canvas-selection-count={selectedIds.length}
+      >
+        已选择 {selectedIds.length.toLocaleString()} 个画布项目
+      </span>
       <CanvasEntityLayerProvider value={{
         camera,
         nodeById,
         duplicateOrigins,
         visibleNodes,
-        offscreenSelectedNodes,
         previews,
         resizePreviews,
         appearancePreview,
         previewEntities,
         nodeCharacterCounts,
         selected,
-        selectedIds,
         connectionTargetId,
         beginNodeDrag,
         handleConnectionPort,

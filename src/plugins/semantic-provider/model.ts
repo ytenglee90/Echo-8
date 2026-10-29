@@ -10,6 +10,7 @@ import type {
   AIContextSearchRequest,
   AIContextSource,
 } from '../../protocols/ai.ts';
+import { isAbortError } from '../../services/abort.ts';
 import {
   SEMANTIC_PROVIDER_CHANGED_SIGNAL,
   SEMANTIC_PROVIDER_COMMANDS,
@@ -24,14 +25,14 @@ import {
   type SemanticProviderProfileState,
 } from '../../protocols/semantic.ts';
 import { SEMANTIC_PROVIDER_NAMESPACE, semanticProviderManifest } from './manifest.ts';
-import { FULL_SEMANTIC_COVERAGE_LENGTH, SEMANTIC_BLOCK_LENGTH } from '../../ai/semantic-blocks.ts';
+import { FULL_SEMANTIC_COVERAGE_LENGTH, SEMANTIC_BLOCK_LENGTH } from '../../services/semantic-blocks.ts';
 import {
   readSemanticCatalog as readCatalog,
   sampleSemanticSource as sampleSource,
   semanticPreview,
-} from '../../ai/semantic-source-sampling.ts';
+} from '../../services/semantic-source-sampling.ts';
 
-export { semanticBlockFingerprint } from '../../ai/semantic-source-sampling.ts';
+export { semanticBlockFingerprint } from '../../services/semantic-source-sampling.ts';
 
 export { SEMANTIC_PROVIDER_NAMESPACE } from './manifest.ts';
 
@@ -773,10 +774,6 @@ function assertNotAborted(signal: AbortSignal): void {
 
 function abortError(): DOMException {
   return new DOMException('Semantic retrieval aborted', 'AbortError');
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function yieldToMainThread(): Promise<void> {

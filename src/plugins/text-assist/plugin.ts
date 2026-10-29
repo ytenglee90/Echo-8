@@ -21,7 +21,10 @@ import {
   type TextAssistResourceRole,
   type TextAssistResourceStatus,
   type TextAssistEnsureResourcesRequest,
+  type TextAssistImportRulesFileRequest,
+  type TextAssistImportRulesFileResult,
   type TextAssistSettings,
+  TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL,
 } from '../../protocols/text-assist.ts';
 import { defineManifest } from '../manifest.ts';
 import {
@@ -48,6 +51,9 @@ const TEXT_ASSIST_PREFERENCE_KEY = 'settings@1';
 const TEXT_ASSIST_RULE_ASSET_KEY = 'rules@1';
 const TEXT_ASSIST_RULE_FILE_NAME = 'Echo-8-text-assist-rules.txt';
 const DEFAULT_RULE_VERSION = 4;
+const BUILTIN_RULE_OVERLAY_TEXT = `# Echo-8 内置纠错规则由应用按版本提供，不重复写入书籍。
+# 在下方按同样格式添加或覆盖自定义规则；这些自定义内容会随书保存。
+版本=${DEFAULT_RULE_VERSION}\n`;
 const LEGACY_RESOURCE_KEYS = ['common', 'personal', 'canvas'] as const;
 
 interface MergeDefaultRulesPayload {
@@ -69,7 +75,8 @@ interface CompiledResources extends TextAssistCompileResult {
 export function createTextAssistPlugin(associationNotice?: unknown): PluginDefinition {
   return {
   manifest: defineManifest('text-assist', '文本纠错、引用与补全', {
-    version: '0.6.0',
+    version: '0.7.0',
+    dataVersion: 2,
     namespaces: [TEXT_ASSIST_NAMESPACE, TEXT_ASSIST_RESOURCE_NAMESPACE],
     namespaceDomains: {
       [TEXT_ASSIST_NAMESPACE]: 'workspace',
@@ -99,6 +106,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
       'textAssist.mergeDefaultRules',
       'textAssist.openRules',
       'textAssist.loadRulesFile',
+      'textAssist.importRulesFile',
     ],
     dispatches: [
       'textAssist.restoreSettings',
@@ -122,6 +130,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
       'text.assist.invalidated',
       'text.assist.settings.changed',
       'text.assist.resources.status',
+      TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL,
       EDITOR_OPEN_REQUESTED_EVENT,
     ],
     ui: associationNotice ? ['text-assist.association-notice'] : [],
@@ -150,6 +159,12 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
       ...(associationNotice ? ['ui.canvas.contribute' as const] : []),
     ],
   }),
+
+  migrations: [{
+    from: 1,
+    to: 2,
+    migrate: (data) => data,
+  }],
 
   async start(context) {
     let catalogVersion: number | undefined;
@@ -419,7 +434,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
             : []),
         ])];
         const rulesNeedsUpgrade = bindings.rules &&
-          (!isRecord(rawBindings.rules) || rawBindings.rules.schemaVersion !== 3);
+          (!isRecord(rawBindings.rules) || rawBindings.rules.schemaVersion !== 4);
         const placementChanged = placementPlans.some(({ plan }) => plan.patches.length > 0);
         if (missing.length === 0 && obsoleteKeys.length === 0 && !hasRetiredRecord &&
           !rulesNeedsUpgrade && !placementChanged) {
@@ -433,7 +448,9 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
           const seed = TEXT_ASSIST_RESOURCE_SEEDS.find((candidate) => candidate.role === role)!;
           const plan = await context.capabilities.request<ContentMutationPlan>('content.createPlan@1', {
             title: seed.title,
-            body: role === 'rules' ? bundledRules : '',
+            body: role === 'rules'
+              ? ruleAssociation.state === 'same-origin' ? BUILTIN_RULE_OVERLAY_TEXT : bundledRules
+              : '',
             x: seed.x,
             y: seed.y,
             automaticContext: false,
@@ -475,7 +492,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
                 domain: 'document' as const,
                 namespace: TEXT_ASSIST_RESOURCE_NAMESPACE,
                 key: 'rules',
-                value: { ...bindings.rules, schemaVersion: 3 as const, updatedAt: now },
+                value: { ...bindings.rules, schemaVersion: 4 as const, updatedAt: now },
                 schemaOwner: 'text-assist',
               }] : []),
               ...created.map(({ role, nodeId }) => ({
@@ -484,12 +501,15 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
                 namespace: TEXT_ASSIST_RESOURCE_NAMESPACE,
                 key: role,
                 value: {
-                  schemaVersion: 3,
+                  schemaVersion: 4,
                   role,
                   nodeId,
                   createdAt: bindings[role]?.createdAt ?? now,
                   updatedAt: now,
                   defaultRuleVersion: DEFAULT_RULE_VERSION,
+                  ruleStorage: role === 'rules' && ruleAssociation.state === 'same-origin'
+                    ? 'builtin-overlay'
+                    : 'embedded',
                 } satisfies TextAssistResourceBinding,
                 schemaOwner: 'text-assist',
               })),
@@ -527,15 +547,22 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
     });
     context.commands.register({
       type: 'textAssist.loadRulesFile',
-      handle: async () => {
-        const picked = await pickTextAssistRulesFile();
-        const normalized = acceptDefaultRuleText(picked.text, { state: 'stored', fileName: picked.name });
+      handle: () => {
+        context.signals.emit(TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL, undefined);
+        return { result: { requested: true as const } };
+      },
+    });
+    context.commands.register<TextAssistImportRulesFileRequest, TextAssistImportRulesFileResult>({
+      type: 'textAssist.importRulesFile',
+      validate: isTextAssistImportRulesFileRequest,
+      handle: async (payload) => {
+        const normalized = acceptDefaultRuleText(payload.text, { state: 'stored', fileName: payload.name });
         await context.commands.invoke('system.personalAssets.set', {
           key: TEXT_ASSIST_RULE_ASSET_KEY,
           asset: {
             schemaVersion: 1,
             text: normalized,
-            fileName: picked.name,
+            fileName: payload.name,
             updatedAt: Date.now(),
           } satisfies PersonalTextAssetRecord,
         });
@@ -546,7 +573,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
         const current = await readResourceText(context, binding);
         if (current.text === normalized) {
           emitResourceStatus();
-          return { result: { loaded: true, name: picked.name, ensured } };
+          return { result: { loaded: true, name: payload.name, ensured } };
         }
         const plan = await context.capabilities.request<ContentMutationPlan>('content.deltaPlan@1', {
           nodeId: binding.nodeId,
@@ -556,11 +583,27 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
           expectedRevision: current.revision,
         } satisfies ContentDeltaPlanRequest);
         return {
-          result: { loaded: true, name: picked.name, ensured },
+          result: { loaded: true, name: payload.name, ensured },
           transaction: {
             label: '从 TXT 更新纠错规则',
             history: false,
-            patches: plan.patches,
+            patches: [
+              ...plan.patches,
+              {
+                op: 'set' as const,
+                domain: 'document' as const,
+                namespace: TEXT_ASSIST_RESOURCE_NAMESPACE,
+                key: 'rules',
+                value: {
+                  ...binding,
+                  schemaVersion: 4 as const,
+                  updatedAt: Date.now(),
+                  defaultRuleVersion: DEFAULT_RULE_VERSION,
+                  ruleStorage: 'embedded' as const,
+                } satisfies TextAssistResourceBinding,
+                schemaOwner: 'text-assist',
+              },
+            ],
             events: [
               ...(plan.events ?? []),
               { type: 'text.assist.resources.changed', payload: { roles: ['rules'] } },
@@ -576,27 +619,32 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
         const automatic = payload.automatic === true;
         const binding = readBindings().rules;
         if (!binding) throw new Error('纠错规则尚未准备好，请稍后重试或从 TXT 更新规则');
-        if (automatic && binding.defaultRuleVersion >= DEFAULT_RULE_VERSION) {
+        if (automatic && binding.defaultRuleVersion >= DEFAULT_RULE_VERSION &&
+          binding.ruleStorage === 'builtin-overlay') {
           return { result: { added: 0 } };
         }
         const resource = await readResourceText(context, binding);
-        const merged = mergeMissingDefaultRules(resource.text, await loadDefaultRuleText());
-        if (!merged.appendText && binding.defaultRuleVersion >= DEFAULT_RULE_VERSION) {
+        const bundledRules = await loadDefaultRuleText();
+        const compacted = ruleAssociation.state === 'same-origin'
+          ? compactBundledRuleText(resource.text, bundledRules)
+          : undefined;
+        if (compacted === undefined && binding.defaultRuleVersion >= DEFAULT_RULE_VERSION &&
+          binding.schemaVersion === 4 && binding.ruleStorage === 'embedded') {
           return { result: { added: 0 } };
         }
-        const plan = merged.appendText
+        const plan = compacted !== undefined && compacted !== resource.text
           ? await context.capabilities.request<ContentMutationPlan>('content.deltaPlan@1', {
               nodeId: binding.nodeId,
-              start: resource.text.length,
-              deleteCount: 0,
-              insert: merged.appendText,
+              start: 0,
+              deleteCount: resource.text.length,
+              insert: compacted,
               expectedRevision: resource.revision,
             } satisfies ContentDeltaPlanRequest)
           : undefined;
         return {
-          result: { added: merged.added },
+          result: { added: 0 },
           transaction: {
-            label: automatic ? '更新内置纠错规则' : '补充内置纠错规则',
+            label: automatic ? '压缩内置纠错规则' : '刷新内置纠错规则',
             history: !automatic,
             patches: [
               ...(plan?.patches ?? []),
@@ -607,9 +655,10 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
                 key: 'rules',
                 value: {
                   ...binding,
-                  schemaVersion: 3 as const,
+                  schemaVersion: 4 as const,
                   updatedAt: Date.now(),
                   defaultRuleVersion: DEFAULT_RULE_VERSION,
+                  ruleStorage: compacted !== undefined ? 'builtin-overlay' : 'embedded',
                 } satisfies TextAssistResourceBinding,
                 schemaOwner: 'text-assist',
               },
@@ -845,34 +894,6 @@ async function readResourceText(
   return { text: parts.join(''), revision: expectedRevision ?? 0 };
 }
 
-async function pickTextAssistRulesFile(): Promise<{
-  name: string;
-  text: string;
-}> {
-  const picker = (globalThis.window as Window & {
-    showOpenFilePicker?: (options: {
-      multiple?: boolean;
-      types?: Array<{ description: string; accept: Record<string, string[]> }>;
-    }) => Promise<Array<{ name: string; getFile(): Promise<File> }>>;
-  } | undefined)?.showOpenFilePicker;
-  if (picker) {
-    const [handle] = await picker({
-      multiple: false,
-      types: [{ description: 'Echo-8 纠错补全规则', accept: { 'text/plain': ['.txt'] } }],
-    });
-    if (!handle) throw new Error('没有选择纠错规则文件');
-    return { name: handle.name, text: await (await handle.getFile()).text() };
-  }
-  const file = await new Promise<File>((resolve, reject) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.txt,text/plain';
-    input.onchange = () => input.files?.[0] ? resolve(input.files[0]) : reject(new Error('没有选择纠错规则文件'));
-    input.click();
-  });
-  return { name: file.name, text: await file.text() };
-}
-
 async function compileWithWorkerFallback(
   context: Parameters<PluginDefinition['start']>[0],
   texts: TextAssistResourceTexts,
@@ -885,6 +906,12 @@ async function compileWithWorkerFallback(
     context.diagnostics.warn('后台纠错规则编译不可用，已临时切换到兼容模式', error);
     return compileTextAssistResources(texts);
   }
+}
+
+function isTextAssistImportRulesFileRequest(value: unknown): value is TextAssistImportRulesFileRequest {
+  return isRecord(value) && typeof value.name === 'string' && value.name.length > 0 && value.name.length <= 255 &&
+    value.name.toLocaleLowerCase().endsWith('.txt') && typeof value.text === 'string' &&
+    value.text.length <= MAX_RESOURCE_LENGTH;
 }
 
 class TextAssistResourceReadError extends Error {
@@ -906,14 +933,15 @@ function normalizeBindings(value: Record<string, unknown>): Partial<Record<TextA
   const result: Partial<Record<TextAssistResourceRole, TextAssistResourceBinding>> = {};
   for (const role of TEXT_ASSIST_RESOURCE_ROLES) {
     const binding = value[role];
-    if (!isRecord(binding) || ![1, 2, 3].includes(binding.schemaVersion as number) || binding.role !== role ||
+    if (!isRecord(binding) || ![1, 2, 3, 4].includes(binding.schemaVersion as number) || binding.role !== role ||
       typeof binding.nodeId !== 'string' || !Number.isFinite(binding.createdAt) || !Number.isFinite(binding.updatedAt)) continue;
     result[role] = {
       ...binding,
-      schemaVersion: 3,
+      schemaVersion: 4,
       defaultRuleVersion: Number.isInteger(binding.defaultRuleVersion) && (binding.defaultRuleVersion as number) >= 0
         ? binding.defaultRuleVersion as number
         : 0,
+      ruleStorage: binding.ruleStorage === 'builtin-overlay' ? 'builtin-overlay' : 'embedded',
     } as TextAssistResourceBinding;
   }
   return result;
@@ -955,6 +983,21 @@ async function ensureAndUpgradeResources(
   );
   if (ensured.created.some((item) => item.role === 'rules')) return;
   await context.commands.dispatch('textAssist.mergeDefaultRules', { automatic: true });
+}
+
+function compactBundledRuleText(existing: string, bundled: string): string | undefined {
+  const current = normalizeRuleText(existing);
+  const base = normalizeRuleText(bundled).trimEnd();
+  if (current.trimEnd() === base) return BUILTIN_RULE_OVERLAY_TEXT;
+  if (!current.startsWith(base)) return undefined;
+  const suffix = current.slice(base.length);
+  if (!/^\s*\n/u.test(suffix)) return undefined;
+  const custom = suffix.trim();
+  return custom ? `${BUILTIN_RULE_OVERLAY_TEXT.trimEnd()}\n\n${custom}\n` : BUILTIN_RULE_OVERLAY_TEXT;
+}
+
+function normalizeRuleText(value: string): string {
+  return value.replace(/^\uFEFF/u, '').replace(/\r\n/gu, '\n');
 }
 
 function validateRequest(request: TextAssistAnalyzeRequest): void {

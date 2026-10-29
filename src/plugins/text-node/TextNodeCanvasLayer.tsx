@@ -36,7 +36,6 @@ function TextNodeCanvasLayerView({
   nodeById,
   duplicateOrigins,
   visibleNodes,
-  offscreenSelectedNodes,
   previews,
   resizePreviews,
   appearancePreview,
@@ -114,13 +113,6 @@ function TextNodeCanvasLayerView({
           </article>
         );
       })}
-      {offscreenSelectedNodes.map((node) => (
-        <article
-          className="canvas-selected-node-proxy"
-          key={`selected-proxy:${node.id}`}
-          aria-label={`已选中，文本节点：${node.title}`}
-        />
-      ))}
       {visibleNodes.map((node) => {
         const position = previews[node.id] ?? node;
         const size = resizePreviews[node.id] ?? node;

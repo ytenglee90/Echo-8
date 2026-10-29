@@ -9,6 +9,7 @@ import type {
   AIStatusSignal,
 } from '../../protocols/ai.ts';
 import { Icon } from '../../ui/Icon.tsx';
+import { ProcessingIndicator, ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import {
   chooseNativeAIMemoryFiles,
 } from '../../ui/native-save.ts';
@@ -165,7 +166,11 @@ export function AIMemoryCenter({
             <button type="button" onClick={() => void chooseMemoryDirectory()}><Icon name="folder-open" size={14} />{memoryFiles.linked ? '更改保存路径' : '选择保存路径'}</button>
             <button type="button" onClick={() => void importMemoryFiles()}><Icon name="folder-open" size={14} />从本地导入记忆</button>
           </span>
-          {memoryFiles.writingSourceIds.length > 0 && <small className="ai-memory-files-progress">正在保存 {memoryFiles.writingSourceIds.length} 份记忆…</small>}
+          {memoryFiles.writingSourceIds.length > 0 && (
+            <small className="ai-memory-files-progress">
+              <ProcessingLabel size={9}>正在保存 {memoryFiles.writingSourceIds.length} 份记忆…</ProcessingLabel>
+            </small>
+          )}
         </div>
       </header>
       <section className="ai-memory-daily-action" aria-label="保存当前对话">
@@ -178,14 +183,18 @@ export function AIMemoryCenter({
               : memoryFiles.linked
                 ? '保存后，AI 可以在以后的相关提问中找到本轮内容。'
                 : '第一次保存会优先定位到书籍所在文件夹；确认后直接保存本轮对话。'}</small>
-          {savingCurrentSession && <small className="ai-memory-save-progress" role="status">正在保存原文并建立索引；完成后会自动显示在下方。</small>}
+          {savingCurrentSession && (
+            <small className="ai-memory-save-progress" role="status">
+              <ProcessingLabel size={9}>正在保存原文并建立索引；完成后会自动显示在下方。</ProcessingLabel>
+            </small>
+          )}
         </div>
         <button
           type="button"
           disabled={!currentSessionId || currentSessionTurns === 0 || savingCurrentSession}
           onClick={onSaveSession}
           title={savingCurrentSession ? '正在保存原文并建立索引，请稍候' : currentMemory ? '更新当前对话原文和检索索引' : '保存当前对话原文并建立检索索引'}
-        >{savingCurrentSession ? '正在保存…' : currentMemory ? '保存更新' : '保存本轮对话'}</button>
+        >{savingCurrentSession && <ProcessingIndicator size={10} />}{savingCurrentSession ? '正在保存…' : currentMemory ? '保存更新' : '保存本轮对话'}</button>
       </section>
       {(selectedSourceIds.size > 0 || contextMode === 'explicit-only') && <div className="ai-memory-selection-summary" role="status">
         <span>{selectedSourceIds.size > 0
@@ -220,7 +229,14 @@ export function AIMemoryCenter({
         <span className="sr-only">筛选记忆</span>
         <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索已保存的记忆" />
       </label>}
-      {status.state !== 'idle' && <div className={`ai-status ai-status-${status.state}`} role="status"><i />{status.message}</div>}
+      {status.state !== 'idle' && (
+        <div className={`ai-status ai-status-${status.state}`} role="status">
+          {status.state === 'preparing' || status.state === 'indexing' || status.state === 'generating'
+            ? <ProcessingIndicator size={10} />
+            : <i />}
+          {status.message}
+        </div>
+      )}
       {memoryFiles.lastError && <p className="ai-error" role="alert">{memoryFiles.lastError}</p>}
       {error && <p className="ai-error" role="alert">{error}</p>}
       {unresolvedConflicts.length > 0 && (

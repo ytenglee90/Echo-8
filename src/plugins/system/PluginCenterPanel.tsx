@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { PluginSnapshot, ViewClient } from '../../core/contracts.ts';
 import { IconButton } from '../../ui/Icon.tsx';
+import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
 export function PluginCenterPanel({ client }: { client: ViewClient }) {
   const [plugins, setPlugins] = useState<PluginSnapshot[]>([]);
@@ -77,7 +78,9 @@ export function PluginCenterPanel({ client }: { client: ViewClient }) {
                     : undefined;
                 return (
                   <div className="plugin-row" key={plugin.id}>
-                    <span className={`plugin-state ${active ? 'active' : ''}`} aria-hidden="true" />
+                    {busy === plugin.id
+                      ? <ProcessingIndicator size={10} />
+                      : <span className={`plugin-state ${active ? 'active' : ''}`} aria-hidden="true" />}
                     <div>
                       <strong>{plugin.name}</strong>
                       <span>{reason ?? pluginStatusLabel(plugin.status)}</span>

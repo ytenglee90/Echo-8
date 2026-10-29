@@ -14,6 +14,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
+import { isAbortError } from '../../services/abort.ts';
 import { countNonWhitespaceGraphemes, countWritingUnits } from '../../services/text-metrics.ts';
 import {
   ANNOTATION_TEXT_CLIPBOARD_MIME,
@@ -1207,8 +1208,4 @@ function textAssistRequest(
     maxDecorations: 240,
     maxCompletions: 8,
   };
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
 }

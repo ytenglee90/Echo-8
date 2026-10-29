@@ -1,13 +1,6 @@
 import type { PluginStatus } from './contracts.ts';
-
-export interface DiagnosticRecord {
-  id: number;
-  timestamp: number;
-  level: 'info' | 'warn' | 'error';
-  source: string;
-  message: string;
-  detail?: unknown;
-}
+import type { DiagnosticRecord } from '../protocols/diagnostics.ts';
+export type { DiagnosticRecord } from '../protocols/diagnostics.ts';
 
 export class DiagnosticsService {
   private sequence = 0;

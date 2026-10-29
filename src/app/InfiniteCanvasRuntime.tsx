@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ApplicationKernel } from '../core/kernel.ts';
 import { InfiniteCanvasShell } from '../shell/InfiniteCanvasShell.tsx';
-import { Icon } from '../ui/Icon.tsx';
+import { BrandLoadingMark } from '../ui/ProcessingIndicator.tsx';
 
 export function InfiniteCanvasRuntime({
   createKernel,
@@ -61,7 +61,7 @@ export function InfiniteCanvasRuntime({
   if (!kernel || status === 'starting') {
     return (
       <main className="boot-screen" aria-live="polite">
-        <div className="boot-mark"><Icon name="echo-8" size={52} /></div>
+        <div className="boot-mark"><BrandLoadingMark size={52} /></div>
         <strong>正在建立广播与插件边界</strong>
         <span>恢复数据 · 验证能力 · 注入界面</span>
       </main>

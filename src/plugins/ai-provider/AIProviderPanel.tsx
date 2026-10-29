@@ -4,6 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import { IconButton } from '../../ui/Icon.tsx';
 import { Icon } from '../../ui/Icon.tsx';
+import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import {
   chooseNativePersonalAIBackup,
   chooseNativePersonalAIBackupOpen,
@@ -52,6 +53,7 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [presetId, setPresetId] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const applyState = (next: AIProviderPanelState, preferredId?: string) => {
     setState(next);
@@ -75,12 +77,15 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
 
   const run = async (operation: () => Promise<unknown>, success: string, preferredId?: string) => {
     setError('');
+    setBusy(true);
     try {
       await operation();
       setMessage(success);
       await refresh(preferredId);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
     }
   };
   const selectProfile = (profileId: string) => {
@@ -139,7 +144,7 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
   };
 
   return (
-    <section className="ai-provider-panel" aria-label="AI 模型连接与密钥">
+    <section className="ai-provider-panel" aria-label="AI 模型连接与密钥" aria-busy={busy || undefined}>
       <header className="ai-provider-transfer-actions" aria-label="配置导出与导入">
         <div>
           <strong>配置迁移</strong>
@@ -178,7 +183,7 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
             setDraft({ ...EMPTY_DRAFT });
             setApiKey('');
             setPresetId('');
-            setMessage('正在添加新的平台连接');
+            setMessage('请填写新的平台连接');
             setError('');
           }}
         />
@@ -316,7 +321,9 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
           )}
         />
       </div>
-      {message && <p className="ai-message">{message}</p>}
+      {busy
+        ? <p className="ai-message" role="status"><ProcessingLabel size={9}>正在处理模型连接设置…</ProcessingLabel></p>
+        : message && <p className="ai-message">{message}</p>}
       {error && <p className="ai-error" role="alert">{error}</p>}
       </section>
     </section>
