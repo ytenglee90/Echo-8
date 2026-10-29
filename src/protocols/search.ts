@@ -85,7 +85,7 @@ export interface ContentReplaceRequest {
 
 export interface SearchReplaceTargetsRequest extends ContentReplaceRequest {
   selectedNodeIds: string[];
-  /** Exactly one current editor hit; ignored when result-list nodes are selected. */
+  /** Exact highlighted hit. It takes precedence over selected nodes and the canvas fallback. */
   currentHit?: SearchHit;
 }
 

@@ -6108,7 +6108,7 @@ test('search previous and next retain a multi-node selection scope while selecti
   assert.equal(titleEditor.activePane, nodes[0].id);
 });
 
-test('replace changes one selected editor hit or every hit in selected result nodes, then searches again', async () => {
+test('replace prioritizes the highlighted hit, then selected nodes, then the full canvas', async () => {
   const harness = createHarness();
   const editorPlugin = createEditorPlugin();
   const searchPlugin = createSearchReplacePlugin();
@@ -6128,7 +6128,7 @@ test('replace changes one selected editor hit or every hit in selected result no
   );
   const second = await harness.router.dispatch<{ id: string }>(
     'node.create',
-    { title: '列表节点', body: 'current-token select-token' },
+    { title: '列表节点', body: 'current-token select-token select-token' },
     'core.test',
   );
   await harness.router.dispatch('editor.open', { id: first.id }, 'core.test');
@@ -6190,7 +6190,7 @@ test('replace changes one selected editor hit or every hit in selected result no
   refreshed = waitForSearch('current-token');
   await harness.router.dispatch('search.replaceTargets', {
     hits: currentHits.hits,
-    selectedNodeIds: [],
+    selectedNodeIds: [first.id],
     currentHit,
     replacement: 'CURRENT',
   }, 'core.test');
@@ -6213,7 +6213,7 @@ test('replace changes one selected editor hit or every hit in selected result no
     nodeId: second.id, start: 0, length: 100,
   });
   assert.equal(firstBody.text, 'CURRENT middle current-token select-token');
-  assert.equal(secondBody.text, 'current-token select-token');
+  assert.equal(secondBody.text, 'current-token select-token select-token');
 
   let selectedRefresh = waitForSearch('select-token');
   await harness.router.dispatch('search.run', {
@@ -6239,7 +6239,24 @@ test('replace changes one selected editor hit or every hit in selected result no
     nodeId: second.id, start: 0, length: 100,
   });
   assert.equal(firstBody.text, 'CURRENT middle current-token select-token');
-  assert.equal(secondBody.text, 'current-token SELECTED');
+  assert.equal(secondBody.text, 'current-token SELECTED SELECTED');
+
+  const globalRefresh = waitForSearch('select-token');
+  await harness.router.dispatch('search.replaceTargets', {
+    hits: refreshedSelected.hits,
+    selectedNodeIds: [],
+    replacement: 'GLOBAL',
+  }, 'core.test');
+  const refreshedGlobal = await globalRefresh;
+  assert.equal(refreshedGlobal.hits.length, 0);
+  firstBody = await harness.capabilities.request<{ text: string }>('content.read@1', {
+    nodeId: first.id, start: 0, length: 100,
+  });
+  secondBody = await harness.capabilities.request<{ text: string }>('content.read@1', {
+    nodeId: second.id, start: 0, length: 100,
+  });
+  assert.equal(firstBody.text, 'CURRENT middle current-token GLOBAL');
+  assert.equal(secondBody.text, 'current-token SELECTED SELECTED');
 });
 
 test('global replace validates revisions and commits all matched nodes as one history entry', async () => {

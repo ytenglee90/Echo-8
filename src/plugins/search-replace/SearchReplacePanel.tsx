@@ -11,7 +11,13 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
-import type { SearchNavigationSignal, SearchResult, SearchStatus } from '../../protocols/search.ts';
+import type {
+  SearchMatchPreview,
+  SearchHit,
+  SearchNavigationSignal,
+  SearchResult,
+  SearchStatus,
+} from '../../protocols/search.ts';
 import type { SelectionMode, SelectionSnapshot } from '../../protocols/selection.ts';
 import type { EditorContextSnapshot, EditorSelectionSnapshot } from '../../protocols/editor.ts';
 import type { FloatingPanelRect } from '../../protocols/floating.ts';
@@ -62,6 +68,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
   const [editorContext, setEditorContext] = useState<EditorContextSnapshot>({ openPanes: [] });
   const [editorSelection, setEditorSelection] = useState<EditorSelectionSnapshot>();
   const [navigationState, setNavigationState] = useState<SearchNavigationSignal>();
+  const [matchPreview, setMatchPreview] = useState<SearchMatchPreview>();
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [lasso, setLasso] = useState<SearchLassoRect>();
   const selectionAnchor = useRef<number | undefined>(undefined);
@@ -97,6 +104,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
       if (message.payload.state === 'replaced') {
         setResult(undefined);
         setNavigationState(undefined);
+        setMatchPreview(undefined);
         setLasso(undefined);
         selectionAnchor.current = undefined;
       }
@@ -108,6 +116,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     () => client.subscribeSignal<SearchResult>('search.results', (message) => {
       setResult(message.payload);
       setNavigationState(undefined);
+      setMatchPreview(undefined);
       setLasso(undefined);
       selectionAnchor.current = undefined;
     }),
@@ -118,6 +127,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     () => client.subscribeSignal('search.results.clear', () => {
       setResult(undefined);
       setNavigationState(undefined);
+      setMatchPreview(undefined);
       setLasso(undefined);
       selectionAnchor.current = undefined;
     }),
@@ -141,6 +151,13 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
 
   useEffect(
     () => client.subscribeSignal('search.navigation.clear', () => setNavigationState(undefined)),
+    [client],
+  );
+
+  useEffect(
+    () => client.subscribeSignal<SearchMatchPreview>('search.match.preview', (message) => {
+      setMatchPreview(message.payload.clear ? undefined : message.payload);
+    }),
     [client],
   );
 
@@ -214,9 +231,27 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     )),
     [editorContext.activePane, editorSelection, result],
   );
-  const replacementHits = selectedNodeIds.length > 0
-    ? selectedHits
-    : currentEditorHit ? [currentEditorHit] : [];
+  const previewHit = useMemo(
+    () => result?.hits.find((hit) => (
+      hit.nodeId === matchPreview?.nodeId &&
+      hit.field === matchPreview.field &&
+      hit.start === matchPreview.start &&
+      hit.length === matchPreview.length
+    )),
+    [matchPreview, result],
+  );
+  const highlightedHit = previewHit?.field === 'title'
+    ? previewHit
+    : previewHit && currentEditorHit && sameSearchHit(previewHit, currentEditorHit)
+      ? previewHit
+      : currentEditorHit;
+  const replacementMode = highlightedHit
+    ? 'current'
+    : selectedNodeIds.length > 0 ? 'selection' : 'canvas';
+  const replacementHits = replacementMode === 'current'
+    ? [highlightedHit!]
+    : replacementMode === 'selection' ? selectedHits : result?.hits ?? [];
+  const incompleteBatch = Boolean(result?.truncated && replacementMode !== 'current');
 
   if (!open) return null;
 
@@ -225,6 +260,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
   };
   const resetNavigation = () => {
     setNavigationState(undefined);
+    setMatchPreview(undefined);
     client.emit('search.navigation.reset', {});
   };
   const commitSelection = (
@@ -246,11 +282,11 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     }));
   };
   const replaceTargets = () => {
-    if (!result || replacementHits.length === 0 || result.truncated) return;
+    if (!result || replacementHits.length === 0 || incompleteBatch) return;
     void client.dispatch('search.replaceTargets', {
       hits: result.hits,
       selectedNodeIds,
-      currentHit: currentEditorHit,
+      currentHit: highlightedHit,
       replacement,
     }).catch((error) => setStatus({
       state: 'error',
@@ -439,20 +475,24 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
           <button
             type="button"
             className="search-main-action"
-            title={result?.truncated
-              ? '结果达到上限，不能执行不完整的替换'
-              : selectedNodeIds.length > 0
-                ? selectedHits.length > 0
-                  ? '替换画布所选节点中的全部标题和正文命中'
-                  : '画布所选节点中没有可替换的匹配'
-                : currentEditorHit
-                  ? '没有选择列表节点，将只替换当前文本编辑区选中的这一处'
-                  : '请在当前文本编辑区选中一处查找结果，或在结果列表中选择节点'}
-            disabled={replacementHits.length === 0 || Boolean(result?.truncated)}
+            title={incompleteBatch
+              ? '结果达到上限，不能执行不完整的批量替换；可以先定位并替换当前一处'
+              : replacementMode === 'current'
+                ? '只替换当前蓝色标题高亮或编辑区选中的这一处'
+                : replacementMode === 'selection'
+                  ? selectedHits.length > 0
+                    ? '替换画布所选节点中的全部标题和正文命中'
+                    : '画布所选节点中没有可替换的匹配'
+                  : replacementHits.length > 0
+                    ? '当前没有高亮或节点选择，替换全画布的全部标题和正文命中'
+                    : '全画布没有可替换的匹配'}
+            disabled={replacementHits.length === 0 || incompleteBatch}
             onClick={replaceTargets}
           >
             <Icon name="replace" size={17} />
-            <span>{selectedNodeIds.length > 0 ? '替换所选匹配' : '替换当前一处'}</span>
+            <span>{replacementMode === 'current'
+              ? '替换当前一处'
+              : replacementMode === 'selection' ? '替换所选节点' : '替换全画布'}</span>
           </button>
         </div>
         <p className={`search-status ${status.state === 'error' ? 'error' : ''}`} aria-live="polite">
@@ -616,4 +656,13 @@ function rectanglesIntersect(
     left.top <= right.bottom &&
     left.bottom >= right.top
   );
+}
+
+function sameSearchHit(left: SearchHit, right: SearchHit): boolean {
+  return left.nodeId === right.nodeId &&
+    (left.field ?? 'body') === (right.field ?? 'body') &&
+    left.start === right.start &&
+    left.length === right.length &&
+    left.revision === right.revision &&
+    left.matchedText === right.matchedText;
 }

@@ -2181,20 +2181,28 @@ test('search navigation highlights title hits and opens the matching body editor
   const result = panel.getByRole('option').filter({ hasText: '画布基本操作指南' });
   await expect(result).toBeVisible();
   await expect(result).toContainText('标题 1 处');
+  await expect(panel.getByRole('button', { name: '替换全画布', exact: true })).toBeVisible();
+  await expect.poll(async () => Math.round((await result.boundingBox())?.height ?? 0)).toBe(72);
+  const panelHeight = Math.round((await panel.boundingBox())?.height ?? 0);
+  await panel.getByRole('button', { name: '调整查找与替换大小', exact: true }).press('Shift+ArrowUp');
+  await expect.poll(async () => Math.round((await panel.boundingBox())?.height ?? 0)).toBe(panelHeight - 40);
+  await expect.poll(async () => Math.round((await result.boundingBox())?.height ?? 0)).toBe(72);
   await result.click();
 
   const card = page.getByRole('article', { name: '已选中，文本节点：画布基本操作指南', exact: true });
   await expect(card).toHaveClass(/selected/u);
   await expect(result).toHaveAttribute('aria-selected', 'true');
+  await expect(panel.getByRole('button', { name: '替换所选节点', exact: true })).toBeVisible();
 
   await panel.getByRole('button', { name: '下一个', exact: true }).click();
   const titleMatch = card.locator('.node-title-search-hit');
   await expect(titleMatch).toHaveText('画布基本操作指南');
   await expect(titleMatch).toHaveCSS('background-color', 'rgb(10, 132, 255)');
   await expect(page.getByRole('region', { name: '文本编辑区' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: '替换当前一处', exact: true })).toBeVisible();
 
   await panel.getByRole('textbox', { name: '替换为' }).fill('画布操作手册');
-  await panel.getByRole('button', { name: '替换所选匹配', exact: true }).click();
+  await panel.getByRole('button', { name: '替换当前一处', exact: true }).click();
   const renamedCard = page.getByRole('article', { name: '已选中，文本节点：画布操作手册', exact: true });
   await expect(renamedCard).toBeVisible();
   await expect(panel.getByRole('option').filter({ hasText: '画布基本操作指南' })).toHaveCount(0);

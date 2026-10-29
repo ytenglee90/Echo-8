@@ -49,6 +49,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
   let navigationScope: NavigationScopeState | undefined;
   let expectedNavigationSelections: string[][] = [];
   let pendingNavigation: PendingReplacementNavigation | undefined;
+  let highlightedHit: SearchHit | undefined;
   return {
     manifest: defineManifest('search-replace', '查找替换', {
       namespaces: [SEARCH_NAMESPACE],
@@ -124,6 +125,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
       navigationScope = undefined;
       expectedNavigationSelections = [];
       pendingNavigation = undefined;
+      highlightedHit = undefined;
       const isOpen = () => context.store.readValue<boolean>(SEARCH_NAMESPACE, 'open') ?? false;
       const readRect = () => normalizeFloatingRect(
         context.store.readValue(SEARCH_NAMESPACE, 'panelRect'),
@@ -133,6 +135,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         navigationState = undefined;
         navigationScope = undefined;
         expectedNavigationSelections = [];
+        highlightedHit = undefined;
         context.signals.emit('search.navigation.clear', {});
         context.signals.emit('search.match.preview', { clear: true } satisfies SearchMatchPreview);
       };
@@ -172,6 +175,13 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         } catch {
           return;
         }
+        highlightedHit = hit;
+        context.signals.emit('search.match.preview', {
+          nodeId: hit.nodeId,
+          field: hit.field,
+          start: hit.start,
+          length: hit.length,
+        } satisfies SearchMatchPreview);
         navigationState = {
           nodeId: activeNodeId,
           index,
@@ -280,6 +290,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
               }
             }
             if (signal.aborted || latestResult?.requestId !== source.requestId) return;
+            highlightedHit = target.hit;
             context.signals.emit('search.match.preview', {
               nodeId: target.hit.nodeId,
               field: target.hit.field,
@@ -490,8 +501,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         validate: isReplaceTargetsRequest,
         handle: async (payload) => {
           const selectedNodeIds = [...new Set(payload.selectedNodeIds)];
-          if (selectedNodeIds.length === 0) {
-            if (!payload.currentHit) throw new Error('请先在当前文本编辑区选中一处查找结果');
+          if (payload.currentHit) {
             if (payload.currentHit.field !== 'title') {
               const selection = await context.capabilities.request<EditorSelectionSnapshot | undefined>(
                 'editor.selection@1',
@@ -502,21 +512,28 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
                 selection.end !== payload.currentHit.start + payload.currentHit.length) {
                 throw new Error('当前文本编辑区选中的内容已经变化，请重新选择一处查找结果');
               }
+            } else if (!highlightedHit || !sameSearchHit(highlightedHit, payload.currentHit)) {
+              throw new Error('当前标题高亮已经变化，请重新定位这一处查找结果');
             }
             const currentHit = payload.hits.find((hit) => sameSearchHit(hit, payload.currentHit!));
             if (!currentHit) throw new Error('当前选中的查找结果已经失效，请等待重新检索');
             return createReplacement(
               { hits: [currentHit], replacement: payload.replacement },
-              {
+              currentHit.field === 'body' ? {
                 nodeId: currentHit.nodeId,
                 afterStart: currentHit.start + payload.replacement.length,
-              },
+              } : undefined,
             );
           }
-          const targets = new Set(selectedNodeIds);
-          const hits = payload.hits.filter((hit) => targets.has(hit.nodeId));
+          if (latestResult?.truncated) {
+            throw new Error('查找结果达到上限，不能执行不完整的批量替换');
+          }
+          const targets = selectedNodeIds.length > 0 ? new Set(selectedNodeIds) : undefined;
+          const hits = targets ? payload.hits.filter((hit) => targets.has(hit.nodeId)) : payload.hits;
           if (hits.length === 0) {
-            throw new Error('所选节点中没有可替换的结果');
+            throw new Error(selectedNodeIds.length > 0
+              ? '所选节点中没有可替换的结果'
+              : '全画布没有可替换的结果');
           }
           return createReplacement({ hits, replacement: payload.replacement });
         },
@@ -666,6 +683,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
       navigationScope = undefined;
       expectedNavigationSelections = [];
       pendingNavigation = undefined;
+      highlightedHit = undefined;
     },
   };
 }
