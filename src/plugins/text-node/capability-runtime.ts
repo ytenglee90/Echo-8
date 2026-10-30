@@ -1278,7 +1278,7 @@ export function registerTextNodeCapabilities({
         const hits = [...rawHits].sort((left, right) => left.start - right.start);
         let previousEnd = -1;
         for (const hit of hits) {
-          if (hit.revision !== node.revision) throw new Error(`节点“${node.title}”标题已修改，请重新查找`);
+          if (hit.title !== node.title) throw new Error(`节点“${node.title}”标题已修改，请重新查找`);
           if (hit.start < previousEnd) throw new Error('标题替换范围发生重叠');
           if (node.title.slice(hit.start, hit.start + hit.length) !== hit.matchedText) {
             throw new Error(`节点“${node.title}”的标题匹配已变化，请重新查找`);

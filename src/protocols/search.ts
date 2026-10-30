@@ -33,7 +33,11 @@ export interface ContentSearchResult {
   truncated: boolean;
 }
 
-/** Title-and-body search result. Title offsets and revisions belong to the node title. */
+/**
+ * Title-and-body search result. Title offsets are bound to the exact `title`
+ * snapshot carried by each hit; the entity revision is informative because
+ * unrelated body, geometry, and appearance edits may advance it too.
+ */
 export interface ContentSearchResultV2 extends Omit<ContentSearchResult, 'hits'> {
   hits: SearchHitV2[];
 }
@@ -83,8 +87,10 @@ export interface ContentReplaceRequest {
   replacement: string;
 }
 
-export interface SearchReplaceTargetsRequest extends ContentReplaceRequest {
-  selectedNodeIds: string[];
+export interface SearchReplaceTargetsRequest {
+  /** Identifies the authoritative result set currently owned by the search plugin. */
+  requestId: string;
+  replacement: string;
   /** Exact highlighted hit. It takes precedence over selected nodes and the canvas fallback. */
   currentHit?: SearchHit;
 }

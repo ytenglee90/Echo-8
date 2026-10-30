@@ -240,6 +240,7 @@ export function createAIAssistantPlugin(
         'ai.assistant.continueMemory',
         'ai.openProviderSettings',
         'ai.close',
+        'ai.closeAll',
         'ai.setView',
         'ai.setPanelRect',
         'ai.setComposerHeight',
@@ -277,7 +278,7 @@ export function createAIAssistantPlugin(
         'ai.memory.candidate.dismiss',
       ],
       dispatches: [
-        'ai.open', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings',
+        'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings',
         'ai.context.prepare',
         'aiProvider.profile.activate', 'ai.promptTemplate.restorePersonal', 'system.preferences.set',
         'ai.memory.importFiles.commit',
@@ -337,6 +338,7 @@ export function createAIAssistantPlugin(
         'content.reference.drop-zone',
         'content.reference.drag.preview',
         'content.reference.drop',
+        'bookLibrary.updated',
       ],
       ui: ['ai.open-button', 'ai.panel', 'ai.memory.deleteConfirm'],
       actions: ['ai.open-action', 'ai.open-new-assistant-action', 'ai.open-provider-settings-action', 'ai.save-session-action'],
@@ -1045,6 +1047,30 @@ export function createAIAssistantPlugin(
           else context.ui.activateSurface('overlay.floating', 'ai.panel', 'ai.close');
           return assistantWorkspaceTransaction('最小化 AI 助手', next);
         },
+      });
+      context.commands.register({
+        type: 'ai.closeAll',
+        handle: () => {
+          const assistants = readAssistantInstances();
+          const visible = assistants.filter((assistant) => assistant.minimized !== true);
+          if (visible.length === 0) return { result: { closed: 0 } };
+          const next = assistants.map((assistant) => ({
+            ...assistant,
+            minimized: true,
+            draft: composerDrafts.get(assistant.id) ?? assistant.draft,
+          }));
+          activeAssistantId = undefined;
+          context.ui.deactivateSurface('overlay.floating', 'ai.panel');
+          return {
+            result: { closed: visible.length },
+            ...assistantWorkspaceTransaction('关闭全部 AI 助手窗口', next),
+          };
+        },
+      });
+      context.signals.subscribe('bookLibrary.updated', (message) => {
+        if (!isRecord(message.payload) || message.payload.open !== true) return;
+        if (!readAssistantInstances().some((assistant) => assistant.minimized !== true)) return;
+        void context.commands.dispatch('ai.closeAll');
       });
       context.commands.register<SessionIdPayload>({
         type: 'ai.assistant.removeDeletedWindow',

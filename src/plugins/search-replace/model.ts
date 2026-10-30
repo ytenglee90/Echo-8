@@ -43,6 +43,7 @@ interface NavigationScopeState {
 export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
   let activeTask: TaskHandle<SearchResult> | undefined;
   let debounceTask: TaskHandle<void> | undefined;
+  let refreshTask: TaskHandle<void> | undefined;
   let latestRequest: SearchRequest | undefined;
   let latestResult: SearchResult | undefined;
   let navigationState: SearchNavigationSignal | undefined;
@@ -74,12 +75,16 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         'search.replace',
         'search.replaceTargets',
       ],
-      dispatches: ['editor.open', 'editor.revealRange', 'selection.set', 'selection.clear'],
+      dispatches: ['search.close', 'search.run', 'editor.open', 'editor.revealRange', 'selection.set', 'selection.clear'],
       events: [
         'search.replaced',
         'content.changed',
+        'node.created',
         'node.renamed',
+        'nodes.deleted',
+        'nodes.pasted',
         'document.replaced',
+        'transaction.committed',
         'editor.panes.changed',
         'editor.active.changed',
         'selection.changed',
@@ -97,6 +102,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         'search.editorContext',
         'search.panel.preview',
         'editor.selection.preview',
+        'bookLibrary.updated',
       ],
       ui: ['search.open-button', 'search.panel'],
       actions: ['search.open-action'],
@@ -120,6 +126,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
     start(context) {
       activeTask = undefined;
       debounceTask = undefined;
+      refreshTask = undefined;
       latestRequest = undefined;
       latestResult = undefined;
       navigationState = undefined;
@@ -139,6 +146,16 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         highlightedHit = undefined;
         context.signals.emit('search.navigation.clear', {});
         context.signals.emit('search.match.preview', { clear: true } satisfies SearchMatchPreview);
+      };
+      const cancelActiveSearch = () => {
+        const task = activeTask;
+        activeTask = undefined;
+        task?.cancel();
+      };
+      const cancelRefresh = () => {
+        const task = refreshTask;
+        refreshTask = undefined;
+        task?.cancel();
       };
       const revealPendingResult = async (result: SearchResult) => {
         const pending = pendingNavigation;
@@ -206,6 +223,41 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
           ],
         },
       });
+      const invalidateAndRefresh = (message: string) => {
+        const request = latestRequest ? { ...latestRequest } : undefined;
+        cancelActiveSearch();
+        cancelRefresh();
+        latestResult = undefined;
+        clearNavigation();
+        context.signals.emit('search.results.clear', {});
+        context.signals.emit('search.status', {
+          state: 'replaced',
+          message: request ? `${message}，正在重新检索` : message,
+        } satisfies SearchStatus);
+        if (!request) return;
+        const task = context.tasks.schedule<void>({
+          category: 'search-refresh',
+          label: '刷新已失效的查找结果',
+          delayMs: 1,
+          noticeAfterMs: 10_000,
+          priority: 80,
+          timeoutMs: 10_000,
+          estimatedCost: 0,
+          run: async (signal) => {
+            if (signal.aborted || refreshTask?.id !== task.id) return;
+            refreshTask = undefined;
+            await context.commands.dispatch('search.run', request);
+          },
+        });
+        refreshTask = task;
+        void task.result.catch((error) => {
+          if (isAbortError(error)) return;
+          context.signals.emit('search.status', {
+            state: 'error',
+            message: error instanceof Error ? error.message : String(error),
+          } satisfies SearchStatus);
+        });
+      };
 
       context.commands.register({
         type: 'search.open',
@@ -349,7 +401,8 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         handle: (payload) => {
           debounceTask?.cancel();
           debounceTask = undefined;
-          activeTask?.cancel();
+          cancelRefresh();
+          cancelActiveSearch();
           latestRequest = { ...payload };
           const requestId = createId('search');
           const status: SearchStatus = { requestId, state: 'running', message: '正在按块扫描标题和正文' };
@@ -383,6 +436,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
           void task.result.then(
             (result) => {
               if (activeTask?.id !== task.id) return;
+              activeTask = undefined;
               latestResult = result;
               clearNavigation();
               context.signals.emit('search.results', result);
@@ -395,6 +449,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
             },
             (error) => {
               if (activeTask?.id !== task.id || isAbortError(error)) return;
+              activeTask = undefined;
               context.signals.emit('search.status', {
                 requestId,
                 state: 'error',
@@ -412,7 +467,8 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         latestResult = undefined;
         clearNavigation();
         debounceTask?.cancel();
-        activeTask?.cancel();
+        cancelRefresh();
+        cancelActiveSearch();
         context.signals.emit('search.results.clear', {});
         if (message.payload.query.length > 512) {
           context.signals.emit('search.status', {
@@ -501,7 +557,10 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         type: 'search.replaceTargets',
         validate: isReplaceTargetsRequest,
         handle: async (payload) => {
-          const selectedNodeIds = [...new Set(payload.selectedNodeIds)];
+          const source = latestResult;
+          if (!source || source.requestId !== payload.requestId) {
+            throw new Error('查找结果已经变化，请等待重新检索');
+          }
           if (payload.currentHit) {
             if (payload.currentHit.field !== 'title') {
               const selection = await context.capabilities.request<EditorSelectionSnapshot | undefined>(
@@ -516,7 +575,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
             } else if (!highlightedHit || !sameSearchHit(highlightedHit, payload.currentHit)) {
               throw new Error('当前标题高亮已经变化，请重新定位这一处查找结果');
             }
-            const currentHit = payload.hits.find((hit) => sameSearchHit(hit, payload.currentHit!));
+            const currentHit = source.hits.find((hit) => sameSearchHit(hit, payload.currentHit!));
             if (!currentHit) throw new Error('当前选中的查找结果已经失效，请等待重新检索');
             return createReplacement(
               { hits: [currentHit], replacement: payload.replacement },
@@ -526,11 +585,20 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
               } : undefined,
             );
           }
-          if (latestResult?.truncated) {
+          if (source.truncated) {
             throw new Error('查找结果达到上限，不能执行不完整的批量替换');
           }
+          let selectedNodeIds: string[] = [];
+          try {
+            const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+            selectedNodeIds = [...new Set(selection.items
+              .filter((item) => item.kind === 'text-node')
+              .map((item) => item.id))];
+          } catch {
+            // Headless compositions may omit selection; replacement then covers the canvas result.
+          }
           const targets = selectedNodeIds.length > 0 ? new Set(selectedNodeIds) : undefined;
-          const hits = targets ? payload.hits.filter((hit) => targets.has(hit.nodeId)) : payload.hits;
+          const hits = targets ? source.hits.filter((hit) => targets.has(hit.nodeId)) : source.hits;
           if (hits.length === 0) {
             throw new Error(selectedNodeIds.length > 0
               ? '所选节点中没有可替换的结果'
@@ -549,41 +617,31 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         pendingNavigation = request && navigation
           ? { ...navigation, query: request.query }
           : undefined;
-        context.signals.emit('search.status', {
-          state: 'replaced',
-          message: request
-            ? `已替换 ${typeof payload.replaced === 'number' ? payload.replaced : 0} 处，正在重新检索`
-            : `已替换 ${typeof payload.replaced === 'number' ? payload.replaced : 0} 处`,
-        } satisfies SearchStatus);
-        if (request) void context.commands.dispatch('search.run', request);
+        invalidateAndRefresh(`已替换 ${typeof payload.replaced === 'number' ? payload.replaced : 0} 处`);
       });
       context.events.subscribe('document.replaced', () => {
-        activeTask?.cancel();
+        cancelActiveSearch();
+        cancelRefresh();
+        latestRequest = undefined;
         latestResult = undefined;
         clearNavigation();
         pendingNavigation = undefined;
+        context.signals.emit('search.results.clear', {});
         context.signals.emit('search.status', {
           state: 'replaced',
           message: '已打开另一份画布，请重新查找',
         } satisfies SearchStatus);
       });
-      context.events.subscribe('content.changed', () => {
-        activeTask?.cancel();
-        latestResult = undefined;
-        clearNavigation();
-        context.signals.emit('search.status', {
-          state: 'replaced',
-          message: '正文已修改，旧结果已失效，请重新查找',
-        } satisfies SearchStatus);
-      });
-      context.events.subscribe('node.renamed', () => {
-        activeTask?.cancel();
-        latestResult = undefined;
-        clearNavigation();
-        context.signals.emit('search.status', {
-          state: 'replaced',
-          message: '标题已修改，旧结果已失效，请重新查找',
-        } satisfies SearchStatus);
+      context.events.subscribe('content.changed', () => invalidateAndRefresh('正文已修改'));
+      context.events.subscribe('node.renamed', () => invalidateAndRefresh('标题已修改'));
+      context.events.subscribe('node.created', () => invalidateAndRefresh('画布节点已增加'));
+      context.events.subscribe('nodes.deleted', () => invalidateAndRefresh('画布节点已删除'));
+      context.events.subscribe('nodes.pasted', () => invalidateAndRefresh('画布节点已粘贴'));
+      context.events.subscribe('transaction.committed', (message) => {
+        const payload = isRecord(message.payload) ? message.payload : undefined;
+        const record = payload && isRecord(payload.record) ? payload.record : undefined;
+        if (record?.historyAction === 'undo') invalidateAndRefresh('已撤销修改');
+        else if (record?.historyAction === 'redo') invalidateAndRefresh('已重做修改');
       });
       const publishEditorContext = () => {
         void context.capabilities.request<EditorContextSnapshot>('editor.context@1').then(
@@ -608,6 +666,10 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         clearNavigation();
       });
       context.signals.subscribe('search.navigation.reset', () => clearNavigation());
+      context.signals.subscribe('bookLibrary.updated', (message) => {
+        if (!isRecord(message.payload) || message.payload.open !== true || !isOpen()) return;
+        void context.commands.dispatch('search.close');
+      });
 
       context.capabilities.provide({
         key: 'search.state@1',
@@ -678,6 +740,8 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
       debounceTask = undefined;
       activeTask?.cancel();
       activeTask = undefined;
+      refreshTask?.cancel();
+      refreshTask = undefined;
       latestRequest = undefined;
       latestResult = undefined;
       navigationState = undefined;
@@ -742,12 +806,11 @@ function isReplaceRequest(payload: unknown): payload is ContentReplaceRequest {
 }
 
 function isReplaceTargetsRequest(payload: unknown): payload is SearchReplaceTargetsRequest {
-  if (!isRecord(payload)) return false;
-  const selectedNodeIds = payload.selectedNodeIds;
   return (
-    isReplaceRequest(payload) &&
-    Array.isArray(selectedNodeIds) &&
-    selectedNodeIds.every((id: unknown) => typeof id === 'string' && id.length > 0) &&
+    isRecord(payload) &&
+    typeof payload.requestId === 'string' &&
+    payload.requestId.length > 0 &&
+    typeof payload.replacement === 'string' &&
     (payload.currentHit === undefined || isSearchHit(payload.currentHit))
   );
 }

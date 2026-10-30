@@ -244,7 +244,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
     ? previewHit
     : previewHit && currentEditorHit && sameSearchHit(previewHit, currentEditorHit)
       ? previewHit
-      : currentEditorHit;
+      : undefined;
   const replacementMode = highlightedHit
     ? 'current'
     : selectedNodeIds.length > 0 ? 'selection' : 'canvas';
@@ -284,8 +284,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
   const replaceTargets = () => {
     if (!result || replacementHits.length === 0 || incompleteBatch) return;
     void client.dispatch('search.replaceTargets', {
-      hits: result.hits,
-      selectedNodeIds,
+      requestId: result.requestId,
       currentHit: highlightedHit,
       replacement,
     }).catch((error) => setStatus({
@@ -478,7 +477,7 @@ export function SearchReplacePanel({ client }: { client: ViewClient }) {
             title={incompleteBatch
               ? '结果达到上限，不能执行不完整的批量替换；可以先定位并替换当前一处'
               : replacementMode === 'current'
-                ? '只替换当前蓝色标题高亮或编辑区选中的这一处'
+                ? '只替换上一个/下一个当前定位并高亮的这一处'
                 : replacementMode === 'selection'
                   ? selectedHits.length > 0
                     ? '替换画布所选节点中的全部标题和正文命中'

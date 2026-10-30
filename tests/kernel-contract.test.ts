@@ -5557,6 +5557,54 @@ test('title-and-body search reports title offsets without treating them as repla
   );
 });
 
+test('search refreshes after content edits and title hits survive unrelated body revisions', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSearchReplacePlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('search-replace');
+  const node = await harness.router.dispatch<{ id: string }>(
+    'node.create',
+    { title: 'revision-title-token 节点', body: '正文' },
+    'core.test',
+  );
+  const waitForSearch = () => new Promise<SearchResult>((resolve) => {
+    const unsubscribe = harness.router.subscribeSignal('core.test', 'search.results', (message) => {
+      const result = message.payload as SearchResult;
+      if (result.query !== 'revision-title-token') return;
+      unsubscribe();
+      resolve(result);
+    });
+  });
+  let refreshed = waitForSearch();
+  await harness.router.dispatch('search.run', {
+    query: 'revision-title-token', scope: 'canvas', matchCase: true, wholeWord: false,
+  }, 'core.test');
+  const initial = await refreshed;
+  assert.equal(initial.hits.length, 1);
+  assert.equal(initial.hits[0]?.field, 'title');
+
+  refreshed = waitForSearch();
+  await harness.router.dispatch('content.applyDelta', {
+    nodeId: node.id,
+    start: 0,
+    deleteCount: 0,
+    insert: 'revision-title-token',
+  }, 'core.test');
+  const afterBodyEdit = await refreshed;
+  assert.equal(afterBodyEdit.hits.length, 2);
+  assert.deepEqual(afterBodyEdit.hits.map((hit) => hit.field), ['title', 'body']);
+
+  await harness.router.dispatch('search.replace', {
+    hits: [initial.hits[0]!],
+    replacement: 'stable-title-token',
+  }, 'core.test');
+  const [summary] = await harness.capabilities.request<ContentSummary[]>('content.summariesById@1', {
+    nodeIds: [node.id],
+  });
+  assert.equal(summary?.title, 'stable-title-token 节点');
+});
+
 test('title-and-body replace changes every matched field and linked title reference in one undoable transaction', async () => {
   const harness = createHarness();
   harness.plugins.register(textNodePlugin);
@@ -6241,8 +6289,7 @@ test('replace prioritizes the highlighted hit, then selected nodes, then the ful
   }, 'editor');
   refreshed = waitForSearch('current-token');
   await harness.router.dispatch('search.replaceTargets', {
-    hits: currentHits.hits,
-    selectedNodeIds: [first.id],
+    requestId: currentResult.requestId,
     currentHit,
     replacement: 'CURRENT',
   }, 'core.test');
@@ -6272,10 +6319,10 @@ test('replace prioritizes the highlighted hit, then selected nodes, then the ful
     query: 'select-token', scope: 'canvas', matchCase: true, wholeWord: false,
   }, 'core.test');
   const selectedHits = await selectedRefresh;
+  await harness.router.dispatch('selection.set', { ids: [second.id], mode: 'replace' }, 'core.test');
   selectedRefresh = waitForSearch('select-token');
   await harness.router.dispatch('search.replaceTargets', {
-    hits: selectedHits.hits,
-    selectedNodeIds: [second.id],
+    requestId: selectedHits.requestId,
     replacement: 'SELECTED',
   }, 'core.test');
   const refreshedSelected = await selectedRefresh;
@@ -6293,10 +6340,10 @@ test('replace prioritizes the highlighted hit, then selected nodes, then the ful
   assert.equal(firstBody.text, 'CURRENT middle current-token select-token');
   assert.equal(secondBody.text, 'current-token SELECTED SELECTED');
 
+  await harness.router.dispatch('selection.clear', undefined, 'core.test');
   const globalRefresh = waitForSearch('select-token');
   await harness.router.dispatch('search.replaceTargets', {
-    hits: refreshedSelected.hits,
-    selectedNodeIds: [],
+    requestId: refreshedSelected.requestId,
     replacement: 'GLOBAL',
   }, 'core.test');
   const refreshedGlobal = await globalRefresh;
@@ -6309,6 +6356,23 @@ test('replace prioritizes the highlighted hit, then selected nodes, then the ful
   });
   assert.equal(firstBody.text, 'CURRENT middle current-token GLOBAL');
   assert.equal(secondBody.text, 'current-token SELECTED SELECTED');
+
+  const undoRefresh = waitForSearch('select-token');
+  await harness.transactions.undo();
+  const restoredGlobalHits = await undoRefresh;
+  assert.equal(restoredGlobalHits.hits.length, 1);
+  assert.equal(restoredGlobalHits.hits[0]?.nodeId, first.id);
+  const secondGlobalRefresh = waitForSearch('select-token');
+  await harness.router.dispatch('search.replaceTargets', {
+    requestId: restoredGlobalHits.requestId,
+    replacement: 'GLOBAL-AGAIN',
+  }, 'core.test');
+  const secondRefreshedGlobal = await secondGlobalRefresh;
+  assert.equal(secondRefreshedGlobal.hits.length, 0);
+  firstBody = await harness.capabilities.request<{ text: string }>('content.read@1', {
+    nodeId: first.id, start: 0, length: 100,
+  });
+  assert.equal(firstBody.text, 'CURRENT middle current-token GLOBAL-AGAIN');
 });
 
 test('global replace validates revisions and commits all matched nodes as one history entry', async () => {

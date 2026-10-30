@@ -545,10 +545,17 @@ test('the brand returns home while cloud sync stays in its governed panel', asyn
   await expect(commandPalette.getByRole('option', { name: /打开命令面板/u })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('region', { name: 'Cloudflare 云同步' })).toHaveCount(0);
+  await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+  await page.getByRole('button', { name: '新开独立 AI 助手', exact: true }).click();
+  await page.getByRole('button', { name: '查找替换', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'AI 助手' })).toHaveCount(2);
+  await expect(page.getByRole('region', { name: '查找与替换' })).toBeVisible();
   await cloudStatus.click();
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   await expect(library).toBeVisible();
   await expect(page.getByRole('region', { name: 'Cloudflare 云同步' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'AI 助手' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '查找与替换' })).toHaveCount(0);
   await library.press('Escape');
   await executeCommand(page, '打开 Cloudflare 云同步');
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
@@ -2328,6 +2335,72 @@ test('dragging selected editor text to another input copies without changing the
 
   await expect(editor).toHaveText('甲乙丙丁');
   await expect(searchInput).toHaveValue('乙丙');
+});
+
+test('selected and whole-canvas replacement remain usable after undo', async ({ page }) => {
+  await openApplication(page);
+  await page.getByRole('button', { name: '查找替换', exact: true }).click();
+  const panel = page.getByRole('region', { name: '查找与替换' });
+  const searchInput = panel.getByRole('textbox', { name: '查找标题和正文' });
+  const replacementInput = panel.getByRole('textbox', { name: '替换为' });
+  await searchInput.fill('指南');
+  await searchInput.press('Enter');
+  const canvasGuideResult = panel.getByRole('option').filter({ hasText: '画布基本操作指南' });
+  await expect(canvasGuideResult).toBeVisible();
+  await canvasGuideResult.click();
+  await expect(panel.getByRole('button', { name: '替换所选节点', exact: true })).toBeVisible();
+
+  const bodyQuery = '新节点会出现在当前视图中间';
+  await searchInput.fill(bodyQuery);
+  await searchInput.press('Enter');
+  const bodyResult = panel.getByRole('option').filter({ hasText: '画布基本操作指南' });
+  await expect(bodyResult).toContainText('正文 1 处');
+  await bodyResult.click();
+  const nextButton = panel.getByRole('button', { name: '下一个', exact: true });
+  await nextButton.click();
+  const textEditor = page.getByRole('region', { name: '文本编辑区' });
+  await expect(textEditor).toBeVisible();
+  await expect(panel.getByRole('button', { name: '替换当前一处', exact: true })).toBeVisible();
+
+  await bodyResult.click();
+  await expect(textEditor).toBeVisible();
+  await expect(panel.getByRole('button', { name: '替换所选节点', exact: true })).toBeVisible();
+
+  await searchInput.fill('指南');
+  await searchInput.press('Enter');
+  await expect(canvasGuideResult).toBeVisible();
+  await canvasGuideResult.click();
+  await expect(textEditor).toBeVisible();
+  await expect(panel.getByRole('button', { name: '替换所选节点', exact: true })).toBeVisible();
+
+  await replacementInput.fill('手册');
+  await panel.getByRole('button', { name: '替换所选节点', exact: true }).click();
+  await expect(page.getByRole('article', { name: /文本节点：画布基本操作手册/u })).toBeVisible();
+  await expect(page.getByRole('article', { name: /文本节点：AI 助手使用指南/u })).toBeVisible();
+
+  await page.keyboard.press('Control+z');
+  await expect(page.getByRole('article', { name: /文本节点：画布基本操作指南/u })).toBeVisible();
+  await expect(canvasGuideResult).toBeVisible();
+  const canvas = page.locator('.canvas-surface');
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  await page.mouse.click(canvasBox!.x + canvasBox!.width / 2, canvasBox!.y + canvasBox!.height - 24);
+  await expect(textEditor).toBeVisible();
+  await expect(panel.getByRole('button', { name: '替换全画布', exact: true })).toBeVisible();
+
+  await replacementInput.fill('教程');
+  await panel.getByRole('button', { name: '替换全画布', exact: true }).click();
+  await expect(page.getByRole('article', { name: /文本节点：画布基本操作教程/u })).toBeVisible();
+  await expect(page.getByRole('article', { name: /文本节点：AI 助手使用教程/u })).toBeVisible();
+
+  await page.keyboard.press('Control+z');
+  await expect(page.getByRole('article', { name: /文本节点：画布基本操作指南/u })).toBeVisible();
+  await expect(page.getByRole('article', { name: /文本节点：AI 助手使用指南/u })).toBeVisible();
+  await expect(panel.getByRole('option').filter({ hasText: '画布基本操作指南' })).toBeVisible();
+  await replacementInput.fill('终稿');
+  await panel.getByRole('button', { name: '替换全画布', exact: true }).click();
+  await expect(page.getByRole('article', { name: /文本节点：画布基本操作终稿/u })).toBeVisible();
+  await expect(page.getByRole('article', { name: /文本节点：AI 助手使用终稿/u })).toBeVisible();
 });
 
 test('search navigation highlights title hits and opens the matching body editor', async ({ page }) => {
