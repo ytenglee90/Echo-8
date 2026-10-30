@@ -2403,6 +2403,111 @@ test('selected and whole-canvas replacement remain usable after undo', async ({ 
   await expect(page.getByRole('article', { name: /文本节点：AI 助手使用终稿/u })).toBeVisible();
 });
 
+test('selected and whole-canvas replacement refresh an already open editor', async ({ page }) => {
+  await openApplication(page);
+  await page.getByRole('button', { name: '查找替换', exact: true }).click();
+  const panel = page.getByRole('region', { name: '查找与替换' });
+  const searchInput = panel.getByRole('textbox', { name: '查找标题和正文' });
+  const replacementInput = panel.getByRole('textbox', { name: '替换为' });
+  await searchInput.fill('画布');
+  await searchInput.press('Enter');
+  const result = panel.getByRole('option').filter({ hasText: '画布基本操作指南' });
+  await result.click();
+  const nextButton = panel.getByRole('button', { name: '下一个', exact: true });
+  await nextButton.click();
+  await nextButton.click();
+  const editor = page.locator('.editor-writing-area').first();
+  await expect(editor).toBeVisible();
+  await expect.poll(() => editor.evaluate(() => globalThis.getSelection()?.toString() ?? '')).toBe('画布');
+  const initialRevision = Number(await editor.getAttribute('data-content-revision'));
+
+  await result.click();
+  await replacementInput.fill('画面');
+  await panel.getByRole('button', { name: '替换所选节点', exact: true }).click();
+  await expect(page.getByRole('article', { name: /文本节点：画面基本操作指南/u })).toBeVisible();
+  await expect(editor).toContainText('画面');
+  await expect(editor).not.toContainText('画布');
+  await expect(editor).toHaveAttribute('data-content-revision', String(initialRevision + 1));
+
+  await page.keyboard.press('Control+z');
+  await expect(editor).toContainText('画布');
+  await expect(editor).toHaveAttribute('data-content-revision', String(initialRevision));
+  await expect(result).toContainText(/正文 [1-9]\d* 处/u);
+  const canvas = page.locator('.canvas-surface');
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  await page.mouse.click(canvasBox!.x + canvasBox!.width / 2, canvasBox!.y + canvasBox!.height - 24);
+  await expect(panel.getByRole('button', { name: '替换全画布', exact: true })).toBeVisible();
+
+  await replacementInput.fill('场景');
+  await panel.getByRole('button', { name: '替换全画布', exact: true }).click();
+  const renamedCard = page.getByRole('article', { name: /文本节点：场景基本操作指南/u });
+  await expect(renamedCard).toBeVisible();
+  await expect(renamedCard.getByRole('paragraph')).not.toContainText('画布');
+  await expect(editor).toHaveAttribute('data-content-revision', String(initialRevision + 1));
+  await expect(editor).toContainText('场景');
+  await expect(editor).not.toContainText('画布');
+});
+
+test('current replacement keeps next navigation after the replaced occurrence', async ({ page }) => {
+  await openApplication(page);
+  await page.getByRole('button', { name: '查找替换', exact: true }).click();
+  const panel = page.getByRole('region', { name: '查找与替换' });
+  const searchInput = panel.getByRole('textbox', { name: '查找标题和正文' });
+  await searchInput.fill('画布');
+  await searchInput.press('Enter');
+  const result = panel.getByRole('option').filter({ hasText: '画布基本操作指南' });
+  await result.click();
+  const nextButton = panel.getByRole('button', { name: '下一个', exact: true });
+  await nextButton.click();
+  await nextButton.click();
+  const editor = page.locator('.editor-writing-area').first();
+  await expect(editor).toBeVisible();
+  await expect.poll(() => editor.evaluate(() => globalThis.getSelection()?.toString() ?? '')).toBe('画布');
+  const replacedRange = await readEditorSelection(editor);
+
+  await panel.getByRole('textbox', { name: '替换为' }).fill('画面');
+  await panel.getByRole('button', { name: '替换当前一处', exact: true }).click();
+  await expect.poll(() => editor.evaluate(() => globalThis.getSelection()?.toString() ?? '')).toBe('画布');
+  const automaticRange = await readEditorSelection(editor);
+  expect(automaticRange.start).toBeGreaterThan(replacedRange.start);
+
+  await nextButton.click();
+  await expect.poll(() => editor.evaluate(() => globalThis.getSelection()?.toString() ?? '')).toBe('画布');
+  const nextRange = await readEditorSelection(editor);
+  expect(nextRange.start).toBeGreaterThan(automaticRange.start);
+  await expect(page.locator('.node-title-search-hit')).toHaveCount(0);
+});
+
+test('current replacement keeps previous navigation before the replaced occurrence', async ({ page }) => {
+  await openApplication(page);
+  await page.getByRole('button', { name: '查找替换', exact: true }).click();
+  const panel = page.getByRole('region', { name: '查找与替换' });
+  const searchInput = panel.getByRole('textbox', { name: '查找标题和正文' });
+  await searchInput.fill('画布');
+  await searchInput.press('Enter');
+  const result = panel.getByRole('option').filter({ hasText: '画布基本操作指南' });
+  await result.click();
+  const nextButton = panel.getByRole('button', { name: '下一个', exact: true });
+  await nextButton.click();
+  await nextButton.click();
+  await nextButton.click();
+  await nextButton.click();
+  const editor = page.locator('.editor-writing-area').first();
+  await expect(editor).toBeVisible();
+  await expect.poll(() => editor.evaluate(() => globalThis.getSelection()?.toString() ?? '')).toBe('画布');
+
+  await panel.getByRole('button', { name: '上一个', exact: true }).click();
+  await expect.poll(() => editor.evaluate(() => globalThis.getSelection()?.toString() ?? '')).toBe('画布');
+  const replacedRange = await readEditorSelection(editor);
+  await panel.getByRole('textbox', { name: '替换为' }).fill('画面');
+  await panel.getByRole('button', { name: '替换当前一处', exact: true }).click();
+  await expect.poll(() => editor.evaluate(() => globalThis.getSelection()?.toString() ?? '')).toBe('画布');
+  const previousRange = await readEditorSelection(editor);
+  expect(previousRange.start).toBeLessThan(replacedRange.start);
+  await expect(page.locator('.node-title-search-hit')).toHaveCount(0);
+});
+
 test('search navigation highlights title hits and opens the matching body editor', async ({ page }) => {
   await openApplication(page);
   await page.getByRole('button', { name: '查找替换', exact: true }).click();

@@ -307,6 +307,7 @@ export function PlainTextWritingArea({
   useEffect(() => {
     const root = rootRef.current;
     if (!root || !revealRequest || revealRequest.id.length === 0) return;
+    if (revealRequest.revision !== undefined && revealRequest.revision !== revision) return;
     const localStart = revealRequest.start - windowStart;
     const localEnd = revealRequest.end - windowStart;
     if (localStart < 0 || localEnd > localText.current.length || localStart >= localEnd) return;
@@ -325,7 +326,7 @@ export function PlainTextWritingArea({
     return () => {
       if (frame !== undefined) globalThis.cancelAnimationFrame?.(frame);
     };
-  }, [revealRequest, windowStart]);
+  }, [revealRequest, revision, windowStart]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -911,6 +912,7 @@ export function PlainTextWritingArea({
         contentEditable="plaintext-only"
         suppressContentEditableWarning
         role="textbox"
+        data-content-revision={revision}
         aria-label={label}
         aria-multiline="true"
         aria-autocomplete="list"

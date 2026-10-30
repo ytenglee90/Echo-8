@@ -939,19 +939,37 @@ export function createEditorPlugin(
       const invalidateDocuments = (payload: EditorDocumentInvalidation) =>
         context.signals.emit('editor.document.invalidated', payload);
       context.events.subscribe<{ nodeId: string; revision?: number }>('content.changed', (message) => {
-        invalidateDocuments({ content: [{ id: message.payload.nodeId, revision: message.payload.revision }] });
+        // Signals are intentionally last-value-wins within a frame. A batch
+        // replacement can therefore publish several content.changed events
+        // before this signal is delivered. Include every open pane in each
+        // payload so the final coalesced signal still covers the whole bounded
+        // editor set. Only the event's own node carries a revision: an editor
+        // that just committed that revision can retain its local buffer, while
+        // the other panes reload authoritatively.
+        const ids = new Set([...openPanes(), message.payload.nodeId]);
+        invalidateDocuments({
+          content: [...ids].map((id) => ({
+            id,
+            revision: id === message.payload.nodeId ? message.payload.revision : undefined,
+          })),
+        });
       });
       context.events.subscribe<{ nodeId?: string; nodeIds?: string[]; revision?: number }>(
         'content.format.changed',
         (message) => {
           const ids = message.payload.nodeIds ?? (message.payload.nodeId ? [message.payload.nodeId] : []);
+          const changed = new Set(ids);
+          const affected = new Set([...openPanes(), ...ids]);
           invalidateDocuments({
-            formatting: ids.map((id) => ({ id, revision: message.payload.revision })),
+            formatting: [...affected].map((id) => ({
+              id,
+              revision: changed.has(id) ? message.payload.revision : undefined,
+            })),
           });
         },
       );
       context.events.subscribe<{ id: string }>('node.renamed', (message) => {
-        invalidateDocuments({ metadataIds: [message.payload.id] });
+        invalidateDocuments({ metadataIds: [...new Set([...openPanes(), message.payload.id])] });
       });
       context.events.subscribe('history.changed', () => invalidateDocuments({ all: true }));
       context.events.subscribe('document.replaced', () => {
@@ -959,7 +977,7 @@ export function createEditorPlugin(
         void context.commands.dispatch('editor.resetDocumentViews');
       });
       context.events.subscribe<{ ids: string[] }>('nodes.deleted', (message) => {
-        invalidateDocuments({ metadataIds: message.payload.ids });
+        invalidateDocuments({ metadataIds: [...new Set([...openPanes(), ...message.payload.ids])] });
         const deleted = Array.isArray(message.payload?.ids) ? new Set(message.payload.ids) : new Set<string>();
         if (pendingPane() && deleted.has(pendingPane()!)) void context.commands.dispatch('editor.cancelReplace');
         for (const id of openPanes()) {

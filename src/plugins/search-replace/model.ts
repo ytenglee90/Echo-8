@@ -24,15 +24,18 @@ const SEARCH_NAMESPACE = 'searchUI';
 const DEFAULT_SEARCH_RECT: FloatingPanelRect = { x: 160, y: 88, width: 500, height: 620 };
 
 interface PendingReplacementNavigation {
+  field: 'title' | 'body';
   nodeId: string;
+  beforeStart: number;
   afterStart: number;
+  direction: -1 | 1;
+  scopeNodeIds?: string[];
+  selectionAvailable: boolean;
+  orderedNodeIds: string[];
   query: string;
 }
 
-interface ReplacementNavigationAnchor {
-  nodeId: string;
-  afterStart: number;
-}
+type ReplacementNavigationAnchor = Omit<PendingReplacementNavigation, 'query'>;
 
 interface NavigationScopeState {
   requestId: string;
@@ -48,6 +51,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
   let latestResult: SearchResult | undefined;
   let navigationState: SearchNavigationSignal | undefined;
   let navigationScope: NavigationScopeState | undefined;
+  let navigationDirection: -1 | 1 | undefined;
   let expectedNavigationSelections: string[][] = [];
   let pendingNavigation: PendingReplacementNavigation | undefined;
   let highlightedHit: SearchHit | undefined;
@@ -131,6 +135,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
       latestResult = undefined;
       navigationState = undefined;
       navigationScope = undefined;
+      navigationDirection = undefined;
       expectedNavigationSelections = [];
       pendingNavigation = undefined;
       highlightedHit = undefined;
@@ -142,6 +147,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
       const clearNavigation = () => {
         navigationState = undefined;
         navigationScope = undefined;
+        navigationDirection = undefined;
         expectedNavigationSelections = [];
         highlightedHit = undefined;
         context.signals.emit('search.navigation.clear', {});
@@ -162,36 +168,44 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         if (!pending) return;
         pendingNavigation = undefined;
         if (pending.query !== result.query) return;
-        let activeNodeId: string | undefined;
-        try {
-          activeNodeId = await context.capabilities.request<string | undefined>('editor.activeNode@1');
-        } catch {
-          return;
-        }
-        if (activeNodeId !== pending.nodeId) return;
-        const hits = result.hits
-          .filter((hit) => hit.nodeId === activeNodeId && hit.field === 'body')
-          .sort((left, right) => left.start - right.start);
-        if (hits.length === 0) {
+        const allowed = pending.scopeNodeIds?.length ? new Set(pending.scopeNodeIds) : undefined;
+        const hits = allowed ? result.hits.filter((hit) => allowed.has(hit.nodeId)) : result.hits;
+        const hit = resolveReplacementContinuation(hits, pending);
+        if (!hit) {
           context.signals.emit('search.status', {
             requestId: result.requestId,
             state: 'ready',
-            message: '当前文本编辑区没有下一处查找结果',
+            message: '替换后没有剩余的查找结果',
           } satisfies SearchStatus);
           return;
         }
-        const forwardIndex = hits.findIndex((hit) => hit.start >= pending.afterStart);
-        const index = forwardIndex >= 0 ? forwardIndex : 0;
-        const hit = hits[index];
-        try {
-          await context.commands.dispatch('editor.revealRange', {
-            id: activeNodeId,
-            start: hit.start,
-            end: hit.start + hit.length,
-            revision: hit.revision,
+        const index = hits.indexOf(hit);
+        navigationScope = {
+          requestId: result.requestId,
+          nodeIds: pending.scopeNodeIds,
+          selectionAvailable: pending.selectionAvailable,
+        };
+        navigationDirection = pending.direction;
+        if (pending.selectionAvailable) {
+          expectedNavigationSelections.push([hit.nodeId]);
+          await context.commands.dispatch('selection.set', {
+            items: [{ id: hit.nodeId, kind: 'text-node' }],
+            mode: 'replace',
           });
-        } catch {
-          return;
+        }
+        if (hit.field === 'body') {
+          try {
+            await context.commands.dispatch('editor.open', {
+              id: hit.nodeId,
+              reveal: {
+                start: hit.start,
+                end: hit.start + hit.length,
+                revision: hit.revision,
+              },
+            });
+          } catch {
+            // Canvas selection remains the feedback when the optional editor is unavailable.
+          }
         }
         highlightedHit = hit;
         context.signals.emit('search.match.preview', {
@@ -201,17 +215,17 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
           length: hit.length,
         } satisfies SearchMatchPreview);
         navigationState = {
-          nodeId: activeNodeId,
+          nodeId: hit.nodeId,
           index,
           total: hits.length,
-          scope: 'selection',
-          scopeNodeCount: 1,
+          scope: pending.scopeNodeIds?.length ? 'selection' : 'canvas',
+          scopeNodeCount: pending.scopeNodeIds?.length ?? 0,
         } satisfies SearchNavigationSignal;
         context.signals.emit('search.navigation', navigationState);
         context.signals.emit('search.status', {
           requestId: result.requestId,
           state: 'ready',
-          message: `已自动跳到当前文本编辑区第 ${index + 1} / ${hits.length} 处`,
+          message: `已自动跳到替换后的${pending.direction > 0 ? '下一处' : '上一处'}：第 ${index + 1} / ${hits.length} 处`,
         } satisfies SearchStatus);
       };
       const setOpen = (open: boolean) => ({
@@ -238,7 +252,11 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         const task = context.tasks.schedule<void>({
           category: 'search-refresh',
           label: '刷新已失效的查找结果',
-          delayMs: 1,
+          // One transaction may publish title, body and history facts through
+          // separate ordered event deliveries. Keep a short trailing window so
+          // a refresh search cannot run between those facts and then have its
+          // just-published result cleared by the remainder of the same burst.
+          delayMs: 24,
           noticeAfterMs: 10_000,
           priority: 80,
           timeoutMs: 10_000,
@@ -311,6 +329,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         // their order. The governed task starts after this command leaves the
         // serialized command queue, avoiding a nested-command deadlock.
         navigationState = target.state;
+        navigationDirection = direction;
         const task = context.tasks.schedule<void>({
           category: 'search-navigation',
           label: '定位画布查找结果',
@@ -577,12 +596,23 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
             }
             const currentHit = source.hits.find((hit) => sameSearchHit(hit, payload.currentHit!));
             if (!currentHit) throw new Error('当前选中的查找结果已经失效，请等待重新检索');
+            const scope = navigationScope?.requestId === source.requestId
+              ? navigationScope
+              : { requestId: source.requestId, selectionAvailable: false };
+            const allowed = scope.nodeIds?.length ? new Set(scope.nodeIds) : undefined;
+            const scopedHits = allowed ? source.hits.filter((hit) => allowed.has(hit.nodeId)) : source.hits;
             return createReplacement(
               { hits: [currentHit], replacement: payload.replacement },
-              currentHit.field === 'body' ? {
+              {
                 nodeId: currentHit.nodeId,
+                field: currentHit.field ?? 'body',
+                beforeStart: currentHit.start,
                 afterStart: currentHit.start + payload.replacement.length,
-              } : undefined,
+                direction: navigationDirection ?? 1,
+                scopeNodeIds: scope.nodeIds ? [...scope.nodeIds] : undefined,
+                selectionAvailable: scope.selectionAvailable,
+                orderedNodeIds: [...new Set(scopedHits.map((hit) => hit.nodeId))],
+              },
             );
           }
           if (source.truncated) {
@@ -746,6 +776,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
       latestResult = undefined;
       navigationState = undefined;
       navigationScope = undefined;
+      navigationDirection = undefined;
       expectedNavigationSelections = [];
       pendingNavigation = undefined;
       highlightedHit = undefined;
@@ -832,7 +863,38 @@ function isSearchHit(payload: unknown): payload is SearchResult['hits'][number] 
 function isReplacementNavigationAnchor(payload: unknown): payload is ReplacementNavigationAnchor {
   return isRecord(payload) &&
     typeof payload.nodeId === 'string' && payload.nodeId.length > 0 &&
-    Number.isInteger(payload.afterStart) && (payload.afterStart as number) >= 0;
+    (payload.field === 'title' || payload.field === 'body') &&
+    Number.isInteger(payload.beforeStart) && (payload.beforeStart as number) >= 0 &&
+    Number.isInteger(payload.afterStart) && (payload.afterStart as number) >= 0 &&
+    (payload.direction === -1 || payload.direction === 1) &&
+    typeof payload.selectionAvailable === 'boolean' &&
+    (payload.scopeNodeIds === undefined || Array.isArray(payload.scopeNodeIds) &&
+      payload.scopeNodeIds.every((id) => typeof id === 'string' && id.length > 0)) &&
+    Array.isArray(payload.orderedNodeIds) &&
+    payload.orderedNodeIds.every((id) => typeof id === 'string' && id.length > 0);
+}
+
+function resolveReplacementContinuation(
+  hits: readonly SearchResult['hits'][number][],
+  anchor: ReplacementNavigationAnchor,
+): SearchResult['hits'][number] | undefined {
+  if (hits.length === 0) return undefined;
+  const fieldOrder = (hit: SearchHit) => (hit.field ?? 'body') === 'title' ? 0 : 1;
+  const anchorFieldOrder = anchor.field === 'title' ? 0 : 1;
+  const sameNode = hits.filter((hit) => hit.nodeId === anchor.nodeId);
+  const after = sameNode.filter((hit) => fieldOrder(hit) > anchorFieldOrder ||
+    fieldOrder(hit) === anchorFieldOrder && hit.start >= anchor.afterStart);
+  const before = sameNode.filter((hit) => fieldOrder(hit) < anchorFieldOrder ||
+    fieldOrder(hit) === anchorFieldOrder && hit.start < anchor.beforeStart);
+  const nodeRank = new Map(anchor.orderedNodeIds.map((id, index) => [id, index]));
+  const anchorRank = nodeRank.get(anchor.nodeId) ?? -1;
+  const earlierNodes = hits.filter((hit) => hit.nodeId !== anchor.nodeId &&
+    (nodeRank.get(hit.nodeId) ?? Number.MAX_SAFE_INTEGER) < anchorRank);
+  const laterNodes = hits.filter((hit) => hit.nodeId !== anchor.nodeId &&
+    (nodeRank.get(hit.nodeId) ?? Number.MAX_SAFE_INTEGER) > anchorRank);
+  return anchor.direction > 0
+    ? after[0] ?? laterNodes[0] ?? earlierNodes[0] ?? before[0]
+    : before.at(-1) ?? earlierNodes.at(-1) ?? laterNodes.at(-1) ?? after.at(-1);
 }
 
 function sameSearchHit(

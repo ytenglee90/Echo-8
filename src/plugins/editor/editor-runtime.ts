@@ -418,8 +418,9 @@ export function useEditorRuntime(client: ViewClient) {
         if (payload.all) {
           for (const id of state.openPanes) staleContent.current.add(id);
         } else {
-          for (const { id } of payload.content ?? []) {
-            if (state.openPanes.includes(id) && (pendingContent.current.get(id) ?? 0) === 0) {
+          for (const { id, revision } of payload.content ?? []) {
+            if (state.openPanes.includes(id) && (revision === undefined ||
+              (contentRevisions.current.get(id) ?? -1) < revision)) {
               staleContent.current.add(id);
             }
           }
