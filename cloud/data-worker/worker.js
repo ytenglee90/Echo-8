@@ -5,6 +5,7 @@ const MAX_CHUNKS = 512;
 const MAX_JSON_BYTES = 12 * 1024 * 1024;
 const D1_CHECKPOINT_PART_BYTES = 512 * 1024;
 const D1_CHUNK_QUERY_SIZE = 75;
+const D1_FREE_DATABASE_CAPACITY_BYTES = 500_000_000;
 
 export default {
   async fetch(request, env) {
@@ -20,7 +21,9 @@ export default {
       }
       const identity = await authorize(request, env);
       let response;
-      if (url.pathname === '/v1/projects' && request.method === 'GET') {
+      if (url.pathname === '/v1/storage' && request.method === 'GET') {
+        response = await readStorageUsage(env);
+      } else if (url.pathname === '/v1/projects' && request.method === 'GET') {
         response = await listProjects(env);
       } else if (url.pathname === '/v1/projects' && request.method === 'POST') {
         response = await createProject(request, env);
@@ -40,6 +43,38 @@ export default {
 function positiveInteger(value, fallback) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function readStorageUsage(env) {
+  const result = await env.DB.prepare('SELECT 1 AS echo8_storage_probe').all();
+  return json({ storage: storageUsage(env, result) });
+}
+
+function storageUsage(env, result) {
+  const storageMode = objectStorageMode(env);
+  const usedBytes = nonNegativeInteger(result?.meta?.size_after, 0);
+  if (storageMode !== 'd1') {
+    return {
+      storageMode,
+      usedBytes,
+      quotaBasis: 'unknown',
+      measuredAt: Date.now(),
+    };
+  }
+  const capacityBytes = positiveInteger(env.D1_CAPACITY_BYTES, D1_FREE_DATABASE_CAPACITY_BYTES);
+  return {
+    storageMode,
+    usedBytes,
+    capacityBytes,
+    remainingBytes: Math.max(0, capacityBytes - usedBytes),
+    quotaBasis: 'd1-free-database-limit',
+    measuredAt: Date.now(),
+  };
+}
+
+function nonNegativeInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 async function routeProject(request, env, url, identity) {
@@ -253,6 +288,7 @@ async function syncProject(projectId, request, env) {
     headRevision: nextHead,
     checkpointRevision,
     lease: { id: leaseId, deviceId, expiresAt: now + LEASE_MS, owned: true },
+    storage: storageUsage(env, results.at(-1)),
   });
 }
 

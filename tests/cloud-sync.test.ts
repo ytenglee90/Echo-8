@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import dataWorker from '../cloud/data-worker/worker.js';
 import {
+  CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES,
   CLOUD_DATA_WORKER_VERSION,
   cloudDataWorkerUpgradeAvailable,
 } from '../src/cloud/contracts.ts';
@@ -33,7 +34,7 @@ test('cloud control cryptography signs sessions, encrypts grants and issues inst
 });
 
 test('cloud data Worker release detection upgrades older installs without downgrading newer ones', () => {
-  assert.equal(CLOUD_DATA_WORKER_VERSION, 3);
+  assert.equal(CLOUD_DATA_WORKER_VERSION, 4);
   assert.equal(cloudDataWorkerUpgradeAvailable(1), true);
   assert.equal(cloudDataWorkerUpgradeAvailable(CLOUD_DATA_WORKER_VERSION), false);
   assert.equal(cloudDataWorkerUpgradeAvailable(CLOUD_DATA_WORKER_VERSION + 1), false);
@@ -123,6 +124,7 @@ test('user data Worker stores chunks and multipart checkpoints in D1 without an 
     DATA_SIGNING_SECRET: 'data-worker-d1-only-contract-secret',
     ALLOWED_ORIGIN: 'https://canvas.example',
     STORAGE_MODE: 'd1',
+    D1_CAPACITY_BYTES: String(CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES),
     DB: db,
   };
   const signed = await signDataToken({
@@ -182,6 +184,21 @@ test('user data Worker stores chunks and multipart checkpoints in D1 without an 
   }), env);
   assert.equal(synced.status, 200);
   assert.equal((db.checkpointParts.get(`${projectId}:0`) ?? []).length > 1, true);
+
+  const storage = await dataWorker.fetch(new Request('https://data.example/v1/storage', {
+    method: 'GET', headers,
+  }), env);
+  assert.equal(storage.status, 200);
+  const storageBody = await storage.json() as { storage: Record<string, unknown> };
+  assert.equal(storageBody.storage.storageMode, 'd1');
+  assert.equal(storageBody.storage.usedBytes, db.sizeBytes);
+  assert.equal(storageBody.storage.capacityBytes, CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES);
+  assert.equal(
+    storageBody.storage.remainingBytes,
+    CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES - db.sizeBytes,
+  );
+  assert.equal(storageBody.storage.quotaBasis, 'd1-free-database-limit');
+  assert.equal(Number.isFinite(storageBody.storage.measuredAt), true);
 
   const bootstrapped = await dataWorker.fetch(new Request(`https://data.example/v1/projects/${projectId}/bootstrap`, {
     method: 'GET', headers,
@@ -273,6 +290,7 @@ class LegacyControlD1 {
 }
 
 class MemoryD1 {
+  readonly sizeBytes = 12_500_000;
   readonly projects = new Map<string, Record<string, unknown>>();
   readonly leases = new Map<string, Record<string, unknown>>();
   readonly chunks = new Map<string, Record<string, unknown>>();
@@ -383,6 +401,9 @@ class MemoryD1 {
 
   all(sql: string, args: unknown[]) {
     const normalized = normalizeSql(sql);
+    if (normalized === 'SELECT 1 AS echo8_storage_probe') {
+      return { results: [{ echo8_storage_probe: 1 }], meta: { size_after: this.sizeBytes } };
+    }
     if (normalized.includes('FROM projects WHERE deleted_at IS NULL')) {
       return {
         results: [...this.projects.values()]

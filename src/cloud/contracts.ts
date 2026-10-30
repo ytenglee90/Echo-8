@@ -7,7 +7,10 @@ export const CLOUD_API_VERSION = 1 as const;
  * only when existing installations must republish that Worker or apply D1
  * migrations. It is intentionally separate from the browser wire protocol.
  */
-export const CLOUD_DATA_WORKER_VERSION = 3 as const;
+export const CLOUD_DATA_WORKER_VERSION = 4 as const;
+export const CLOUD_STORAGE_USAGE_WORKER_VERSION = 4 as const;
+/** Conservative per-database ceiling used by the D1-first free installation. */
+export const CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES = 500_000_000 as const;
 export const CLOUD_CONTENT_CHUNK_NAMESPACE = 'textContentChunk';
 
 export function cloudDataWorkerUpgradeAvailable(installedVersion: number): boolean {
@@ -65,6 +68,17 @@ export interface CloudProjectSummary {
   createdAt: number;
   updatedAt: number;
   headRevision: number;
+}
+
+export interface CloudStorageUsage {
+  storageMode: 'd1' | 'r2';
+  /** Physical D1 database size reported by the binding after a read. */
+  usedBytes: number;
+  /** Present only when Echo-8 can state a meaningful storage ceiling. */
+  capacityBytes?: number;
+  remainingBytes?: number;
+  quotaBasis: 'd1-free-database-limit' | 'unknown';
+  measuredAt: number;
 }
 
 /** Ephemeral confirmation state owned by cloud-sync, never persisted with a book. */
@@ -126,5 +140,7 @@ export interface CloudSyncState {
   lastSyncedAt?: number;
   leaseExpiresAt?: number;
   otherDeviceId?: string;
+  storageUsage?: CloudStorageUsage;
+  storageUsageError?: string;
   error?: string;
 }

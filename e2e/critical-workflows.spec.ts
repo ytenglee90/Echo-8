@@ -682,6 +682,9 @@ test('saving a read-only cloud book opens the takeover panel after the failure n
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   await library.getByRole('button', { name: '打开书籍：只读云端书籍' }).click();
   await expect(library).toHaveCount(0);
+  await page.getByRole('button', { name: '返回首页', exact: true }).click();
+  await expect(library.getByText('权限：只读（可接管）', { exact: true })).toBeVisible();
+  await library.press('Escape');
   await executeCommand(page, '书籍与恢复设置');
   const filePanel = page.getByRole('region', { name: '书籍与恢复' });
   await expect(filePanel).toBeVisible();
@@ -718,8 +721,8 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
         accountId: 'account-rename-test',
         accountName: '测试账户',
         workerUrl: 'http://localhost:3000',
-        workerVersion: 3,
-        latestWorkerVersion: 3,
+        workerVersion: 4,
+        latestWorkerVersion: 4,
         upgradeAvailable: false,
         status: 'ready',
       }],
@@ -731,6 +734,18 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
       workerUrl: 'http://localhost:3000',
       token: 'test-data-token',
       expiresAt: Date.now() + 10 * 60_000,
+    },
+  }));
+  await page.route('**/v1/storage', (route) => route.fulfill({
+    json: {
+      storage: {
+        storageMode: 'd1',
+        usedBytes: 12_000_000,
+        capacityBytes: 500_000_000,
+        remainingBytes: 488_000_000,
+        quotaBasis: 'd1-free-database-limit',
+        measuredAt: Date.now(),
+      },
     },
   }));
   await page.route('**/v1/projects**', async (route) => {
@@ -796,6 +811,8 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   await page.goto('/');
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   await expect(library.getByText('reader@example.com', { exact: true })).toBeVisible();
+  await expect(library.getByText('已用 12 MB / 剩余 488 MB', { exact: true })).toBeVisible();
+  await expect(library.getByText('权限：未打开云端书籍', { exact: true })).toBeVisible();
   await expect(library.getByText("reader@example.com's Account", { exact: true })).toHaveCount(0);
   const libraryRow = library.locator('.book-library-project-row').filter({ hasText: '初始书名' });
   const libraryIconBox = await libraryRow.locator('.book-library-project-icon').boundingBox();
@@ -834,6 +851,9 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   const renamedLibraryRow = library.locator('.book-library-project-row').filter({ hasText: '书库重命名' });
   await renamedLibraryRow.click({ position: { x: 8, y: 35 } });
   await expect(library).toHaveCount(0);
+  await page.getByRole('button', { name: '返回首页', exact: true }).click();
+  await expect(library.getByText('权限：可编辑', { exact: true })).toBeVisible();
+  await library.press('Escape');
   const syncedStatus = page.locator('.cloud-sync-status');
   await expect(syncedStatus).toHaveAccessibleName('返回首页');
   await expect(syncedStatus).toHaveClass(/is-synced/u);

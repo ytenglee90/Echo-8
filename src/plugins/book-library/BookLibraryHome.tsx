@@ -146,6 +146,8 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
   const accountLabel = accountDisplayName(
     cloud.user?.email || cloud.user?.name || installation?.accountName,
   );
+  const storage = storageStatus(cloud, installation);
+  const access = accessStatus(cloud);
   const isLocalFile = globalThis.location.protocol === 'file:';
   const processing = Boolean(busy) || cloud.phase === 'connecting' || cloud.phase === 'syncing';
   const openingBook = busy === 'open-local' || busy.startsWith('open:');
@@ -174,7 +176,11 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
           {cloud.authenticated ? (
             <>
               <span className="book-library-avatar" aria-hidden="true">{accountInitial(accountLabel)}</span>
-              <span><strong>{accountLabel || 'Cloudflare 账户'}</strong></span>
+              <span className="book-library-account-copy">
+                <strong>{accountLabel || 'Cloudflare 账户'}</strong>
+                <small className="book-library-account-storage" title={storage.title}>{storage.label}</small>
+                <small className="book-library-account-access">{access}</small>
+              </span>
               <button type="button" disabled={Boolean(busy)} onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}>
                 {busy === 'logout' && <ProcessingIndicator size={9} />}退出
               </button>
@@ -418,6 +424,53 @@ function accountInitial(value: string | undefined): string {
 function accountDisplayName(value: string | undefined): string | undefined {
   const normalized = value?.trim().replace(/[’']s Account$/iu, '').trim();
   return normalized || undefined;
+}
+
+function storageStatus(
+  state: CloudSyncState,
+  installation: CloudInstallationSummary | undefined,
+): { label: string; title: string } {
+  if (!installation) return { label: '容量：尚未安装个人存储', title: '选择 Cloudflare 账户并安装后显示容量' };
+  if (!state.storageUsage) {
+    const detail = state.storageUsageError || '正在读取';
+    return { label: `容量：${detail}`, title: detail };
+  }
+  const usage = state.storageUsage;
+  if (usage.capacityBytes === undefined || usage.remainingBytes === undefined) {
+    return {
+      label: `D1 已用 ${formatBytes(usage.usedBytes)} · 总容量未知`,
+      title: '当前存储模式无法从数据 Worker 得到完整对象容量',
+    };
+  }
+  return {
+    label: `已用 ${formatBytes(usage.usedBytes)} / 剩余 ${formatBytes(usage.remainingBytes)}`,
+    title: `剩余容量按 Cloudflare D1 免费版单数据库 ${formatBytes(usage.capacityBytes)} 上限估算；付费账户实际上限可能更高`,
+  };
+}
+
+function accessStatus(state: CloudSyncState): string {
+  if (!state.activeProjectId) {
+    return state.phase === 'connecting' ? '权限：正在确认' : '权限：未打开云端书籍';
+  }
+  if (state.phase === 'read-only') return '权限：只读（可接管）';
+  if (state.phase === 'ready' || state.phase === 'syncing') return '权限：可编辑';
+  if (state.phase === 'offline') return '权限：本机可编辑（离线）';
+  if (state.phase === 'conflict') return '权限：暂停同步（需处理冲突）';
+  if (state.phase === 'connecting') return '权限：正在确认';
+  return '权限：暂不可用';
+}
+
+function formatBytes(value: number): string {
+  const safe = Math.max(0, Number.isFinite(value) ? value : 0);
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let amount = safe;
+  let unit = 0;
+  while (amount >= 1000 && unit < units.length - 1) {
+    amount /= 1000;
+    unit += 1;
+  }
+  const maximumFractionDigits = amount < 10 && unit > 0 ? 1 : 0;
+  return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits }).format(amount)} ${units[unit]}`;
 }
 
 function formatTime(value: number): string {

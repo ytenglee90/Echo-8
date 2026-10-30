@@ -1,6 +1,9 @@
 import dataWorkerSource from '../../../cloud/data-worker/worker.js?raw';
 import dataSchema from '../../../cloud/data-worker/schema.sql?raw';
-import { CLOUD_DATA_WORKER_VERSION } from '../../cloud/contracts.ts';
+import {
+  CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES,
+  CLOUD_DATA_WORKER_VERSION,
+} from '../../cloud/contracts.ts';
 import type { StoredInstallation } from './control-store.ts';
 import { cloudflareApi } from './cloudflare-api.ts';
 
@@ -45,6 +48,11 @@ export async function provisionInstallation(input: ProvisionInput): Promise<Stor
     bindings: [
       { type: 'd1', name: 'DB', database_id: d1DatabaseId },
       { type: 'plain_text', name: 'STORAGE_MODE', text: 'd1' },
+      {
+        type: 'plain_text',
+        name: 'D1_CAPACITY_BYTES',
+        text: String(CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES),
+      },
       { type: 'plain_text', name: 'DATA_WORKER_VERSION', text: String(CLOUD_DATA_WORKER_VERSION) },
       { type: 'plain_text', name: 'INSTALLATION_ID', text: installation.id },
       { type: 'plain_text', name: 'ALLOWED_ORIGIN', text: new URL(input.allowedOrigin).origin },

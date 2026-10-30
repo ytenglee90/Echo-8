@@ -13,6 +13,7 @@ import {
 } from '../../protocols/files.ts';
 import {
   CLOUD_CONTENT_CHUNK_NAMESPACE,
+  CLOUD_STORAGE_USAGE_WORKER_VERSION,
   type CloudBootstrap,
   type CloudCheckpoint,
   type CloudControlStatus,
@@ -20,6 +21,7 @@ import {
   type CloudOperation,
   type CloudProjectDeleteConfirmation,
   type CloudProjectSummary,
+  type CloudStorageUsage,
   type CloudSyncState,
 } from '../../cloud/contracts.ts';
 import { defineManifest } from '../manifest.ts';
@@ -160,6 +162,29 @@ export function createCloudSyncPlugin(
           throw error;
         }
       };
+      const refreshStorageUsage = async () => {
+        const installation = state.installations.find(
+          (item) => item.id === local.installationId && item.status === 'ready',
+        ) ?? state.installations.find((item) => item.status === 'ready');
+        if (!installation) {
+          update({ storageUsage: undefined, storageUsageError: undefined });
+          return;
+        }
+        if (installation.workerVersion < CLOUD_STORAGE_USAGE_WORKER_VERSION) {
+          update({
+            storageUsage: undefined,
+            storageUsageError: '升级个人数据服务后可显示容量',
+          });
+          return;
+        }
+        try {
+          const result = await dataRequest<{ storage: CloudStorageUsage }>('/v1/storage', { method: 'GET' });
+          update({ storageUsage: result.storage, storageUsageError: undefined });
+        } catch (error) {
+          context.diagnostics.warn('个人云存储容量读取失败', error);
+          update({ storageUsage: undefined, storageUsageError: '容量暂不可用' });
+        }
+      };
 
       const persistLocal = async (parent?: MessageEnvelope) => {
         const call = parent ? context.commands.invoke : context.commands.dispatch;
@@ -218,6 +243,7 @@ export function createCloudSyncPlugin(
             headRevision: number;
             checkpointRevision: number;
             lease: { expiresAt: number };
+            storage?: CloudStorageUsage;
           }>(`/v1/projects/${encodeURIComponent(local.projectId)}/sync`, jsonInit({
             deviceId: local.deviceId,
             leaseId,
@@ -235,6 +261,8 @@ export function createCloudSyncPlugin(
             pendingCommits: pending.length,
             lastSyncedAt: includePending ? Date.now() : state.lastSyncedAt,
             leaseExpiresAt: result.lease.expiresAt,
+            storageUsage: result.storage ?? state.storageUsage,
+            storageUsageError: result.storage ? undefined : state.storageUsageError,
             error: undefined,
           });
           await persistLocal(parent);
@@ -462,6 +490,7 @@ export function createCloudSyncPlugin(
           const listed = await dataRequest<{ projects: CloudProjectSummary[] }>('/v1/projects');
           projects = listed.projects;
           update({ activeInstallationId: installation.id, error: undefined });
+          await refreshStorageUsage();
           await persistLocal(envelope);
           return { result: structuredClone(projects) };
         },
@@ -499,6 +528,7 @@ export function createCloudSyncPlugin(
             );
             access = undefined;
             await refreshControlStatus(controlRequest, update);
+            context.commands.defer('cloudSync.listProjects');
             return { result };
           } catch (error) {
             update({ phase: 'error', error: errorMessage(error) });

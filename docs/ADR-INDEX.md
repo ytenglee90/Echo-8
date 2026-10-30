@@ -93,4 +93,6 @@
 | [0081](ADR-0081-UNIFIED-AUTOSAVE-TARGET-SCHEDULING.md) | 统一自动保存目标调度、本机恢复与云端上传节拍 | 有效；补充 0006、0071，部分替代 0077 |
 | [0082](ADR-0082-COMPACT-BUILTIN-TEXT-ASSIST-OVERLAYS.md) | 书籍仅保存内置纠错规则版本引用与自定义覆盖 | 有效；补充 0006、0038、0061 |
 | [0083](ADR-0083-TITLE-SEARCH-AND-SELECTION-SCOPED-NAVIGATION.md) | 标题检索、画布选择联动与选中范围导航 | 有效；补充 0003，部分替代 0028 |
+| [0084](ADR-0084-SESSION-ONLY-WORKSPACE-RESTORE-BOUNDARY.md) | 仅会话工作区恢复边界与只读云书籍接管入口 | 有效；补充 0006、0025、0060、0080 |
+| [0085](ADR-0085-HOMEPAGE-CLOUD-CAPACITY-AND-ACCESS.md) | 首页云容量与当前书籍权限状态 | 有效；补充 0068、0069、0070 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。
