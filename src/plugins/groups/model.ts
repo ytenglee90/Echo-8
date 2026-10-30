@@ -637,6 +637,13 @@ export function createGroupsPlugin(
               return [{
                 id: group.id,
                 kind: 'group',
+                geometryRevision: members.map((member) => [
+                  member.id,
+                  member.x,
+                  member.y,
+                  member.width,
+                  member.height,
+                ].join(':')).join('|'),
                 bounds,
                 boxMatch: 'contain' as const,
                 contains: [...group.memberIds],

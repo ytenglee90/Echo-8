@@ -360,6 +360,13 @@
   border-radius: calc(var(--canvas-node-radius) + 3px);
 }
 
+.text-node-card.overview-selected::after,
+.text-node-card.text-box.overview-selected::after {
+  inset: -5px;
+  border-width: 10px;
+  border-radius: calc(var(--canvas-node-radius) + 5px);
+}
+
 .text-node-card.duplicate-origin {
   z-index: 1;
   opacity: 0.58;
@@ -375,6 +382,8 @@
   justify-content: center;
   overflow: hidden;
 }
+
+.text-node-card.compact.selected { overflow: visible; }
 
 .text-node-card.compact .node-zoom-title {
   display: block;
@@ -529,6 +538,14 @@
 
 .connection-layer.is-batched {
   pointer-events: auto;
+}
+
+.connection-layer.lasso-hit-disabled,
+.connection-layer.lasso-hit-disabled .connection-hit-area,
+.connection-layer.lasso-hit-disabled .connection-label-foreign,
+.connection-layer.lasso-hit-disabled .connection-label-editor,
+.connection-layer.lasso-hit-disabled .connection-label-resize-handle {
+  pointer-events: none !important;
 }
 
 .group-layer {

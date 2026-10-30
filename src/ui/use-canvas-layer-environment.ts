@@ -9,7 +9,13 @@ import {
 } from 'react';
 import type { ViewClient } from '../core/contracts.ts';
 import type { AppearancePreview } from '../protocols/appearance.ts';
-import type { CameraState, CanvasAppearanceSnapshot, DragPreview } from '../protocols/canvas.ts';
+import type {
+  CameraState,
+  CanvasAppearanceSnapshot,
+  CanvasEntityHoverPreview,
+  DragPreview,
+  LassoSignal,
+} from '../protocols/canvas.ts';
 import type { ContentSummary, NodePosition } from '../protocols/content.ts';
 import type { SelectionSnapshot } from '../protocols/selection.ts';
 import { useContentCatalog } from './runtime-hooks.ts';
@@ -23,6 +29,9 @@ interface CanvasLayerEnvironment<TElement extends Element> {
   duplicateOriginIds: ReadonlySet<string>;
   sizePreviews: Record<string, { width: number; height: number }>;
   selectedIds: string[];
+  hoveredEntityId?: string;
+  editingEntityIds: ReadonlySet<string>;
+  lassoActive: boolean;
   canvasColor: string;
   surfaceSize: { width: number; height: number };
   layerRef: RefObject<TElement | null>;
@@ -31,6 +40,7 @@ interface CanvasLayerEnvironment<TElement extends Element> {
 /** Shared, read-only environment used by governed canvas overlay layers. */
 export function useCanvasLayerEnvironment<TElement extends Element>(
   client: ViewClient,
+  options: { trackInteractionFocus?: boolean } = {},
 ): CanvasLayerEnvironment<TElement> {
   const workspaceVersion = useSyncExternalStore(client.subscribeState, client.getWorkspaceVersion, () => 0);
   const capabilityVersion = useSyncExternalStore(
@@ -44,6 +54,9 @@ export function useCanvasLayerEnvironment<TElement extends Element>(
   const [duplicateOriginIds, setDuplicateOriginIds] = useState<ReadonlySet<string>>(() => new Set());
   const [sizePreviews, setSizePreviews] = useState<Record<string, { width: number; height: number }>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [hoveredEntityId, setHoveredEntityId] = useState<string>();
+  const [editingEntityIds, setEditingEntityIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [lassoActive, setLassoActive] = useState(false);
   const [committedCanvasColor, setCommittedCanvasColor] = useState('#efefec');
   const [previewCanvasColor, setPreviewCanvasColor] = useState<string>();
   const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
@@ -148,6 +161,36 @@ export function useCanvasLayerEnvironment<TElement extends Element>(
     [client],
   );
 
+  useEffect(() => {
+    if (!options.trackInteractionFocus) return;
+    let current = true;
+    void client.ask<string[]>('editor.openPanes').then((ids) => {
+      if (current) setEditingEntityIds(new Set(ids));
+    }).catch(() => {
+      if (current) setEditingEntityIds(new Set());
+    });
+    return () => {
+      current = false;
+    };
+  }, [capabilityVersion, client, options.trackInteractionFocus, workspaceVersion]);
+
+  useEffect(() => {
+    if (!options.trackInteractionFocus) return;
+    return client.subscribeSignal<CanvasEntityHoverPreview>('canvas.entity.hover.preview', (message) => {
+      const payload = message.payload;
+      setHoveredEntityId((current) => payload.clear
+        ? payload.id && current !== payload.id ? current : undefined
+        : payload.id);
+    });
+  }, [client, options.trackInteractionFocus]);
+
+  useEffect(() => {
+    if (!options.trackInteractionFocus) return;
+    return client.subscribeSignal<LassoSignal>('canvas.lasso.preview', (message) => {
+      setLassoActive(!('clear' in message.payload && message.payload.clear === true));
+    });
+  }, [client, options.trackInteractionFocus]);
+
   return {
     capabilityVersion,
     nodes,
@@ -157,6 +200,9 @@ export function useCanvasLayerEnvironment<TElement extends Element>(
     duplicateOriginIds,
     sizePreviews,
     selectedIds,
+    hoveredEntityId,
+    editingEntityIds,
+    lassoActive,
     canvasColor: previewCanvasColor ?? committedCanvasColor,
     surfaceSize,
     layerRef,

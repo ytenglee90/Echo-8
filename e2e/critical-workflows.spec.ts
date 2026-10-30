@@ -2037,6 +2037,19 @@ test('title-bar ports create persistent connections before the title dot', async
 
   const fixedLabelBox = await label.boundingBox();
   expect(fixedLabelBox).not.toBeNull();
+  const sourceSelectionPoint = await source.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    for (let y = rect.top + 6; y < rect.bottom - 6; y += 6) {
+      for (let x = rect.left + 6; x < rect.right - 6; x += 6) {
+        const target = document.elementFromPoint(x, y);
+        if (target?.closest('.text-node-card') === element &&
+          !target.closest('.connection-edge, .node-resize-handle')) return { x, y };
+      }
+    }
+    throw new Error('Moved source node has no directly clickable point');
+  });
+  await page.mouse.click(sourceSelectionPoint.x, sourceSelectionPoint.y);
+  await expect(source).toHaveAttribute('aria-label', /^已选中，/u);
   const fixedConnectionVisuals = await Promise.all([
     renderedConnection.evaluate(connectionStrokeScreenWidth),
     label.evaluate(connectionLabelScreenMetrics),
@@ -2045,6 +2058,9 @@ test('title-bar ports create persistent connections before the title dot', async
   await zoomStatus.fill('5');
   await zoomStatus.press('Enter');
   await expect(zoomStatus).toHaveAttribute('aria-label', /40%/u);
+  await expect(page.locator('.connection-layer')).toHaveAttribute('data-detail-mode', 'overview-focus');
+  expect(await selectedNodeOverlayStyle(source)).toMatchObject({ borderWidth: '10px' });
+  expect(await source.evaluate((element) => getComputedStyle(element, '::before').content)).toBe('none');
   const zoomedOutDetailRatio = Math.sqrt(0.4);
   await expect.poll(async () => Math.abs(
     await renderedConnection.evaluate(connectionStrokeScreenWidth) /
@@ -2075,9 +2091,26 @@ test('title-bar ports create persistent connections before the title dot', async
   expect(Math.abs(
     zoomedConnectionVisuals[2].width / fixedConnectionVisuals[2].width - zoomedOutDetailRatio,
   )).toBeLessThan(0.03);
+  const overviewLabelBox = await label.boundingBox();
+  expect(overviewLabelBox).not.toBeNull();
+  await page.mouse.move(
+    overviewLabelBox!.x + overviewLabelBox!.width / 2,
+    overviewLabelBox!.y + overviewLabelBox!.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    overviewLabelBox!.x + overviewLabelBox!.width / 2 + 96,
+    overviewLabelBox!.y + overviewLabelBox!.height / 2 + 72,
+    { steps: 6 },
+  );
+  await expect(page.locator('.selection-lasso')).toBeVisible();
+  await expect(page.locator('.connection-layer')).toHaveClass(/lasso-hit-disabled/u);
+  await page.mouse.up();
+  await expect(page.locator('.selection-lasso')).toHaveCount(0);
   await zoomStatus.fill('100');
   await zoomStatus.press('Enter');
   await expect(zoomStatus).toHaveAttribute('aria-label', /100%/u);
+  await expect(label).toBeVisible();
 
   const initialZoomLabel = await zoomStatus.getAttribute('aria-label');
   await page.mouse.move(connectionPoint.x, connectionPoint.y);

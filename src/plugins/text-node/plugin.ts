@@ -204,7 +204,7 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       'history.changed',
       'document.replaced',
     ],
-    signals: ['content.catalog.invalidated', 'search.match.preview'],
+    signals: ['content.catalog.invalidated', 'search.match.preview', 'canvas.entity.hover.preview'],
     ui: [
       'text-node.canvas-layer',
       'text-node.empty-state',

@@ -5,6 +5,7 @@ import { serializeProject } from '../src/plugins/import-export/codec.ts';
 import type { ProjectSource } from '../src/protocols/files.ts';
 
 const NODE_COUNT = 2_000;
+const CONNECTION_COUNT = 1_600;
 const HUGE_TEXT_LENGTH = 20_000_000;
 const OPEN_BUDGET_MS = 15_000;
 const FULL_SELECTION_BUDGET_MS = 5_000;
@@ -30,8 +31,30 @@ test('a real browser opens, culls and edits the supported extreme canvas envelop
   const ordinaryVisibleCards = await page.getByRole('article', { name: /文本节点：/u }).count();
   expect(ordinaryVisibleCards).toBeLessThan(200);
 
-  const selectedAt = performance.now();
+  const zoomStatus = page.locator('.canvas-zoom-status input');
+  await zoomStatus.fill('40');
+  await zoomStatus.press('Enter');
+  await expect(zoomStatus).toHaveAttribute('aria-label', /40%/u);
+  await expect(page.locator('.connection-layer')).toHaveAttribute('data-detail-mode', 'overview-focus');
+  await expect(page.locator('.connection-path')).toHaveCount(0);
+  await expect(page.locator('.connection-label-display')).toHaveCount(0);
+
   const canvas = page.getByLabel('Echo-8 无限画布');
+  const blankPoint = await findBlankCanvasPoint(page);
+  const lassoAt = performance.now();
+  await page.mouse.move(blankPoint.x, blankPoint.y);
+  await page.mouse.down();
+  await page.mouse.move(blankPoint.x + 110, blankPoint.y + 80, { steps: 6 });
+  await expect(page.locator('.selection-lasso')).toBeVisible();
+  await page.mouse.up();
+  await expect(page.locator('.selection-lasso')).toHaveCount(0);
+  expect(performance.now() - lassoAt).toBeLessThan(FULL_SELECTION_BUDGET_MS);
+
+  await zoomStatus.fill('100');
+  await zoomStatus.press('Enter');
+  await expect(zoomStatus).toHaveAttribute('aria-label', /100%/u);
+
+  const selectedAt = performance.now();
   await canvas.click({ position: { x: 8, y: 8 } });
   await page.keyboard.press('Control+a');
   await expect(page.locator('[data-canvas-selection-count]')).toHaveAttribute(
@@ -114,6 +137,7 @@ async function createExtremeProject(): Promise<Blob> {
     textNode: {},
     textContent: {},
     textContentChunk: {},
+    connections: {},
   };
   const hugeBody = repeatedText(
     'Browser performance paragraph 0123456789 '.padEnd(1_999, 'x') + '\n',
@@ -143,6 +167,19 @@ async function createExtremeProject(): Promise<Blob> {
       updatedAt: index + 1,
     };
   }
+  for (let index = 0; index < CONNECTION_COUNT; index += 1) {
+    const connectionId = `browser-connection-${String(index).padStart(4, '0')}`;
+    namespaces.connections[connectionId] = {
+      id: connectionId,
+      from: { nodeId: `browser-node-${String(index).padStart(4, '0')}`, side: 'right' },
+      to: { nodeId: `browser-node-${String(index + 1).padStart(4, '0')}`, side: 'left' },
+      label: `浏览器压力连线 ${String(index).padStart(4, '0')}`,
+      labelWidth: 168,
+      labelHeight: 48,
+      revision: 1,
+      createdAt: NODE_COUNT + index + 1,
+    };
+  }
   const source: ProjectSource = {
     document: { revision: 1, namespaces },
     history: { undo: [], redo: [] },
@@ -153,9 +190,29 @@ async function createExtremeProject(): Promise<Blob> {
         namespaces: ['textNode', 'textContent', 'textContentChunk'],
         available: true,
       },
+      {
+        id: 'connections',
+        version: '0.4.0',
+        dataVersion: 6,
+        namespaces: ['connections'],
+        available: true,
+      },
     ],
   };
   return serializeProject(source);
+}
+
+async function findBlankCanvasPoint(page: Page): Promise<{ x: number; y: number }> {
+  return page.locator('.canvas-surface').evaluate((surface) => {
+    const rect = surface.getBoundingClientRect();
+    for (let y = rect.top + 12; y < rect.bottom - 100; y += 8) {
+      for (let x = rect.left + 12; x < rect.right - 130; x += 8) {
+        const target = document.elementFromPoint(x, y);
+        if (target === surface || target?.classList.contains('canvas-world')) return { x, y };
+      }
+    }
+    throw new Error('No blank canvas point is available for the lasso performance probe');
+  });
 }
 
 function repeatedText(pattern: string, length: number): string {

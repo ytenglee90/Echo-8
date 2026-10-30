@@ -17,6 +17,7 @@ import type {
   SelectionSnapshot,
 } from '../../protocols/selection.ts';
 import { defineManifest } from '../manifest.ts';
+import { SelectionCatalogIndex } from './catalog-index.ts';
 
 const SELECTION_NAMESPACE = 'selection';
 const SELECTION_KEY = 'current';
@@ -48,6 +49,12 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
       ],
       dispatches: ['canvas.focusSelection'],
       events: ['entity.deleted', 'history.changed', 'document.replaced'],
+      signals: [
+        'content.catalog.invalidated',
+        'connections.invalidated',
+        'groups.invalidated',
+        'annotations.invalidated',
+      ],
       ui: ['selection.actions', 'selection.delete-button'],
       actions: ['selection.all-action', 'selection.delete-action', 'selection.clear-action'],
       shortcuts: [
@@ -65,6 +72,12 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
     }),
 
     start(context) {
+      const catalog = new SelectionCatalogIndex();
+      let catalogInvalidation = 1;
+      let appliedCatalogInvalidation = 0;
+      let catalogReady = false;
+      let catalogRefresh: Promise<void> | undefined;
+
       const readSelection = (): SelectionSnapshot => {
         const stored = context.store.readValue<StoredSelection | string[]>(SELECTION_NAMESPACE, SELECTION_KEY);
         const items = Array.isArray(stored)
@@ -73,7 +86,7 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         return { ids: items.map((item) => item.id), items };
       };
 
-      const readCatalog = async (): Promise<SelectableEntity[]> => {
+      const requestCatalog = async (): Promise<SelectableEntity[]> => {
         const contributions = await context.capabilities.requestAll<SelectionCatalogContribution>(
           'selection.entities@1',
         );
@@ -91,6 +104,39 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         }
         return [...byId.values()];
       };
+
+      const refreshCatalog = async (): Promise<void> => {
+        if (catalogRefresh) {
+          await catalogRefresh;
+          if (appliedCatalogInvalidation < catalogInvalidation) await refreshCatalog();
+          return;
+        }
+        const targetInvalidation = catalogInvalidation;
+        catalogRefresh = requestCatalog().then((entities) => {
+          catalog.replace(entities);
+          catalogReady = true;
+          appliedCatalogInvalidation = targetInvalidation;
+        }).finally(() => {
+          catalogRefresh = undefined;
+        });
+        await catalogRefresh;
+        if (appliedCatalogInvalidation < catalogInvalidation) await refreshCatalog();
+      };
+
+      const invalidateCatalog = () => {
+        catalogInvalidation += 1;
+        void refreshCatalog().catch(() => undefined);
+      };
+
+      const ensureCatalogReady = async () => {
+        if (!catalogReady) await refreshCatalog();
+      };
+
+      const ensureCatalogCurrent = async () => {
+        if (!catalogReady || appliedCatalogInvalidation < catalogInvalidation) await refreshCatalog();
+      };
+
+      void refreshCatalog().catch(() => undefined);
 
       const selectionTransaction = (items: SelectionItem[], label: string): TransactionProposal | undefined => {
         const unique = uniqueItems(items);
@@ -112,14 +158,17 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
       };
 
       const resolveSelection = async (payload: SelectionResolutionRequest): Promise<SelectionResolution> => {
-        const catalog = await readCatalog();
-        const byId = new Map(catalog.map((entity) => [entity.id, entity]));
+        await ensureCatalogReady();
+        const declaredItems = payload.items;
+        if (!declaredItems && (payload.ids ?? []).some((id) => !catalog.get(id))) {
+          await ensureCatalogCurrent();
+        }
         const incoming = payload.items ?? (payload.ids ?? []).map((id) => ({
           id,
-          kind: byId.get(id)?.kind ?? 'unknown',
+          kind: catalog.get(id)?.kind ?? 'unknown',
         }));
         const current = resolveDirectSelection(readSelection().items, catalog);
-        const resolvedIncoming = resolveDirectSelection(incoming, catalog);
+        const resolvedIncoming = resolveDirectSelection(incoming, catalog, Boolean(declaredItems));
         const preserveCurrent = payload.preserveIfSelected === true &&
           (payload.mode ?? 'replace') === 'replace' &&
           resolvedIncoming.length > 0 &&
@@ -157,8 +206,8 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         type: 'selection.box',
         validate: isSelectionBoxPayload,
         handle: async (payload) => {
-          const catalog = await readCatalog();
-          const hits = catalog.filter((entity) => boxIntersectsEntity(payload, entity));
+          await ensureCatalogCurrent();
+          const hits = catalog.query(payload).filter((entity) => boxIntersectsEntity(payload, entity));
           const items = prioritizeBoxHits(hits)
             .map(({ id, kind }) => ({ id, kind }));
           return {
@@ -178,7 +227,8 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         type: 'selection.all',
         validate: isSelectionAllPayload,
         handle: async (payload = {}) => {
-          const catalog = await readCatalog();
+          await ensureCatalogCurrent();
+          const entitiesInCatalog = catalog.values();
           let point = payload.point;
           if (!point) {
             try {
@@ -197,7 +247,7 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
               .sort((left, right) =>
                 (right.priority ?? 0) - (left.priority ?? 0) || left.owner.localeCompare(right.owner));
             const selectableIds = new Set(
-              catalog.filter((entity) => entity.includeInSelectAll !== false).map((entity) => entity.id),
+              entitiesInCatalog.filter((entity) => entity.includeInSelectAll !== false).map((entity) => entity.id),
             );
             const scoped = scopes[0]
               ? resolveDirectSelection(scopes[0].items, catalog)
@@ -210,7 +260,7 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
             }
           }
           const entities = collapseContainedEntities(
-            catalog.filter((entity) => entity.includeInSelectAll !== false),
+            entitiesInCatalog.filter((entity) => entity.includeInSelectAll !== false),
           );
           return {
             transaction: selectionTransaction(
@@ -249,15 +299,16 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
       });
 
       context.events.subscribe('entity.deleted', () => {
+        invalidateCatalog();
         void context.commands.dispatch('selection.clear');
       });
       context.events.subscribe('history.changed', () => {
-        void readCatalog().then((entities) => {
-          const available = new Map(entities.map((entity) => [entity.id, entity]));
+        catalogInvalidation += 1;
+        void ensureCatalogCurrent().then(() => {
           const items = readSelection().items
-            .filter((item) => available.has(item.id))
+            .filter((item) => catalog.get(item.id))
             .map((item) => {
-              const entity = available.get(item.id);
+              const entity = catalog.get(item.id);
               return {
                 id: item.id,
                 kind: entity?.kind ?? item.kind,
@@ -268,8 +319,19 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         }).catch(() => undefined);
       });
       context.events.subscribe('document.replaced', () => {
+        catalog.clear();
+        catalogReady = false;
+        invalidateCatalog();
         void context.commands.dispatch('selection.clear');
       });
+
+      context.signals.subscribe<{ geometry?: boolean }>('content.catalog.invalidated', (message) => {
+        if (message.payload.geometry === false) return;
+        invalidateCatalog();
+      });
+      context.signals.subscribe('connections.invalidated', invalidateCatalog);
+      context.signals.subscribe('groups.invalidated', invalidateCatalog);
+      context.signals.subscribe('annotations.invalidated', invalidateCatalog);
 
       context.capabilities.provide({
         key: 'selection.read@1',
@@ -394,25 +456,31 @@ function collapseContainedEntities(entities: SelectableEntity[]): SelectableEnti
 
 function resolveDirectSelection(
   items: SelectionItem[],
-  entities: SelectableEntity[],
+  catalog: Pick<SelectionCatalogIndex, 'get'>,
+  allowDeclaredMissing = false,
 ): SelectionItem[] {
-  const byId = new Map(entities.map((entity) => [entity.id, entity]));
   return uniqueItems(items
-    .filter((item) => byId.has(item.id))
-    .map((item) => {
-      const entity = byId.get(item.id)!;
+    .flatMap((item) => {
+      const entity = catalog.get(item.id);
+      if (!entity) {
+        return allowDeclaredMissing && item.kind !== 'unknown'
+          ? [{ id: item.id, kind: item.kind, ...(item.part ? { part: item.part } : {}) }]
+          : [];
+      }
       const part = item.part && entity.parts?.includes(item.part) ? item.part : undefined;
-      return { id: item.id, kind: entity.kind, ...(part ? { part } : {}) };
+      return [{ id: item.id, kind: entity.kind, ...(part ? { part } : {}) }];
     }));
 }
 
-function expandSelectionItems(items: SelectionItem[], entities: SelectableEntity[]): string[] {
-  const byId = new Map(entities.map((entity) => [entity.id, entity]));
+function expandSelectionItems(
+  items: SelectionItem[],
+  catalog: Pick<SelectionCatalogIndex, 'get'>,
+): string[] {
   const expanded = new Set<string>();
   const visit = (id: string) => {
     if (expanded.has(id)) return;
     expanded.add(id);
-    for (const containedId of byId.get(id)?.contains ?? []) visit(containedId);
+    for (const containedId of catalog.get(id)?.contains ?? []) visit(containedId);
   };
   for (const item of items) visit(item.id);
   return [...expanded];

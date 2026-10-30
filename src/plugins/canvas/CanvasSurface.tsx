@@ -17,6 +17,8 @@ import { appearancePreviewTarget, type AppearancePreview } from '../../protocols
 import type {
   CameraState,
   CanvasAppearanceSnapshot,
+  CanvasExternalLassoPointerRequest,
+  CanvasExternalLassoStartRequest,
   CanvasSnapGuide,
   CanvasSnapPreview,
   CanvasPointerSnapshot,
@@ -125,6 +127,17 @@ interface PanSession {
   latest: CameraState;
 }
 
+interface PendingLassoGesture {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startWorldX: number;
+  startWorldY: number;
+  mode: SelectionMode;
+  cameraOrigin: CameraState;
+  released: boolean;
+}
+
 interface SuspendedDragPan {
   pointerX: number;
   pointerY: number;
@@ -197,7 +210,9 @@ export function CanvasSurface({
   const drag = useRef<DragSession | undefined>(undefined);
   const pendingDrag = useRef<PendingNodeDrag | undefined>(undefined);
   const pan = useRef<PanSession | undefined>(undefined);
+  const pendingLasso = useRef<PendingLassoGesture | undefined>(undefined);
   const lasso = useRef<LassoSession | undefined>(undefined);
+  const externalLassoPointerId = useRef<number | undefined>(undefined);
   const suspendedDragPan = useRef<SuspendedDragPan | undefined>(undefined);
   const lassoPanFrame = useRef<number | undefined>(undefined);
   const resize = useRef<ResizeSession | undefined>(undefined);
@@ -928,8 +943,8 @@ export function CanvasSurface({
     if (!wantsPan && (event.target as HTMLElement).closest('.text-node-card, .connection-edge, .node-resize-handle')) return;
     event.currentTarget.focus({ preventScroll: true });
     event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
     if (wantsPan) {
+      event.currentTarget.setPointerCapture(event.pointerId);
       pan.current = {
         pointerX: event.clientX,
         pointerY: event.clientY,
@@ -945,23 +960,19 @@ export function CanvasSurface({
       return;
     }
     const point = screenToWorld(event.clientX, event.clientY, camera, event.currentTarget);
-    const mode = modifierMode(event);
-    lasso.current = {
-      startX: point.x,
-      startY: point.y,
-      latestX: point.x,
-      latestY: point.y,
-      mode,
-      latestClientX: event.clientX,
-      latestClientY: event.clientY,
+    pendingLasso.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startWorldX: point.x,
+      startWorldY: point.y,
+      mode: modifierMode(event),
       cameraOrigin: cameraRef.current,
-      cameraMoved: false,
+      released: false,
     };
-    client.emit('canvas.lasso.preview', normalizeLasso(lasso.current));
-    scheduleLassoEdgePan();
   };
 
-  const scheduleLassoEdgePan = () => {
+  const scheduleLassoEdgePan = useCallback(() => {
     if (lassoPanFrame.current !== undefined) return;
     const tick = () => {
       lassoPanFrame.current = undefined;
@@ -984,9 +995,34 @@ export function CanvasSurface({
       lassoPanFrame.current = requestAnimationFrame(tick);
     };
     lassoPanFrame.current = requestAnimationFrame(tick);
-  };
+  }, [client]);
 
   const moveGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pendingSurfaceLasso = pendingLasso.current;
+    if (pendingSurfaceLasso?.pointerId === event.pointerId && !pendingSurfaceLasso.released) {
+      const distance = Math.hypot(
+        event.clientX - pendingSurfaceLasso.startClientX,
+        event.clientY - pendingSurfaceLasso.startClientY,
+      );
+      if (distance <= 3) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      const point = screenToWorld(event.clientX, event.clientY, cameraRef.current, event.currentTarget);
+      lasso.current = {
+        startX: pendingSurfaceLasso.startWorldX,
+        startY: pendingSurfaceLasso.startWorldY,
+        latestX: point.x,
+        latestY: point.y,
+        mode: pendingSurfaceLasso.mode,
+        latestClientX: event.clientX,
+        latestClientY: event.clientY,
+        cameraOrigin: pendingSurfaceLasso.cameraOrigin,
+        cameraMoved: false,
+      };
+      pendingLasso.current = undefined;
+      client.emit('canvas.lasso.preview', normalizeLasso(lasso.current));
+      scheduleLassoEdgePan();
+    }
     if (pendingDrag.current?.pointerId === event.pointerId) {
       pendingDrag.current.latestX = event.clientX;
       pendingDrag.current.latestY = event.clientY;
@@ -1139,7 +1175,29 @@ export function CanvasSurface({
     }
   };
 
+  const commitLassoSelection = useCallback(() => {
+    const session = lasso.current;
+    if (!session) return;
+    const box = normalizeLasso(session);
+    const movedCamera = session.cameraMoved;
+    lasso.current = undefined;
+    externalLassoPointerId.current = undefined;
+    if (lassoPanFrame.current !== undefined) {
+      cancelAnimationFrame(lassoPanFrame.current);
+      lassoPanFrame.current = undefined;
+    }
+    client.emit('canvas.lasso.preview', { clear: true });
+    if (movedCamera) void client.dispatch('canvas.camera.commit', cameraRef.current).catch(() => undefined);
+    void client.dispatch('selection.box', box);
+  }, [client]);
+
   const finishGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (pendingLasso.current?.pointerId === event.pointerId) {
+      const pending = pendingLasso.current;
+      pendingLasso.current = undefined;
+      if (pending.mode === 'replace') void client.dispatch('selection.clear');
+      return;
+    }
     if (connectionDraft.current) {
       const pointer = screenToWorld(event.clientX, event.clientY, camera, event.currentTarget);
       const session = updateConnectionSession(
@@ -1218,16 +1276,7 @@ export function CanvasSurface({
         .finally(() => client.dispatch('interaction.end', { mode: 'panning' }).catch(() => undefined));
     }
     if (lasso.current) {
-      const box = normalizeLasso(lasso.current);
-      const movedCamera = lasso.current.cameraMoved;
-      lasso.current = undefined;
-      if (lassoPanFrame.current !== undefined) {
-        cancelAnimationFrame(lassoPanFrame.current);
-        lassoPanFrame.current = undefined;
-      }
-      client.emit('canvas.lasso.preview', { clear: true });
-      if (movedCamera) void client.dispatch('canvas.camera.commit', cameraRef.current).catch(() => undefined);
-      void client.dispatch('selection.box', box);
+      commitLassoSelection();
     }
   };
 
@@ -1241,7 +1290,9 @@ export function CanvasSurface({
     setNodeDragActive(false);
     setDragOriginPreview([]);
     pan.current = undefined;
+    pendingLasso.current = undefined;
     lasso.current = undefined;
+    externalLassoPointerId.current = undefined;
     suspendedDragPan.current = undefined;
     if (lassoPanFrame.current !== undefined) {
       cancelAnimationFrame(lassoPanFrame.current);
@@ -1397,6 +1448,84 @@ export function CanvasSurface({
     } satisfies CanvasPointerSnapshot);
   };
 
+  useEffect(() => {
+    const unsubscribeStart = client.subscribeSignal<CanvasExternalLassoStartRequest>(
+      'canvas.lasso.external.requested',
+      (message) => {
+        const payload = message.payload;
+        const surface = surfaceRef.current;
+        if (!surface || lasso.current || pan.current || drag.current || resize.current || connectionDraft.current) return;
+        const start = screenToWorld(payload.startClientX, payload.startClientY, cameraRef.current, surface);
+        const latest = screenToWorld(payload.clientX, payload.clientY, cameraRef.current, surface);
+        pendingLasso.current = undefined;
+        lasso.current = {
+          startX: start.x,
+          startY: start.y,
+          latestX: latest.x,
+          latestY: latest.y,
+          mode: payload.mode,
+          latestClientX: payload.clientX,
+          latestClientY: payload.clientY,
+          cameraOrigin: cameraRef.current,
+          cameraMoved: false,
+        };
+        externalLassoPointerId.current = payload.pointerId;
+        surface.focus({ preventScroll: true });
+        try {
+          surface.setPointerCapture(payload.pointerId);
+        } catch {
+          // A very short drag may have released before the coalesced request arrives.
+        }
+        client.emit('canvas.lasso.preview', normalizeLasso(lasso.current));
+        scheduleLassoEdgePan();
+      },
+    );
+    const unsubscribePreview = client.subscribeSignal<CanvasExternalLassoPointerRequest>(
+      'canvas.lasso.external.preview',
+      (message) => {
+        const payload = message.payload;
+        const surface = surfaceRef.current;
+        const session = lasso.current;
+        if (!surface || !session || externalLassoPointerId.current !== payload.pointerId) return;
+        const point = screenToWorld(payload.clientX, payload.clientY, cameraRef.current, surface);
+        session.latestX = point.x;
+        session.latestY = point.y;
+        session.latestClientX = payload.clientX;
+        session.latestClientY = payload.clientY;
+        client.emit('canvas.lasso.preview', normalizeLasso(session));
+        scheduleLassoEdgePan();
+      },
+    );
+    const unsubscribeFinish = client.subscribeSignal<CanvasExternalLassoPointerRequest>(
+      'canvas.lasso.external.finished',
+      (message) => {
+        const payload = message.payload;
+        if (externalLassoPointerId.current !== payload.pointerId) return;
+        if (payload.cancel) {
+          lasso.current = undefined;
+          externalLassoPointerId.current = undefined;
+          client.emit('canvas.lasso.preview', { clear: true });
+          return;
+        }
+        const surface = surfaceRef.current;
+        const session = lasso.current;
+        if (surface && session) {
+          const point = screenToWorld(payload.clientX, payload.clientY, cameraRef.current, surface);
+          session.latestX = point.x;
+          session.latestY = point.y;
+          session.latestClientX = payload.clientX;
+          session.latestClientY = payload.clientY;
+        }
+        commitLassoSelection();
+      },
+    );
+    return () => {
+      unsubscribeStart();
+      unsubscribePreview();
+      unsubscribeFinish();
+    };
+  }, [client, commitLassoSelection, scheduleLassoEdgePan]);
+
   return (
     <div
       ref={surfaceRef}
@@ -1410,6 +1539,9 @@ export function CanvasSurface({
       onPointerMove={(event) => {
         publishPointer(event);
         moveGesture(event);
+      }}
+      onPointerUpCapture={(event) => {
+        if (pendingLasso.current?.pointerId === event.pointerId) pendingLasso.current.released = true;
       }}
       onPointerLeave={() => client.emit('canvas.pointer.preview', { clear: true } satisfies CanvasPointerSnapshot)}
       onPointerUp={finishGesture}

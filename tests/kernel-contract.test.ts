@@ -69,8 +69,11 @@ import {
 import { createConnectionsPlugin } from '../src/plugins/connections/model.ts';
 import {
   CONNECTION_BATCH_RENDER_THRESHOLD,
+  CONNECTION_OVERVIEW_MAX_ZOOM,
   connectionCurvePath,
+  connectionOverviewMode,
   connectionRenderMode,
+  connectionVisibleForOverview,
   distanceToConnectionCurve,
 } from '../src/plugins/connections/rendering.ts';
 import type { ConnectionAppearanceSnapshot, ConnectionRecord } from '../src/protocols/connections.ts';
@@ -93,6 +96,7 @@ import type { CloudSyncState } from '../src/cloud/contracts.ts';
 import { createPalettePlugin } from '../src/plugins/palette/model.ts';
 import { defineManifest } from '../src/plugins/manifest.ts';
 import { createSelectionPlugin } from '../src/plugins/selection/model.ts';
+import { SelectionCatalogIndex } from '../src/plugins/selection/catalog-index.ts';
 import { createSearchReplacePlugin } from '../src/plugins/search-replace/model.ts';
 import { resolveSearchNavigation } from '../src/plugins/search-replace/navigation.ts';
 import { groupHitsByNode } from '../src/plugins/search-replace/result-order.ts';
@@ -4851,6 +4855,44 @@ test('connection rendering batches large visible sets while preserving pointer h
   assert.match(connectionCurvePath({ x: 0, y: 0 }, { x: 120, y: 0 }), /^M 0 0 C /u);
   assert.ok(distanceToConnectionCurve({ x: 60, y: 0 }, { x: 0, y: 0 }, { x: 120, y: 0 }) < 0.01);
   assert.ok(distanceToConnectionCurve({ x: 60, y: 40 }, { x: 0, y: 0 }, { x: 120, y: 0 }) > 35);
+});
+
+test('connection overview mounts only edges related to selected, hovered or editing entities', () => {
+  const connection = {
+    id: 'connection-overview',
+    from: { nodeId: 'left' },
+    to: { nodeId: 'right' },
+  };
+  assert.equal(connectionOverviewMode(CONNECTION_OVERVIEW_MAX_ZOOM - 0.01), true);
+  assert.equal(connectionOverviewMode(CONNECTION_OVERVIEW_MAX_ZOOM), false);
+  assert.equal(connectionVisibleForOverview(connection, new Set(), new Set()), false);
+  assert.equal(connectionVisibleForOverview(connection, new Set(['left']), new Set()), true);
+  assert.equal(connectionVisibleForOverview(connection, new Set(['right']), new Set()), true);
+  assert.equal(connectionVisibleForOverview(connection, new Set(), new Set([connection.id])), true);
+});
+
+test('selection catalog updates only geometry revisions and queries spatial candidates', () => {
+  const catalog = new SelectionCatalogIndex();
+  const entities = Array.from({ length: 2_000 }, (_, index) => ({
+    id: `selection-index-${index}`,
+    kind: 'text-node',
+    geometryRevision: 1,
+    bounds: { x: (index % 50) * 400, y: Math.floor(index / 50) * 240, width: 280, height: 180 },
+  }));
+  assert.deepEqual(catalog.replace(entities), { added: 2_000, updated: 0, removed: 0, indexed: 2_000 });
+  assert.deepEqual(catalog.replace(entities.map((entity) => ({ ...entity }))), {
+    added: 0,
+    updated: 0,
+    removed: 0,
+    indexed: 0,
+  });
+
+  const moved = entities.map((entity, index) => index === 1_234
+    ? { ...entity, geometryRevision: 2, bounds: { ...entity.bounds, x: 90_000, y: 90_000 } }
+    : entity);
+  assert.deepEqual(catalog.replace(moved), { added: 0, updated: 1, removed: 0, indexed: 1 });
+  assert.equal(catalog.query({ x: 89_900, y: 89_900, width: 500, height: 500 })[0]?.id, 'selection-index-1234');
+  assert.equal(catalog.query(entities[1_234].bounds).some((entity) => entity.id === 'selection-index-1234'), false);
 });
 
 test('box selection is workspace state and supports add and remove modes', async () => {

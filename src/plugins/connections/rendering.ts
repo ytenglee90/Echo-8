@@ -10,6 +10,7 @@ export interface ConnectionRenderPoint {
 export type ConnectionRenderMode = 'interactive-svg' | 'batched-svg';
 
 export const CONNECTION_BATCH_RENDER_THRESHOLD = 600;
+export const CONNECTION_OVERVIEW_MAX_ZOOM = 0.5;
 export const CONNECTION_ARROW_SCREEN_LENGTH = 14;
 export const CONNECTION_ARROW_SCREEN_HALF_WIDTH = 7;
 export const CONNECTION_LINE_SCREEN_WIDTH = 1.5;
@@ -25,6 +26,19 @@ interface CubicCurveSegment {
 
 export function connectionRenderMode(visibleConnections: number): ConnectionRenderMode {
   return visibleConnections > CONNECTION_BATCH_RENDER_THRESHOLD ? 'batched-svg' : 'interactive-svg';
+}
+
+export function connectionOverviewMode(zoom: number): boolean {
+  return zoom < CONNECTION_OVERVIEW_MAX_ZOOM;
+}
+
+export function connectionVisibleForOverview(
+  connection: { id: string; from: { nodeId: string }; to: { nodeId: string } },
+  focusedNodeIds: ReadonlySet<string>,
+  emphasizedConnectionIds: ReadonlySet<string>,
+): boolean {
+  return emphasizedConnectionIds.has(connection.id) ||
+    focusedNodeIds.has(connection.from.nodeId) || focusedNodeIds.has(connection.to.nodeId);
 }
 
 export function orderConnectionsForPaint<T extends { connection: { id: string } }>(

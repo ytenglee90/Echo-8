@@ -95,4 +95,5 @@
 | [0083](ADR-0083-TITLE-SEARCH-AND-SELECTION-SCOPED-NAVIGATION.md) | 标题检索、画布选择联动与选中范围导航 | 有效；补充 0003，部分替代 0028 |
 | [0084](ADR-0084-SESSION-ONLY-WORKSPACE-RESTORE-BOUNDARY.md) | 仅会话工作区恢复边界与只读云书籍接管入口 | 有效；补充 0006、0025、0060、0080 |
 | [0085](ADR-0085-HOMEPAGE-CLOUD-CAPACITY-AND-ACCESS.md) | 首页云容量与当前书籍权限状态 | 有效；补充 0068、0069、0070 |
+| [0086](ADR-0086-OVERVIEW-CONNECTION-LOD-AND-INDEXED-LASSO.md) | 低缩放连线 LOD、框选仲裁与增量选择索引 | 有效；补充 0011、0017、0021、0022、0045、0065、0074 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

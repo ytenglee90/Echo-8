@@ -31,6 +31,12 @@ export type CanvasPointerSnapshot =
   | { point: { x: number; y: number } }
   | { clear: true };
 
+/** Ephemeral entity hover used by overview renderers without inspecting another plugin's DOM. */
+export interface CanvasEntityHoverPreview {
+  id?: string;
+  clear?: boolean;
+}
+
 export type CanvasToolMode = 'select' | 'hand';
 
 export interface CanvasZoomRequest {
@@ -71,6 +77,22 @@ export interface LassoPreview {
 }
 
 export type LassoSignal = LassoPreview | { clear: true };
+
+export interface CanvasExternalLassoStartRequest {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  clientX: number;
+  clientY: number;
+  mode: SelectionMode;
+}
+
+export interface CanvasExternalLassoPointerRequest {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  cancel?: boolean;
+}
 
 export interface FocusRequest {
   bounds: { x: number; y: number; width: number; height: number };

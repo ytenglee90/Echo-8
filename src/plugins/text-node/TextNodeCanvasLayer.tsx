@@ -67,6 +67,9 @@ function TextNodeCanvasLayerView({
     }),
     [client],
   );
+  useEffect(() => () => {
+    client.emit('canvas.entity.hover.preview', { clear: true });
+  }, [client]);
   const finishTitleEdit = (save: boolean) => {
     const edit = titleEdit;
     if (!edit) return;
@@ -159,9 +162,10 @@ function TextNodeCanvasLayerView({
           width: size.width,
           height: size.height,
         }, camera);
+        const isSelected = selected.has(node.id);
         return (
           <article
-            className={`text-node-card ${isTextBox ? 'text-box' : ''} ${selected.has(node.id) ? 'selected' : ''} ${connectionTargetId === node.id ? 'connection-target' : ''} ${!isTextBox && detail === 'title-only' ? 'compact' : ''}`}
+            className={`text-node-card ${isTextBox ? 'text-box' : ''} ${isSelected ? 'selected' : ''} ${isSelected && detail === 'title-only' ? 'overview-selected' : ''} ${connectionTargetId === node.id ? 'connection-target' : ''} ${!isTextBox && detail === 'title-only' ? 'compact' : ''}`}
             key={node.id}
             style={{
               width: renderedFrame.width,
@@ -173,6 +177,8 @@ function TextNodeCanvasLayerView({
               '--text-box-color': renderedTextBoxColor,
             } as CSSProperties}
             onPointerDown={(event) => beginNodeDrag(event, node)}
+            onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: node.id })}
+            onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: node.id, clear: true })}
             onDoubleClick={(event) => {
               if (isTextBox) {
                 event.preventDefault();
@@ -195,7 +201,7 @@ function TextNodeCanvasLayerView({
               }
             }}
             tabIndex={0}
-            aria-label={`${selected.has(node.id) ? '已选中，' : ''}${isTextBox ? '文本框' : '文本节点'}：${node.title}`}
+            aria-label={`${isSelected ? '已选中，' : ''}${isTextBox ? '文本框' : '文本节点'}：${node.title}`}
           >
             {isTextBox ? (
               titleEdit?.id === node.id ? (

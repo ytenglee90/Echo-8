@@ -34,6 +34,12 @@ export interface SelectionSetPayload {
 }
 
 export interface SelectableEntity extends SelectionItem {
+  /**
+   * Rebuildable geometry-only revision used by the selection catalog cache.
+   * Metadata changes may reuse this value; movement, resize, endpoint or shape
+   * changes must produce a different value.
+   */
+  geometryRevision?: string | number;
   bounds?: { x: number; y: number; width: number; height: number };
   /** Entities affected when this container itself is selected for a batch operation. */
   contains?: string[];

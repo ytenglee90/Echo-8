@@ -329,6 +329,13 @@ export function registerTextNodeCapabilities({
         entities: Object.values(readNodes()).filter(isCanvasTextNode).map((node) => ({
           id: node.id,
           kind: 'text-node',
+          geometryRevision: [
+            node.presentation ?? 'card',
+            node.x,
+            node.y,
+            node.width,
+            nodeHeight(node),
+          ].join(':'),
           bounds: { x: node.x, y: node.y, width: node.width, height: nodeHeight(node) },
         })),
       }),

@@ -3,6 +3,7 @@
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -11,7 +12,11 @@ import {
 import type { ViewClient } from '../../core/contracts.ts';
 import { SpatialHashIndex } from '../../services/spatial-index.ts';
 import { appearancePreviewTarget, type AppearancePreview } from '../../protocols/appearance.ts';
-import type { CanvasWheelZoomRequest } from '../../protocols/canvas.ts';
+import type {
+  CanvasExternalLassoPointerRequest,
+  CanvasExternalLassoStartRequest,
+  CanvasWheelZoomRequest,
+} from '../../protocols/canvas.ts';
 import {
   connectionEndpointPoint,
   MAX_CONNECTION_LABEL_LENGTH,
@@ -38,7 +43,9 @@ import {
   connectionCurveMidpoint,
   connectionCurvePath,
   connectionCurvePathWithArrow,
+  connectionOverviewMode,
   connectionRenderMode,
+  connectionVisibleForOverview,
   CONNECTION_LINE_SCREEN_WIDTH,
   distanceToConnectionCurve,
   orderConnectionsForPaint,
@@ -81,6 +88,17 @@ interface ConnectionLabelResizeSession {
   expectedRevision: number;
 }
 
+interface PendingConnectionSelection {
+  id: string;
+  part: 'line' | 'label-background' | 'label-text';
+  mode: SelectionMode;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
+  lassoRequested: boolean;
+}
+
 export function ConnectionLayer({ client }: { client: ViewClient }) {
   const {
     capabilityVersion,
@@ -90,10 +108,13 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     duplicateOriginIds,
     sizePreviews,
     selectedIds,
+    hoveredEntityId,
+    editingEntityIds,
+    lassoActive,
     canvasColor,
     surfaceSize,
     layerRef,
-  } = useCanvasLayerEnvironment<SVGSVGElement>(client);
+  } = useCanvasLayerEnvironment<SVGSVGElement>(client, { trackInteractionFocus: true });
   const [connections, setConnections] = useState<ConnectionRecord[]>([]);
   const [connectionAppearance, setConnectionAppearance] = useState<ConnectionAppearanceSnapshot>({ revision: 0 });
   const [appearancePreview, setAppearancePreview] = useState<AppearancePreview>();
@@ -103,6 +124,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const [labelResizePreview, setLabelResizePreview] = useState<ConnectionLabelResizePreview>();
   const labelInputRef = useRef<HTMLTextAreaElement>(null);
   const labelResize = useRef<ConnectionLabelResizeSession | undefined>(undefined);
+  const pendingSelection = useRef<PendingConnectionSelection | undefined>(undefined);
   const skipBlurCommitRef = useRef(false);
 
   useEffect(() => {
@@ -215,6 +237,26 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     }
     return { byId, byNode };
   }, [connections]);
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const editingConnectionId = labelEditor?.id;
+  const overviewMode = connectionOverviewMode(camera.zoom);
+  const focusedNodeIds = useMemo(() => {
+    const ids = new Set(editingEntityIds);
+    if (hoveredEntityId) ids.add(hoveredEntityId);
+    for (const id of selected) {
+      if (nodeById.has(id)) ids.add(id);
+    }
+    return ids;
+  }, [editingEntityIds, hoveredEntityId, nodeById, selected]);
+  const emphasizedConnectionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const id of selected) {
+      if (connectionLookup.byId.has(id)) ids.add(id);
+    }
+    if (hoveredId) ids.add(hoveredId);
+    if (editingConnectionId) ids.add(editingConnectionId);
+    return ids;
+  }, [connectionLookup.byId, editingConnectionId, hoveredId, selected]);
   const connectionIndex = useMemo(() => {
     const index = new SpatialHashIndex<ConnectionRecord>();
     index.rebuild(
@@ -228,6 +270,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     return index;
   }, [connections, stableNodeMap]);
   const drawable = useMemo(() => {
+    if (overviewMode && focusedNodeIds.size === 0 && emphasizedConnectionIds.size === 0) return [];
     const viewport = worldViewport(camera, surfaceSize, CULL_MARGIN);
     const candidates = new Map(connectionIndex.query(viewport).map((connection) => [connection.id, connection]));
     for (const nodeId of [...Object.keys(previews), ...Object.keys(sizePreviews)]) {
@@ -237,15 +280,30 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       }
     }
     return [...candidates.values()].filter((connection) => {
+      if (overviewMode && !connectionVisibleForOverview(
+        connection,
+        focusedNodeIds,
+        emphasizedConnectionIds,
+      )) return false;
       const points = connectionPoints(connection, nodeMap);
       return Boolean(points && boundsIntersect(viewport, connectionBounds(points.from, points.to)));
     });
-  }, [camera, connectionIndex, connectionLookup, nodeMap, previews, sizePreviews, surfaceSize]);
+  }, [
+    camera,
+    connectionIndex,
+    connectionLookup,
+    emphasizedConnectionIds,
+    focusedNodeIds,
+    nodeMap,
+    overviewMode,
+    previews,
+    sizePreviews,
+    surfaceSize,
+  ]);
   const draftStart = draft.from ? endpointPoint(draft.from, nodeMap) : undefined;
   const draftEnd = draft.to ? endpointPoint(draft.to, nodeMap) : draft.pointer;
-  const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const editingConnectionId = labelEditor?.id;
-  const drawableGeometry = useMemo<DrawableConnection[]>(() => drawable.flatMap((connection) => {
+  const renderableConnections = drawable;
+  const drawableGeometry = useMemo<DrawableConnection[]>(() => renderableConnections.flatMap((connection) => {
     const points = connectionPoints(connection, nodeMap);
     return points ? [{
       connection,
@@ -256,7 +314,11 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       curvePath: connectionCurvePath(points.from, points.to),
       renderedPath: connectionCurvePathWithArrow(points.from, points.to, camera.zoom),
     }] : [];
-  }), [camera.zoom, drawable, editingConnectionId, nodeMap]);
+  }), [camera.zoom, editingConnectionId, nodeMap, renderableConnections]);
+  const renderedConnectionIds = useMemo(
+    () => new Set(renderableConnections.map((connection) => connection.id)),
+    [renderableConnections],
+  );
   const renderMode = connectionRenderMode(drawableGeometry.length);
   const batchRendered = renderMode === 'batched-svg';
   const paintOrderedGeometry = useMemo(
@@ -330,6 +392,57 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const selectConnection = (id: string, mode: SelectionMode, part: 'line' | 'label-background' | 'label-text' = 'line') => {
     void client.dispatch('selection.set', { items: [{ id, kind: 'connection', part }], mode });
   };
+
+  const beginConnectionSelection = (
+    event: ReactPointerEvent<SVGSVGElement>,
+    connection: ConnectionRecord,
+    part: PendingConnectionSelection['part'],
+  ) => {
+    pendingSelection.current = {
+      id: connection.id,
+      part,
+      mode: modifierMode(event),
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+      lassoRequested: false,
+    };
+  };
+
+  const movePendingConnectionSelection = useCallback((pointerId: number, clientX: number, clientY: number) => {
+    const pending = pendingSelection.current;
+    if (!pending || pending.pointerId !== pointerId) return;
+    const moved = Math.hypot(clientX - pending.startX, clientY - pending.startY) > 3;
+    if (moved && !pending.lassoRequested) {
+      pending.moved = true;
+      pending.lassoRequested = true;
+      client.emit('canvas.lasso.external.requested', {
+        pointerId,
+        startClientX: pending.startX,
+        startClientY: pending.startY,
+        clientX,
+        clientY,
+        mode: pending.mode,
+      } satisfies CanvasExternalLassoStartRequest);
+    }
+    if (pending.lassoRequested) client.emit('canvas.lasso.external.preview', {
+      pointerId,
+      clientX,
+      clientY,
+    } satisfies CanvasExternalLassoPointerRequest);
+  }, [client]);
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      // WebKit does not consistently bubble pointer moves from HTML inside an SVG
+      // foreignObject. The window capture listener preserves lasso arbitration for
+      // connection labels without retargeting ordinary clicks or double clicks.
+      movePendingConnectionSelection(event.pointerId, event.clientX, event.clientY);
+    };
+    window.addEventListener('pointermove', move, { capture: true });
+    return () => window.removeEventListener('pointermove', move, { capture: true });
+  }, [movePendingConnectionSelection]);
 
   const openLabelEditor = (connection: ConnectionRecord) => {
     selectConnection(connection.id, 'replace', 'label-text');
@@ -436,6 +549,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   };
 
   const hitConnection = (clientX: number, clientY: number): ConnectionRecord | undefined => {
+    if (lassoActive) return undefined;
     const element = layerRef.current;
     if (!element) return undefined;
     const rect = element.getBoundingClientRect();
@@ -458,6 +572,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     }
     let best: { connection: ConnectionRecord; distance: number } | undefined;
     for (const connection of candidates.values()) {
+      if (!renderedConnectionIds.has(connection.id)) continue;
       const points = connectionPoints(connection, nodeMap);
       if (!points) continue;
       const distance = distanceToConnectionCurve(point, points.from, points.to);
@@ -469,40 +584,79 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   return (
     <svg
       ref={layerRef}
-      className={`connection-layer ${batchRendered ? 'is-batched' : ''}`}
+      className={`connection-layer ${batchRendered ? 'is-batched' : ''} ${lassoActive ? 'lasso-hit-disabled' : ''}`}
       style={{
         ...canvasContrastVariables(canvasColor),
         '--connection-line': globalConnectionLineColor,
         '--connection-label-background': canvasColor,
         '--connection-stroke-width': `${CONNECTION_LINE_SCREEN_WIDTH * detailWorldScale}px`,
+        pointerEvents: lassoActive ? 'none' : undefined,
       } as CSSProperties}
       aria-label="节点连线"
       data-render-mode={renderMode}
+      data-detail-mode={overviewMode ? 'overview-focus' : 'full'}
       onPointerDownCapture={(event) => {
-        if (!labelEditor || event.target === labelInputRef.current) return;
-        labelInputRef.current?.blur();
+        if (labelEditor && event.target !== labelInputRef.current) labelInputRef.current?.blur();
+        if (lassoActive || event.button !== 0) return;
+        const target = event.target as Element;
+        if (target.closest('textarea, .connection-label-resize-handle')) return;
+        const declaredTarget = target.closest<SVGElement>('[data-connection-id]');
+        const declaredId = declaredTarget?.dataset.connectionId;
+        const declaredConnection = declaredId ? connectionLookup.byId.get(declaredId) : undefined;
+        const connection = declaredConnection ?? (batchRendered
+          ? hitConnection(event.clientX, event.clientY)
+          : undefined);
+        if (!connection) return;
+        const part = declaredTarget?.dataset.connectionPart;
+        beginConnectionSelection(
+          event,
+          connection,
+          part === 'label-background' || part === 'label-text' ? part : 'line',
+        );
       }}
       onPointerMove={(event) => {
+        movePendingConnectionSelection(event.pointerId, event.clientX, event.clientY);
         if (updateLabelResize(event)) return;
         if (!batchRendered) return;
         const next = hitConnection(event.clientX, event.clientY)?.id;
         setHoveredId((current) => current === next ? current : next);
       }}
       onPointerUp={(event) => {
-        finishLabelResize(event);
+        if (finishLabelResize(event)) {
+          pendingSelection.current = undefined;
+          return;
+        }
+        const pending = pendingSelection.current;
+        if (!pending || pending.pointerId !== event.pointerId) return;
+        pendingSelection.current = undefined;
+        if (pending.moved || lassoActive) {
+          event.preventDefault();
+          event.stopPropagation();
+          client.emit('canvas.lasso.external.finished', {
+            pointerId: event.pointerId,
+            clientX: event.clientX,
+            clientY: event.clientY,
+          } satisfies CanvasExternalLassoPointerRequest);
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        selectConnection(pending.id, pending.mode, pending.part);
       }}
       onPointerCancel={(event) => {
+        const pending = pendingSelection.current;
+        if (pending?.pointerId === event.pointerId) {
+          pendingSelection.current = undefined;
+          if (pending.lassoRequested) client.emit('canvas.lasso.external.finished', {
+            pointerId: event.pointerId,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            cancel: true,
+          } satisfies CanvasExternalLassoPointerRequest);
+        }
         cancelLabelResize(event.pointerId);
       }}
       onPointerLeave={() => setHoveredId(undefined)}
-      onPointerDown={(event) => {
-        if (!batchRendered || event.button !== 0) return;
-        const connection = hitConnection(event.clientX, event.clientY);
-        if (!connection) return;
-        event.preventDefault();
-        event.stopPropagation();
-        selectConnection(connection.id, modifierMode(event));
-      }}
       onDoubleClick={(event) => {
         if (!batchRendered) return;
         const connection = hitConnection(event.clientX, event.clientY);
@@ -543,16 +697,14 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
               <path
                 className="connection-hit-area"
                 d={curvePath}
+                data-connection-id={connection.id}
+                data-connection-part="line"
                 tabIndex={0}
                 role="button"
                 aria-pressed={isSelected}
                 aria-label={`${isSelected ? '已选中，' : ''}节点连线${connection.label ? `：${connection.label}` : ''}；双击或按 F2 编辑文字`}
                 onPointerEnter={() => setHoveredId(connection.id)}
                 onPointerLeave={() => setHoveredId((current) => current === connection.id ? undefined : current)}
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                  selectConnection(connection.id, modifierMode(event), 'line');
-                }}
                 onDoubleClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -666,14 +818,12 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
             <foreignObject
               key={`label-${connection.id}`}
               className="connection-label-foreign"
+              data-connection-id={connection.id}
+              data-connection-part="label-background"
               x={midpoint.x - renderedSize.width / 2}
               y={midpoint.y - renderedSize.height / 2}
               width={renderedSize.width}
               height={renderedSize.height}
-              onPointerDown={(event) => {
-                event.stopPropagation();
-                selectConnection(connection.id, modifierMode(event), 'label-background');
-              }}
               onDoubleClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -695,10 +845,8 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
               >
                 <span
                   className="connection-label-text"
-                  onPointerDown={(event) => {
-                    event.stopPropagation();
-                    selectConnection(connection.id, modifierMode(event), 'label-text');
-                  }}
+                  data-connection-id={connection.id}
+                  data-connection-part="label-text"
                 >
                   {connection.label}
                 </span>
