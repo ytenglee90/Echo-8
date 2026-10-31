@@ -10,6 +10,7 @@ import type {
   AIStatusSignal,
   AISessionRecord,
 } from '../../protocols/ai.ts';
+import { assertNotAborted } from '../../services/async-control.ts';
 import { buildGenerateRequest } from './generation-request.ts';
 import { executeMemorySearchToolCalls } from './memory-search-tool.ts';
 import { operationCreatesWriteback } from './operations.ts';
@@ -53,7 +54,7 @@ export async function consumeAIGenerationStream(
   let finishReason: AIGenerateResult['finishReason'];
   const toolCalls = new Map<number, { id?: string; name?: string; arguments: string }>();
   for await (const event of stream.events) {
-    if (signal.aborted) throw new DOMException('AI generation aborted', 'AbortError');
+    assertNotAborted(signal);
     if (event.type === 'complete') {
       usage = event.usage;
       finishReason = event.finishReason;

@@ -52,10 +52,7 @@ function waitForTurn(turn: Promise<void>, signal: AbortSignal): Promise<void> {
   });
 }
 
-function assertNotAborted(signal: AbortSignal): void {
-  if (signal.aborted) throw abortError();
-}
-
 function abortError(): DOMException {
   return new DOMException('The operation was aborted', 'AbortError');
 }
+import { assertNotAborted } from '../../services/async-control.ts';

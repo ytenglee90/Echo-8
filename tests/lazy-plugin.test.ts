@@ -7,6 +7,7 @@ function manifest(id = 'lazy-probe'): PluginManifest {
   return {
     id,
     name: 'Lazy probe',
+    category: 'feature',
     version: '1.0.0',
     apiVersion: '1',
     dataVersion: 1,

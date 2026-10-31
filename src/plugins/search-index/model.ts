@@ -1,4 +1,5 @@
 import type { PluginContext, PluginDefinition, TaskHandle } from '../../core/contracts.ts';
+import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
 import type {
   AIContextCatalogContribution,
   AIContextReadContribution,
@@ -6,6 +7,7 @@ import type {
   AIContextSearchRequest,
   AIContextSource,
 } from '../../protocols/ai.ts';
+import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { isAbortError } from '../../services/abort.ts';
 import { defineManifest } from '../manifest.ts';
 import {
@@ -176,7 +178,7 @@ export function createSearchIndexPlugin(): PluginDefinition {
       context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
         key: 'context.search@2',
         invoke: async (input, signal) => {
-          validateSearchRequest(input);
+          validateAIContextSearchRequest(input);
           await ensureReady();
           return searchBM25(context, runtimeIndex, input, signal);
         },
@@ -184,7 +186,7 @@ export function createSearchIndexPlugin(): PluginDefinition {
       context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
         key: 'context.search@3',
         invoke: async (input, signal) => {
-          validateSearchRequest(input);
+          validateAIContextSearchRequest(input);
           await ensureReady();
           return searchBM25(context, runtimeIndex, input, signal);
         },
@@ -472,27 +474,6 @@ async function executeSearchWorker<TResult>(
   return context.workers.run<TResult>(type, payload, signal);
 }
 
-function validateSearchRequest(input: AIContextSearchRequest): void {
-  if (!input || !Array.isArray(input.terms) || input.terms.length === 0 || input.terms.length > 8 ||
-    input.terms.some((term) => typeof term !== 'string' || term.length === 0 || term.length > 48) ||
-    (input.query !== undefined && (typeof input.query !== 'string' || input.query.length > 20_000)) ||
-    (input.expandedTerms !== undefined && (!Array.isArray(input.expandedTerms) || input.expandedTerms.length > 16 ||
-      input.expandedTerms.some((term) => typeof term !== 'string' || term.length === 0 || term.length > 48))) ||
-    (input.sourceIds !== undefined && (!Array.isArray(input.sourceIds) || input.sourceIds.length > 100 ||
-      input.sourceIds.some((id) => typeof id !== 'string' || id.length === 0 || id.length > 200))) ||
-    !Number.isInteger(input.maxResults) || input.maxResults < 1 || input.maxResults > 50) {
-    throw new Error('索引检索请求不正确');
-  }
-}
-
-function assertNotAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
-}
-
 function isIndexReady(status: SearchIndexStatus): boolean {
   return status.state === 'ready';
-}
-
-function yieldToMainThread(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }

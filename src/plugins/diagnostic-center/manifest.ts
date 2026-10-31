@@ -3,6 +3,7 @@ import { defineManifest } from '../manifest.ts';
 export const DIAGNOSTIC_CENTER_NAMESPACE = 'diagnosticCenter';
 
 export const diagnosticCenterManifest = defineManifest('diagnostic-center', '诊断中心', {
+  category: 'diagnostic',
   namespaces: [DIAGNOSTIC_CENTER_NAMESPACE],
   namespaceDomains: { [DIAGNOSTIC_CENTER_NAMESPACE]: 'workspace' },
   sessionOnlyWorkspace: { [DIAGNOSTIC_CENTER_NAMESPACE]: true },

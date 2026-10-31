@@ -15,9 +15,9 @@ export async function readDocxPlainText(
   signal: AbortSignal,
   maximumTextLength: number,
 ): Promise<string> {
-  assertActive(signal);
+  assertNotAborted(signal);
   const archive = new Uint8Array(await file.arrayBuffer());
-  assertActive(signal);
+  assertNotAborted(signal);
   const entry = findDocumentEntry(archive);
   const maximumXmlBytes = Math.min(136 * 1024 * 1024, maximumTextLength * 4 + 8 * 1024 * 1024);
   if (entry.uncompressedSize > maximumXmlBytes) throw new Error('Word 正文解压后过大，已停止导入');
@@ -30,7 +30,7 @@ export async function readDocxPlainText(
       : undefined;
   if (!xmlBytes) throw new Error(`不支持 Word 文件使用的 ZIP 压缩方式：${entry.compression}`);
   if (xmlBytes.byteLength > maximumXmlBytes) throw new Error('Word 正文解压后过大，已停止导入');
-  assertActive(signal);
+  assertNotAborted(signal);
   const xml = new TextDecoder('utf-8').decode(xmlBytes);
   const document = new DOMParser().parseFromString(xml, 'application/xml');
   if (document.getElementsByTagName('parsererror').length > 0) throw new Error('Word 正文 XML 已损坏');
@@ -110,7 +110,7 @@ async function inflateRaw(
   let length = 0;
   try {
     while (true) {
-      assertActive(signal);
+      assertNotAborted(signal);
       const chunk = await reader.read();
       if (chunk.done) break;
       length += chunk.value.byteLength;
@@ -155,6 +155,4 @@ function readParagraph(paragraph: Element): string {
   return parts.join('');
 }
 
-function assertActive(signal: AbortSignal): void {
-  if (signal.aborted) throw new DOMException('Operation aborted', 'AbortError');
-}
+import { assertNotAborted } from '../../services/async-control.ts';

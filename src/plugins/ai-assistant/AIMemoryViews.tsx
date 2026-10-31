@@ -3,6 +3,10 @@
 import { useRef, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type {
+  CommandArguments,
+  KnownCommandType,
+} from '../../protocols/commands.ts';
+import type {
   AIContextMode,
   AIMemoryCandidateRecord,
   AIMemoryCatalogSnapshot,
@@ -12,7 +16,7 @@ import { Icon } from '../../ui/Icon.tsx';
 import { ProcessingIndicator, ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import {
   chooseNativeAIMemoryFiles,
-} from '../../ui/native-save.ts';
+} from '../../services/native-save.ts';
 import { chooseAIMemoryDirectory } from './memory-directory-picker.ts';
 import type { AIAssistantState } from './types.ts';
 
@@ -94,10 +98,13 @@ export function AIMemoryCenter({
   const savingCurrentSession = status.state === 'indexing' && status.sessionId === currentSessionId;
   const pendingCandidates = memoryCandidates.filter((candidate) =>
     candidate.sessionId === currentSessionId && candidate.status === 'pending');
-  const dispatch = async (type: string, payload: unknown) => {
+  const dispatch = async <TType extends KnownCommandType,>(
+    type: TType,
+    ...args: CommandArguments<TType>
+  ) => {
     onError('');
     try {
-      await client.dispatch(type, payload);
+      await client.dispatch(type, ...args);
     } catch (reason) {
       onError(errorMessage(reason));
     }
@@ -347,7 +354,9 @@ export function AIMemoryCenter({
                       title: `${memory.title} · 记忆索引`,
                     }));
                   }}
-                  onClick={() => void dispatch('editor.open', { id: memory.indexNodeId })}
+                  onClick={() => {
+                    if (memory.indexNodeId) void dispatch('editor.open', { id: memory.indexNodeId });
+                  }}
                 ><Icon name="find-replace" size={14} />打开检索索引</button>}
                 <button
                   type="button"

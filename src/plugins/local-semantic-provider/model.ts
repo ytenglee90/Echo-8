@@ -6,11 +6,13 @@ import type {
 import type { LocalModelAsset } from '../../protocols/network.ts';
 import type { PersonalTextAssetRecord } from '../../protocols/personal-assets.ts';
 import { isAbortError } from '../../services/abort.ts';
+import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
 import type {
   AIContextSearchContribution,
   AIContextSearchRequest,
   AIContextSource,
 } from '../../protocols/ai.ts';
+import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import {
   LOCAL_SEMANTIC_PROVIDER_CHANGED_SIGNAL,
   LOCAL_SEMANTIC_PROVIDER_COMMANDS,
@@ -281,7 +283,7 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
         key: 'context.semanticSearch@1',
         priority: 24,
         invoke: async (input, signal) => {
-          validateSearchRequest(input);
+          validateAIContextSearchRequest(input);
           if (!enabled()) return emptyContribution();
           try {
             await scheduleIndex(false).result;
@@ -598,12 +600,6 @@ function countPartialSources(cache: Map<string, CachedChunk[]>): number {
   return total;
 }
 
-function validateSearchRequest(value: AIContextSearchRequest): void {
-  if (!value || !Array.isArray(value.terms) || value.terms.some((term) => typeof term !== 'string') ||
-    !Number.isInteger(value.maxResults) || value.maxResults < 1 || value.maxResults > 100 ||
-    (value.query !== undefined && typeof value.query !== 'string')) throw new Error('语义检索请求格式不正确');
-}
-
 function dot(left: Float32Array, right: Float32Array): number {
   let total = 0;
   for (let index = 0; index < left.length; index += 1) total += left[index] * right[index];
@@ -614,18 +610,10 @@ function emptyContribution(): AIContextSearchContribution {
   return { provider: 'local-bge-small-zh-v1.5', hits: [], scanned: 0 };
 }
 
-function assertNotAborted(signal: AbortSignal): void {
-  if (signal.aborted) throw abortError();
-}
-
 function abortError(): DOMException {
   return new DOMException('Local semantic retrieval aborted', 'AbortError');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function yieldToMainThread(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }

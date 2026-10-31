@@ -1,5 +1,8 @@
 import type { DomainSnapshot, PatchOperation, StoreDomain, StoreSnapshot } from './contracts.ts';
-import { yieldToMainThread } from './async.ts';
+import {
+  assertNotAborted as throwIfAborted,
+  yieldToMainThread,
+} from '../services/async-control.ts';
 
 const emptyDomain = (): DomainSnapshot => ({ revision: 0, namespaces: {} });
 
@@ -313,10 +316,6 @@ async function cloneCapturedDomain(
 
 function now(): number {
   return globalThis.performance?.now?.() ?? Date.now();
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException('Snapshot cancelled', 'AbortError');
 }
 
 export function validateDomainSnapshot(snapshot: DomainSnapshot): void {

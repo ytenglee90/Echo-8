@@ -18,16 +18,19 @@ import type { CloudSyncState } from '../../cloud/contracts.ts';
 import { PROJECT_FILE_EXTENSION, PROJECT_RELATED_DIRECTORY_CAPABILITY } from '../../protocols/files.ts';
 import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { PRODUCT_NAME } from '../../product.ts';
+import {
+  assertNotAborted,
+  yieldToMainThread as nextTaskTurn,
+} from '../../services/async-control.ts';
 import { defineManifest } from '../manifest.ts';
 import { parseProject, serializeProject } from './codec.ts';
 import {
   chooseNativeDirectoryNearProject,
   chooseNativeProjectOpen,
   chooseNativeProjectSave,
-} from '../../ui/native-save.ts';
+} from '../../services/native-save.ts';
 import { FileWriteCoordinator } from './file-write-coordinator.ts';
 import {
-  assertNotAborted,
   dateStamp,
   deliverArtifact,
   emitProgress,
@@ -43,7 +46,6 @@ import {
   isExportWordPayload,
   isFileSaveTarget,
   isImportDocumentsPayload,
-  nextTaskTurn,
   parseImportedDocument,
   removeDirectoryEntry,
   renameDestination,

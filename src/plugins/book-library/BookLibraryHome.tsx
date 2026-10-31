@@ -12,7 +12,7 @@ import {
   PROJECT_OPEN_ACCEPT,
   type FileSaveTarget,
 } from '../../protocols/files.ts';
-import { chooseNativeProjectOpen } from '../../ui/native-save.ts';
+import { chooseNativeProjectOpen } from '../../services/native-save.ts';
 import { Icon } from '../../ui/Icon.tsx';
 import { BrandLoadingMark, ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 

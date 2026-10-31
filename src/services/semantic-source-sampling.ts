@@ -1,4 +1,5 @@
 import type { PluginContext } from '../core/contracts.ts';
+import { assertNotAborted } from './async-control.ts';
 import type {
   AIContextCatalogContribution,
   AIContextReadContribution,
@@ -130,8 +131,4 @@ async function readSemanticSource(
     'context.read@1', { sourceId, start, length }, signal,
   );
   return contributions.find((contribution) => contribution.handled)?.text ?? '';
-}
-
-function assertNotAborted(signal: AbortSignal): void {
-  if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
 }

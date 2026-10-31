@@ -5,6 +5,7 @@ import type {
   AIMemoryClaimRecord,
   AIMemoryIndexDraft,
 } from '../../protocols/ai.ts';
+import { assertNotAborted } from '../../services/async-control.ts';
 import { normalizeMemoryField } from './memory-artifacts.ts';
 import { MEMORY_STOP_TERMS, memoryTermOccurrences } from './memory-terms.ts';
 
@@ -50,7 +51,7 @@ export async function buildMemoryIndexDraft(
   recordMemoryTerms(title, 0, stats);
 
   for (let offset = 0; offset < source.length; offset += MEMORY_SCAN_CHUNK) {
-    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    assertNotAborted(signal);
     await waitIfPaused();
     const read = await readSource({
       sourceId: source.sourceId,

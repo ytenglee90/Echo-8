@@ -7,6 +7,7 @@ import type {
   AIPreparedSource,
   AIProposalRecord,
 } from '../../protocols/ai.ts';
+import { assertNotAborted } from '../../services/async-control.ts';
 import {
   emptyEvidenceBlock,
   enclosingChatExchange,
@@ -90,7 +91,7 @@ export async function readCompleteContextSourceText(
   if (length === 0) return '';
   const pieces: string[] = [];
   for (let start = 0; start < length; start += COMPLETE_SOURCE_READ_CHUNK) {
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    assertNotAborted(signal);
     const part = await readContextSource(context, {
       sourceId,
       start,

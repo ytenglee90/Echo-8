@@ -16,6 +16,7 @@ import type {
   CommandResult,
   KnownCommandType,
 } from '../protocols/commands.ts';
+import type { KnownCapabilityType, KnownQueryType } from '../protocols/messages.ts';
 
 export type PluginStatus =
   | 'discovered'
@@ -189,6 +190,8 @@ export interface RegisteredShortcut extends ShortcutContribution {
   disabled: boolean;
 }
 
+export type PluginCategory = 'core' | 'feature' | 'provider' | 'diagnostic';
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -196,6 +199,8 @@ export interface PluginManifest {
   apiVersion: '1';
   /** Version of this plugin's portable document namespaces; independent from code semver. */
   dataVersion: number;
+  /** Presentation/lifecycle classification declared by composition, never inferred from the ID. */
+  category: PluginCategory;
   autoStart?: boolean;
   dependencies: string[];
   optionalDependencies: string[];
@@ -232,9 +237,18 @@ export interface PluginDataMigration {
   migrate(data: PluginDocumentData): PluginDocumentData | Promise<PluginDocumentData>;
 }
 
+/** A plugin-owned, idempotent cleanup for one retired namespace shape. */
+export interface RetiredDataScrubRule {
+  /** Stable id. Changing it deliberately re-runs persistent cleanup once. */
+  id: string;
+  namespace: string;
+  scrubInPlace(value: unknown): boolean;
+}
+
 export interface PluginDefinition {
   manifest: PluginManifest;
   migrations?: PluginDataMigration[];
+  retiredDataScrubbers?: RetiredDataScrubRule[];
   /** Lazy wrappers may load migration code only when an older book requires it. */
   loadMigrations?: () => Promise<PluginDataMigration[]>;
   install?: (context: PluginContext) => Promise<void> | void;
@@ -264,7 +278,7 @@ export interface PluginContext {
     register<TPayload = unknown, TResult = unknown>(
       registration: QueryRegistration<TPayload, TResult>,
     ): void;
-    ask<TResult = unknown>(type: string, payload?: unknown): Promise<TResult>;
+    ask<TResult = unknown>(type: KnownQueryType, payload?: unknown): Promise<TResult>;
   };
   readonly signals: {
     emit(type: string, payload?: unknown, parent?: MessageEnvelope): void;
@@ -278,12 +292,12 @@ export interface PluginContext {
       provider: CapabilityProvider<TInput, TResult>,
     ): void;
     request<TResult = unknown>(
-      key: string,
+      key: KnownCapabilityType,
       input?: unknown,
       signal?: AbortSignal,
     ): Promise<TResult>;
     requestAll<TResult = unknown>(
-      key: string,
+      key: KnownCapabilityType,
       input?: unknown,
       signal?: AbortSignal,
     ): Promise<TResult[]>;
@@ -389,7 +403,7 @@ export interface PluginSnapshot {
   name: string;
   version: string;
   status: PluginStatus;
-  category: 'core' | 'feature' | 'provider' | 'diagnostic';
+  category: PluginCategory;
   toggleable: boolean;
   blockers: string[];
   resources: number;
@@ -400,22 +414,24 @@ export interface PluginSnapshot {
 export interface ViewClient {
   readonly owner: string;
   dispatch: CommandDispatcher;
+  /** Runtime contribution/extension path; built-in code should prefer the typed dispatcher. */
+  dispatchDynamic(type: string, payload?: unknown): Promise<unknown>;
   isCommandAvailable(type: string): boolean;
   subscribeCommands(listener: () => void): () => void;
   getCommandVersion(): number;
-  ask<TResult = unknown>(type: string, payload?: unknown): Promise<TResult>;
+  ask<TResult = unknown>(type: KnownQueryType, payload?: unknown): Promise<TResult>;
   request<TResult = unknown>(
-    capability: string,
+    capability: KnownCapabilityType,
     input?: unknown,
     signal?: AbortSignal,
   ): Promise<TResult>;
   requestAll<TResult = unknown>(
-    capability: string,
+    capability: KnownCapabilityType,
     input?: unknown,
     signal?: AbortSignal,
   ): Promise<TResult[]>;
   /** Bounded, pure interaction-frame capabilities only; asynchronous providers are rejected. */
-  requestSync<TResult = unknown>(capability: string, input?: unknown): TResult;
+  requestSync<TResult = unknown>(capability: KnownCapabilityType, input?: unknown): TResult;
   emit(type: string, payload?: unknown): void;
   subscribeSignal<TPayload = unknown>(
     type: string,

@@ -1,6 +1,10 @@
 'use client';
 
 import type { ViewClient } from '../../core/contracts.ts';
+import type {
+  CommandArguments,
+  KnownCommandType,
+} from '../../protocols/commands.ts';
 import { IconButton } from '../../ui/Icon.tsx';
 import type { AIAssistantView } from './types.ts';
 
@@ -17,10 +21,13 @@ export function AIAssistantWindowActions({
   providerSettingsAvailable: boolean;
   onError: (message: string) => void;
 }) {
-  const dispatch = async (type: string, payload?: unknown) => {
+  const dispatch = async <TType extends KnownCommandType,>(
+    type: TType,
+    ...args: CommandArguments<TType>
+  ) => {
     onError('');
     try {
-      await client.dispatch(type, payload);
+      await client.dispatch(type, ...args);
     } catch (reason) {
       onError(errorMessage(reason));
     }

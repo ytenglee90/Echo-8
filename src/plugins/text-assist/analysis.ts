@@ -941,10 +941,6 @@ function clampInteger(value: number | undefined, min: number, max: number, fallb
   return Number.isInteger(value) ? Math.max(min, Math.min(max, value!)) : fallback;
 }
 
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw signal.reason ?? new DOMException('Task cancelled', 'AbortError');
-}
-
 function emptyAnalysis(request: TextAssistAnalyzeRequest): TextAssistAnalysis {
   return {
     nodeId: request.nodeId,
@@ -955,3 +951,4 @@ function emptyAnalysis(request: TextAssistAnalyzeRequest): TextAssistAnalysis {
     completions: [],
   };
 }
+import { assertNotAborted as throwIfAborted } from '../../services/async-control.ts';

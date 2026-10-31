@@ -9,6 +9,7 @@ import {
 export const SEMANTIC_PROVIDER_NAMESPACE = 'semanticProvider';
 
 export const semanticProviderManifest = defineManifest('semantic-provider', '远程语义检索', {
+  category: 'provider',
   namespaces: [SEMANTIC_PROVIDER_NAMESPACE],
   namespaceDomains: { [SEMANTIC_PROVIDER_NAMESPACE]: 'workspace' },
   commands: Object.values(SEMANTIC_PROVIDER_COMMANDS),

@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const externalServer = process.env.PLAYWRIGHT_EXTERNAL_SERVER === 'true';
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -22,7 +24,7 @@ export default defineConfig({
       use: { ...devices['Desktop Safari'], launchOptions: { timeout: 20_000 } },
     },
   ],
-  webServer: {
+  webServer: externalServer ? undefined : {
     command: 'node node_modules/vinext/dist/cli.js dev',
     env: {
       PLAYWRIGHT_TEST: 'true',

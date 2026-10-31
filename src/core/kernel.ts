@@ -52,6 +52,7 @@ import { WorkerService, type ManagedWorkerFactory } from './worker-service.ts';
 import { NetworkAccessService } from './network-access.ts';
 import type { TextAssetReadRequest, TextAssetReadResult } from '../protocols/assets.ts';
 import { createWorkspacePersistencePolicy } from './workspace-persistence.ts';
+import { createRetiredDataRegistry } from './retired-data-registry.ts';
 
 export class ApplicationKernel {
   readonly diagnostics = new DiagnosticsService();
@@ -88,7 +89,8 @@ export class ApplicationKernel {
     this.definitions = definitions;
     this.persistenceLaunchPolicy = options.persistenceLaunchPolicy ?? 'restore-session';
     this.store = new StateStore(this.writeToken);
-    this.transactions = new TransactionManager(this.store, this.history, this.writeToken);
+    const retiredData = createRetiredDataRegistry(definitions);
+    this.transactions = new TransactionManager(this.store, this.history, this.writeToken, retiredData);
     this.router = new MessageRouter(this.transactions, this.diagnostics);
     this.workers = new WorkerService(options.workerFactory);
     this.persistence = new PersistenceService(
@@ -108,6 +110,7 @@ export class ApplicationKernel {
       ),
       this.workers,
       createWorkspacePersistencePolicy(definitions.map((definition) => definition.manifest)),
+      retiredData,
     );
     this.plugins = new PluginManager({
       resources: this.resources,
@@ -165,27 +168,33 @@ export class ApplicationKernel {
     this.diagnostics.record('info', 'core.kernel', 'Application kernel is active');
   }
 
+  async discardLocalRecovery(): Promise<void> {
+    await this.persistence.discardLocalSession();
+  }
+
   createViewClient(owner: string): ViewClient {
     const cached = this.viewClients.get(owner);
     if (cached) return cached;
+    const dispatchDynamic = <TResult = unknown>(type: string, payload?: unknown): Promise<TResult> => {
+      if (!this.plugins.canDispatch(owner, type) && !owner.startsWith('core')) {
+        const error = new Error(`${owner} did not declare dispatched command ${type}`);
+        this.reportViewActionFailure(owner, type, error);
+        return Promise.reject(error);
+      }
+      try {
+        return this.router.dispatch<TResult>(type, payload, owner).catch((error) => {
+          this.reportViewActionFailure(owner, type, error);
+          throw error;
+        });
+      } catch (error) {
+        this.reportViewActionFailure(owner, type, error);
+        return Promise.reject(error);
+      }
+    };
     const client: ViewClient = {
       owner,
-      dispatch: <TResult = unknown>(type: string, payload?: unknown): Promise<TResult> => {
-        if (!this.plugins.canDispatch(owner, type) && !owner.startsWith('core')) {
-          const error = new Error(`${owner} did not declare dispatched command ${type}`);
-          this.reportViewActionFailure(owner, type, error);
-          return Promise.reject(error);
-        }
-        try {
-          return this.router.dispatch<TResult>(type, payload, owner).catch((error) => {
-            this.reportViewActionFailure(owner, type, error);
-            throw error;
-          });
-        } catch (error) {
-          this.reportViewActionFailure(owner, type, error);
-          return Promise.reject(error);
-        }
-      },
+      dispatch: dispatchDynamic as ViewClient['dispatch'],
+      dispatchDynamic,
       isCommandAvailable: (type) =>
         (owner.startsWith('core') || this.plugins.canDispatch(owner, type)) &&
         this.router.isCommandAvailable(type),

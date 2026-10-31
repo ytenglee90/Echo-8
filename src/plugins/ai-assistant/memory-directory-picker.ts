@@ -3,7 +3,7 @@ import {
   PROJECT_RELATED_DIRECTORY_CAPABILITY,
   type FileDirectoryTarget,
 } from '../../protocols/files.ts';
-import { chooseNativeAIMemoryDirectory } from '../../ui/native-save.ts';
+import { chooseNativeAIMemoryDirectory } from '../../services/native-save.ts';
 
 /**
  * Prefer the file plugin's current-book-aware picker. The fallback keeps the

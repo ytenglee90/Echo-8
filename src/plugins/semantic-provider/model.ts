@@ -5,11 +5,13 @@ import {
   type PluginDefinition,
   type TaskHandle,
 } from '../../core/contracts.ts';
+import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
 import type {
   AIContextSearchContribution,
   AIContextSearchRequest,
   AIContextSource,
 } from '../../protocols/ai.ts';
+import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { isAbortError } from '../../services/abort.ts';
 import {
   SEMANTIC_PROVIDER_CHANGED_SIGNAL,
@@ -320,7 +322,7 @@ export function createSemanticProviderPlugin(): PluginDefinition {
         key: 'context.semanticSearch@1',
         priority: 20,
         invoke: async (input, signal) => {
-          validateSearchRequest(input);
+          validateAIContextSearchRequest(input);
           const profile = activeProfile();
           const hasKey = profile ? Boolean(sessionApiKeys.get(profile.id)) : false;
           if (!profile || !isConfigured(profile, hasKey)) return emptyContribution();
@@ -712,14 +714,6 @@ function isConfigured(profile: SemanticProviderProfile, hasSessionKey: boolean):
     (profile.authentication === 'none' || hasSessionKey));
 }
 
-function validateSearchRequest(value: AIContextSearchRequest): void {
-  if (!value || !Array.isArray(value.terms) || value.terms.some((term) => typeof term !== 'string') ||
-    !Number.isInteger(value.maxResults) || value.maxResults < 1 || value.maxResults > 100 ||
-    (value.query !== undefined && typeof value.query !== 'string')) {
-    throw new Error('语义检索请求格式不正确');
-  }
-}
-
 function isRequiredProfileId(value: unknown): value is { profileId: string } {
   return isRecord(value) && typeof value.profileId === 'string' && value.profileId.length > 0;
 }
@@ -768,14 +762,6 @@ function emptyContribution(): AIContextSearchContribution {
   return { provider: 'remote-semantic-embedding', hits: [], scanned: 0 };
 }
 
-function assertNotAborted(signal: AbortSignal): void {
-  if (signal.aborted) throw abortError();
-}
-
 function abortError(): DOMException {
   return new DOMException('Semantic retrieval aborted', 'AbortError');
-}
-
-function yieldToMainThread(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }

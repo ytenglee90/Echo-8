@@ -10,7 +10,7 @@ import {
 } from 'react';
 import type { UISlot, ViewClient } from '../../core/contracts.ts';
 import { IconButton } from '../../ui/Icon.tsx';
-import { chooseNativeTextExport } from '../../ui/native-save.ts';
+import { chooseNativeTextExport } from '../../services/native-save.ts';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import type { AppearancePreview } from '../../protocols/appearance.ts';
 import type {

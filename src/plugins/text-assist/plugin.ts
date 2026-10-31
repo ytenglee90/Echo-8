@@ -1039,6 +1039,4 @@ async function waitForSharedTask<TResult>(task: TaskHandle<TResult>, signal?: Ab
   });
 }
 
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw signal.reason ?? new DOMException('Task cancelled', 'AbortError');
-}
+import { assertNotAborted as throwIfAborted } from '../../services/async-control.ts';

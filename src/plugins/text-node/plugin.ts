@@ -3,7 +3,9 @@ import {
   isRecord,
   type PatchOperation,
   type PluginDefinition,
+  type RetiredDataScrubRule,
 } from '../../core/contracts.ts';
+import { removeOwnKeysInPlace } from '../../services/retired-data.ts';
 import type {
   ContentClonePlanRequest,
   ContentMaterializeCopyRequest,
@@ -99,9 +101,18 @@ import {
   isReferenceTitle,
   MAX_TITLE_REFERENCE_REPLACEMENTS,
 } from './title-reference-sync.ts';
+
+export const TEXT_NODE_RETIRED_DATA: RetiredDataScrubRule = {
+  id: 'text-node.remove-retired-private-v1',
+  namespace: NODE_NAMESPACE,
+  scrubInPlace: (value) => removeOwnKeysInPlace(value, ['private']),
+};
+
 export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown): PluginDefinition {
   return {
+  retiredDataScrubbers: [TEXT_NODE_RETIRED_DATA],
   manifest: defineManifest('text-node', '文本节点', {
+    category: 'core',
     dataVersion: 2,
     namespaces: [
       NODE_NAMESPACE,

@@ -1,5 +1,12 @@
-import { createId, isRecord, type PatchOperation, type PluginDefinition } from '../../core/contracts.ts';
+import {
+  createId,
+  isRecord,
+  type PatchOperation,
+  type PluginDefinition,
+  type RetiredDataScrubRule,
+} from '../../core/contracts.ts';
 import { countGraphemes } from '../../services/text-metrics.ts';
+import { removeOwnKeysInPlace } from '../../services/retired-data.ts';
 import type {
   EditorContextSnapshot,
   EditorDocumentInvalidation,
@@ -32,6 +39,12 @@ const EDITOR_METRICS_NAMESPACE = 'editorMetrics';
 const DEFAULT_PANE_WIDTH = 520;
 const IDLE_TIMEOUT_MS = 60_000;
 
+export const EDITOR_RETIRED_DATA: RetiredDataScrubRule = {
+  id: 'editor.remove-retired-recent-metrics-v1',
+  namespace: EDITOR_NAMESPACE,
+  scrubInPlace: (value) => removeOwnKeysInPlace(value, ['recentBuckets', 'recentWindowMs']),
+};
+
 interface StoredWritingMetrics extends WritingMetricsSnapshot {
   runtimeSessionId: string;
 }
@@ -45,7 +58,9 @@ export function createEditorPlugin(
   let selections = new Map<string, EditorSelectionSnapshot>();
 
   return {
+    retiredDataScrubbers: [EDITOR_RETIRED_DATA],
     manifest: defineManifest('editor', '多文本编辑器', {
+      category: 'core',
       namespaces: [EDITOR_NAMESPACE, EDITOR_METRICS_NAMESPACE],
       namespaceDomains: {
         [EDITOR_NAMESPACE]: 'workspace',

@@ -7,7 +7,7 @@ import type {
   AIProviderInfo,
 } from '../../protocols/ai.ts';
 import type { FileReadWriteTarget } from '../../protocols/files.ts';
-import { canReusePersistedFileHandle } from '../../ui/native-file-permission.ts';
+import { canReusePersistedFileHandle } from '../../services/native-file-permission.ts';
 import { defineManifest } from '../manifest.ts';
 import {
   SEMANTIC_PROVIDER_CHANGED_SIGNAL,
@@ -73,6 +73,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
   let backupWriteTail: Promise<void> = Promise.resolve();
   return {
     manifest: defineManifest('ai-provider', 'AI 模型连接', {
+      category: 'provider',
       namespaces: [AI_PROVIDER_NAMESPACE],
       namespaceDomains: { [AI_PROVIDER_NAMESPACE]: 'workspace' },
       commands: [

@@ -69,6 +69,7 @@ import type {
   SelectionCatalogContribution,
 } from '../../protocols/selection.ts';
 import type { ContentStatistics } from '../../protocols/statistics.ts';
+import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
 import {
   createNodeTitleAllocator,
   isNodeTitleTaken,
@@ -111,7 +112,6 @@ import {
 import {
   CONTENT_NAMESPACE,
   NODE_NAMESPACE,
-  assertNotAborted,
   buildMovePlan,
   buildTextColorPlan,
   buildTitleColorPlan,
@@ -128,7 +128,6 @@ import {
   toContextSource,
   validateAppearanceUpdate,
   validateSearchRequest,
-  yieldToMainThread,
   type CreateNodePayload,
   type SerializedTextNodes,
   type TextNodeRecord,

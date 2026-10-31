@@ -8,35 +8,6 @@
 .floating-layer > *,
 .modal-layer > * { pointer-events: auto; }
 
-.immersive-editor {
-  display: grid;
-  grid-template-rows: 72px minmax(0, 1fr);
-  width: 100vw;
-  height: 100vh;
-  background: var(--editor-background);
-  color: var(--ink);
-}
-
-.immersive-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 0 28px;
-  border-bottom: 1px solid var(--border);
-  background: var(--toolbar);
-}
-
-.immersive-header strong { display: block; margin-top: 3px; font-size: 15px; }
-.immersive-actions { display: flex; align-items: center; gap: 12px; }
-.immersive-actions span { color: var(--muted); font-size: 12px; }
-.immersive-content { display: grid; place-items: stretch center; min-height: 0; overflow: auto; padding: 28px; }
-.immersive-pane { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(980px, 100%); min-height: calc(100vh - 128px); background: var(--editor-paper); box-shadow: 0 20px 70px rgba(24, 24, 27, 0.08); }
-.immersive-pane .editor-writing-area { min-height: 0; max-height: none; padding: 48px clamp(28px, 8vw, 96px); }
-.immersive-pane .format-strip { padding-right: 18px; padding-left: 18px; }
-
-.large-document-editor { background: var(--editor-paper); }
-
 .sr-only {
   position: absolute;
   width: 1px;
@@ -610,6 +581,40 @@
 .boot-screen strong, .fatal-screen h1 { margin: 12px 0 0; font-size: 16px; }
 .boot-screen > span, .fatal-screen p, .fatal-screen > span { color: var(--muted); font-size: 12px; }
 .fatal-screen h1 { margin: 0; }
+.fatal-screen p { max-width: min(680px, calc(100vw - 48px)); text-align: center; overflow-wrap: anywhere; }
+.fatal-screen-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 720px; }
+.fatal-screen-actions button,
+.startup-safe-mode button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--control-surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.fatal-screen-actions button.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); color: var(--danger); }
+.fatal-screen-confirm { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; flex-basis: 100%; padding: 12px; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border)); border-radius: 12px; color: var(--muted); font-size: 12px; }
+.startup-safe-mode {
+  position: fixed;
+  z-index: 1100;
+  top: 10px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(880px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border));
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--muted);
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+.startup-safe-mode span { display: grid; gap: 2px; }
+.startup-safe-mode strong { color: var(--text); }
 .cloud-sync-status {
   isolation: isolate;
   position: relative;

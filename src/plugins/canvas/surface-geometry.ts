@@ -82,25 +82,6 @@ export function clampSize(value: number, minimum: number, maximum: number): numb
   return Math.round(Math.min(maximum, Math.max(minimum, value)));
 }
 
-export function isSupportedDocumentDrop(file: File): boolean {
-  const name = file.name.toLocaleLowerCase();
-  return name.endsWith('.txt') || name.endsWith('.docx') || name.endsWith('.doc') ||
-    file.type.startsWith('text/plain') ||
-    file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-}
-
-export function contrastTextColor(color: string): '#111111' | '#ffffff' {
-  const match = /^#([0-9a-f]{6})$/iu.exec(color);
-  if (!match) return '#ffffff';
-  const numeric = Number.parseInt(match[1], 16);
-  const channels = [numeric >> 16, (numeric >> 8) & 255, numeric & 255].map((channel) => {
-    const normalized = channel / 255;
-    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
-  });
-  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-  return luminance > 0.42 ? '#111111' : '#ffffff';
-}
-
 export function selectionAfterPointer(current: string[], id: string, mode: SelectionMode): string[] {
   const next = new Set(current);
   if (mode === 'replace') return next.has(id) ? current : [id];

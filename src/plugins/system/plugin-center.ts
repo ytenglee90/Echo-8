@@ -7,6 +7,7 @@ const PLUGIN_CENTER_NAMESPACE = 'pluginCenterUI';
 
 export const pluginCenterPlugin: PluginDefinition = {
   manifest: defineManifest('plugin-center', '插件中心', {
+    category: 'core',
     namespaces: [PLUGIN_CENTER_NAMESPACE],
     namespaceDomains: { [PLUGIN_CENTER_NAMESPACE]: 'workspace' },
     sessionOnlyWorkspace: { [PLUGIN_CENTER_NAMESPACE]: true },

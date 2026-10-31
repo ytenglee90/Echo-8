@@ -8,7 +8,7 @@ import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import {
   chooseNativePersonalAIBackup,
   chooseNativePersonalAIBackupOpen,
-} from '../../ui/native-save.ts';
+} from '../../services/native-save.ts';
 import { AI_PROVIDER_NAMESPACE } from './model.ts';
 import type {
   AIProviderPanelState,

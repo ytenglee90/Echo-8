@@ -11,11 +11,15 @@ const expectedImports = [
   "@import './styles/foundation.css';",
   "@import './styles/shell-base.css';",
   "@import './styles/canvas.css';",
+  "@import './styles/feature-controls.css';",
   "@import './styles/editor.css';",
   "@import './styles/feature-panels.css';",
   "@import './styles/book-library.css';",
   "@import './styles/ai-base.css';",
   "@import './styles/shell.css';",
+  "@import './styles/editor-layout.css';",
+  "@import './styles/feature-layout.css';",
+  "@import './styles/ai-toolbar.css';",
   "@import './styles/ai-assistant.css';",
   "@import './styles/ai-settings-base.css';",
   "@import './styles/ai-settings-local.css';",
@@ -44,6 +48,19 @@ test('each stylesheet owner has no duplicate selector blocks', async () => {
     }
   }
   assert.deepEqual(duplicates, []);
+});
+
+test('shell, editor, feature and AI toolbar selectors stay with their owning stylesheets', async () => {
+  const shell = await readFile(path.join(stylesDirectory, 'shell.css'), 'utf8');
+  const editor = `${await readFile(path.join(stylesDirectory, 'editor.css'), 'utf8')}\n${
+    await readFile(path.join(stylesDirectory, 'editor-layout.css'), 'utf8')}`;
+  const features = `${await readFile(path.join(stylesDirectory, 'feature-controls.css'), 'utf8')}\n${
+    await readFile(path.join(stylesDirectory, 'feature-layout.css'), 'utf8')}`;
+  const aiToolbar = await readFile(path.join(stylesDirectory, 'ai-toolbar.css'), 'utf8');
+  assert.doesNotMatch(shell, /\.(?:editor-|immersive-|search-|group-membership|ai-toolbar)/u);
+  assert.doesNotMatch(editor, /\.(?:search-|plugin-|group-membership|ai-toolbar)/u);
+  assert.doesNotMatch(features, /\.(?:editor-|immersive-|ai-toolbar)/u);
+  assert.doesNotMatch(aiToolbar, /\.(?:editor-|immersive-|search-|group-membership|plugin-)/u);
 });
 
 function readSelectorBlocks(source: string): string[] {

@@ -2,7 +2,7 @@ import { createId, type DomainSnapshot, type MessageEnvelope, type PatchOperatio
 import type { TransactionCommitRecord } from '../protocols/state.ts';
 import { HistoryService, type HistoryEntry, type HistorySnapshot, validateHistorySnapshot } from './history.ts';
 import { StateStore } from './store.ts';
-import { scrubRetiredDocument, scrubRetiredHistory } from './legacy-migrations.ts';
+import { RetiredDataRegistry } from './retired-data-registry.ts';
 
 export type { TransactionCommitRecord } from '../protocols/state.ts';
 
@@ -15,16 +15,23 @@ export class TransactionManager {
   private readonly store: StateStore;
   private readonly history: HistoryService;
   private readonly writeToken: symbol;
+  private readonly retiredData: RetiredDataRegistry;
   private publishEvent: EventPublisher = async () => undefined;
   private persist: PersistenceSink = () => undefined;
   private resolveNamespaceOwner: NamespaceOwnerResolver = () => undefined;
   private canWrite: WriteAuthorizer = (owner) => owner.startsWith('core');
   private active = false;
 
-  constructor(store: StateStore, history: HistoryService, writeToken: symbol) {
+  constructor(
+    store: StateStore,
+    history: HistoryService,
+    writeToken: symbol,
+    retiredData = new RetiredDataRegistry([]),
+  ) {
     this.store = store;
     this.history = history;
     this.writeToken = writeToken;
+    this.retiredData = retiredData;
   }
 
   setEventPublisher(publisher: EventPublisher): void {
@@ -149,8 +156,8 @@ export class TransactionManager {
   ): Promise<string> {
     if (this.active) throw new Error('Document replacement collided with an active transaction');
     validateHistorySnapshot(history);
-    const cleanDocument = scrubRetiredDocument(document).value;
-    const cleanHistory = scrubRetiredHistory(history).value;
+    const cleanDocument = this.retiredData.scrubDocument(document).value;
+    const cleanHistory = this.retiredData.scrubHistory(history).value;
     const id = createId('document-open');
     this.active = true;
     try {

@@ -3,6 +3,7 @@ import {
   isRecord,
   type PatchOperation,
   type PluginDefinition,
+  type RetiredDataScrubRule,
   type TaskHandle,
 } from '../../core/contracts.ts';
 import type {
@@ -25,7 +26,8 @@ import {
   type FileDirectoryTarget,
   type PersistenceSnapshot,
 } from '../../protocols/files.ts';
-import { canReusePersistedFileHandle } from '../../ui/native-file-permission.ts';
+import { canReusePersistedFileHandle } from '../../services/native-file-permission.ts';
+import { isRecord as isPlainRecord, removeOwnKeysInPlace } from '../../services/retired-data.ts';
 import { defineManifest } from '../manifest.ts';
 export { estimateAITokens } from './evidence-boundaries.ts';
 import { buildMemoryIndexDraft } from './memory-indexing.ts';
@@ -138,6 +140,20 @@ export { AI_MEMORY_NAMESPACE } from './memory-commit.ts';
 export { AI_MEMORY_CANDIDATE_NAMESPACE } from './memory-candidate-runtime.ts';
 
 const MEMORY_AUTO_REINDEX_DELAY_MS = 900;
+
+export const AI_PROPOSAL_RETIRED_DATA: RetiredDataScrubRule = {
+  id: 'ai-assistant.remove-retired-source-private-v1',
+  namespace: AI_PROPOSAL_NAMESPACE,
+  scrubInPlace(value) {
+    if (!isPlainRecord(value) || !Array.isArray(value.sourceRefs)) return false;
+    let changed = false;
+    for (const reference of value.sourceRefs) {
+      changed = removeOwnKeysInPlace(reference, ['private']) || changed;
+    }
+    return changed;
+  },
+};
+
 export function createAIAssistantPlugin(
   panel?: unknown,
   toolbar?: unknown,
@@ -167,6 +183,7 @@ export function createAIAssistantPlugin(
   let lifecycleGeneration = 0;
 
   return {
+    retiredDataScrubbers: [AI_PROPOSAL_RETIRED_DATA],
     manifest: defineManifest('ai-assistant', 'AI 助手', {
       namespaces: [
         AI_SESSION_NAMESPACE,

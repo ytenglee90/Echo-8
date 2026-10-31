@@ -1,6 +1,7 @@
 import type { SearchHit } from '../../protocols/search.ts';
 import { contentChunkLengths, type TextContentRecord } from './content-storage.ts';
-import { yieldToMainThread, type TextNodeRecord } from './operations.ts';
+import { yieldToMainThread } from '../../services/async-control.ts';
+import type { TextNodeRecord } from './operations.ts';
 
 export const MAX_TITLE_REFERENCE_REPLACEMENTS = 5_000;
 

@@ -2,11 +2,15 @@
 @import './styles/foundation.css';
 @import './styles/shell-base.css';
 @import './styles/canvas.css';
+@import './styles/feature-controls.css';
 @import './styles/editor.css';
 @import './styles/feature-panels.css';
 @import './styles/book-library.css';
 @import './styles/ai-base.css';
 @import './styles/shell.css';
+@import './styles/editor-layout.css';
+@import './styles/feature-layout.css';
+@import './styles/ai-toolbar.css';
 @import './styles/ai-assistant.css';
 @import './styles/ai-settings-base.css';
 @import './styles/ai-settings-local.css';

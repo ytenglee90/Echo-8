@@ -67,6 +67,41 @@ test('public protocols do not import kernel implementation modules', () => {
   assert.deepEqual(violations, []);
 });
 
+test('built-in message names use closed protocol registries and an explicit dynamic command boundary', () => {
+  const commands = readFileSync(join(sourceRoot, 'protocols', 'commands.ts'), 'utf8');
+  const messages = readFileSync(join(sourceRoot, 'protocols', 'messages.ts'), 'utf8');
+  const contracts = readFileSync(join(sourceRoot, 'core', 'contracts.ts'), 'utf8');
+
+  assert.doesNotMatch(commands, /UnregisteredCommand|TType extends string/u);
+  assert.match(contracts, /dispatchDynamic\(type: string/u);
+  assert.match(contracts, /ask<TResult = unknown>\(type: KnownQueryType/u);
+  assert.match(contracts, /capability: KnownCapabilityType/u);
+  assert.match(messages, /export interface ApplicationQueryMap/u);
+  assert.match(messages, /export interface ApplicationCapabilityMap/u);
+});
+
+test('retired plugin data stays plugin-owned and core cleanup stays schema-neutral', () => {
+  const registry = readFileSync(join(sourceRoot, 'core', 'retired-data-registry.ts'), 'utf8');
+  const forbiddenPluginSchemas = /textNode|aiProposals|recentBuckets|recentWindowMs|clipboard/u;
+  assert.doesNotMatch(registry, forbiddenPluginSchemas);
+
+  const owners = [
+    join(pluginRoot, 'text-node', 'plugin.ts'),
+    join(pluginRoot, 'ai-assistant', 'model.ts'),
+    join(pluginRoot, 'editor', 'model.ts'),
+    join(pluginRoot, 'clipboard', 'model.ts'),
+  ].map((file) => readFileSync(file, 'utf8')).join('\n');
+  assert.match(owners, /retiredDataScrubbers/u);
+});
+
+test('plugin category is declared rather than inferred from identifiers', () => {
+  const contracts = readFileSync(join(sourceRoot, 'core', 'contracts.ts'), 'utf8');
+  const manager = readFileSync(join(sourceRoot, 'core', 'plugin-manager.ts'), 'utf8');
+  assert.match(contracts, /category: PluginCategory/u);
+  assert.match(manager, /const category = manifest\.category/u);
+  assert.doesNotMatch(manager, /manifest\.id\.(?:includes|startsWith).*category/u);
+});
+
 test('feature code does not construct raw browser file-picker DOM', () => {
   const violations: string[] = [];
   for (const file of sourceFiles(pluginRoot)) {
@@ -163,7 +198,7 @@ test('every registered public action has at least one centrally managed shortcut
 test('shipped application starts from a fresh persistence session', () => {
   const composition = readFileSync(join(sourceRoot, 'app', 'create-application.ts'), 'utf8');
   const persistence = readFileSync(join(sourceRoot, 'core', 'persistence.ts'), 'utf8');
-  assert.match(composition, /persistenceLaunchPolicy:\s*'fresh-session'/u);
+  assert.match(composition, /PersistenceLaunchPolicy\s*=\s*'fresh-session'/u);
   assert.match(persistence, /policy === 'fresh-session'/u);
   for (const store of ['snapshots', 'journal', 'recovery', 'contentChunks']) {
     assert.match(persistence, new RegExp(`objectStore\\('${store}'\\)\\.clear\\(\\)`, 'u'));
@@ -198,7 +233,7 @@ test('hosted server rendering never constructs the browser kernel', () => {
   assert.match(runtime, /useState<ApplicationKernel \| null>\(null\)/u);
   assert.match(
     runtime,
-    /useEffect\(\(\) => \{[\s\S]*?Promise\.resolve\(\)\.then\(createKernel\)[\s\S]*?setKernel\(nextKernel\)[\s\S]*?\}, \[createKernel\]\);/u,
+    /useEffect\(\(\) => \{[\s\S]*?launchSafeMode = isSafeStartRequested\(\)[\s\S]*?Promise\.resolve\(\)\.then\(\(\) =>[\s\S]*?createKernel\([\s\S]*?setKernel\(nextKernel\)[\s\S]*?\}, \[createKernel\]\);/u,
   );
   assert.doesNotMatch(runtime, /useState<ApplicationKernel \| null>\(\(\) =>[\s\S]*?createKernel\(\)/u);
   assert.doesNotMatch(hosted, /import \{ createHostedApplication \} from/u);

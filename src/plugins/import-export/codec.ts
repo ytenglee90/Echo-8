@@ -466,10 +466,4 @@ for (let index = 0; index < 256; index += 1) {
   CRC_TABLE[index] = value >>> 0;
 }
 
-function assertNotAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException('Task cancelled', 'AbortError');
-}
-
-function yieldToMainThread(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
+import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';

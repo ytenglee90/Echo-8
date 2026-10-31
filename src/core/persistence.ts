@@ -1,5 +1,8 @@
 import type { PatchOperation, StoreSnapshot, TaskHandle } from './contracts.ts';
-import { yieldToMainThread } from './async.ts';
+import {
+  assertNotAborted as throwIfAborted,
+  yieldToMainThread,
+} from '../services/async-control.ts';
 import { HistoryService, type HistorySnapshot } from './history.ts';
 import { DiagnosticsService } from './diagnostics.ts';
 import { StateStore } from './store.ts';
@@ -32,13 +35,8 @@ import {
   type RecoveryPointSummary,
 } from '../protocols/files.ts';
 import {
-  RETIRED_DATA_MIGRATION,
-  scrubRetiredHistory,
-  scrubRetiredHistoryInPlace,
-  scrubRetiredPatch,
-  scrubRetiredStore,
-  scrubRetiredStoreInPlace,
-} from './legacy-migrations.ts';
+  RetiredDataRegistry,
+} from './retired-data-registry.ts';
 
 export interface PersistedApplication {
   formatVersion: 1;
@@ -58,7 +56,7 @@ type PersistenceStatusInput = Omit<PersistenceStatus, 'autosaveIntervalMs'> & {
   autosaveIntervalMs?: number;
 };
 
-export type PersistenceLaunchPolicy = 'restore-session' | 'fresh-session';
+export type PersistenceLaunchPolicy = 'restore-session' | 'fresh-session' | 'memory-only';
 export interface AutomaticCheckpointEvent {
   savedAt: number;
   documentRevision: number;
@@ -106,6 +104,7 @@ export class PersistenceService {
   private readonly onAutomaticCheckpoint?: (event: AutomaticCheckpointEvent) => void;
   private readonly onAutomaticSaveRequest?: (event: AutomaticSaveRequestEvent) => void;
   private readonly workspacePersistence: WorkspacePersistencePolicy;
+  private readonly retiredData: RetiredDataRegistry;
 
   constructor(
     store: StateStore,
@@ -116,6 +115,7 @@ export class PersistenceService {
     onAutomaticSaveRequest?: (event: AutomaticSaveRequestEvent) => void,
     workers?: WorkerService,
     workspacePersistence?: WorkspacePersistencePolicy,
+    retiredData = new RetiredDataRegistry([]),
   ) {
     this.store = store;
     this.history = history;
@@ -129,6 +129,7 @@ export class PersistenceService {
       scrubStore: () => false,
       scrubRecord: (record) => record,
     };
+    this.retiredData = retiredData;
   }
 
   subscribe(listener: () => void): () => void {
@@ -149,8 +150,11 @@ export class PersistenceService {
   }
 
   async open(policy: PersistenceLaunchPolicy = 'restore-session'): Promise<PersistedApplication | undefined> {
-    if (typeof indexedDB === 'undefined') {
+    if (policy === 'memory-only' || typeof indexedDB === 'undefined') {
       this.setStatus({ state: 'memory-only', journalEntries: 0, recoveryPoints: 0 });
+      if (policy === 'memory-only') {
+        this.diagnostics.record('warn', 'core.persistence', 'Started without opening browser recovery storage');
+      }
       return undefined;
     }
     this.database = await openDatabase();
@@ -180,7 +184,7 @@ export class PersistenceService {
       this.diagnostics.record('info', 'core.persistence', 'Previous local session data was discarded');
       return undefined;
     }
-    await scrubRetiredPersistentData(this.database);
+    await scrubRetiredPersistentData(this.database, this.retiredData);
     const storedSnapshot = await readValue<StoredPersistedApplication>(this.database, 'snapshots', 'latest');
     const snapshot = storedSnapshot
       ? await hydrateStoredApplication(this.database, storedSnapshot)
@@ -198,7 +202,7 @@ export class PersistenceService {
       return undefined;
     }
     const outstanding = journal.filter((record) => record.timestamp > snapshot.savedAt);
-    const recovered = replayApplication(snapshot, outstanding);
+    const recovered = replayApplication(snapshot, outstanding, this.retiredData);
     this.workspacePersistence.scrubStore(recovered.store);
     this.projectPlugins = structuredClone(recovered.projectPlugins ?? []);
     this.setStatus({
@@ -212,6 +216,35 @@ export class PersistenceService {
     });
     this.scheduleCheckpointDeadline();
     return recovered;
+  }
+
+  /**
+   * Explicit startup-recovery escape hatch. This is intentionally destructive
+   * and is only called after the recovery UI receives a second confirmation.
+   * Personal preferences and associated text assets are retained.
+   */
+  async discardLocalSession(): Promise<void> {
+    if (typeof indexedDB === 'undefined') return;
+    await this.ioTail;
+    if (this.journalTimer) clearTimeout(this.journalTimer);
+    if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
+    if (this.checkpointTimer) clearTimeout(this.checkpointTimer);
+    this.journalTimer = undefined;
+    this.autosaveTimer = undefined;
+    this.checkpointTimer = undefined;
+    this.checkpointTask?.cancel();
+    this.checkpointTask = undefined;
+
+    const database = this.database ?? await openDatabase();
+    await clearPreviousSession(database);
+    database.close();
+    if (database === this.database) this.database = undefined;
+    this.pendingRecords = [];
+    this.projectPlugins = [];
+    this.persistedContentChunkIds.clear();
+    this.autosaveDirty = false;
+    this.setStatus({ state: 'memory-only', journalEntries: 0, recoveryPoints: 0 });
+    this.diagnostics.record('warn', 'core.persistence', 'Local recovery session was explicitly discarded');
   }
 
   enqueue(record: TransactionCommitRecord): void {
@@ -515,8 +548,8 @@ export class PersistenceService {
     // snapshotAsync/exportAsync already return private deep clones. Scrub them
     // in place so a checkpoint does not clone every large immutable chunk and
     // historical patch for a second time before worker preparation.
-    scrubRetiredStoreInPlace(store);
-    scrubRetiredHistoryInPlace(history);
+    this.retiredData.scrubStoreInPlace(store);
+    this.retiredData.scrubHistoryInPlace(history);
     this.workspacePersistence.scrubStore(store);
     return {
       formatVersion: 1,
@@ -660,16 +693,13 @@ function performanceNow(): number {
   return globalThis.performance?.now?.() ?? Date.now();
 }
 
-function throwIfAborted(signal: AbortSignal): void {
-  if (signal.aborted) throw new DOMException('Task cancelled', 'AbortError');
-}
-
 export function replayApplication(
   baseline: PersistedApplication,
   records: TransactionCommitRecord[],
+  retiredData = new RetiredDataRegistry([]),
 ): PersistedApplication {
-  const cleanBaseline = scrubPersistedApplication(baseline).value;
-  const cleanRecords = records.map((record) => scrubCommitRecord(record).value);
+  const cleanBaseline = scrubPersistedApplication(baseline, retiredData).value;
+  const cleanRecords = records.map((record) => scrubCommitRecord(record, retiredData).value);
   const store = structuredClone(cleanBaseline.store);
   const history = new HistoryService(2400);
   history.import(cleanBaseline.history);
@@ -800,19 +830,22 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-async function scrubRetiredPersistentData(database: IDBDatabase): Promise<void> {
-  if (await readValue<boolean>(database, 'meta', RETIRED_DATA_MIGRATION)) return;
+async function scrubRetiredPersistentData(
+  database: IDBDatabase,
+  retiredData: RetiredDataRegistry,
+): Promise<void> {
+  if (await readValue<boolean>(database, 'meta', retiredData.migrationKey)) return;
   const [storedSnapshot, journal, recovery] = await Promise.all([
     readValue<StoredPersistedApplication>(database, 'snapshots', 'latest'),
     readAll<TransactionCommitRecord>(database, 'journal'),
     readAll<RecoveryPointRecord>(database, 'recovery'),
   ]);
   const snapshot = storedSnapshot ? await hydrateStoredApplication(database, storedSnapshot) : undefined;
-  const cleanSnapshot = snapshot ? scrubPersistedApplication(snapshot) : undefined;
-  const cleanJournal = journal.map(scrubCommitRecord);
+  const cleanSnapshot = snapshot ? scrubPersistedApplication(snapshot, retiredData) : undefined;
+  const cleanJournal = journal.map((record) => scrubCommitRecord(record, retiredData));
   const cleanRecovery = await Promise.all(recovery.map(async (record) => {
     const hydrated = await hydrateStoredApplication(database, record.snapshot);
-    const snapshotResult = scrubPersistedApplication(hydrated);
+    const snapshotResult = scrubPersistedApplication(hydrated, retiredData);
     return { value: { ...record, snapshot: snapshotResult.value }, changed: snapshotResult.changed };
   }));
   await new Promise<void>((resolve, reject) => {
@@ -824,7 +857,7 @@ async function scrubRetiredPersistentData(database: IDBDatabase): Promise<void> 
     for (const record of cleanRecovery) {
       if (record.changed) recoveryStore.put(record.value, record.value.summary.id);
     }
-    transaction.objectStore('meta').put(true, RETIRED_DATA_MIGRATION);
+    transaction.objectStore('meta').put(true, retiredData.migrationKey);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error ?? new Error('Legacy data cleanup aborted'));
@@ -833,9 +866,10 @@ async function scrubRetiredPersistentData(database: IDBDatabase): Promise<void> 
 
 function scrubPersistedApplication(
   source: PersistedApplication,
+  retiredData: RetiredDataRegistry,
 ): { value: PersistedApplication; changed: boolean } {
-  const store = scrubRetiredStore(source.store);
-  const history = scrubRetiredHistory(source.history);
+  const store = retiredData.scrubStore(source.store);
+  const history = retiredData.scrubHistory(source.history);
   return {
     value: { ...structuredClone(source), store: store.value, history: history.value },
     changed: store.changed || history.changed,
@@ -844,10 +878,11 @@ function scrubPersistedApplication(
 
 function scrubCommitRecord(
   source: TransactionCommitRecord,
+  retiredData: RetiredDataRegistry,
 ): { value: TransactionCommitRecord; changed: boolean } {
   let changed = false;
   const scrub = (patches: PatchOperation[]) => patches.map((patch) => {
-    const result = scrubRetiredPatch(patch);
+    const result = retiredData.scrubPatch(patch);
     changed ||= result.changed;
     return result.value;
   });

@@ -1,5 +1,5 @@
 import type { PatchOperation } from './contracts.ts';
-import { yieldToMainThread } from './async.ts';
+import { assertNotAborted, yieldToMainThread } from '../services/async-control.ts';
 import { canMergePatchEntries, composePatchPairs } from './patch-composition.ts';
 
 export interface HistoryEntry {
@@ -139,7 +139,7 @@ async function cloneCapturedEntries(
     for (const source of [entry.forward, entry.inverse]) {
       const destination = source === entry.forward ? cloned.forward : cloned.inverse;
       for (const patch of source) {
-        if (signal?.aborted) throw new DOMException('History export cancelled', 'AbortError');
+        assertNotAborted(signal);
         destination.push(
           patch.op === 'set' && options.preserveImmutableNamespaces?.has(patch.namespace)
             ? { ...patch }

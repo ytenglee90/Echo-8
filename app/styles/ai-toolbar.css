@@ -1,0 +1,53 @@
+/* AI contribution inside the governed top toolbar. */
+.ai-toolbar-launcher { position: relative; display: flex; }
+.ai-toolbar-button-wrap { position: relative; display: flex; }
+.ai-toolbar-count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1.5px solid var(--toolbar);
+  border-radius: 999px;
+  background: var(--toolbar-ink);
+  color: var(--toolbar);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1;
+  pointer-events: none;
+}
+.ai-toolbar-menu {
+  position: fixed;
+  z-index: 180;
+  inset: auto;
+  display: grid;
+  gap: 3px;
+  width: 248px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 12px;
+  background: var(--toolbar);
+  color: var(--toolbar-ink);
+  box-shadow: 0 14px 36px rgba(24, 24, 27, .16);
+}
+.ai-toolbar-menu:not(:popover-open) { display: none; }
+.ai-toolbar-menu-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; gap: 3px; }
+.ai-toolbar-menu-row > button:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ai-toolbar-menu-row > button:first-child:hover { background: var(--toolbar-hover); }
+.ai-toolbar-menu-row span { overflow: hidden; font-size: 12px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.ai-toolbar-menu-row small { color: var(--toolbar-muted); font-size: 11px; }

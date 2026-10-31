@@ -78,7 +78,7 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
       if (!editable && event.key === ' ') event.preventDefault();
       if (!shortcut?.command) return;
       event.preventDefault();
-      void kernel.createViewClient(shortcut.owner).dispatch(shortcut.command, undefined);
+      void kernel.createViewClient(shortcut.owner).dispatchDynamic(shortcut.command, undefined);
     };
     const handleKeyUp = (event: KeyboardEvent) => kernel.ui.setKeyPressed(event.key, false);
     const handleBlur = () => kernel.ui.clearPressedKeys();
@@ -179,6 +179,7 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
   const topContributions = kernel.listUI('top.primary');
   const shortcuts = kernel.ui.listShortcuts();
   const rightPrimaryOpen = Boolean(kernel.ui.topSurface(['right.primary']));
+  const rightEditorOpen = Boolean(kernel.ui.topSurface(['right.editor']));
   const groups = [
     ['file', '文件与命令'],
     ['create', '新建'],
@@ -197,6 +198,7 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
       className="application-shell"
       data-theme={theme.mode}
       data-right-primary-open={rightPrimaryOpen ? 'true' : 'false'}
+      data-right-editor-open={rightEditorOpen ? 'true' : 'false'}
       style={themeStyle}
     >
       <div className="welcome-layer">
@@ -358,7 +360,7 @@ function TopContribution({
         onPointerDown={contribution.preserveEditableFocus ? (event) => event.preventDefault() : undefined}
         onClick={() =>
           contribution.command &&
-          void kernel.createViewClient(contribution.owner).dispatch(contribution.command, undefined)
+          void kernel.createViewClient(contribution.owner).dispatchDynamic(contribution.command, undefined)
         }
       >
         <Icon name={contribution.icon ?? 'more'} />

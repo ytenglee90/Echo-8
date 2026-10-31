@@ -1,4 +1,5 @@
 import type { CapabilityProvider } from './contracts.ts';
+import { assertNotAborted } from '../services/async-control.ts';
 
 interface RegisteredProvider extends CapabilityProvider {
   owner: string;
@@ -46,7 +47,7 @@ export class CapabilityRegistry {
   }
 
   async request<TResult>(key: string, input?: unknown, signal?: AbortSignal): Promise<TResult> {
-    if (signal?.aborted) throw new DOMException('Capability request aborted', 'AbortError');
+    assertNotAborted(signal);
     const provider = this.availableProviders(key)[0];
     if (!provider) throw new Error(`Capability unavailable: ${key}`);
     return (await this.invoke(provider, input, signal)) as TResult;
@@ -63,11 +64,11 @@ export class CapabilityRegistry {
   }
 
   async requestAll<TResult>(key: string, input?: unknown, signal?: AbortSignal): Promise<TResult[]> {
-    if (signal?.aborted) throw new DOMException('Capability request aborted', 'AbortError');
+    assertNotAborted(signal);
     const providers = this.availableProviders(key);
     return Promise.all(
       providers.map(async (provider) => {
-        if (signal?.aborted) throw new DOMException('Capability request aborted', 'AbortError');
+        assertNotAborted(signal);
         return (await this.invoke(provider, input, signal)) as TResult;
       }),
     );

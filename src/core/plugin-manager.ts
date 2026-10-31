@@ -335,7 +335,7 @@ export class PluginManager {
     return [...this.plugins.values()].map((record) => {
       const manifest = record.definition.manifest;
       const blockerIds = record.status === 'active' ? this.stopBlockers(manifest.id, manifest) : [];
-      const category = pluginCategory(manifest.id);
+      const category = manifest.category;
       return {
         id: manifest.id,
         name: manifest.name,
@@ -753,27 +753,15 @@ export class PluginManager {
   }
 }
 
-const FOUNDATIONAL_PLUGINS = new Set([
-  'canvas',
-  'text-node',
-  'selection',
-  'editor',
-  'plugin-center',
-  'command-palette',
-]);
-
-function pluginCategory(id: string): PluginSnapshot['category'] {
-  if (FOUNDATIONAL_PLUGINS.has(id)) return 'core';
-  if (id.includes('provider') || id === 'cloud-sync') return 'provider';
-  if (id.includes('diagnostic') || id === 'shortcut-center') return 'diagnostic';
-  return 'feature';
-}
 
 function validateManifest(manifest: PluginManifest): void {
   if (!/^[a-z0-9-]+$/.test(manifest.id)) throw new Error(`Invalid plugin id: ${manifest.id}`);
   if (!manifest.name.trim()) throw new Error(`Plugin ${manifest.id} has no name`);
   if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error(`Invalid plugin version: ${manifest.version}`);
   if (manifest.apiVersion !== '1') throw new Error(`Unsupported plugin API: ${manifest.apiVersion}`);
+  if (!['core', 'feature', 'provider', 'diagnostic'].includes(manifest.category)) {
+    throw new Error(`Invalid plugin category: ${String(manifest.category)}`);
+  }
   if (!Number.isInteger(manifest.dataVersion) || manifest.dataVersion < 1) {
     throw new Error(`Invalid plugin data version: ${manifest.dataVersion}`);
   }

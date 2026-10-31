@@ -64,6 +64,7 @@ export function createCloudSyncPlugin(
 
   return {
     manifest: defineManifest('cloud-sync', 'Cloudflare 云同步', {
+      category: 'provider',
       commands: [
         'cloudSync.open', 'cloudSync.close', 'cloudSync.refresh', 'cloudSync.install', 'cloudSync.upgrade',
         'cloudSync.listProjects', 'cloudSync.openProject', 'cloudSync.createProject',

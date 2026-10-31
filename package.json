@@ -27,7 +27,6 @@
     "verify": "pnpm run typecheck && pnpm run lint && pnpm audit --prod && pnpm run test && pnpm run test:e2e && pnpm run test:performance-browser && pnpm run build && pnpm run build:portable && pnpm run test:portable",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "dev:vinext": "vinext dev --port 3001",
-    "build:vinext": "vinext build",
     "start:vinext": "wrangler dev --config dist/server/wrangler.json",
     "deploy:vinext": "vinext-cloudflare deploy --config dist/server/wrangler.json --experimental-warm-cdn-cache",
     "deploy:response-store": "wrangler deploy --config wrangler.response-store.jsonc"

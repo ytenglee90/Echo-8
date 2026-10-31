@@ -2526,9 +2526,9 @@ test('current replacement keeps next navigation after the replaced occurrence', 
   expect(automaticRange.start).toBeGreaterThan(replacedRange.start);
 
   await nextButton.click();
+  await expect.poll(async () => (await readEditorSelection(editor)).start)
+    .toBeGreaterThan(automaticRange.start);
   await expect.poll(() => editor.evaluate(() => globalThis.getSelection()?.toString() ?? '')).toBe('画布');
-  const nextRange = await readEditorSelection(editor);
-  expect(nextRange.start).toBeGreaterThan(automaticRange.start);
   await expect(page.locator('.node-title-search-hit')).toHaveCount(0);
 });
 

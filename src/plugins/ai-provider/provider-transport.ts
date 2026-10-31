@@ -7,6 +7,7 @@ import type {
   AIChatToolCall,
 } from '../../protocols/ai.ts';
 import type { AIProviderPreferences, AIProviderProfile } from './types.ts';
+import { assertNotAborted } from '../../services/async-control.ts';
 import { EmbeddedReasoningStream } from './reasoning-stream.ts';
 
 const MAX_AI_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -188,7 +189,7 @@ export async function fetchWithInitialRetry(
       }
       throw new Error(await describeProviderHttpError(response));
     } catch (error) {
-      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      assertNotAborted(signal);
       lastError = error;
       if (attempt === 0 && error instanceof TypeError) {
         await abortableDelay(450, signal);

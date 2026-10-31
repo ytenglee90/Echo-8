@@ -26,7 +26,7 @@ import {
   chooseNativeTextExport,
   chooseNativeTextExportDirectory,
   chooseNativeProjectOpen,
-} from '../../ui/native-save.ts';
+} from '../../services/native-save.ts';
 
 export function FilePanel({ client }: { client: ViewClient }) {
   const fileVersion = useSyncExternalStore(

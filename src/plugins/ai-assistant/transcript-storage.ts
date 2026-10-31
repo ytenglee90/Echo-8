@@ -12,6 +12,7 @@ import type {
   AISessionRecord,
 } from '../../protocols/ai.ts';
 import type { ContentAppendPlanRequest, ContentMutationPlan } from '../../protocols/content.ts';
+import { assertNotAborted } from '../../services/async-control.ts';
 import { operationLabel } from './operations.ts';
 
 export const AI_SESSION_NAMESPACE = 'aiSessions';
@@ -81,7 +82,7 @@ export function readInternalTranscript(
   request: AIContextReadRequest,
   signal?: AbortSignal,
 ): AIContextReadContribution {
-  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  assertNotAborted(signal);
   const session = context.store.readValue<AISessionRecord>(AI_SESSION_NAMESPACE, sessionId);
   if (!session || session.transcriptSourceId) return { handled: true };
   const length = Math.max(0, session.transcriptLength ?? 0);

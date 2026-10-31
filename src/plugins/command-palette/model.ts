@@ -6,6 +6,7 @@ export const COMMAND_PALETTE_NAMESPACE = 'commandPalette';
 export function createCommandPalettePlugin(view?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('command-palette', '命令面板', {
+      category: 'core',
       namespaces: [COMMAND_PALETTE_NAMESPACE],
       namespaceDomains: { [COMMAND_PALETTE_NAMESPACE]: 'workspace' },
       sessionOnlyWorkspace: { [COMMAND_PALETTE_NAMESPACE]: true },

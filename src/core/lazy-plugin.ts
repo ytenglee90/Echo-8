@@ -49,7 +49,7 @@ export function createLazyPlugin(descriptor: LazyPluginDescriptor): PluginDefini
 
 function assertCompatibleManifest(expected: PluginManifest, actual: PluginManifest): void {
   const fields: Array<keyof PluginManifest> = [
-    'id', 'version', 'apiVersion', 'dataVersion', 'dependencies', 'optionalDependencies',
+    'id', 'version', 'apiVersion', 'dataVersion', 'category', 'dependencies', 'optionalDependencies',
     'requiresCapabilities', 'optionalCapabilities', 'providesCapabilities',
     'permissions', 'namespaces', 'namespaceDomains', 'sessionOnlyWorkspace', 'commands', 'dispatches',
     'events', 'signals', 'queries', 'asks', 'ui', 'actions', 'shortcuts',

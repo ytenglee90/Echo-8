@@ -62,7 +62,8 @@ import { canvasContrastVariables } from '../../ui/canvas-contrast.ts';
 import { SpatialHashIndex } from '../../services/spatial-index.ts';
 import { useCommandAvailability, useContentCatalog } from '../../ui/runtime-hooks.ts';
 import { CanvasEntityLayerProvider } from '../../ui/canvas-entity-layer-runtime.tsx';
-import { canvasNodeDetail } from './lod.ts';
+import { canvasNodeDetail } from '../../services/canvas-lod.ts';
+import { isSupportedDocumentFile } from '../../services/document-files.ts';
 import {
   clampCanvasZoom,
   cameraForBounds,
@@ -72,7 +73,6 @@ import {
   dragOriginFor,
   droppedTextTitle,
   edgePanVelocity,
-  isSupportedDocumentDrop,
   modifierMode,
   normalizeDroppedText,
   normalizeLasso,
@@ -85,6 +85,7 @@ import {
   type ResizePreview,
   type SurfaceSize,
 } from './surface-geometry.ts';
+import { CanvasPanSessionController } from './pan-session.ts';
 
 const CULL_MARGIN = 360;
 const MIN_NODE_WIDTH = 220;
@@ -118,13 +119,6 @@ interface PendingNodeDrag {
   cancelled: boolean;
   membershipActiveOnRelease?: boolean;
   duplicateOnCommit?: boolean;
-}
-
-interface PanSession {
-  pointerX: number;
-  pointerY: number;
-  origin: CameraState;
-  latest: CameraState;
 }
 
 interface PendingLassoGesture {
@@ -209,7 +203,7 @@ export function CanvasSurface({
   );
   const drag = useRef<DragSession | undefined>(undefined);
   const pendingDrag = useRef<PendingNodeDrag | undefined>(undefined);
-  const pan = useRef<PanSession | undefined>(undefined);
+  const pan = useRef(new CanvasPanSessionController());
   const pendingLasso = useRef<PendingLassoGesture | undefined>(undefined);
   const lasso = useRef<LassoSession | undefined>(undefined);
   const externalLassoPointerId = useRef<number | undefined>(undefined);
@@ -944,18 +938,21 @@ export function CanvasSurface({
     event.currentTarget.focus({ preventScroll: true });
     event.preventDefault();
     if (wantsPan) {
+      if (pan.current.active) return;
       event.currentTarget.setPointerCapture(event.pointerId);
-      pan.current = {
-        pointerX: event.clientX,
-        pointerY: event.clientY,
-        origin: camera,
-        latest: camera,
-      };
-      void client.dispatch('interaction.begin', { mode: 'panning' }).catch(() => {
-        const active = pan.current;
-        if (!active) return;
-        pan.current = undefined;
-        client.emit('canvas.camera.preview', active.origin);
+      const session = pan.current.begin(
+        event.pointerId,
+        event.clientX,
+        event.clientY,
+        camera,
+      );
+      if (!session) return;
+      void client.dispatch('interaction.begin', {
+        mode: 'panning',
+        sessionId: session.interactionSessionId,
+      }).catch(() => {
+        const rejected = pan.current.reject(session.interactionSessionId);
+        if (rejected) client.emit('canvas.camera.preview', rejected.origin);
       });
       return;
     }
@@ -1154,13 +1151,9 @@ export function CanvasSurface({
       );
       return;
     }
-    if (pan.current) {
-      pan.current.latest = {
-        ...camera,
-        x: pan.current.origin.x + event.clientX - pan.current.pointerX,
-        y: pan.current.origin.y + event.clientY - pan.current.pointerY,
-      };
-      client.emit('canvas.camera.preview', pan.current.latest);
+    if (pan.current.active) {
+      const latest = pan.current.move(event.pointerId, event.clientX, event.clientY);
+      if (latest) client.emit('canvas.camera.preview', latest);
       return;
     }
     if (lasso.current) {
@@ -1269,11 +1262,16 @@ export function CanvasSurface({
         finishNodeClick(current.primaryId, current.selectionMode);
       }
     }
-    if (pan.current) {
-      const next = pan.current.latest;
-      pan.current = undefined;
-      void client.dispatch('canvas.camera.commit', next)
-        .finally(() => client.dispatch('interaction.end', { mode: 'panning' }).catch(() => undefined));
+    const completedPan = pan.current.release(event.pointerId);
+    if (completedPan) {
+      // End the ephemeral gesture before its durable camera commit enters the
+      // serial queue. Otherwise a fast second pan can be admitted ahead of the
+      // delayed end and produce the illegal panning -> panning transition.
+      void client.dispatch('interaction.end', {
+        mode: 'panning',
+        sessionId: completedPan.interactionSessionId,
+      }).catch(() => undefined);
+      void client.dispatch('canvas.camera.commit', completedPan.latest).catch(() => undefined);
     }
     if (lasso.current) {
       commitLassoSelection();
@@ -1285,11 +1283,10 @@ export function CanvasSurface({
     if (cancelledPendingDrag) cancelledPendingDrag.cancelled = true;
     pendingDrag.current = undefined;
     const cancelledDrag = drag.current;
-    const cancelledPan = pan.current;
+    const cancelledPan = pan.current.cancel();
     drag.current = undefined;
     setNodeDragActive(false);
     setDragOriginPreview([]);
-    pan.current = undefined;
     pendingLasso.current = undefined;
     lasso.current = undefined;
     externalLassoPointerId.current = undefined;
@@ -1312,7 +1309,10 @@ export function CanvasSurface({
     client.emit('connection.draft.preview', {});
     if (cancelledPan) {
       client.emit('canvas.camera.preview', cancelledPan.origin);
-      void client.dispatch('interaction.end', { mode: 'panning' }).catch(() => undefined);
+      void client.dispatch('interaction.end', {
+        mode: 'panning',
+        sessionId: cancelledPan.interactionSessionId,
+      }).catch(() => undefined);
     }
     if (cancelledResize) void client.dispatch('interaction.end', { mode: 'resizing' }).catch(() => undefined);
     if (cancelledConnection) {
@@ -1415,7 +1415,7 @@ export function CanvasSurface({
       void client.dispatch('file.openProject', { file: projectFile }).catch(() => undefined);
       return;
     }
-    const files = droppedFiles.filter(isSupportedDocumentDrop).slice(0, 20);
+    const files = droppedFiles.filter(isSupportedDocumentFile).slice(0, 20);
     if (files.length > 0 && importAvailable) {
       event.preventDefault();
       event.stopPropagation();
@@ -1454,7 +1454,7 @@ export function CanvasSurface({
       (message) => {
         const payload = message.payload;
         const surface = surfaceRef.current;
-        if (!surface || lasso.current || pan.current || drag.current || resize.current || connectionDraft.current) return;
+        if (!surface || lasso.current || pan.current.active || drag.current || resize.current || connectionDraft.current) return;
         const start = screenToWorld(payload.startClientX, payload.startClientY, cameraRef.current, surface);
         const latest = screenToWorld(payload.clientX, payload.clientY, cameraRef.current, surface);
         pendingLasso.current = undefined;

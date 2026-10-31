@@ -75,6 +75,18 @@ test('a real browser opens, culls and edits the supported extreme canvas envelop
   );
   expect(performance.now() - selectedAt).toBeLessThan(FULL_SELECTION_BUDGET_MS);
 
+  // A dense selection can keep rendering work queued while the user starts
+  // another gesture. Two immediate pans must still close their own interaction
+  // sessions in order and must not leave the canvas unable to clear selection.
+  await page.keyboard.press('h');
+  for (let index = 0; index < 2; index += 1) {
+    await page.mouse.move(blankPoint.x + index * 4, blankPoint.y + index * 4);
+    await page.mouse.down();
+    await page.mouse.move(blankPoint.x + 28 + index * 4, blankPoint.y + 18 + index * 4, { steps: 2 });
+    await page.mouse.up();
+  }
+  await expect(page.getByText(/Illegal interaction transition/u)).toHaveCount(0);
+  await page.keyboard.press('v');
   await canvas.click({ position: { x: 8, y: 8 } });
   await expect(page.locator('[data-canvas-selection-count]')).toHaveAttribute('data-canvas-selection-count', '0');
   await expect(page.getByRole('article', { name: /已选中，文本节点：/u })).toHaveCount(0);

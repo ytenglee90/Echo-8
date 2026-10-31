@@ -14,6 +14,7 @@ const SHORTCUT_PREFERENCE_KEY = 'shortcut-center.overrides@1';
 export function createShortcutCenterPlugin(panel?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('shortcut-center', '快捷键中心', {
+      category: 'diagnostic',
       namespaces: [SHORTCUT_CENTER_NAMESPACE],
       namespaceDomains: { [SHORTCUT_CENTER_NAMESPACE]: 'workspace' },
       sessionOnlyWorkspace: { [SHORTCUT_CENTER_NAMESPACE]: ['open'] },

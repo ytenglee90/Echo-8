@@ -29,6 +29,7 @@ interface StoredSelection {
 export function createSelectionPlugin(selectionActions?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('selection', '选择与批量操作', {
+      category: 'core',
       namespaces: [SELECTION_NAMESPACE],
       namespaceDomains: { [SELECTION_NAMESPACE]: 'workspace' },
       sessionOnlyWorkspace: { [SELECTION_NAMESPACE]: true },

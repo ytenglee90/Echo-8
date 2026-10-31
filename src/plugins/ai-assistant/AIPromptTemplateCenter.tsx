@@ -8,7 +8,7 @@ import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import {
   chooseNativePromptTemplateOpen,
   chooseNativePromptTemplateSave,
-} from '../../ui/native-save.ts';
+} from '../../services/native-save.ts';
 import type { PromptTemplateDraft } from './prompt-template-files.ts';
 
 const EMPTY_PROMPT_DRAFT: PromptTemplateDraft = {

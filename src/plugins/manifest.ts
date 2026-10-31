@@ -11,6 +11,7 @@ export function defineManifest(
     version: '0.1.0',
     apiVersion: '1',
     dataVersion: 1,
+    category: 'feature',
     autoStart: true,
     dependencies: [],
     optionalDependencies: [],

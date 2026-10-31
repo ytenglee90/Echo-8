@@ -1,4 +1,10 @@
-import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
+import {
+  createId,
+  isRecord,
+  type PluginDefinition,
+  type RetiredDataScrubRule,
+} from '../../core/contracts.ts';
+import { isRecord as isPlainRecord, removeOwnKeysInPlace } from '../../services/retired-data.ts';
 import type {
   ClipboardBundle,
   ClipboardFragment,
@@ -9,6 +15,24 @@ import { defineManifest } from '../manifest.ts';
 
 const CLIPBOARD_NAMESPACE = 'clipboard';
 const BUNDLE_KEY = 'bundle';
+
+export const CLIPBOARD_RETIRED_DATA: RetiredDataScrubRule = {
+  id: 'clipboard.remove-retired-text-node-private-v1',
+  namespace: CLIPBOARD_NAMESPACE,
+  scrubInPlace(value) {
+    if (!isPlainRecord(value) || !Array.isArray(value.fragments)) return false;
+    let changed = false;
+    for (const fragment of value.fragments) {
+      if (!isPlainRecord(fragment) || fragment.owner !== 'text-node' ||
+        !isPlainRecord(fragment.payload) || !Array.isArray(fragment.payload.nodes)) continue;
+      for (const entry of fragment.payload.nodes) {
+        if (!isPlainRecord(entry) || !isPlainRecord(entry.node)) continue;
+        changed = removeOwnKeysInPlace(entry.node, ['private']) || changed;
+      }
+    }
+    return changed;
+  },
+};
 
 interface ClipboardCopiedEvent {
   cut: boolean;
@@ -21,6 +45,7 @@ interface ClipboardPastedEvent {
 export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
   let pasteSerial = 0;
   return {
+    retiredDataScrubbers: [CLIPBOARD_RETIRED_DATA],
     manifest: defineManifest('clipboard', '内部剪贴板', {
       namespaces: [CLIPBOARD_NAMESPACE],
       namespaceDomains: { [CLIPBOARD_NAMESPACE]: 'workspace' },

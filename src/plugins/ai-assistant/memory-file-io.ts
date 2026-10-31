@@ -7,6 +7,7 @@ import {
 import type { AIMemoryIndexRecord, AISessionRecord } from '../../protocols/ai.ts';
 import type { ContentCreatePlanRequest, ContentMutationPlan } from '../../protocols/content.ts';
 import type { FileDirectoryTarget, FileReadWriteTarget } from '../../protocols/files.ts';
+import { assertNotAborted } from '../../services/async-control.ts';
 import {
   readContextSource,
   readContextSourceRevision,
@@ -57,7 +58,7 @@ export async function writeMemorySourceToDirectory(
   try {
     if (length === 0) await writable.write(new Blob([''], { type: 'text/plain;charset=utf-8' }));
     for (let start = 0; start < length; start += AI_MEMORY_FILE_WRITE_CHUNK) {
-      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      assertNotAborted(signal);
       await waitIfPaused();
       const part = await readContextSource(context, {
         sourceId,
@@ -103,7 +104,7 @@ export async function prepareMemoryFileImport(
   const events: EventDeclaration[] = [];
   const reservedTitles: string[] = Object.values(existingMemories).map((memory) => memory.title);
   for (const [pairIndex, pair] of pairs.entries()) {
-    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    assertNotAborted(signal);
     await waitIfPaused();
     const originalFile = await pair.original.getFile();
     const indexFile = await pair.index.getFile();

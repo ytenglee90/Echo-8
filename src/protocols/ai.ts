@@ -68,6 +68,35 @@ export interface AIContextSearchRequest {
   sourceIds?: string[];
 }
 
+export const AI_CONTEXT_SEARCH_LIMITS = {
+  terms: 8,
+  expandedTerms: 16,
+  termLength: 48,
+  queryLength: 20_000,
+  sourceIds: 100,
+  sourceIdLength: 200,
+  maxResults: 50,
+} as const;
+
+export function validateAIContextSearchRequest(input: AIContextSearchRequest): void {
+  const limits = AI_CONTEXT_SEARCH_LIMITS;
+  if (!input || !Array.isArray(input.terms) || input.terms.length === 0 ||
+    input.terms.length > limits.terms ||
+    input.terms.some((term) => typeof term !== 'string' || term.length === 0 || term.length > limits.termLength) ||
+    (input.query !== undefined && (typeof input.query !== 'string' || input.query.length > limits.queryLength)) ||
+    (input.expandedTerms !== undefined && (!Array.isArray(input.expandedTerms) ||
+      input.expandedTerms.length > limits.expandedTerms ||
+      input.expandedTerms.some((term) =>
+        typeof term !== 'string' || term.length === 0 || term.length > limits.termLength))) ||
+    (input.sourceIds !== undefined && (!Array.isArray(input.sourceIds) ||
+      input.sourceIds.length > limits.sourceIds ||
+      input.sourceIds.some((id) =>
+        typeof id !== 'string' || id.length === 0 || id.length > limits.sourceIdLength))) ||
+    !Number.isInteger(input.maxResults) || input.maxResults < 1 || input.maxResults > limits.maxResults) {
+    throw new Error('AI 检索请求格式不正确');
+  }
+}
+
 export interface AIContextSearchHit {
   source: AIContextSource;
   start: number;

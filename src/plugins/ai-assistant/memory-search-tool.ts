@@ -6,6 +6,7 @@ import type {
   AIPreparedContext,
   AIToolDefinition,
 } from '../../protocols/ai.ts';
+import { assertNotAborted } from '../../services/async-control.ts';
 import { readContextSource, readNaturalEvidenceBlock } from './context-source-reader.ts';
 import { matchConversationMemories } from './memory-retrieval.ts';
 
@@ -149,7 +150,7 @@ async function searchMemory(
   let stale = 0;
   let unavailable = 0;
   for (const match of matches) {
-    if (signal?.aborted) throw new DOMException('AI memory tool aborted', 'AbortError');
+    assertNotAborted(signal);
     try {
       const metadata = await readContextSource(context, {
         sourceId: match.index.sourceId, start: 0, length: 0,

@@ -8,10 +8,9 @@ import {
 } from '../src/core/checkpoint-preparation.ts';
 import { CheckpointPerformanceMonitor } from '../src/core/checkpoint-performance.ts';
 import {
-  scrubRetiredHistoryInPlace,
-  scrubRetiredStore,
-  scrubRetiredStoreInPlace,
-} from '../src/core/legacy-migrations.ts';
+  RetiredDataRegistry,
+} from '../src/core/retired-data-registry.ts';
+import { TEXT_NODE_RETIRED_DATA } from '../src/plugins/text-node/plugin.ts';
 import {
   prepareCheckpointWorkerRequest,
 } from '../src/core/persistence-worker-jobs.ts';
@@ -21,6 +20,8 @@ import {
 } from '../src/core/persistence.ts';
 import { HistoryService } from '../src/core/history.ts';
 import { StateStore } from '../src/core/store.ts';
+
+const retiredData = new RetiredDataRegistry([TEXT_NODE_RETIRED_DATA]);
 
 function application(): PersistedApplication {
   return {
@@ -111,7 +112,7 @@ test('checkpoint scrubbing reuses an isolated snapshot without cloning unchanged
   const activeChunk = snapshot.document.namespaces.textContentChunk['chunk:a'];
   const original = structuredClone(snapshot);
   original.document.namespaces.textNode.node = { id: 'node', private: true };
-  const publicResult = scrubRetiredStore(original);
+  const publicResult = retiredData.scrubStore(original);
   assert.equal(Object.prototype.hasOwnProperty.call(
     original.document.namespaces.textNode.node as object,
     'private',
@@ -122,7 +123,7 @@ test('checkpoint scrubbing reuses an isolated snapshot without cloning unchanged
   ), false);
 
   snapshot.document.namespaces.textNode.node = { id: 'node', private: true };
-  assert.equal(scrubRetiredStoreInPlace(snapshot), true);
+  assert.equal(retiredData.scrubStoreInPlace(snapshot), true);
   assert.equal(snapshot.document.namespaces.textContentChunk['chunk:a'], activeChunk);
   assert.equal(Object.prototype.hasOwnProperty.call(
     snapshot.document.namespaces.textNode.node as object,
@@ -131,7 +132,7 @@ test('checkpoint scrubbing reuses an isolated snapshot without cloning unchanged
 
   const history = application().history;
   const unchangedPatchValue = history.undo[0].forward[0].value;
-  assert.equal(scrubRetiredHistoryInPlace(history), false);
+  assert.equal(retiredData.scrubHistoryInPlace(history), false);
   assert.equal(history.undo[0].forward[0].value, unchangedPatchValue);
 });
 

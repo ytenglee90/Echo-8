@@ -12,10 +12,10 @@ import {
 import { Icon } from '../../ui/Icon.tsx';
 import { alignCanvasRectToDevicePixels } from '../../ui/canvas-pixel-alignment.ts';
 import { ensureCanvasColorContrast } from '../../ui/canvas-contrast.ts';
+import { contrastTextColor } from '../../ui/color-contrast.ts';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import { endEllipsis, nodeTitleLimit } from '../../ui/title-ellipsis.ts';
-
-const NODE_PREVIEW_MIN_ZOOM = 0.5;
+import { canvasNodeDetail } from '../../services/canvas-lod.ts';
 
 interface TextNodeCanvasLayerProps {
   client: ViewClient;
@@ -372,22 +372,6 @@ function isLowSurrogate(code: number): boolean {
 
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
-}
-
-function canvasNodeDetail(zoom: number): 'title-only' | 'preview' {
-  return zoom < NODE_PREVIEW_MIN_ZOOM ? 'title-only' : 'preview';
-}
-
-function contrastTextColor(color: string): '#111111' | '#ffffff' {
-  const match = /^#([0-9a-f]{6})$/iu.exec(color);
-  if (!match) return '#ffffff';
-  const numeric = Number.parseInt(match[1], 16);
-  const channels = [numeric >> 16, (numeric >> 8) & 255, numeric & 255].map((channel) => {
-    const normalized = channel / 255;
-    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
-  });
-  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-  return luminance > 0.42 ? '#111111' : '#ffffff';
 }
 
 function formatNodeCharacterCount(

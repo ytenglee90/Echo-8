@@ -1,5 +1,6 @@
 import { isRecord, type PluginContext } from '../../core/contracts.ts';
 import { StreamingGraphemeCounter, WritingUnitCounter } from '../../services/text-metrics.ts';
+import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
 import type {
   AIContextSearchContribution,
   AIContextSearchRequest,
@@ -682,12 +683,4 @@ export function countNewlines(value: string): number {
   let count = 0;
   for (let index = value.indexOf('\n'); index >= 0; index = value.indexOf('\n', index + 1)) count += 1;
   return count;
-}
-
-export function assertNotAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException('Task aborted', 'AbortError');
-}
-
-export function yieldToMainThread(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }

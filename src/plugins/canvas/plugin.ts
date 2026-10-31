@@ -35,6 +35,7 @@ interface CanvasAppearanceRecord {
 
 export const canvasPlugin: PluginDefinition = {
   manifest: defineManifest('canvas', 'Echo-8 画布', {
+    category: 'core',
     namespaces: [VIEW_NAMESPACE, APPEARANCE_NAMESPACE],
     namespaceDomains: { [VIEW_NAMESPACE]: 'workspace', [APPEARANCE_NAMESPACE]: 'document' },
     sessionOnlyWorkspace: { [VIEW_NAMESPACE]: true },

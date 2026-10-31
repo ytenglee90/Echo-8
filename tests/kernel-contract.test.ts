@@ -1,17 +1,32 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import type { CommandContract } from '../src/protocols/commands.ts';
+
+declare module '../src/protocols/commands.ts' {
+  interface ApplicationCommandMap {
+    'probe.child': CommandContract<undefined, string>;
+    'probe.deferred': CommandContract<undefined, boolean>;
+    'loop.tick': CommandContract<undefined, void>;
+    'probe.ui-failure': CommandContract<unknown, never>;
+    'external.noop': CommandContract<undefined, boolean>;
+  }
+}
 
 import { CapabilityRegistry } from '../src/core/capability-registry.ts';
 import type { MessageEnvelope, PluginDefinition } from '../src/core/contracts.ts';
 import { DiagnosticsService } from '../src/core/diagnostics.ts';
 import { HistoryService } from '../src/core/history.ts';
 import { InteractionStateMachine } from '../src/core/interaction-machine.ts';
-import { scrubRetiredHistory, scrubRetiredStore } from '../src/core/legacy-migrations.ts';
+import { RetiredDataRegistry } from '../src/core/retired-data-registry.ts';
 import { ApplicationKernel } from '../src/core/kernel.ts';
 import { MessageRouter } from '../src/core/message-router.ts';
 import { SpatialHashIndex } from '../src/services/spatial-index.ts';
-import { canvasNodeDetail, NODE_PREVIEW_MIN_ZOOM } from '../src/plugins/canvas/lod.ts';
+import { canvasNodeDetail, NODE_PREVIEW_MIN_ZOOM } from '../src/services/canvas-lod.ts';
+import { TEXT_NODE_RETIRED_DATA } from '../src/plugins/text-node/plugin.ts';
+import { AI_PROPOSAL_RETIRED_DATA } from '../src/plugins/ai-assistant/model.ts';
+import { EDITOR_RETIRED_DATA } from '../src/plugins/editor/model.ts';
+import { CLIPBOARD_RETIRED_DATA } from '../src/plugins/clipboard/model.ts';
 import {
   clampCanvasZoom,
   MAX_ZOOM,
@@ -4362,6 +4377,7 @@ test('hot-stop refuses to remove the last provider of an active required capabil
   const harness = createHarness();
   harness.plugins.register({
     manifest: defineManifest('cap-provider', '能力提供者', {
+      category: 'provider',
       providesCapabilities: ['test.capability@1'],
     }),
     start(context) {
@@ -7649,8 +7665,14 @@ test('legacy privacy metadata is scrubbed and all text sources remain readable a
   assert.equal(readable.text, 'privacy-search-token 第二份内容');
 });
 
-test('retired privacy and recent-speed fields are removed from snapshots, history and clipboard fragments', () => {
-  const store = scrubRetiredStore({
+test('plugin-owned retirement rules clean snapshots, history and clipboard fragments', () => {
+  const retiredData = new RetiredDataRegistry([
+    TEXT_NODE_RETIRED_DATA,
+    AI_PROPOSAL_RETIRED_DATA,
+    EDITOR_RETIRED_DATA,
+    CLIPBOARD_RETIRED_DATA,
+  ]);
+  const store = retiredData.scrubStore({
     formatVersion: 1,
     document: {
       revision: 1,
@@ -7671,7 +7693,7 @@ test('retired privacy and recent-speed fields are removed from snapshots, histor
       },
     },
   });
-  const history = scrubRetiredHistory({
+  const history = retiredData.scrubHistory({
     undo: [{
       id: 'old',
       label: '旧操作',

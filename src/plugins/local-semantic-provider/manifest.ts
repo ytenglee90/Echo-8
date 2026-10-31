@@ -15,6 +15,7 @@ import {
 export const LOCAL_SEMANTIC_PROVIDER_NAMESPACE = 'localSemanticProvider';
 
 export const localSemanticProviderManifest = defineManifest('local-semantic-provider', '本地语义检索', {
+  category: 'provider',
   namespaces: [LOCAL_SEMANTIC_PROVIDER_NAMESPACE],
   namespaceDomains: { [LOCAL_SEMANTIC_PROVIDER_NAMESPACE]: 'workspace' },
   commands: Object.values(LOCAL_SEMANTIC_PROVIDER_COMMANDS),
