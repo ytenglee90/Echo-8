@@ -112,7 +112,6 @@ export class TaskScheduler {
         if (task.settled || task.rootController.signal.aborted) return;
         this.enqueue(task as QueuedTask);
       }, options.delayMs);
-      (task.delayTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
     } else this.enqueue(task as QueuedTask);
     this.notify();
     this.pump();
