@@ -29,3 +29,11 @@ jobs:
       - run: pnpm run build:portable
       - run: pnpm run test:portable
       - run: pnpm run test:cross-browser
+      - name: Upload failed visual baselines
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-visual-baselines-${{ github.run_id }}
+          path: test-results/**/*-actual.png
+          if-no-files-found: ignore
+          retention-days: 1
