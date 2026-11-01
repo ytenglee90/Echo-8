@@ -53,6 +53,8 @@ import {
 } from './rendering.ts';
 
 const CULL_MARGIN = 360;
+const CONNECTION_HOVER_TOLERANCE_PX = 12;
+const CONNECTION_CLICK_TOLERANCE_PX = 5;
 
 interface DrawableConnection {
   connection: ConnectionRecord;
@@ -99,6 +101,15 @@ interface PendingConnectionSelection {
   lassoRequested: boolean;
 }
 
+interface PendingConnectionBackground {
+  mode: SelectionMode;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
+  lassoRequested: boolean;
+}
+
 export function ConnectionLayer({ client }: { client: ViewClient }) {
   const {
     capabilityVersion,
@@ -125,6 +136,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const labelInputRef = useRef<HTMLTextAreaElement>(null);
   const labelResize = useRef<ConnectionLabelResizeSession | undefined>(undefined);
   const pendingSelection = useRef<PendingConnectionSelection | undefined>(undefined);
+  const pendingBackground = useRef<PendingConnectionBackground | undefined>(undefined);
   const skipBlurCommitRef = useRef(false);
 
   useEffect(() => {
@@ -398,6 +410,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     connection: ConnectionRecord,
     part: PendingConnectionSelection['part'],
   ) => {
+    pendingBackground.current = undefined;
     pendingSelection.current = {
       id: connection.id,
       part,
@@ -410,8 +423,20 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     };
   };
 
+  const beginConnectionBackground = (event: ReactPointerEvent<SVGSVGElement>) => {
+    pendingSelection.current = undefined;
+    pendingBackground.current = {
+      mode: modifierMode(event),
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+      lassoRequested: false,
+    };
+  };
+
   const movePendingConnectionSelection = useCallback((pointerId: number, clientX: number, clientY: number) => {
-    const pending = pendingSelection.current;
+    const pending = pendingSelection.current ?? pendingBackground.current;
     if (!pending || pending.pointerId !== pointerId) return;
     const moved = Math.hypot(clientX - pending.startX, clientY - pending.startY) > 3;
     if (moved && !pending.lassoRequested) {
@@ -548,7 +573,11 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     void client.dispatch('interaction.end', { mode: 'resizing' }).catch(() => undefined);
   };
 
-  const hitConnection = (clientX: number, clientY: number): ConnectionRecord | undefined => {
+  const hitConnection = (
+    clientX: number,
+    clientY: number,
+    screenTolerance = CONNECTION_HOVER_TOLERANCE_PX,
+  ): ConnectionRecord | undefined => {
     if (lassoActive) return undefined;
     const element = layerRef.current;
     if (!element) return undefined;
@@ -557,7 +586,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       x: (clientX - rect.left - camera.x) / camera.zoom,
       y: (clientY - rect.top - camera.y) / camera.zoom,
     };
-    const threshold = 12 / camera.zoom;
+    const threshold = screenTolerance / camera.zoom;
     const candidates = new Map(connectionIndex.query({
       x: point.x - threshold,
       y: point.y - threshold,
@@ -603,11 +632,19 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         const declaredTarget = target.closest<SVGElement>('[data-connection-id]');
         const declaredId = declaredTarget?.dataset.connectionId;
         const declaredConnection = declaredId ? connectionLookup.byId.get(declaredId) : undefined;
-        const connection = declaredConnection ?? (batchRendered
-          ? hitConnection(event.clientX, event.clientY)
-          : undefined);
-        if (!connection) return;
         const part = declaredTarget?.dataset.connectionPart;
+        const declaredLabel = part === 'label-background' || part === 'label-text';
+        const connection = declaredLabel
+          ? declaredConnection
+          : hitConnection(
+              event.clientX,
+              event.clientY,
+              CONNECTION_CLICK_TOLERANCE_PX,
+            );
+        if (!connection) {
+          beginConnectionBackground(event);
+          return;
+        }
         beginConnectionSelection(
           event,
           connection,
@@ -624,12 +661,16 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       onPointerUp={(event) => {
         if (finishLabelResize(event)) {
           pendingSelection.current = undefined;
+          pendingBackground.current = undefined;
           return;
         }
         const pending = pendingSelection.current;
-        if (!pending || pending.pointerId !== event.pointerId) return;
+        const background = pendingBackground.current;
+        const pointer = pending ?? background;
+        if (!pointer || pointer.pointerId !== event.pointerId) return;
         pendingSelection.current = undefined;
-        if (pending.moved || lassoActive) {
+        pendingBackground.current = undefined;
+        if (pointer.moved || lassoActive) {
           event.preventDefault();
           event.stopPropagation();
           client.emit('canvas.lasso.external.finished', {
@@ -641,12 +682,14 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         }
         event.preventDefault();
         event.stopPropagation();
-        selectConnection(pending.id, pending.mode, pending.part);
+        if (pending) selectConnection(pending.id, pending.mode, pending.part);
+        else if (background?.mode === 'replace') void client.dispatch('selection.clear');
       }}
       onPointerCancel={(event) => {
-        const pending = pendingSelection.current;
+        const pending = pendingSelection.current ?? pendingBackground.current;
         if (pending?.pointerId === event.pointerId) {
           pendingSelection.current = undefined;
+          pendingBackground.current = undefined;
           if (pending.lassoRequested) client.emit('canvas.lasso.external.finished', {
             pointerId: event.pointerId,
             clientX: event.clientX,
@@ -659,7 +702,11 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       onPointerLeave={() => setHoveredId(undefined)}
       onDoubleClick={(event) => {
         if (!batchRendered) return;
-        const connection = hitConnection(event.clientX, event.clientY);
+        const connection = hitConnection(
+          event.clientX,
+          event.clientY,
+          CONNECTION_CLICK_TOLERANCE_PX,
+        );
         if (!connection) return;
         event.preventDefault();
         event.stopPropagation();
@@ -706,6 +753,11 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
                 onPointerEnter={() => setHoveredId(connection.id)}
                 onPointerLeave={() => setHoveredId((current) => current === connection.id ? undefined : current)}
                 onDoubleClick={(event) => {
+                  if (hitConnection(
+                    event.clientX,
+                    event.clientY,
+                    CONNECTION_CLICK_TOLERANCE_PX,
+                  )?.id !== connection.id) return;
                   event.preventDefault();
                   event.stopPropagation();
                   openLabelEditor(connection);

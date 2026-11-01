@@ -934,6 +934,7 @@ export function CanvasSurface({
   const beginSurfaceGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 && event.button !== 1) return;
     const wantsPan = event.button === 1 || (event.button === 0 && panReady);
+    if (!wantsPan && pendingLasso.current?.pointerId === event.pointerId) return;
     if (!wantsPan && (event.target as HTMLElement).closest('.text-node-card, .connection-edge, .node-resize-handle')) return;
     event.currentTarget.focus({ preventScroll: true });
     event.preventDefault();
@@ -1184,13 +1185,17 @@ export function CanvasSurface({
     void client.dispatch('selection.box', box);
   }, [client]);
 
+  const finishPendingSurfaceClick = (pointerId: number): boolean => {
+    const pending = pendingLasso.current;
+    if (pending?.pointerId !== pointerId) return false;
+    pending.released = true;
+    pendingLasso.current = undefined;
+    if (pending.mode === 'replace') void client.dispatch('selection.clear');
+    return true;
+  };
+
   const finishGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (pendingLasso.current?.pointerId === event.pointerId) {
-      const pending = pendingLasso.current;
-      pendingLasso.current = undefined;
-      if (pending.mode === 'replace') void client.dispatch('selection.clear');
-      return;
-    }
+    if (finishPendingSurfaceClick(event.pointerId)) return;
     if (connectionDraft.current) {
       const pointer = screenToWorld(event.clientX, event.clientY, camera, event.currentTarget);
       const session = updateConnectionSession(
@@ -1534,6 +1539,15 @@ export function CanvasSurface({
         '--document-canvas-background': renderedCanvasColor,
         ...canvasContrastStyle,
       } as CSSProperties}
+      onPointerDownCapture={(event) => {
+        const target = event.target as Element;
+        if (!target.closest('.connection-layer') ||
+          target.closest('textarea, input, button, .connection-label-resize-handle')) return;
+        // Dense and ordinary connection layers own transparent hit geometry.
+        // Admit a background-click candidate before those descendants arbitrate
+        // their narrower visible-curve hit in their own capture handler.
+        beginSurfaceGesture(event);
+      }}
       onPointerDown={beginSurfaceGesture}
       onPointerEnter={publishPointer}
       onPointerMove={(event) => {
@@ -1541,7 +1555,10 @@ export function CanvasSurface({
         moveGesture(event);
       }}
       onPointerUpCapture={(event) => {
-        if (pendingLasso.current?.pointerId === event.pointerId) pendingLasso.current.released = true;
+        // Descendant layers may consume pointerup after resolving their own hit.
+        // Finalize a click candidate while capture still guarantees delivery so
+        // a visually blank dense-canvas click cannot leave selection trapped.
+        finishPendingSurfaceClick(event.pointerId);
       }}
       onPointerLeave={() => client.emit('canvas.pointer.preview', { clear: true } satisfies CanvasPointerSnapshot)}
       onPointerUp={finishGesture}

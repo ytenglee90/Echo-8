@@ -96,7 +96,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.toggleSelected',
         'connection.toggleTitleSelected',
       ],
-      dispatches: ['selection.set', 'interaction.begin', 'interaction.end'],
+      dispatches: ['selection.set', 'selection.clear', 'interaction.begin', 'interaction.end'],
       asks: ['editor.openPanes'],
       events: [
         'connection.created',

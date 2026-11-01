@@ -75,6 +75,22 @@ test('a real browser opens, culls and edits the supported extreme canvas envelop
   );
   expect(performance.now() - selectedAt).toBeLessThan(FULL_SELECTION_BUDGET_MS);
 
+  // Dense connection rendering uses transparent hit geometry around thin
+  // curves. A visibly separated point must remain canvas background rather
+  // than becoming an invisible connection target that traps the selection.
+  const visualBlankPoint = await pointBesideFirstConnection(page);
+  await page.mouse.click(visualBlankPoint.x, visualBlankPoint.y);
+  await expect(page.locator('[data-canvas-selection-count]')).toHaveAttribute(
+    'data-canvas-selection-count',
+    '0',
+  );
+  await page.keyboard.press('Control+a');
+  await expect(page.locator('[data-canvas-selection-count]')).toHaveAttribute(
+    'data-canvas-selection-count',
+    String(NODE_COUNT),
+    { timeout: FULL_SELECTION_BUDGET_MS },
+  );
+
   // A dense selection can keep rendering work queued while the user starts
   // another gesture. Two immediate pans must still close their own interaction
   // sessions in order and must not leave the canvas unable to clear selection.
@@ -181,11 +197,12 @@ async function createExtremeProject(): Promise<Blob> {
   }
   for (let index = 0; index < CONNECTION_COUNT; index += 1) {
     const connectionId = `browser-connection-${String(index).padStart(4, '0')}`;
+    const fromIndex = index + Math.floor(index / 49);
     namespaces.connections[connectionId] = {
       id: connectionId,
-      from: { nodeId: `browser-node-${String(index).padStart(4, '0')}`, side: 'right' },
-      to: { nodeId: `browser-node-${String(index + 1).padStart(4, '0')}`, side: 'left' },
-      label: `浏览器压力连线 ${String(index).padStart(4, '0')}`,
+      from: { nodeId: `browser-node-${String(fromIndex).padStart(4, '0')}`, side: 'right' },
+      to: { nodeId: `browser-node-${String(fromIndex + 1).padStart(4, '0')}`, side: 'left' },
+      label: index === 0 ? undefined : `浏览器压力连线 ${String(index).padStart(4, '0')}`,
       labelWidth: 168,
       labelHeight: 48,
       revision: 1,
@@ -225,6 +242,16 @@ async function findBlankCanvasPoint(page: Page): Promise<{ x: number; y: number 
     }
     throw new Error('No blank canvas point is available for the lasso performance probe');
   });
+}
+
+async function pointBesideFirstConnection(page: Page): Promise<{ x: number; y: number }> {
+  const first = await page.getByRole('article', { name: /浏览器极限节点 0000/u }).boundingBox();
+  const second = await page.getByRole('article', { name: /浏览器压力节点 0001/u }).boundingBox();
+  if (!first || !second) throw new Error('The first connected node pair is not visible');
+  return {
+    x: (first.x + first.width + second.x) / 2,
+    y: first.y + first.height / 2 + 8,
+  };
 }
 
 function repeatedText(pattern: string, length: number): string {
