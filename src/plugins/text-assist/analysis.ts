@@ -10,6 +10,7 @@ import type {
   TextNodeReferenceDecoration,
 } from '../../protocols/text-assist.ts';
 import { DEFAULT_TEXT_ASSIST_SETTINGS } from '../../protocols/text-assist.ts';
+import { assertNotAborted as throwIfAborted } from '../../services/async-control.ts';
 import { compileTextAssistResources } from './resource-format.ts';
 
 interface TitleEntry {
@@ -951,4 +952,3 @@ function emptyAnalysis(request: TextAssistAnalyzeRequest): TextAssistAnalysis {
     completions: [],
   };
 }
-import { assertNotAborted as throwIfAborted } from '../../services/async-control.ts';

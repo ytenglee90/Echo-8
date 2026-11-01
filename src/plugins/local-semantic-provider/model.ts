@@ -1,7 +1,8 @@
-import type {
-  PluginContext,
-  PluginDefinition,
-  TaskHandle,
+import {
+  isRecord,
+  type PluginContext,
+  type PluginDefinition,
+  type TaskHandle,
 } from '../../core/contracts.ts';
 import type { LocalModelAsset } from '../../protocols/network.ts';
 import type { PersonalTextAssetRecord } from '../../protocols/personal-assets.ts';
@@ -26,6 +27,11 @@ import {
   sampleSemanticSource,
   semanticPreview,
 } from '../../services/semantic-source-sampling.ts';
+import {
+  searchSemanticVectorCache,
+  semanticVectorCacheStats,
+  type SemanticVectorChunk,
+} from '../../services/semantic-vector-search.ts';
 import { localSemanticProviderManifest, LOCAL_SEMANTIC_PROVIDER_NAMESPACE } from './manifest.ts';
 import {
   LOCAL_SEMANTIC_DECODE_CACHE_JOB,
@@ -54,14 +60,8 @@ const LOCAL_MODEL_DOWNLOAD_STEPS: ReadonlyArray<{ asset: LocalModelAsset; label:
   { asset: 'onnxruntime-web.wasm-binary', label: 'ONNX WASM 引擎' },
 ];
 
-interface CachedChunk {
-  source: AIContextSource;
-  start: number;
-  length: number;
+interface CachedChunk extends SemanticVectorChunk {
   fingerprint: string;
-  preview: string;
-  vector: Float32Array;
-  coverage: 'full' | 'sampled';
 }
 
 interface PersistentCacheSnapshot {
@@ -181,12 +181,13 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
                   notify('index-progress');
                 },
               });
+              const stats = semanticVectorCacheStats(cacheBySource.values());
               cacheState = {
                 ...cacheState,
                 status: 'ready',
                 indexedSources: cacheBySource.size,
-                indexedChunks: countChunks(cacheBySource),
-                partialSources: countPartialSources(cacheBySource),
+                indexedChunks: stats.chunks,
+                partialSources: stats.partialSources,
                 lastBuiltAt: Date.now(),
                 error: undefined,
               };
@@ -287,10 +288,17 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
           if (!enabled()) return emptyContribution();
           try {
             await scheduleIndex(false).result;
-            if (signal?.aborted) throw abortError();
+            assertNotAborted(signal);
             const query = input.query?.trim() || input.terms.join(' ');
             const [vector] = await embedTexts(context, [query], signal);
-            return vector ? searchCache(cacheBySource, vector, input) : emptyContribution();
+            return vector
+              ? searchSemanticVectorCache(
+                  cacheBySource.values(),
+                  vector,
+                  input,
+                  'local-bge-small-zh-v1.5',
+                )
+              : emptyContribution();
           } catch (error) {
             if (isAbortError(error)) throw error;
             context.diagnostics.warn('本地语义检索不可用，已保留 BM25 结果', error);
@@ -432,10 +440,12 @@ async function buildIndex(
     });
     const completed = Math.min(representatives.length, offset + batch.length);
     options.report(0.32 + 0.68 * completed / Math.max(1, representatives.length));
+    const stagedStats = semanticVectorCacheStats(staged.values());
+    const nextStats = semanticVectorCacheStats(nextChunks.values());
     options.updateState({
       indexedSources: staged.size + nextChunks.size,
-      indexedChunks: countChunks(staged) + countChunks(nextChunks),
-      partialSources: countPartialSources(staged) + countPartialSources(nextChunks),
+      indexedChunks: stagedStats.chunks + nextStats.chunks,
+      partialSources: stagedStats.partialSources + nextStats.partialSources,
     });
   }
   for (const source of stale) staged.delete(source.sourceId);
@@ -552,33 +562,6 @@ async function embedTexts(context: PluginContext, texts: string[], signal?: Abor
   return result.vectors;
 }
 
-function searchCache(
-  cache: Map<string, CachedChunk[]>,
-  queryVector: Float32Array,
-  input: AIContextSearchRequest,
-): AIContextSearchContribution {
-  const filter = input.sourceIds?.length ? new Set(input.sourceIds) : undefined;
-  const hits: AIContextSearchContribution['hits'] = [];
-  let scanned = 0;
-  for (const chunks of cache.values()) {
-    if (!chunks.length || (filter && !filter.has(chunks[0].source.sourceId))) continue;
-    let best: CachedChunk | undefined;
-    let bestScore = -Infinity;
-    for (const chunk of chunks) {
-      scanned += 1;
-      if (chunk.vector.length !== queryVector.length) continue;
-      const score = dot(queryVector, chunk.vector);
-      if (score > bestScore) { best = chunk; bestScore = score; }
-    }
-    if (best) hits.push({
-      source: { ...best.source }, start: best.start, length: best.length,
-      preview: best.preview, score: bestScore, retrievalMethod: 'semantic',
-    });
-  }
-  hits.sort((left, right) => right.score - left.score || left.source.title.localeCompare(right.source.title, 'zh-CN'));
-  return { provider: 'local-bge-small-zh-v1.5', hits: hits.slice(0, input.maxResults), scanned };
-}
-
 function readConfiguration(context: PluginContext): LocalSemanticProviderConfiguration {
   const value = context.store.readValue(LOCAL_SEMANTIC_PROVIDER_NAMESPACE, 'configuration');
   return isRecord(value) && typeof value.enabled === 'boolean' ? { enabled: value.enabled } : { enabled: true };
@@ -588,32 +571,6 @@ function emptyCache(status: LocalSemanticProviderPanelState['cache']['status']):
   return { status, indexedSources: 0, indexedChunks: 0, totalSources: 0, partialSources: 0 };
 }
 
-function countChunks(cache: Map<string, CachedChunk[]>): number {
-  let total = 0;
-  for (const chunks of cache.values()) total += chunks.length;
-  return total;
-}
-
-function countPartialSources(cache: Map<string, CachedChunk[]>): number {
-  let total = 0;
-  for (const chunks of cache.values()) if (chunks[0]?.coverage === 'sampled') total += 1;
-  return total;
-}
-
-function dot(left: Float32Array, right: Float32Array): number {
-  let total = 0;
-  for (let index = 0; index < left.length; index += 1) total += left[index] * right[index];
-  return total;
-}
-
 function emptyContribution(): AIContextSearchContribution {
   return { provider: 'local-bge-small-zh-v1.5', hits: [], scanned: 0 };
-}
-
-function abortError(): DOMException {
-  return new DOMException('Local semantic retrieval aborted', 'AbortError');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

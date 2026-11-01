@@ -1,3 +1,5 @@
+import { assertNotAborted } from '../../services/async-control.ts';
+
 interface ZipDocumentEntry {
   compression: number;
   flags: number;
@@ -154,5 +156,3 @@ function readParagraph(paragraph: Element): string {
   visit(paragraph);
   return parts.join('');
 }
-
-import { assertNotAborted } from '../../services/async-control.ts';

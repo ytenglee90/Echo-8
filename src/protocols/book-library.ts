@@ -1,4 +1,3 @@
-import type { CommandContract } from './commands.ts';
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {

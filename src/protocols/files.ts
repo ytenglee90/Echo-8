@@ -1,5 +1,4 @@
 import type { DomainSnapshot, PatchOperation } from './state.ts';
-import type { CommandContract } from './commands.ts';
 
 export const PROJECT_KIND = 'echo-8-project' as const;
 export const PROJECT_FORMAT_VERSION = 2 as const;

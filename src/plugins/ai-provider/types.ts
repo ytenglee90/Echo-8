@@ -1,4 +1,3 @@
-import type { CommandContract } from '../../protocols/commands.ts';
 
 export interface AIProviderPreferences {
   endpoint: string;

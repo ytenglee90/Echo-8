@@ -1,3 +1,10 @@
+import {
+  contrastRatioForChannels,
+  parseColor,
+  toHex,
+  type RGB,
+} from './color-math.ts';
+
 export interface CanvasContrastColors {
   line: string;
   selection: string;
@@ -122,10 +129,3 @@ function mix(from: RGB, to: RGB, amount: number): RGB {
   return from.map((channel, index) =>
     Math.round(channel + (to[index] - channel) * amount)) as RGB;
 }
-
-import {
-  contrastRatioForChannels,
-  parseColor,
-  toHex,
-  type RGB,
-} from './color-math.ts';

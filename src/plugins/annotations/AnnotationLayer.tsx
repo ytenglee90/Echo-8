@@ -9,6 +9,7 @@ import type { ContentSummary } from '../../protocols/content.ts';
 import type { GroupRecord } from '../../protocols/groups.ts';
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import { Icon } from '../../ui/Icon.tsx';
+import { collectAnnotationMarkerAnchors } from '../../ui/annotation-marker-anchors.ts';
 import { canvasDetailScreenScale, worldPointToCanvasScreen } from '../../ui/canvas-screen-scale.ts';
 import { contrastingInk } from '../../ui/color-contrast.ts';
 import { useContentCatalog } from '../../ui/runtime-hooks.ts';
@@ -109,21 +110,9 @@ export function AnnotationLayer({ client }: { client: ViewClient }) {
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
   const targetOrder = new Map<string, number>();
   const publishMarkerAnchors = () => {
-    const anchors = [...(layerRef.current?.querySelectorAll<HTMLElement>('[data-annotation-id]') ?? [])]
-      .map((marker) => ({ id: marker.dataset.annotationId ?? '', rect: marker.getBoundingClientRect() }))
-      .filter((anchor) => anchor.id && anchor.rect.width > 0 && anchor.rect.height > 0)
-      .map((anchor) => ({
-        id: anchor.id,
-        rect: {
-          x: anchor.rect.x,
-          y: anchor.rect.y,
-          width: anchor.rect.width,
-          height: anchor.rect.height,
-        },
-      }));
     client.emit('annotations.markerAnchors.preview', {
       sourceId: anchorSourceId,
-      anchors,
+      anchors: collectAnnotationMarkerAnchors(layerRef.current),
     } satisfies AnnotationMarkerAnchorsPreview);
   };
   useEffect(publishMarkerAnchors);

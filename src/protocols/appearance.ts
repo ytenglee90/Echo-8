@@ -1,5 +1,4 @@
 import type { EventDeclaration, PatchOperation } from './state.ts';
-import type { CommandContract } from './commands.ts';
 import type { SelectionItem } from './selection.ts';
 
 export type AppearanceKind =
@@ -51,6 +50,17 @@ export interface AppearanceUpdatePlan {
   patches: PatchOperation[];
   events?: EventDeclaration[];
   changed: number;
+}
+
+export function isAppearanceColor(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/iu.test(value);
+}
+
+/** Shared validation for revision-bound entity color plans. */
+export function isAppearanceEntityUpdateRequest(value: AppearanceUpdateRequest): boolean {
+  return isAppearanceColor(value.color) && value.entities.length > 0 && value.entities.every((entity) =>
+    typeof entity.id === 'string' && Number.isInteger(entity.revision) && entity.revision > 0 &&
+    isAppearanceColor(entity.expectedColor));
 }
 
 /** Rebuildable color usage reported by one appearance owner. */

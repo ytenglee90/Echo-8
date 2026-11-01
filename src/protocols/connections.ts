@@ -1,5 +1,4 @@
 import type { EventDeclaration, PatchOperation } from './state.ts';
-import type { CommandContract } from './commands.ts';
 
 export const MAX_CONNECTION_LABEL_LENGTH = 200;
 export const DEFAULT_CONNECTION_LABEL_WIDTH = 180;

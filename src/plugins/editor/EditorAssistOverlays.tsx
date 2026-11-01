@@ -19,6 +19,7 @@ import type {
   TextNodeReferenceTarget,
 } from '../../protocols/text-assist.ts';
 import { Icon } from '../../ui/Icon.tsx';
+import { collectAnnotationMarkerAnchors } from '../../ui/annotation-marker-anchors.ts';
 import { contrastingInk } from '../../ui/color-contrast.ts';
 import { textOffsetToDomPoint } from './dom-text-selection.ts';
 
@@ -148,21 +149,9 @@ export function EditorAnnotationMarkers({
   }, [layoutRevision, measurementBlockedRef, records, rootRef, shellRef, windowLength, windowStart]);
 
   const publishMarkerAnchors = () => {
-    const anchors = [...(layerRef.current?.querySelectorAll<HTMLElement>('[data-annotation-id]') ?? [])]
-      .map((marker) => ({ id: marker.dataset.annotationId ?? '', rect: marker.getBoundingClientRect() }))
-      .filter((anchor) => anchor.id && anchor.rect.width > 0 && anchor.rect.height > 0)
-      .map((anchor) => ({
-        id: anchor.id,
-        rect: {
-          x: anchor.rect.x,
-          y: anchor.rect.y,
-          width: anchor.rect.width,
-          height: anchor.rect.height,
-        },
-      }));
     client.emit('annotations.markerAnchors.preview', {
       sourceId: anchorSourceId,
-      anchors,
+      anchors: collectAnnotationMarkerAnchors(layerRef.current),
     } satisfies AnnotationMarkerAnchorsPreview);
   };
   useEffect(publishMarkerAnchors);

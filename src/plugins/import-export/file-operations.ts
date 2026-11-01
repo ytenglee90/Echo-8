@@ -15,6 +15,7 @@ import {
   assertNotAborted,
   yieldToMainThread as nextTaskTurn,
 } from '../../services/async-control.ts';
+import { isSupportedDocumentFile } from '../../services/document-files.ts';
 import { writeProjectToWritable } from './codec.ts';
 import { createDocx } from './docx.ts';
 import { readDocxPlainText } from './docx-import.ts';
@@ -605,4 +606,3 @@ export { isAbortError } from '../../services/abort.ts';
 export function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
 }
-import { isSupportedDocumentFile } from '../../services/document-files.ts';

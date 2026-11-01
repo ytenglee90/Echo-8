@@ -1,5 +1,4 @@
 import type { EventDeclaration, PatchOperation } from './state.ts';
-import type { CommandContract } from './commands.ts';
 
 export type ContentNodePresentation = 'card' | 'text-box';
 

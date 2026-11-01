@@ -1,11 +1,13 @@
 import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
-import type {
-  AppearanceColorContribution,
-  AppearanceColorReadRequest,
-  AppearanceReadContribution,
-  AppearanceReadRequest,
-  AppearanceUpdatePlan,
-  AppearanceUpdateRequest,
+import {
+  isAppearanceColor,
+  isAppearanceEntityUpdateRequest,
+  type AppearanceColorContribution,
+  type AppearanceColorReadRequest,
+  type AppearanceReadContribution,
+  type AppearanceReadRequest,
+  type AppearanceUpdatePlan,
+  type AppearanceUpdateRequest,
 } from '../../protocols/appearance.ts';
 import type {
   ClipboardFragment,
@@ -541,7 +543,7 @@ export function createGroupsPlugin(
         key: 'appearance.updatePlan@1',
         invoke: (input) => {
           if (input.kind !== 'group-fill') return { patches: [], changed: 0 };
-          if (!isAppearanceUpdate(input)) throw new Error('群组颜色请求不正确');
+          if (!isAppearanceEntityUpdateRequest(input)) throw new Error('群组颜色请求不正确');
           const groups = readGroups();
           const changed = input.entities.flatMap((reference) => {
             const group = groups[reference.id];
@@ -936,17 +938,7 @@ function isSerializedGroups(payload: unknown): payload is SerializedGroups {
         (group.titleMarks === undefined || (
           Array.isArray(group.titleMarks) && group.titleMarks.every(isGroupTitleMark)
         )) &&
-        (group.color === undefined || isHexColor(group.color)),
+        (group.color === undefined || isAppearanceColor(group.color)),
     )
   );
-}
-
-function isAppearanceUpdate(value: AppearanceUpdateRequest): boolean {
-  return isHexColor(value.color) && value.entities.length > 0 && value.entities.every((entity) =>
-    typeof entity.id === 'string' && Number.isInteger(entity.revision) && entity.revision > 0 &&
-    isHexColor(entity.expectedColor));
-}
-
-function isHexColor(value: unknown): value is string {
-  return typeof value === 'string' && /^#[0-9a-f]{6}$/iu.test(value);
 }

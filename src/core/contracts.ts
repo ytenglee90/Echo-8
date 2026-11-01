@@ -1,14 +1,6 @@
 import type { LocalModelAsset, LocalModelAssetData } from '../protocols/network.ts';
 import type { ThemeDefinition, ThemeTokenOverrides } from '../protocols/theme.ts';
 import type { EventDeclaration, PatchOperation, WritableStoreDomain } from '../protocols/state.ts';
-export type {
-  DomainSnapshot,
-  EventDeclaration,
-  PatchOperation,
-  StoreDomain,
-  StoreSnapshot,
-  WritableStoreDomain,
-} from '../protocols/state.ts';
 import type {
   CommandDeferrer,
   CommandDispatcher,
@@ -17,6 +9,15 @@ import type {
   KnownCommandType,
 } from '../protocols/commands.ts';
 import type { KnownCapabilityType, KnownQueryType } from '../protocols/messages.ts';
+
+export type {
+  DomainSnapshot,
+  EventDeclaration,
+  PatchOperation,
+  StoreDomain,
+  StoreSnapshot,
+  WritableStoreDomain,
+} from '../protocols/state.ts';
 
 export type PluginStatus =
   | 'discovered'

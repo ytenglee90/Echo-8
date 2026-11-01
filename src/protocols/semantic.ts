@@ -1,4 +1,3 @@
-import type { CommandContract } from './commands.ts';
 
 export type SemanticAPIStyle = 'openai-compatible' | 'voyage' | 'gemini';
 export type SemanticAuthentication = 'bearer' | 'api-key' | 'none';

@@ -3,10 +3,40 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, normalize, relative, resolve, sep } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceRoot = join(projectRoot, 'src');
 const pluginRoot = join(sourceRoot, 'plugins');
+
+test('source imports stay together at the file boundary', () => {
+  const violations: string[] = [];
+  for (const file of sourceFiles(sourceRoot)) {
+    const source = ts.createSourceFile(
+      file,
+      readFileSync(file, 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    let inDirectivePrologue = true;
+    let sawImplementation = false;
+    for (const statement of source.statements) {
+      const isDirective = inDirectivePrologue && ts.isExpressionStatement(statement) &&
+        ts.isStringLiteral(statement.expression);
+      if (isDirective) continue;
+      inDirectivePrologue = false;
+      if (ts.isImportDeclaration(statement)) {
+        if (sawImplementation) {
+          const { line } = source.getLineAndCharacterOfPosition(statement.getStart(source));
+          violations.push(`${relative(sourceRoot, file)}:${line + 1}`);
+        }
+      } else {
+        sawImplementation = true;
+      }
+    }
+  }
+  assert.deepEqual(violations, []);
+});
 
 test('feature plugins do not import another feature implementation', () => {
   const violations: string[] = [];

@@ -1,4 +1,4 @@
-import type { MessageEnvelope, PluginDefinition } from '../../core/contracts.ts';
+import { isRecord, type MessageEnvelope, type PluginDefinition } from '../../core/contracts.ts';
 import type { TransactionCommitRecord } from '../../protocols/state.ts';
 import type { PersonalTextAssetRecord } from '../../protocols/personal-assets.ts';
 import type {} from '../../protocols/cloud-sync.ts';
@@ -1046,10 +1046,6 @@ function errorMessage(error: unknown): string {
 function isCommitRecord(value: unknown): value is TransactionCommitRecord {
   return isRecord(value) && typeof value.id === 'string' && typeof value.label === 'string' &&
     Number.isFinite(value.timestamp) && Array.isArray(value.forward) && Array.isArray(value.inverse);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isProjectIdPayload(value: unknown): value is { projectId: string } {

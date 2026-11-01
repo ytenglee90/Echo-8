@@ -1,4 +1,3 @@
-import type { CommandContract } from './commands.ts';
 
 export type TextAssistDecoration = TextCorrectionDecoration | TextNodeReferenceDecoration;
 

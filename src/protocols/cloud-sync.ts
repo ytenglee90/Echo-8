@@ -3,7 +3,6 @@ import type {
   CloudProjectSummary,
   CloudSyncState,
 } from '../cloud/contracts.ts';
-import type { CommandContract } from './commands.ts';
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {

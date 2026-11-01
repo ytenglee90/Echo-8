@@ -1,5 +1,4 @@
 import { isRecord } from '../../core/contracts.ts';
-import type { CommandContract } from '../../protocols/commands.ts';
 import type {
   AIGenerateResult,
   AIInlineReference,

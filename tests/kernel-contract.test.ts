@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import type { CommandContract } from '../src/protocols/commands.ts';
 
 declare module '../src/protocols/commands.ts' {
   interface ApplicationCommandMap {

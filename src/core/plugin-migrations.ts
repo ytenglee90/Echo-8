@@ -1,7 +1,8 @@
-import type {
-  PluginDataMigration,
-  PluginDefinition,
-  PluginDocumentData,
+import {
+  isRecord,
+  type PluginDataMigration,
+  type PluginDefinition,
+  type PluginDocumentData,
 } from './contracts.ts';
 import type { ProjectOpenPayload, ProjectPluginDescriptor } from '../protocols/files.ts';
 
@@ -180,8 +181,4 @@ function currentDescriptor(
     namespaces,
     available: true,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

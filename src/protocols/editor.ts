@@ -1,5 +1,4 @@
 import type { TextDocumentFormat } from './formatting.ts';
-import type { CommandContract } from './commands.ts';
 import type { AnnotationClipboardItem } from './annotations.ts';
 
 export const EDITOR_OPEN_REQUESTED_EVENT = 'editor.open.requested';

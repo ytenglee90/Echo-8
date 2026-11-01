@@ -14,6 +14,13 @@ import type {
 import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { isAbortError } from '../../services/abort.ts';
 import {
+  isOptionalProfileIdPayload,
+  isRequiredProfileIdPayload,
+  isSessionKeyPayload,
+  type ProfileIdPayload,
+  type SessionKeyPayload,
+} from '../../services/provider-profile-payloads.ts';
+import {
   SEMANTIC_PROVIDER_CHANGED_SIGNAL,
   SEMANTIC_PROVIDER_COMMANDS,
   SEMANTIC_PROVIDER_PERSONAL_QUERY,
@@ -33,6 +40,11 @@ import {
   sampleSemanticSource as sampleSource,
   semanticPreview,
 } from '../../services/semantic-source-sampling.ts';
+import {
+  searchSemanticVectorCache,
+  semanticVectorCacheStats,
+  type SemanticVectorChunk,
+} from '../../services/semantic-vector-search.ts';
 
 export { semanticBlockFingerprint } from '../../services/semantic-source-sampling.ts';
 
@@ -40,17 +52,9 @@ export { SEMANTIC_PROVIDER_NAMESPACE } from './manifest.ts';
 
 const SAMPLE_LENGTH = SEMANTIC_BLOCK_LENGTH;
 const MAX_SOURCES = 10_000;
-interface ProfileIdPayload { profileId?: string }
-interface SessionKeyPayload extends ProfileIdPayload { apiKey: string }
 
-interface CachedChunk {
-  source: AIContextSource;
-  start: number;
-  length: number;
+interface CachedChunk extends SemanticVectorChunk {
   fingerprint: string;
-  preview: string;
-  vector: Float32Array;
-  coverage: 'full' | 'sampled';
 }
 
 interface SourceSamples {
@@ -155,12 +159,13 @@ export function createSemanticProviderPlugin(): PluginDefinition {
                   notify('index-progress');
                 },
               });
+              const stats = semanticVectorCacheStats(cacheBySource.values());
               cacheState = {
                 ...cacheState,
                 status: 'ready',
                 indexedSources: cacheBySource.size,
-                indexedChunks: countChunks(cacheBySource),
-                partialSources: countPartialSources(cacheBySource),
+                indexedChunks: stats.chunks,
+                partialSources: stats.partialSources,
                 lastBuiltAt: Date.now(),
                 error: undefined,
               };
@@ -191,12 +196,13 @@ export function createSemanticProviderPlugin(): PluginDefinition {
           cacheBySource = new Map();
           cacheProfile = '';
         }
+        const stats = semanticVectorCacheStats(cacheBySource.values());
         cacheState = {
           ...cacheState,
           status: cacheBySource.size > 0 ? 'dirty' : 'idle',
           indexedSources: cacheBySource.size,
-          indexedChunks: countChunks(cacheBySource),
-          partialSources: countPartialSources(cacheBySource),
+          indexedChunks: stats.chunks,
+          partialSources: stats.partialSources,
           error: undefined,
         };
         notify('index-dirty');
@@ -224,7 +230,7 @@ export function createSemanticProviderPlugin(): PluginDefinition {
       });
       context.commands.register<{ profileId: string }>({
         type: SEMANTIC_PROVIDER_COMMANDS.removeProfile,
-        validate: isRequiredProfileId,
+        validate: isRequiredProfileIdPayload,
         handle: (payload) => {
           const configuration = readConfiguration();
           if (!configuration.profiles.some((profile) => profile.id === payload.profileId)) {
@@ -245,7 +251,7 @@ export function createSemanticProviderPlugin(): PluginDefinition {
       });
       context.commands.register<{ profileId: string }>({
         type: SEMANTIC_PROVIDER_COMMANDS.activateProfile,
-        validate: isRequiredProfileId,
+        validate: isRequiredProfileIdPayload,
         handle: (payload) => {
           const configuration = readConfiguration();
           if (!configuration.profiles.some((profile) => profile.id === payload.profileId)) {
@@ -271,7 +277,7 @@ export function createSemanticProviderPlugin(): PluginDefinition {
       });
       context.commands.register<ProfileIdPayload>({
         type: SEMANTIC_PROVIDER_COMMANDS.clearSessionKey,
-        validate: isOptionalProfileId,
+        validate: isOptionalProfileIdPayload,
         handle: (payload = {}) => {
           const profile = resolveProfile(readConfiguration(), payload.profileId);
           if (profile) sessionApiKeys.delete(profile.id);
@@ -328,7 +334,7 @@ export function createSemanticProviderPlugin(): PluginDefinition {
           if (!profile || !isConfigured(profile, hasKey)) return emptyContribution();
           try {
             await scheduleIndex(false).result;
-            if (signal?.aborted) throw abortError();
+            assertNotAborted(signal);
             const query = input.query?.trim() || input.terms.join(' ');
             const [vector] = await requestEmbeddings(
               context,
@@ -340,7 +346,12 @@ export function createSemanticProviderPlugin(): PluginDefinition {
               activeRequests,
             );
             if (!vector) return emptyContribution();
-            return searchCache(cacheBySource, vector, input);
+            return searchSemanticVectorCache(
+              cacheBySource.values(),
+              vector,
+              input,
+              'remote-semantic-embedding',
+            );
           } catch (error) {
             if (isAbortError(error)) throw error;
             context.diagnostics.warn('远程语义检索不可用，已保留本地 BM25 结果', error);
@@ -498,10 +509,12 @@ async function buildIndex(
     });
     const completed = Math.min(pendingRepresentatives.length, offset + batch.length);
     options.report(0.25 + 0.75 * completed / Math.max(1, pendingRepresentatives.length));
+    const stagedStats = semanticVectorCacheStats(staged.values());
+    const nextStats = semanticVectorCacheStats(nextChunks.values());
     options.updateState({
       indexedSources: staged.size + nextChunks.size,
-      indexedChunks: countChunks(staged) + countChunks(nextChunks),
-      partialSources: countPartialSources(staged) + countPartialSources(nextChunks),
+      indexedChunks: stagedStats.chunks + nextStats.chunks,
+      partialSources: stagedStats.partialSources + nextStats.partialSources,
     });
   }
   for (const source of stale) staged.delete(source.sourceId);
@@ -600,43 +613,6 @@ function normalizeVector(value: unknown): Float32Array {
   return Float32Array.from(value as number[], (item) => item / magnitude);
 }
 
-function searchCache(
-  cache: Map<string, CachedChunk[]>,
-  queryVector: Float32Array,
-  input: AIContextSearchRequest,
-): AIContextSearchContribution {
-  const filter = input.sourceIds?.length ? new Set(input.sourceIds) : undefined;
-  const hits: AIContextSearchContribution['hits'] = [];
-  let scanned = 0;
-  for (const chunks of cache.values()) {
-    if (!chunks.length || (filter && !filter.has(chunks[0].source.sourceId))) continue;
-    let best: CachedChunk | undefined;
-    let bestScore = -Infinity;
-    for (const chunk of chunks) {
-      scanned += 1;
-      if (chunk.vector.length !== queryVector.length) continue;
-      const score = dot(queryVector, chunk.vector);
-      if (score > bestScore) { best = chunk; bestScore = score; }
-    }
-    if (best) hits.push({
-      source: { ...best.source },
-      start: best.start,
-      length: best.length,
-      preview: best.preview,
-      score: bestScore,
-      retrievalMethod: 'semantic',
-    });
-  }
-  hits.sort((left, right) => right.score - left.score || left.source.title.localeCompare(right.source.title, 'zh-CN'));
-  return { provider: 'remote-semantic-embedding', hits: hits.slice(0, input.maxResults), scanned };
-}
-
-function dot(left: Float32Array, right: Float32Array): number {
-  let total = 0;
-  for (let index = 0; index < left.length; index += 1) total += left[index] * right[index];
-  return total;
-}
-
 function normalizeConfiguration(value: unknown): SemanticProviderConfiguration {
   if (!isRecord(value) || !Array.isArray(value.profiles)) return { profiles: [] };
   const profiles: SemanticProviderProfile[] = [];
@@ -714,19 +690,6 @@ function isConfigured(profile: SemanticProviderProfile, hasSessionKey: boolean):
     (profile.authentication === 'none' || hasSessionKey));
 }
 
-function isRequiredProfileId(value: unknown): value is { profileId: string } {
-  return isRecord(value) && typeof value.profileId === 'string' && value.profileId.length > 0;
-}
-
-function isOptionalProfileId(value: unknown): value is ProfileIdPayload {
-  return value === undefined || (isRecord(value) &&
-    (value.profileId === undefined || typeof value.profileId === 'string'));
-}
-
-function isSessionKeyPayload(value: unknown): value is SessionKeyPayload {
-  return isRecord(value) && typeof value.apiKey === 'string' && value.apiKey.length <= 4096 &&
-    (value.profileId === undefined || typeof value.profileId === 'string');
-}
 
 function isPersonalConnections(value: unknown): value is SemanticProviderPersonalConnections {
   return isRecord(value) && isRecord(value.configuration) && isRecord(value.apiKeys) &&
@@ -746,22 +709,6 @@ function embeddingIndex(value: unknown): number {
   return isRecord(value) && typeof value.index === 'number' ? value.index : Number.MAX_SAFE_INTEGER;
 }
 
-function countChunks(cache: Map<string, CachedChunk[]>): number {
-  let total = 0;
-  for (const chunks of cache.values()) total += chunks.length;
-  return total;
-}
-
-function countPartialSources(cache: Map<string, CachedChunk[]>): number {
-  let total = 0;
-  for (const chunks of cache.values()) if (chunks[0]?.coverage === 'sampled') total += 1;
-  return total;
-}
-
 function emptyContribution(): AIContextSearchContribution {
   return { provider: 'remote-semantic-embedding', hits: [], scanned: 0 };
-}
-
-function abortError(): DOMException {
-  return new DOMException('Semantic retrieval aborted', 'AbortError');
 }

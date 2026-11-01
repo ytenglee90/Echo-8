@@ -1,5 +1,4 @@
 import { createId, type PluginContext } from '../../core/contracts.ts';
-import type { CommandContract } from '../../protocols/commands.ts';
 import type {
   AIPromptTemplateCatalog,
   AIPromptTemplateRecord,

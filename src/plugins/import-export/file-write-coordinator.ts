@@ -1,4 +1,5 @@
 import type { FileSaveTarget } from '../../protocols/files.ts';
+import { assertNotAborted } from '../../services/async-control.ts';
 
 /**
  * Serialises writes that target the same native file handle.
@@ -55,4 +56,3 @@ function waitForTurn(turn: Promise<void>, signal: AbortSignal): Promise<void> {
 function abortError(): DOMException {
   return new DOMException('The operation was aborted', 'AbortError');
 }
-import { assertNotAborted } from '../../services/async-control.ts';

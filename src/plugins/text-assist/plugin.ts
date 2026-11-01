@@ -11,6 +11,7 @@ import type {
 } from '../../protocols/content.ts';
 import { EDITOR_OPEN_REQUESTED_EVENT } from '../../protocols/editor.ts';
 import type { EntityDeletePlan } from '../../protocols/selection.ts';
+import { assertNotAborted as throwIfAborted } from '../../services/async-control.ts';
 import {
   DEFAULT_TEXT_ASSIST_SETTINGS,
   type TextAssistAnalysis,
@@ -1038,5 +1039,3 @@ async function waitForSharedTask<TResult>(task: TaskHandle<TResult>, signal?: Ab
     );
   });
 }
-
-import { assertNotAborted as throwIfAborted } from '../../services/async-control.ts';

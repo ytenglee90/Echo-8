@@ -29,7 +29,6 @@ import {
 import { canReusePersistedFileHandle } from '../../services/native-file-permission.ts';
 import { isRecord as isPlainRecord, removeOwnKeysInPlace } from '../../services/retired-data.ts';
 import { defineManifest } from '../manifest.ts';
-export { estimateAITokens } from './evidence-boundaries.ts';
 import { buildMemoryIndexDraft } from './memory-indexing.ts';
 import {
   AI_MEMORY_FILE_INDEX_SUFFIX,
@@ -138,6 +137,7 @@ export { AI_PROPOSAL_NAMESPACE, AI_RESPONSE_NAMESPACE } from './proposal-runtime
 export { AI_UI_NAMESPACE } from './assistant-workspace.ts';
 export { AI_MEMORY_NAMESPACE } from './memory-commit.ts';
 export { AI_MEMORY_CANDIDATE_NAMESPACE } from './memory-candidate-runtime.ts';
+export { estimateAITokens } from './evidence-boundaries.ts';
 
 const MEMORY_AUTO_REINDEX_DELAY_MS = 900;
 

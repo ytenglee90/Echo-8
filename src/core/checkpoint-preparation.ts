@@ -1,4 +1,4 @@
-import type { PatchOperation } from './contracts.ts';
+import { isRecord, type PatchOperation } from './contracts.ts';
 import type { PersistedApplication } from './persistence.ts';
 
 export const CONTENT_CHUNK_NAMESPACE = 'textContentChunk';
@@ -110,8 +110,4 @@ function isPersistedApplication(value: unknown): value is PersistedApplication {
 
 function isStringList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

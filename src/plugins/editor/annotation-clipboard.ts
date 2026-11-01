@@ -6,6 +6,7 @@ import {
   type AnnotationClipboardItem,
   type AnnotationRecord,
 } from '../../protocols/annotations.ts';
+import { moveTextAnchor } from '../../services/text-anchor-movement.ts';
 
 interface AnnotationClipboardPayload {
   version: 1;
@@ -61,7 +62,7 @@ export function moveEditorAnnotationRecords(
 ): AnnotationRecord[] {
   return records.map((record) => {
     if (record.target.kind !== 'text-range' || record.target.targetId !== nodeId) return record;
-    const offset = moveAnchorOffset(record.target.offset, start, end, target);
+    const offset = moveTextAnchor(record.target.offset, start, end, target);
     return offset === record.target.offset ? record : {
       ...record,
       target: { ...record.target, offset },
@@ -110,17 +111,4 @@ export function decodeAnnotationClipboard(raw: string, pastedText: string): Anno
 
 function normalizeNewlines(value: string): string {
   return value.replace(/\r\n?/gu, '\n');
-}
-
-function moveAnchorOffset(offset: number, start: number, end: number, target: number): number {
-  const length = end - start;
-  if (target < start) {
-    if (offset > start && offset <= end) return target + offset - start;
-    if (offset > target && offset <= start) return offset + length;
-    return offset;
-  }
-  const destination = target - length;
-  if (offset > start && offset <= end) return destination + offset - start;
-  if (offset > end && offset <= target) return offset - length;
-  return offset;
 }

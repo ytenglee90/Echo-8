@@ -1,11 +1,12 @@
 import { createId, isRecord, type PluginContext, type PluginDefinition } from '../../core/contracts.ts';
-import type {
-  AppearanceColorContribution,
-  AppearanceColorReadRequest,
-  AppearanceReadContribution,
-  AppearanceReadRequest,
-  AppearanceUpdatePlan,
-  AppearanceUpdateRequest,
+import {
+  isAppearanceEntityUpdateRequest,
+  type AppearanceColorContribution,
+  type AppearanceColorReadRequest,
+  type AppearanceReadContribution,
+  type AppearanceReadRequest,
+  type AppearanceUpdatePlan,
+  type AppearanceUpdateRequest,
 } from '../../protocols/appearance.ts';
 import type {
   AnnotationCreateRequest,
@@ -36,6 +37,7 @@ import type { CameraState, CanvasViewportSize } from '../../protocols/canvas.ts'
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { GroupRecord } from '../../protocols/groups.ts';
 import { normalizeFloatingRect, type FloatingPanelRect } from '../../protocols/floating.ts';
+import { moveTextAnchor } from '../../services/text-anchor-movement.ts';
 import { defineManifest } from '../manifest.ts';
 
 export const ANNOTATION_NAMESPACE = 'annotations';
@@ -407,7 +409,7 @@ export function createAnnotationsPlugin(
           if (!isAnchorMoveRequest(payload)) throw new Error('注释锚点移动请求不正确');
           const changed = Object.values(readRecords()).flatMap((record) => {
             if (record.target.kind !== 'text-range' || record.target.targetId !== payload.nodeId) return [];
-            const offset = moveAnchorOffset(record.target.offset, payload.start, payload.end, payload.target);
+            const offset = moveTextAnchor(record.target.offset, payload.start, payload.end, payload.target);
             if (offset === record.target.offset) return [];
             return [{
               ...record,
@@ -498,7 +500,7 @@ export function createAnnotationsPlugin(
         key: 'appearance.updatePlan@1',
         invoke: (input) => {
           if (input.kind !== 'annotation-marker') return { patches: [], changed: 0 };
-          if (!isAppearanceUpdate(input)) throw new Error('注释颜色请求不正确');
+          if (!isAppearanceEntityUpdateRequest(input)) throw new Error('注释颜色请求不正确');
           const records = readRecords();
           const changed = input.entities.flatMap((reference) => {
             const record = records[reference.id];
@@ -766,16 +768,6 @@ function isAnnotationUpdateRequest(value: unknown): value is AnnotationUpdateReq
     Number.isInteger(value.expectedRevision);
 }
 
-function isAppearanceUpdate(value: AppearanceUpdateRequest): boolean {
-  return isHexColor(value.color) && value.entities.length > 0 && value.entities.every((entity) =>
-    typeof entity.id === 'string' && Number.isInteger(entity.revision) && entity.revision > 0 &&
-    isHexColor(entity.expectedColor));
-}
-
-function isHexColor(value: unknown): value is string {
-  return typeof value === 'string' && /^#[0-9a-f]{6}$/iu.test(value);
-}
-
 function isAnnotationIdPayload(value: unknown): value is { id: string } {
   return isRecord(value) && typeof value.id === 'string';
 }
@@ -805,19 +797,6 @@ function isAnnotationCloneRequest(value: unknown): value is ContentAnnotationClo
     if (bodyLength > MAX_ANNOTATION_CLIPBOARD_BODY) return false;
   }
   return true;
-}
-
-function moveAnchorOffset(offset: number, start: number, end: number, target: number): number {
-  const length = end - start;
-  if (target < start) {
-    if (offset > start && offset <= end) return target + offset - start;
-    if (offset > target && offset <= start) return offset + length;
-    return offset;
-  }
-  const destination = target - length;
-  if (offset > start && offset <= end) return destination + offset - start;
-  if (offset > end && offset <= target) return offset - length;
-  return offset;
 }
 
 function isFloatingRect(value: unknown): value is FloatingPanelRect {

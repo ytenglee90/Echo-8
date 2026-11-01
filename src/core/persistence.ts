@@ -22,8 +22,6 @@ import {
 import { PERSISTENCE_PREPARE_CHECKPOINT_JOB } from './persistence-worker-jobs.ts';
 import { canMergePatchEntries, composePatchPairs } from './patch-composition.ts';
 import type { WorkspacePersistencePolicy } from './workspace-persistence.ts';
-
-export { externalizeContentChunks } from './checkpoint-preparation.ts';
 import type { TransactionCommitRecord } from '../protocols/state.ts';
 import {
   AUTOSAVE_DISABLED_INTERVAL_MS,
@@ -37,6 +35,8 @@ import {
 import {
   RetiredDataRegistry,
 } from './retired-data-registry.ts';
+
+export { externalizeContentChunks } from './checkpoint-preparation.ts';
 
 export interface PersistedApplication {
   formatVersion: 1;

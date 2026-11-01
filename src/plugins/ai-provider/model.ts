@@ -8,6 +8,13 @@ import type {
 } from '../../protocols/ai.ts';
 import type { FileReadWriteTarget } from '../../protocols/files.ts';
 import { canReusePersistedFileHandle } from '../../services/native-file-permission.ts';
+import {
+  isOptionalProfileIdPayload,
+  isRequiredProfileIdPayload,
+  isSessionKeyPayload,
+  type ProfileIdPayload,
+  type SessionKeyPayload,
+} from '../../services/provider-profile-payloads.ts';
 import { defineManifest } from '../manifest.ts';
 import {
   SEMANTIC_PROVIDER_CHANGED_SIGNAL,
@@ -55,14 +62,6 @@ interface PersonalConnections {
 interface PersonalAIBackup {
   provider: PersonalConnections;
   semantic?: SemanticProviderPersonalConnections;
-}
-
-interface ProfileIdPayload {
-  profileId?: string;
-}
-
-interface SessionKeyPayload extends ProfileIdPayload {
-  apiKey: string;
 }
 
 export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown): PluginDefinition {
@@ -291,7 +290,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
       });
       context.commands.register<{ profileId: string }>({
         type: 'aiProvider.profile.remove',
-        validate: isRequiredProfileId,
+        validate: isRequiredProfileIdPayload,
         handle: (payload) => {
           const configuration = readConfiguration();
           if (!configuration.profiles.some((profile) => profile.id === payload.profileId)) {
@@ -310,7 +309,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
       });
       context.commands.register<{ profileId: string }>({
         type: 'aiProvider.profile.activate',
-        validate: isRequiredProfileId,
+        validate: isRequiredProfileIdPayload,
         handle: (payload) => {
           const configuration = readConfiguration();
           if (!configuration.profiles.some((profile) => profile.id === payload.profileId)) {
@@ -339,7 +338,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
       });
       context.commands.register<ProfileIdPayload>({
         type: 'aiProvider.clearSessionKey',
-        validate: isOptionalProfileId,
+        validate: isOptionalProfileIdPayload,
         handle: (payload = {}) => {
           const profile = resolveProfile(readConfiguration(), payload.profileId);
           if (profile) sessionApiKeys.delete(profile.id);
@@ -882,18 +881,4 @@ function isPersonalConnections(value: unknown): value is PersonalConnections {
   return isRecord(value) && isRecord(value.configuration) && isRecord(value.apiKeys) &&
     Object.entries(value.apiKeys).every(([profileId, apiKey]) =>
       profileId.length <= 200 && typeof apiKey === 'string' && apiKey.length <= 4096);
-}
-
-function isRequiredProfileId(value: unknown): value is { profileId: string } {
-  return isRecord(value) && typeof value.profileId === 'string' && value.profileId.length > 0;
-}
-
-function isOptionalProfileId(value: unknown): value is ProfileIdPayload {
-  return value === undefined || (isRecord(value) &&
-    (value.profileId === undefined || typeof value.profileId === 'string'));
-}
-
-function isSessionKeyPayload(value: unknown): value is SessionKeyPayload {
-  return isRecord(value) && typeof value.apiKey === 'string' && value.apiKey.length <= 4096 &&
-    (value.profileId === undefined || typeof value.profileId === 'string');
 }
