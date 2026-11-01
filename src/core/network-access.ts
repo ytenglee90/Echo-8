@@ -193,7 +193,6 @@ export class NetworkAccessService {
       controller.abort(new DOMException('AI network request timed out', 'TimeoutError'));
       release();
     }, policy.timeoutMs);
-    (timeout as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
 
     return this.fetcher(url.toString(), {
       ...requestInit,
@@ -207,6 +206,7 @@ export class NetworkAccessService {
         release();
         return response;
       }
+      (timeout as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
       return wrapResponseBody(response, release);
     }, (error) => {
       release();
@@ -253,7 +253,6 @@ export class NetworkAccessService {
       controller.abort(new DOMException('Local AI model download timed out', 'TimeoutError'));
       release();
     }, policy.timeoutMs);
-    (timeout as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
 
     try {
       const response = await this.fetcher(definition.url, {
