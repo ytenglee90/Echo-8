@@ -38,7 +38,11 @@ import type {
 import type { StatisticsContribution } from '../../protocols/statistics.ts';
 import { defineManifest } from '../manifest.ts';
 import { canvasContrastColors } from '../../ui/canvas-contrast.ts';
-import { connectionCurveBounds } from './rendering.ts';
+import {
+  CONNECTION_LASSO_REGION_PADDING,
+  connectionCurveBounds,
+  connectionCurveLassoRegions,
+} from './rendering.ts';
 
 const CONNECTION_NAMESPACE = 'connections';
 const CONNECTION_APPEARANCE_NAMESPACE = 'connectionAppearance';
@@ -754,7 +758,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
               const endpoints = resolveConnectionRecordEndpoints(connection, fromNode, toNode);
               const from = connectionEndpointPoint(endpoints.from, fromNode);
               const to = connectionEndpointPoint(endpoints.to, toNode);
-              const bounds = connectionCurveBounds(from, to, 10);
+              const bounds = connectionCurveBounds(from, to, CONNECTION_LASSO_REGION_PADDING);
               return [{
                 id: connection.id,
                 kind: 'connection',
@@ -775,6 +779,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
                 parts: ['line', 'label-background', 'label-text'],
                 includeInSelectAll: false,
                 bounds,
+                boxRegions: connectionCurveLassoRegions(from, to),
               }];
             }),
           };

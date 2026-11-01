@@ -111,6 +111,7 @@ import { createPalettePlugin } from '../src/plugins/palette/model.ts';
 import { defineManifest } from '../src/plugins/manifest.ts';
 import { createSelectionPlugin } from '../src/plugins/selection/model.ts';
 import { SelectionCatalogIndex } from '../src/plugins/selection/catalog-index.ts';
+import type { SelectionCatalogContribution } from '../src/protocols/selection.ts';
 import { createSearchReplacePlugin } from '../src/plugins/search-replace/model.ts';
 import { resolveSearchNavigation } from '../src/plugins/search-replace/navigation.ts';
 import { groupHitsByNode } from '../src/plugins/search-replace/result-order.ts';
@@ -4965,6 +4966,55 @@ test('setting an identical selection is a no-op and does not invalidate dependan
   await Promise.resolve();
 
   assert.equal(changes, 1);
+});
+
+test('box selection does not select a curved connection through empty bounds space', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createSelectionPlugin());
+  harness.plugins.register(createConnectionsPlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('selection');
+  await harness.plugins.start('connections');
+  const upper = await harness.router.dispatch<{ id: string }>(
+    'node.create',
+    { title: '曲线上', body: 'U', x: 1000, y: 1000 },
+    'core.test',
+  );
+  const lower = await harness.router.dispatch<{ id: string }>(
+    'node.create',
+    { title: '曲线下', body: 'D', x: 1500, y: 1500 },
+    'core.test',
+  );
+  const curved = await harness.router.dispatch<{ id: string }>('connection.create', {
+    from: { nodeId: upper.id, side: 'right' },
+    to: { nodeId: lower.id, side: 'left' },
+  }, 'core.test');
+  const connectionCatalogs = await harness.capabilities.requestAll<SelectionCatalogContribution>(
+    'selection.entities@1',
+  );
+  const curvedEntity = connectionCatalogs.flatMap((catalog) => catalog.entities)
+    .find((entity) => entity.id === curved.id);
+  assert.ok(curvedEntity?.bounds);
+  assert.ok(curvedEntity.boxRegions?.length);
+  const emptyCandidate = {
+    x: curvedEntity.bounds.x + 8,
+    y: curvedEntity.bounds.y + curvedEntity.bounds.height - 36,
+    width: 20,
+    height: 20,
+  };
+  assert.equal(
+    curvedEntity.boxRegions.some((region) => boundsIntersect(emptyCandidate, region)),
+    false,
+  );
+
+  await harness.router.dispatch('selection.box', { ...emptyCandidate, mode: 'replace' }, 'core.test');
+  assert.deepEqual(
+    (await harness.capabilities.request<{ items: Array<{ id: string; kind: string }> }>(
+      'selection.read@1',
+    )).items,
+    [],
+  );
 });
 
 test('selection catalogs keep connections directly selectable but exclude them from select all', async () => {

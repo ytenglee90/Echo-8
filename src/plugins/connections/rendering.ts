@@ -15,6 +15,11 @@ export const CONNECTION_ARROW_SCREEN_LENGTH = 14;
 export const CONNECTION_ARROW_SCREEN_HALF_WIDTH = 7;
 export const CONNECTION_LINE_SCREEN_WIDTH = 1.5;
 export const CONNECTION_MIN_HANDLE_LENGTH = 160;
+export const CONNECTION_LASSO_REGION_PADDING = 4;
+
+const CONNECTION_LASSO_MAX_REGION_LENGTH = 12;
+const CONNECTION_LASSO_MIN_REGIONS = 16;
+const CONNECTION_LASSO_MAX_REGIONS = 256;
 
 interface CubicCurveSegment {
   kind: 'cubic';
@@ -176,6 +181,37 @@ export function connectionCurveBounds(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
+/**
+ * Narrow lasso regions following the rendered curve. The broad curve bounds
+ * remain useful for the spatial index, but using that whole rectangle as the
+ * final hit target selects visually blank space around bent connections.
+ */
+export function connectionCurveLassoRegions(
+  from: ConnectionRenderPoint,
+  to: ConnectionRenderPoint,
+  padding = CONNECTION_LASSO_REGION_PADDING,
+): Array<{ x: number; y: number; width: number; height: number }> {
+  return connectionCurveSegments(from, to).flatMap((segment) => {
+    const length = approximateCubicLength(segment);
+    const regionCount = Math.max(
+      CONNECTION_LASSO_MIN_REGIONS,
+      Math.min(CONNECTION_LASSO_MAX_REGIONS, Math.ceil(length / CONNECTION_LASSO_MAX_REGION_LENGTH)),
+    );
+    const regions: Array<{ x: number; y: number; width: number; height: number }> = [];
+    let previous = segment.from;
+    for (let step = 1; step <= regionCount; step += 1) {
+      const current = pointOnCubicCurve(segment, step / regionCount);
+      const left = Math.min(previous.x, current.x) - padding;
+      const top = Math.min(previous.y, current.y) - padding;
+      const right = Math.max(previous.x, current.x) + padding;
+      const bottom = Math.max(previous.y, current.y) + padding;
+      regions.push({ x: left, y: top, width: right - left, height: bottom - top });
+      previous = current;
+    }
+    return regions;
+  });
+}
+
 function connectionCurveSegments(
   from: ConnectionRenderPoint,
   to: ConnectionRenderPoint,
@@ -228,6 +264,17 @@ function pointOnCubicCurve(segment: CubicCurveSegment, t: number): ConnectionRen
     y: inverse ** 3 * segment.from.y + 3 * inverse ** 2 * t * segment.controlFrom.y +
       3 * inverse * t ** 2 * segment.controlTo.y + t ** 3 * segment.to.y,
   };
+}
+
+function approximateCubicLength(segment: CubicCurveSegment): number {
+  let length = 0;
+  let previous = segment.from;
+  for (let step = 1; step <= 24; step += 1) {
+    const current = pointOnCubicCurve(segment, step / 24);
+    length += Math.hypot(current.x - previous.x, current.y - previous.y);
+    previous = current;
+  }
+  return length;
 }
 
 function formatPoint(point: ConnectionRenderPoint): string {

@@ -13,8 +13,10 @@ import { createConnectionsPlugin } from '../src/plugins/connections/model.ts';
 import {
   CONNECTION_ARROW_SCREEN_HALF_WIDTH,
   CONNECTION_ARROW_SCREEN_LENGTH,
+  CONNECTION_LASSO_REGION_PADDING,
   CONNECTION_MIN_HANDLE_LENGTH,
   connectionCurveBounds,
+  connectionCurveLassoRegions,
   connectionCurveMidpoint,
   connectionCurvePath,
   connectionCurvePathWithArrow,
@@ -98,6 +100,24 @@ test('ordinary connection curves use enlarged horizontal handles at both endpoin
   assert.deepEqual(coordinates, [0, 0, 160, 0, -40, 300, 120, 300]);
   assert.equal(coordinates[2] - coordinates[0], CONNECTION_MIN_HANDLE_LENGTH);
   assert.equal(coordinates[6] - coordinates[4], CONNECTION_MIN_HANDLE_LENGTH);
+});
+
+test('connection lasso regions follow the curve instead of filling its empty bounding box', () => {
+  const from = { x: 0, y: 0, side: 'right' as const };
+  const to = { x: 520, y: 420, side: 'left' as const };
+  const bounds = connectionCurveBounds(from, to, CONNECTION_LASSO_REGION_PADDING);
+  const regions = connectionCurveLassoRegions(from, to);
+  const emptyBox = { x: bounds.x + 8, y: bounds.y + bounds.height - 36, width: 20, height: 20 };
+  const curveBox = { x: 250, y: 190, width: 20, height: 40 };
+  const intersects = (
+    left: { x: number; y: number; width: number; height: number },
+    right: { x: number; y: number; width: number; height: number },
+  ) => left.x <= right.x + right.width && left.x + left.width >= right.x &&
+    left.y <= right.y + right.height && left.y + left.height >= right.y;
+
+  assert.equal(intersects(bounds, emptyBox), true);
+  assert.equal(regions.some((region) => intersects(region, emptyBox)), false);
+  assert.equal(regions.some((region) => intersects(region, curveBox)), true);
 });
 
 test('ordinary connection handles follow endpoint sides even when endpoint x positions overlap', () => {
