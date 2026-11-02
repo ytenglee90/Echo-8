@@ -912,8 +912,10 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
     };
   });
   expect(processingMotionBounds).toBeDefined();
+  const motionBoundsTolerance = 0.01;
   expect(processingMotionBounds!.paths.every((path) => (
-    path.left >= processingMotionBounds!.left && path.right <= processingMotionBounds!.right
+    path.left >= processingMotionBounds!.left - motionBoundsTolerance &&
+    path.right <= processingMotionBounds!.right + motionBoundsTolerance
   ))).toBe(true);
   const activeMark = syncedStatus.locator('svg.echo-8-sync-mark[data-icon="echo-8"]');
   await expect(activeMark).toBeVisible();

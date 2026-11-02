@@ -256,7 +256,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
           // separate ordered event deliveries. Keep a short trailing window so
           // a refresh search cannot run between those facts and then have its
           // just-published result cleared by the remainder of the same burst.
-          delayMs: 24,
+          delayMs: 100,
           noticeAfterMs: 10_000,
           priority: 80,
           timeoutMs: 10_000,
