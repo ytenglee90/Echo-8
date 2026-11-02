@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 
@@ -48,12 +48,16 @@ process.stdout.write(`Portable HTML: ${relative(projectRoot, outputFile)} (${byt
 function resolveAsset(reference) {
   const clean = reference.replace(/^\.\//u, '');
   const path = resolve(stageRoot, clean);
-  if (!path.startsWith(`${stageRoot}\\`) && path !== stageRoot) throw new Error('Portable asset escaped stage directory');
+  const relativePath = relative(stageRoot, path);
+  if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    throw new Error('Portable asset escaped stage directory');
+  }
   return path;
 }
 
 function assertInsideProject(path) {
-  if (!path.startsWith(`${projectRoot}\\`) || path === projectRoot) {
+  const relativePath = relative(projectRoot, path);
+  if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
     throw new Error(`Unsafe portable build path: ${path}`);
   }
 }
