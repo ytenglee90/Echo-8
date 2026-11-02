@@ -892,11 +892,13 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
     if (!bounds) return undefined;
     const left = bounds.x.baseVal.value;
     const right = left + bounds.width.baseVal.value;
-    return {
+    const probe = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    probe.setAttribute('visibility', 'hidden');
+    element.insertAdjacentElement('beforeend', probe);
+    const result = {
       left,
       right,
       paths: paths.map((path) => {
-        const box = path.getBBox();
         const shifts = path.getAnimations().flatMap((animation) => {
           if (!(animation.effect instanceof KeyframeEffect)) return [];
           return animation.effect.getKeyframes().map((frame) => {
@@ -904,12 +906,23 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
             return transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m41;
           });
         });
+        // Firefox can include the current CSS animation transform in getBBox().
+        // Measure a classless clone so the geometry and keyframe shifts are
+        // combined exactly once on every browser engine.
+        const clone = path.cloneNode() as SVGPathElement;
+        clone.removeAttribute('class');
+        clone.removeAttribute('style');
+        probe.insertAdjacentElement('beforeend', clone);
+        const box = clone.getBBox();
+        clone.remove();
         return {
           left: box.x + Math.min(0, ...shifts),
           right: box.x + box.width + Math.max(0, ...shifts),
         };
       }),
     };
+    probe.remove();
+    return result;
   });
   expect(processingMotionBounds).toBeDefined();
   const motionBoundsTolerance = 0.01;
