@@ -33,7 +33,8 @@ async function openFan(page: Page, pair = false) {
   const chooser = page.waitForEvent('filechooser');
   await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
   await (await chooser).setFiles({ name: '连接属性.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
-  await expect(notice).toHaveCount(0); await expect(page.locator('.connection-hit-area')).toHaveCount(pair ? 6 : 5);
+  await expect(notice).toHaveCount(0); await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeHidden();
+  await expect(page.locator('.connection-hit-area')).toHaveCount(pair ? 6 : 5);
 }
 
 const edgePath = (page: Page, id: string) => page.locator(`.connection-hit-area[data-connection-id="${id}"]`);
@@ -55,6 +56,7 @@ test('bottom and middle fan-outs use horizontal ports throughout point dragging 
   await page.screenshot({ path: test.info().outputPath('fan-bottom.png') });
   const point = page.locator('.connection-junction'); const box = await point.locator('.connection-junction-dot').boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down();
+  await expect(point).toHaveAttribute('aria-pressed', 'true');
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 - 390, { steps: 12 });
   await expect.poll(async () => (await read(page, 'n0'))[1]).toBe(430); await checkFan(page, 430);
   await page.screenshot({ path: test.info().outputPath('fan-middle.png') });

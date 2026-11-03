@@ -38,7 +38,9 @@ test('multiple junctions drag and nudge together, retain spacing, undo once and 
   const initial = await points(page), box = await dots.nth(0).boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down();
   await page.mouse.move(box!.x + 120, box!.y + 70, { steps: 10 }); await page.mouse.up();
-  await expect.poll(async () => (await points(page))[0][0]).toBeGreaterThan(initial[0][0] + 50);
+  const expectedX = initial[0][0] + 120 - box!.width / 2;
+  const expectedY = initial[0][1] + 70 - box!.height / 2;
+  await expect.poll(async () => { const p = (await points(page))[0]; return Math.max(Math.abs(p[0] - expectedX), Math.abs(p[1] - expectedY)); }).toBeLessThan(2);
   const moved = await points(page);
   expect(moved[1][0] - moved[0][0]).toBe(initial[1][0] - initial[0][0]); expect(moved[1][1] - moved[0][1]).toBe(initial[1][1] - initial[0][1]);
   await page.keyboard.press('Control+z'); await expect.poll(() => points(page)).toEqual(initial);

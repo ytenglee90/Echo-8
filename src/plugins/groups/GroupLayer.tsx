@@ -124,7 +124,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
   }, [capabilityVersion, client]);
 
   useEffect(() => {
-    if (pendingDrag.current) pendingDrag.current.duplicateOnCommit = duplicateModifierActive;
+    if (pendingDrag.current && !pendingDrag.current.released) pendingDrag.current.duplicateOnCommit = duplicateModifierActive;
     if (!drag.current) return;
     drag.current.duplicateOnCommit = duplicateModifierActive;
     if (drag.current.moved) {
@@ -333,6 +333,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     if (pendingDrag.current?.pointerId === event.pointerId) {
       pendingDrag.current.latestX = event.clientX;
       pendingDrag.current.latestY = event.clientY;
+      pendingDrag.current.duplicateOnCommit = event.altKey || client.isShortcutPressed('canvas.duplicate-modifier');
     }
     if (!drag.current) return;
     const dx = (event.clientX - drag.current.pointerX) / camera.zoom;
@@ -352,15 +353,17 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     } satisfies DragPreview);
   };
 
-  const finishDrag = () => {
+  const finishDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const duplicateAtRelease = event.altKey || client.isShortcutPressed('canvas.duplicate-modifier');
     if (pendingDrag.current) {
-      pendingDrag.current.duplicateOnCommit = duplicateModifierActive;
+      pendingDrag.current.duplicateOnCommit = duplicateAtRelease;
       pendingDrag.current.released = true;
       return;
     }
     const current = drag.current;
     if (!current) return;
     drag.current = undefined;
+    current.duplicateOnCommit = duplicateAtRelease;
     client.emit('canvas.drag.preview', { clear: true });
     client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
     if (current.moved) {
