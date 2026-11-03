@@ -1,5 +1,6 @@
 import type { EventDeclaration, PatchOperation } from './state.ts';
 import type { CanvasContextRequest } from './canvas.ts';
+import type { MessageContract as CapabilityContract } from './messages.ts';
 
 export const MAX_CONNECTION_LABEL_LENGTH = 200;
 export const DEFAULT_CONNECTION_LABEL_WIDTH = 180;
@@ -16,8 +17,8 @@ export const CONNECTION_TITLE_ANCHOR_OFFSET_Y = 21;
 export interface ConnectionEndpoint {
   nodeId: string;
   side: ConnectionSide;
-  /** Endpoint schema v2. Omission retains the v1 text-node endpoint meaning. */
-  kind?: 'junction';
+  /** Endpoint schema v3 adds groups; v2 added junctions. Omission retains a text-node endpoint. */
+  kind?: 'junction' | 'group';
 }
 
 export interface ConnectionJunction {
@@ -35,6 +36,15 @@ export interface ConnectionGraphSnapshot {
   connections: ConnectionRecord[];
   junctions: ConnectionJunction[];
 }
+
+/** Optional connection-owned point targets for canvas input adapters (world coordinates). */
+export interface ConnectionTargetAtRequest { point: { x: number; y: number }; excludeId: string; radius: number }
+type ConnectionTargetAtContract = CapabilityContract<ConnectionTargetAtRequest, ConnectionEndpoint | undefined>;
+/** Geometry-only target projection. Supplying node geometry permits synchronous frame previews. */
+export interface ConnectionTargetsRequest { nodes?: ConnectionNodeGeometry[]; excludedIds?: string[] }
+export interface ConnectionTarget extends ConnectionNodeGeometry { kind: 'group' }
+type ConnectionTargetsContract = CapabilityContract<ConnectionTargetsRequest | undefined, ConnectionTarget[]>;
+type ConnectionDetachContract = CapabilityContract<{ ids: string[] }, import('./selection.ts').EntityDeletePlan>;
 
 export interface ConnectionAddJunctionRequest {
   x: number;
@@ -72,8 +82,8 @@ export interface ConnectionRecord {
 
 export function isTitleConnection(connection: Pick<ConnectionRecord, 'from' | 'to' | 'titleRoute'>): boolean {
   return connection.titleRoute === true ||
-    (connection.from.kind !== 'junction' && connection.from.side === 'title') ||
-    (connection.to.kind !== 'junction' && connection.to.side === 'title');
+    (connection.from.kind === undefined && connection.from.side === 'title') ||
+    (connection.to.kind === undefined && connection.to.side === 'title');
 }
 
 export interface ConnectionAppearanceSnapshot {
@@ -97,6 +107,7 @@ export interface ConnectionResizeLabelRequest {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'connection.connectSelectedEndpoints': CommandContract<undefined, { id?: string }>;
     'connection.addJunction': CommandContract<ConnectionAddJunctionRequest, { id: string }>;
     'connection.addJunctionFromContext': CommandContract<CanvasContextRequest, { id?: string }>;
     'connection.addJunctionAtPointer': CommandContract<undefined, { id?: string }>;
@@ -125,6 +136,9 @@ declare module './commands.ts' {
 declare module './messages.ts' {
   interface ApplicationCapabilityMap {
     'connections.graph@1': MessageContract<undefined, ConnectionGraphSnapshot>;
+    'connections.targetAt@1': ConnectionTargetAtContract;
+    'connections.targets@1': ConnectionTargetsContract;
+    'connections.detachPlan@1': ConnectionDetachContract;
   }
 }
 
@@ -165,6 +179,7 @@ export interface ConnectionNodeGeometry {
   y: number;
   width: number;
   height: number;
+  kind?: ConnectionEndpoint['kind'];
 }
 
 /**
@@ -206,14 +221,14 @@ export function resolveConnectionRecordEndpoints(
   fromNode: ConnectionNodeGeometry,
   toNode: ConnectionNodeGeometry,
 ): { from: ConnectionEndpoint; to: ConnectionEndpoint } {
-  if (connection.from.kind === 'junction' || connection.to.kind === 'junction') {
+  if (connection.from.kind || connection.to.kind) {
     const automatic = resolveConnectionEndpoints(fromNode, toNode);
     return {
-      from: connection.from.kind === 'junction'
-        ? { ...automatic.from, kind: 'junction' }
+      from: connection.from.kind
+        ? { ...automatic.from, kind: connection.from.kind }
         : connection.from.side === 'title' ? { ...connection.from } : automatic.from,
-      to: connection.to.kind === 'junction'
-        ? { ...automatic.to, kind: 'junction' }
+      to: connection.to.kind
+        ? { ...automatic.to, kind: connection.to.kind }
         : connection.to.side === 'title' ? { ...connection.to } : automatic.to,
     };
   }
@@ -229,13 +244,14 @@ export function resolveConnectionRecordEndpoints(
 export function connectionEndpointPoint(
   endpoint: ConnectionEndpoint,
   node: ConnectionNodeGeometry,
+  horizontalSide: ConnectionSide = 'left',
 ): { x: number; y: number; side: ConnectionSide } {
   if (endpoint.kind === 'junction') return { x: node.x, y: node.y, side: endpoint.side };
   if (endpoint.side === 'title') {
     return {
-      x: node.x,
+      x: node.x + (horizontalSide === 'right' ? node.width : 0),
       y: node.y + CONNECTION_TITLE_ANCHOR_OFFSET_Y,
-      side: endpoint.side,
+      side: horizontalSide === 'right' ? 'right' : 'left',
     };
   }
   return {

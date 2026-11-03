@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { connectionGraphPoints } from '../src/plugins/connections/routing.ts';
+import { connectionCurvePath, distanceToConnectionCurve } from '../src/plugins/connections/rendering.ts';
 import test from 'node:test';
 import { ApplicationKernel } from '../src/core/kernel.ts';
 import { textNodePlugin } from '../src/plugins/text-node/plugin.ts';
@@ -139,7 +141,7 @@ test('junction graphs survive clipboard remapping, file reload and plugin hot-st
     assert.ok((endpoint.kind === 'junction' ? pointIds : nodeIds).has(endpoint.nodeId));
   }
   const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, source);
-  assert.equal(project.plugins.find((item) => item.id === 'connections')?.dataVersion, 7);
+  assert.equal(project.plugins.find((item) => item.id === 'connections')?.dataVersion, 8);
   const reopened = new ApplicationKernel([textNodePlugin, createSelectionPlugin(), createConnectionsPlugin()]);
   await reopened.start();
   await reopened.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), source);
@@ -221,4 +223,57 @@ test('context gestures remain distinct queued transactions and stale multi-line 
   const point = (await graph()).junctions[0];
   await Promise.all(Array.from({ length: 10 }, () => kernel.router.dispatch('connection.nudgeJunction', { id: point.id, dx: 1, dy: 0 }, source)));
   assert.equal((await graph()).junctions.find((item) => item.id === point.id)!.x, point.x + 10);
+});
+
+
+test('all branches share a forward tangent at a junction, including the left-of-title layout', () => {
+  const edges: ConnectionRecord[] = ([
+    { id: 'a', from: { nodeId: 'a', side: 'title' }, to: { nodeId: 'j', kind: 'junction', side: 'left' } },
+    { id: 'b', from: { nodeId: 'b', side: 'title' }, to: { nodeId: 'j', kind: 'junction', side: 'left' } },
+    { id: 'trunk', from: { nodeId: 'j', kind: 'junction', side: 'right' }, to: { nodeId: 'c', side: 'title' } },
+  ] as const).map(edge => ({ ...edge, revision: 1, labelWidth: 100, labelHeight: 40, createdAt: 1 }));
+  const nodes = new Map([
+    ['a', { id: 'a', x: 440, y: 80, width: 280, height: 158 }],
+    ['b', { id: 'b', x: 460, y: 340, width: 280, height: 158 }],
+    ['c', { id: 'c', x: 800, y: 210, width: 280, height: 158 }],
+    ['j', { id: 'j', x: 260, y: 180, width: 0, height: 0 }],
+  ]);
+  const points = connectionGraphPoints(edges, nodes, [{ id: 'j', x: 260, y: 180, revision: 1, branchSide: 'incoming' }]);
+  for (const id of ['a', 'b']) {
+    const incoming = points.get(id)!, outgoing = points.get('trunk')!;
+    assert.deepEqual(incoming.to.tangent, outgoing.from.tangent);
+    const path = connectionCurvePath(incoming.from, incoming.to).match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+    assert.ok(path[2] < path[0], 'title source leaves its actual left edge');
+    const tail = connectionCurvePath(outgoing.from, outgoing.to).match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+    assert.ok(tail[2] > tail[0], 'trunk continues toward the target instead of turning left');
+    assert.ok(tail[4] < tail[6], 'arrow approaches the target title from outside');
+    assert.ok(distanceToConnectionCurve(incoming.to, incoming.from, incoming.to) < .01);
+  }
+});
+
+test('junctions accept incoming, outgoing and point-to-point edges, with undo and cycle validation', async () => {
+  const { kernel, graph, add } = await setup();
+  const point = await add();
+  const extra = await kernel.router.dispatch<{ id: string }>('node.create', { title: '新分支', x: 1100, y: 600 }, source);
+  const before = kernel.history.getState().undoCount;
+  const endpoint = { nodeId: point.id, kind: 'junction' as const, side: 'right' as const };
+  const output = await kernel.router.dispatch<{ id: string }>('connection.create', { from: endpoint, to: { nodeId: extra.id, side: 'left' } }, source);
+  assert.equal((await graph()).connections.find(edge => edge.id === output.id)!.from.kind, 'junction');
+  const duplicate = await kernel.router.dispatch<{ id: string }>('connection.create', { from: endpoint, to: { nodeId: extra.id, side: 'left' } }, source);
+  assert.equal(duplicate.id, output.id);
+  assert.equal(kernel.history.getState().undoCount, before + 1);
+  const input = await kernel.router.dispatch<{ id: string }>('connection.create', { from: { nodeId: extra.id, side: 'left' }, to: endpoint }, source);
+  assert.equal((await graph()).connections.find(edge => edge.id === input.id)!.to.kind, 'junction');
+  const target = kernel.capabilities.requestSync<import('../src/protocols/connections.ts').ConnectionEndpoint>('connections.targetAt@1', { point: { x: 504, y: 240 }, excludeId: extra.id, radius: 10 });
+  assert.equal(target.nodeId, point.id);
+  const split = await kernel.router.dispatch<{ id: string }>('connection.addJunction', { x: 700, y: 500, connections: [{ id: output.id, revision: 1 }] }, source);
+  const beforeCycle = await graph();
+  await assert.rejects(kernel.router.dispatch('connection.create', { from: { nodeId: split.id, kind: 'junction', side: 'left' }, to: endpoint }, source), /循环/u);
+  assert.deepEqual(await graph(), beforeCycle);
+  await assert.rejects(kernel.router.dispatch('connection.create', { from: { nodeId: 'missing', kind: 'junction', side: 'right' }, to: endpoint }, source), /不存在/u);
+  await kernel.router.dispatch('history.undo', undefined, source);
+  assert.equal((await graph()).junctions.length, 1);
+  await kernel.router.dispatch('selection.set', { ids: [extra.id, point.id] }, source);
+  const selected = await kernel.router.dispatch<{ id: string }>('connection.connectSelectedEndpoints', undefined, source);
+  assert.equal(selected.id, input.id);
 });

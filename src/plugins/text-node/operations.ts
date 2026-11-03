@@ -52,7 +52,6 @@ export function defaultNodeTitleColor(index: number): string {
 export const DEFAULT_NODE_WIDTH = GRID_NODE_WIDTH;
 export const DEFAULT_NODE_HEIGHT = GRID_NODE_HEIGHT;
 export const MIN_NODE_WIDTH = 220;
-export const MAX_NODE_WIDTH = 1600;
 export const MIN_NODE_HEIGHT = 120;
 export const MAX_NODE_HEIGHT = 1200;
 export const DEFAULT_TEXT_BOX_WIDTH = 240;
@@ -134,13 +133,11 @@ export function nodeResizeLimits(
   return presentation === 'text-box'
     ? {
         minWidth: MIN_TEXT_BOX_WIDTH,
-        maxWidth: MAX_NODE_WIDTH,
         minHeight: MIN_TEXT_BOX_HEIGHT,
         maxHeight: MAX_NODE_HEIGHT,
       }
     : {
         minWidth: MIN_NODE_WIDTH,
-        maxWidth: MAX_NODE_WIDTH,
         minHeight: MIN_NODE_HEIGHT,
         maxHeight: MAX_NODE_HEIGHT,
       };
@@ -452,7 +449,7 @@ export function nodePreviewLength(node: TextNodeRecord): number {
   );
 }
 
-export function clampNodeSize(value: number, minimum: number, maximum: number): number {
+export function clampNodeSize(value: number, minimum: number, maximum = Number.POSITIVE_INFINITY): number {
   return Math.round(Math.min(maximum, Math.max(minimum, value)));
 }
 

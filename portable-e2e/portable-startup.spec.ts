@@ -75,7 +75,7 @@ test('the generated single HTML starts from the library and edits without extern
 
   const sourceNode = page.getByRole('article', { name: '文本节点：AI 助手使用指南', exact: true });
   const targetNode = page.getByRole('article', { name: '文本节点：画布基本操作指南', exact: true });
-  const titlePort = sourceNode.getByRole('button', { name: '从AI 助手使用指南标题栏连接', exact: true });
+  const titlePort = sourceNode.getByRole('button', { name: '从AI 助手使用指南标题栏右侧连接', exact: true });
   const [titlePortBox, targetNodeBox] = await Promise.all([titlePort.boundingBox(), targetNode.boundingBox()]);
   expect(titlePortBox).not.toBeNull();
   expect(targetNodeBox).not.toBeNull();

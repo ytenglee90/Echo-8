@@ -1,4 +1,4 @@
-import type { ContentSummary } from '../../protocols/content.ts';
+import type { ConnectionNodeGeometry } from '../../protocols/connections.ts';
 
 export interface GroupLayoutBounds {
   x: number;
@@ -7,7 +7,7 @@ export interface GroupLayoutBounds {
   height: number;
 }
 
-export function computeGroupBounds(nodes: readonly ContentSummary[]): GroupLayoutBounds {
+export function computeGroupBounds(nodes: readonly ConnectionNodeGeometry[]): GroupLayoutBounds {
   const left = Math.min(...nodes.map((node) => node.x));
   const top = Math.min(...nodes.map((node) => node.y));
   const right = Math.max(...nodes.map((node) => node.x + node.width));

@@ -22,7 +22,7 @@ async function executeCommand(page: Page, label: string): Promise<void> {
 }
 
 function connectionArrowScreenMetrics(element: Element): { length: number; width: number } {
-  const path = element as SVGPathElement;
+  const path = (element.matches('.connection-arrow') ? element : element.parentElement!.querySelector('.connection-arrow')) as SVGPathElement;
   const coordinates = path.getAttribute('d')?.match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
   const matrix = path.getScreenCTM();
   if (coordinates.length < 6 || !matrix) throw new Error('连接箭头尚未进入可见画布');
@@ -1680,7 +1680,7 @@ test('canvas cards convert to canvas-backed editable text boxes and remember bot
   await expect(textBox.locator('.text-box-title')).toHaveCSS('color', titleColor);
   await expect(textBox.locator('.text-box-title')).toHaveCSS('font-size', '18px');
   await expect(textBox.getByRole('paragraph')).toHaveCount(0);
-  await expect(textBox.getByRole('button', { name: `从${originalTitle}标题栏连接`, exact: true })).toHaveCount(0);
+  await expect(textBox.getByRole('button', { name: `从${originalTitle}标题栏左侧连接`, exact: true })).toHaveCount(0);
   await expect(textBox.getByRole('button', { name: `从${originalTitle}左侧连接`, exact: true })).toBeVisible();
   await expect(textBox.getByRole('button', { name: `从${originalTitle}右侧连接`, exact: true })).toBeVisible();
   await executeCommand(page, '打开全局颜色设置');
@@ -1856,7 +1856,7 @@ test('shortcut center exposes and applies the text-box presentation shortcut', a
   await expect(page.getByRole('article', { name: new RegExp(`文本框：${title}$`, 'u') })).toBeVisible();
 });
 
-test('title-bar ports create persistent connections before the title dot', async ({ page }) => {
+test('title-bar ports create persistent connections on facing left and right title edges', async ({ page }) => {
   await openApplication(page);
   const source = page.locator('.text-node-card').filter({
     has: page.locator('strong[title="AI 助手使用指南"]'),
@@ -1880,7 +1880,7 @@ test('title-bar ports create persistent connections before the title dot', async
   await expect(source).toHaveCSS('border-top-width', '1px');
   expect(await selectedNodeOverlayStyle(source)).toMatchObject({ borderWidth: '4px' });
   await page.mouse.move(
-    sourceTitleBox!.x + sourceTitleBox!.width / 2 + 280,
+    sourceTitleBox!.x + sourceTitleBox!.width / 2 - 80,
     sourceTitleBox!.y + sourceTitleBox!.height / 2 + 140,
     { steps: 8 },
   );
@@ -1888,8 +1888,14 @@ test('title-bar ports create persistent connections before the title dot', async
   await expect.poll(() => source.evaluate((element) => {
     const match = /translate(?:3d)?\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
     return Number(match?.[1]);
-  })).toBeGreaterThan(sourceBeforeMove.x + 200);
-  const sourcePort = source.getByRole('button', { name: '从AI 助手使用指南标题栏连接', exact: true });
+  })).toBeLessThan(sourceBeforeMove.x - 40);
+  // Leave room between facing edges for the label and its resize handle.
+  const targetTitleBox = await target.locator('strong').boundingBox();
+  await page.mouse.move(targetTitleBox!.x + 80, targetTitleBox!.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(targetTitleBox!.x + 330, targetTitleBox!.y + 10, { steps: 8 });
+  await page.mouse.up();
+  const sourcePort = source.getByRole('button', { name: '从AI 助手使用指南标题栏左侧连接', exact: true });
   await expect(sourcePort).toHaveCSS('outline-style', 'none');
   expect(await sourcePort.evaluate((element) => getComputedStyle(element, '::after').content)).toBe('none');
   const [sourcePortBox, targetBox] = await Promise.all([sourcePort.boundingBox(), target.boundingBox()]);
@@ -1914,19 +1920,19 @@ test('title-bar ports create persistent connections before the title dot', async
   await expect(page.locator('.connection-layer marker')).toHaveCount(0);
   expect(await renderedConnection.evaluate((element) => {
     const style = getComputedStyle(element);
-    return style.fill !== 'none' && style.fill === style.stroke;
+    return style.fill === 'none';
   })).toBe(true);
-  const renderedCoordinates = (await renderedConnection.getAttribute('d'))
+  const renderedCoordinates = (await page.locator('.connection-arrow').first().getAttribute('d'))
     ?.match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
-  expect(renderedCoordinates).toHaveLength(20);
-  expect((await renderedConnection.getAttribute('d'))?.match(/\bZ\b/gu)).toHaveLength(2);
+  expect(renderedCoordinates).toHaveLength(6);
+  expect(await renderedConnection.getAttribute('d')).not.toMatch(/\bZ\b/u);
   const arrowScreenHeight = Math.abs(renderedCoordinates.at(-5)! - renderedCoordinates.at(-1)!);
   expect(arrowScreenHeight).toBeGreaterThanOrEqual(13);
   expect(arrowScreenHeight).toBeLessThanOrEqual(15);
   const [sourcePosition, targetPosition, path] = await Promise.all([
     source.evaluate((element) => {
       const match = /translate(?:3d)?\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
-      return { x: Number(match?.[1]), y: Number(match?.[2]) };
+      return { x: Number(match?.[1]), y: Number(match?.[2]), width: (element as HTMLElement).offsetWidth };
     }),
     target.evaluate((element) => {
       const match = /translate(?:3d)?\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
@@ -1934,18 +1940,21 @@ test('title-bar ports create persistent connections before the title dot', async
     }),
     connection.getAttribute('d'),
   ]);
+  const sourceWidth = await source.evaluate(element => (element as HTMLElement).offsetWidth);
+  const targetWidth = await target.evaluate(element => (element as HTMLElement).offsetWidth);
+  const sourceIsLeft = sourcePosition.x + sourceWidth / 2 <= targetPosition.x + targetWidth / 2;
   const coordinates = path?.match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
   expect(coordinates).toHaveLength(8);
-  expect(coordinates[0]).toBeCloseTo(sourcePosition.x, 4);
+  expect(coordinates[0]).toBeCloseTo(sourcePosition.x + (sourceIsLeft ? sourceWidth : 0), 4);
   expect(coordinates[1]).toBeCloseTo(sourcePosition.y + 21, 4);
-  expect(coordinates.at(-2)).toBeCloseTo(targetPosition.x, 4);
+  expect(coordinates.at(-2)).toBeCloseTo(targetPosition.x + (sourceIsLeft ? 0 : targetWidth), 4);
   expect(coordinates.at(-1)).toBeCloseTo(targetPosition.y + 21, 4);
   expect(coordinates[3]).toBeCloseTo(coordinates[1], 4);
   expect(coordinates[5]).toBeCloseTo(coordinates[7], 4);
   expect(renderedCoordinates.at(-4)).toBeCloseTo(coordinates.at(-2)!, 4);
   expect(renderedCoordinates.at(-3)).toBeCloseTo(coordinates.at(-1)!, 4);
-  const pathXCoordinates = coordinates.filter((_, index) => index % 2 === 0);
-  expect(Math.min(...pathXCoordinates)).toBeLessThan(Math.min(coordinates[0], coordinates.at(-2)!) - 50);
+  expect((coordinates[2] - coordinates[0]) * (sourceIsLeft ? 1 : -1)).toBeGreaterThan(0);
+  expect((coordinates[6] - coordinates[4]) * (sourceIsLeft ? 1 : -1)).toBeGreaterThan(0);
 
   const connectionPoint = await connection.evaluate((element) => {
     const hitPath = element as SVGPathElement;
@@ -2220,13 +2229,13 @@ test('overlapping ordinary endpoints keep their port directions and solid target
   expect(hitCoordinates[4]).toBeLessThan(hitCoordinates[6]);
 
   const renderedPath = page.locator('.connection-path').first();
-  const renderedCoordinates = (await renderedPath.getAttribute('d'))
+  const renderedCoordinates = (await page.locator('.connection-arrow').first().getAttribute('d'))
     ?.match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
   expect(renderedCoordinates.at(-4)).toBeCloseTo(hitCoordinates[6], 4);
   expect(renderedCoordinates.at(-3)).toBeCloseTo(hitCoordinates[7], 4);
   expect(renderedCoordinates.at(-6)).toBeLessThan(renderedCoordinates.at(-4)!);
   expect(renderedCoordinates.at(-2)).toBeLessThan(renderedCoordinates.at(-4)!);
-  expect(await renderedPath.evaluate((element) => getComputedStyle(element).fill !== 'none')).toBe(true);
+  expect(await renderedPath.evaluate((element) => getComputedStyle(element).fill)).toBe('none');
 });
 
 test('editor text color stays in the editor while canvas previews keep their default ink', async ({ page }) => {
@@ -3246,7 +3255,8 @@ test('a custom-color connection keeps the exact picker color through selection a
     const style = getComputedStyle(element);
     return { fill: style.fill, stroke: style.stroke, width: style.strokeWidth };
   });
-  expect(selectedAppearance.fill).toBe('rgb(255, 238, 0)');
+  expect(selectedAppearance.fill).toBe('none');
+  await expect(page.locator('.connection-arrow').first()).toHaveCSS('fill', 'rgb(255, 238, 0)');
   expect(selectedAppearance.stroke).toBe('rgb(255, 238, 0)');
   expect(Number.parseFloat(selectedAppearance.width)).toBeGreaterThan(1.5);
 
@@ -3580,7 +3590,7 @@ test('Alt dragging a connected node keeps its existing connection anchored to th
   const target = page.locator('.text-node-card').filter({
     has: page.locator('strong[title="画布基本操作指南"]'),
   });
-  const sourcePort = source.getByRole('button', { name: '从AI 助手使用指南标题栏连接', exact: true });
+  const sourcePort = source.getByRole('button', { name: '从AI 助手使用指南标题栏左侧连接', exact: true });
   const [sourcePortBox, targetBox] = await Promise.all([sourcePort.boundingBox(), target.boundingBox()]);
   expect(sourcePortBox).not.toBeNull();
   expect(targetBox).not.toBeNull();
@@ -3594,7 +3604,8 @@ test('Alt dragging a connected node keeps its existing connection anchored to th
   await page.mouse.up();
 
   const connection = page.locator('.connection-path').first();
-  await expect(connection).toBeVisible();
+  await expect(connection).toBeAttached();
+  await expect(page.locator('.connection-arrow').first()).toBeVisible();
   await page.waitForTimeout(500);
   let previousPath: string | null = null;
   let stableSamples = 0;

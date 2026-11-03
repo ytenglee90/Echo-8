@@ -19,10 +19,10 @@ import type {
 } from '../../protocols/canvas.ts';
 import {
   connectionEndpointPoint,
+  resolveConnectionEndpoints,
   isTitleConnection,
   MAX_CONNECTION_LABEL_LENGTH,
   normalizeConnectionLabelSize,
-  resolveConnectionRecordEndpoints,
   type ConnectionAppearanceSnapshot,
   type ConnectionDraft,
   type ConnectionEndpoint,
@@ -32,10 +32,12 @@ import {
   type ConnectionJunctionPreview,
   type ConnectionNodeGeometry,
 } from '../../protocols/connections.ts';
+import { connectionGraphPoints } from './routing.ts';
 import { ConnectionJunctionMarkers } from './ConnectionJunctionMarkers.tsx';
 import { junctionGeometry, logicalConnectionPaths } from './junctions.ts';
 import type { SelectionMode } from '../../protocols/selection.ts';
 import { boundsIntersect, worldViewport } from '../../protocols/viewport.ts';
+import { useConnectionTargets } from '../../ui/use-connection-targets.ts';
 import { useCanvasLayerEnvironment } from '../../ui/use-canvas-layer-environment.ts';
 import { Icon } from '../../ui/Icon.tsx';
 import {
@@ -48,7 +50,7 @@ import {
   connectionCurveBounds,
   connectionCurveMidpoint,
   connectionCurvePath,
-  connectionCurvePathWithArrow,
+  connectionStrokeGeometry,
   connectionOverviewMode,
   connectionRenderMode,
   connectionVisibleForOverview,
@@ -69,7 +71,8 @@ interface DrawableConnection {
   to: ConnectionRenderPoint;
   midpoint?: ConnectionRenderPoint;
   curvePath: string;
-  renderedPath: string;
+  shaftPath: string;
+  arrowPath: string;
 }
 
 interface ConnectionLabelEditorState {
@@ -239,21 +242,22 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     setJunctionPreview('clear' in message.payload ? undefined : message.payload);
   }), [client]);
 
+  const stableTargets = useConnectionTargets(client, nodeById);
   const stableNodeMap = useMemo(
-    () => new Map<string, ConnectionNodeGeometry>([
-      ...nodeById,
-      ...junctions.map((point): [string, ConnectionNodeGeometry] => [point.id, junctionGeometry(point)]),
-    ]),
-    [junctions, nodeById],
+    () => new Map<string, ConnectionNodeGeometry>([...nodeById, ...stableTargets.map(target => [target.id, target] as const),
+      ...junctions.map((point): [string, ConnectionNodeGeometry] => [point.id, { ...junctionGeometry(point), kind: 'junction' }])]),
+    [junctions, nodeById, stableTargets],
   );
-  const nodeMap = useMemo(
-    () => new Map([...stableNodeMap].map(([id, node]) => {
-      const pointPreview = junctionPreview && !('clear' in junctionPreview) && junctionPreview.id === id ? junctionPreview : undefined;
-      const positionPreview = duplicateOriginIds.has(id) ? undefined : previews[id];
-      return [id, { ...node, ...positionPreview, ...sizePreviews[id], ...pointPreview }];
-    })),
-    [duplicateOriginIds, junctionPreview, previews, sizePreviews, stableNodeMap],
-  );
+  const previewNodes = useMemo(() => new Map([...nodeById].map(([id, node]) => [id,
+    { ...node, ...(duplicateOriginIds.has(id) ? {} : previews[id]), ...sizePreviews[id] } ])),
+  [duplicateOriginIds, nodeById, previews, sizePreviews]);
+  const liveTargets = useConnectionTargets(client, previewNodes);
+  const nodeMap = useMemo(() => new Map<string, ConnectionNodeGeometry>([...previewNodes, ...liveTargets.map(target => [target.id, target] as const),
+    ...junctions.map((point): [string, ConnectionNodeGeometry] => [point.id, { ...junctionGeometry(point), kind: 'junction',
+      ...(junctionPreview && !('clear' in junctionPreview) && junctionPreview.id === point.id ? junctionPreview : {}) }])]),
+  [junctionPreview, junctions, liveTargets, previewNodes]);
+  const stablePoints = useMemo(() => connectionGraphPoints(connections, stableNodeMap, junctions), [connections, stableNodeMap, junctions]);
+  const livePoints = useMemo(() => connectionGraphPoints(connections, nodeMap, junctions), [connections, nodeMap, junctions]);
   const connectionLookup = useMemo(() => {
     const byId = new Map<string, ConnectionRecord>();
     const byNode = new Map<string, Set<string>>();
@@ -276,6 +280,14 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     return ids;
   }, [connections]);
   const isTitleRoute = (connection: ConnectionRecord) => titleRouteIds.has(connection.id);
+  const titleJunctionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const edge of connections) if (titleRouteIds.has(edge.id)) {
+      if (edge.from.kind === 'junction') ids.add(edge.from.nodeId);
+      if (edge.to.kind === 'junction') ids.add(edge.to.nodeId);
+    }
+    return ids;
+  }, [connections, titleRouteIds]);
   const junctionIndex = useMemo(() => {
     const index = new SpatialHashIndex<ConnectionJunction>();
     index.rebuild(junctions, (point) => point.id, (point) => ({ x: point.x - 12, y: point.y - 12, width: 24, height: 24 }));
@@ -322,24 +334,35 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const connectionIndex = useMemo(() => {
     const index = new SpatialHashIndex<ConnectionRecord>();
     index.rebuild(
-      connections.filter((connection) => Boolean(connectionPoints(connection, stableNodeMap))),
+      connections.filter((connection) => Boolean(stablePoints.get(connection.id))),
       (connection) => connection.id,
       (connection) => {
-        const points = connectionPoints(connection, stableNodeMap)!;
+        const points = stablePoints.get(connection.id)!;
         return connectionBounds(points.from, points.to);
       },
     );
     return index;
-  }, [connections, stableNodeMap]);
+  }, [connections, stablePoints]);
+  const previewAffectedIds = useMemo(() => {
+    const ids = new Set<string>();
+    const movedTargets = liveTargets.filter(target => { const stable = stableNodeMap.get(target.id); return !stable || target.x !== stable.x || target.y !== stable.y || target.width !== stable.width || target.height !== stable.height; }).map(target => target.id);
+    const moving = [...movedTargets, ...Object.keys(previews), ...Object.keys(sizePreviews), ...(junctionPreview && !('clear' in junctionPreview) ? [junctionPreview.id] : [])];
+    for (const nodeId of moving) for (const edgeId of connectionLookup.byNode.get(nodeId) ?? []) {
+      ids.add(edgeId);
+      const edge = connectionLookup.byId.get(edgeId)!;
+      for (const endpoint of [edge.from, edge.to]) if (endpoint.kind === 'junction') {
+        for (const related of connectionLookup.byNode.get(endpoint.nodeId) ?? []) ids.add(related);
+      }
+    }
+    return ids;
+  }, [connectionLookup, junctionPreview, liveTargets, previews, sizePreviews, stableNodeMap]);
   const drawable = useMemo(() => {
     if (overviewMode && focusedNodeIds.size === 0 && emphasizedConnectionIds.size === 0) return [];
     const viewport = worldViewport(camera, surfaceSize, CULL_MARGIN);
     const candidates = new Map(connectionIndex.query(viewport).map((connection) => [connection.id, connection]));
-    for (const nodeId of [...Object.keys(previews), ...Object.keys(sizePreviews), ...(junctionPreview && !('clear' in junctionPreview) ? [junctionPreview.id] : [])]) {
-      for (const id of connectionLookup.byNode.get(nodeId) ?? []) {
-        const connection = connectionLookup.byId.get(id);
-        if (connection) candidates.set(id, connection);
-      }
+    for (const id of previewAffectedIds) {
+      const connection = connectionLookup.byId.get(id);
+      if (connection) candidates.set(id, connection);
     }
     return [...candidates.values()].filter((connection) => {
       if (overviewMode && !connectionVisibleForOverview(
@@ -347,7 +370,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         focusedNodeIds,
         emphasizedConnectionIds,
       )) return false;
-      const points = connectionPoints(connection, nodeMap);
+      const points = livePoints.get(connection.id);
       return Boolean(points && boundsIntersect(viewport, connectionBounds(points.from, points.to)));
     });
   }, [
@@ -356,18 +379,26 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     connectionLookup,
     emphasizedConnectionIds,
     focusedNodeIds,
-    nodeMap,
-    junctionPreview,
+    livePoints,
     overviewMode,
-    previews,
-    sizePreviews,
+    previewAffectedIds,
     surfaceSize,
   ]);
-  const draftStart = draft.from ? endpointPoint(draft.from, nodeMap) : undefined;
-  const draftEnd = draft.to ? endpointPoint(draft.to, nodeMap) : draft.pointer;
+  const draftFromNode = draft.from ? nodeMap.get(draft.from.nodeId) : undefined;
+  const draftToNode = draft.to ? nodeMap.get(draft.to.nodeId) : draft.pointer ? { id: '', ...draft.pointer, width: 0, height: 0 } : undefined;
+  const draftSides = draftFromNode && draftToNode ? resolveConnectionEndpoints(draftFromNode, draftToNode) : undefined;
+  const draftStart = draft.from ? endpointPoint(draft.from, nodeMap, draftSides?.from.side) : undefined;
+  const draftEnd = draft.to ? endpointPoint(draft.to, nodeMap, draftSides?.to.side) : draft.pointer;
+  const draftSpan = draftStart && draftEnd ? Math.hypot(draftEnd.x - draftStart.x, draftEnd.y - draftStart.y) || 1 : 1;
+  const draftTangent = draftStart && draftEnd ? { x: (draftEnd.x - draftStart.x) / draftSpan, y: (draftEnd.y - draftStart.y) / draftSpan } : undefined;
+  const draftGeometry = draftStart && draftEnd ? connectionStrokeGeometry(
+    draft.from?.kind === 'junction' ? { ...draftStart, tangent: draftTangent } : draftStart,
+    draft.to?.kind === 'junction' ? { ...draftEnd, tangent: draftTangent } : draftEnd,
+    camera.zoom, draft.to?.kind !== 'junction',
+  ) : undefined;
   const renderableConnections = drawable;
   const drawableGeometry = useMemo<DrawableConnection[]>(() => renderableConnections.flatMap((connection) => {
-    const points = connectionPoints(connection, nodeMap);
+    const points = livePoints.get(connection.id);
     return points ? [{
       connection,
       ...points,
@@ -375,13 +406,16 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         ? connectionCurveMidpoint(points.from, points.to)
         : undefined,
       curvePath: connectionCurvePath(points.from, points.to),
-      renderedPath: connectionCurvePathWithArrow(points.from, points.to, camera.zoom),
+      ...connectionStrokeGeometry(points.from, points.to, camera.zoom, connection.to.kind !== 'junction'),
     }] : [];
-  }), [camera.zoom, editingConnectionId, nodeMap, renderableConnections]);
+  }), [camera.zoom, editingConnectionId, livePoints, renderableConnections]);
   const renderedConnectionIds = useMemo(
     () => new Set(renderableConnections.map((connection) => connection.id)),
     [renderableConnections],
   );
+  const paintedJunctions = useMemo(() => overviewMode ? visibleJunctions.filter(point => selected.has(point.id) ||
+    [...(connectionLookup.byNode.get(point.id) ?? [])].some(id => renderedConnectionIds.has(id))) : visibleJunctions,
+  [connectionLookup.byNode, overviewMode, renderedConnectionIds, selected, visibleJunctions]);
   const renderMode = connectionRenderMode(drawableGeometry.length);
   const batchRendered = renderMode === 'batched-svg';
   const paintOrderedGeometry = useMemo(
@@ -422,7 +456,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     const batchGlobalLine = batchGlobalSource
       ? ensureCanvasColorContrast(batchGlobalSource, canvasColor)
       : canvasContrastColors(canvasColor).line;
-    const paths = new Map<string, { color: string; title: boolean; paths: string[] }>();
+    const paths = new Map<string, { color: string; title: boolean; paths: string[]; arrows: string[] }>();
     for (const item of drawableGeometry) {
       const localPreview = batchPreviewIds.has(item.connection.id)
         ? linePreview?.color
@@ -431,11 +465,12 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       const color = source ? ensureCanvasColorContrast(source, canvasColor) : batchGlobalLine;
       const title = titleRouteIds.has(item.connection.id);
       const key = color + ':' + String(title);
-      const entries = paths.get(key) ?? { color, title, paths: [] };
-      entries.paths.push(item.renderedPath);
+      const entries = paths.get(key) ?? { color, title, paths: [], arrows: [] };
+      entries.paths.push(item.shaftPath);
+      if (item.arrowPath) entries.arrows.push(item.arrowPath);
       paths.set(key, entries);
     }
-    return [...paths.values()].map((entry) => ({ color: entry.color, title: entry.title, path: entry.paths.join(' ') }));
+    return [...paths.values()].map((entry) => ({ color: entry.color, title: entry.title, path: entry.paths.join(' '), arrows: entry.arrows.join(' ') }));
   }, [
     batchRendered,
     canvasColor,
@@ -647,16 +682,14 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       width: threshold * 2,
       height: threshold * 2,
     }).map((connection) => [connection.id, connection]));
-    for (const nodeId of [...Object.keys(previews), ...Object.keys(sizePreviews), ...(junctionPreview && !('clear' in junctionPreview) ? [junctionPreview.id] : [])]) {
-      for (const id of connectionLookup.byNode.get(nodeId) ?? []) {
-        const connection = connectionLookup.byId.get(id);
-        if (connection) candidates.set(id, connection);
-      }
+    for (const id of previewAffectedIds) {
+      const connection = connectionLookup.byId.get(id);
+      if (connection) candidates.set(id, connection);
     }
     let best: { connection: ConnectionRecord; distance: number } | undefined;
     for (const connection of candidates.values()) {
       if (!renderedConnectionIds.has(connection.id)) continue;
-      const points = connectionPoints(connection, nodeMap);
+      const points = livePoints.get(connection.id);
       if (!points) continue;
       const distance = distanceToConnectionCurve(point, points.from, points.to);
       if (distance <= threshold && (!best || distance < best.distance)) best = { connection, distance };
@@ -788,28 +821,32 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       }}
     >
       <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}>
-        {batchRendered && batchedPaths.map(({ color, title, path }) => (
+        {batchRendered && batchedPaths.map(({ color, title, path, arrows }) => (
+          <g key={`${color}:${title}`}>
           <path
-            key={`${color}:${title}`}
             className={`connection-path connection-path-batch ${title ? 'title-connection' : ''}`}
             d={path}
             style={{ '--connection-line': color } as CSSProperties}
             aria-hidden="true"
           />
+          <path className="connection-arrow connection-arrow-batch" d={arrows} style={{ '--connection-line': color } as CSSProperties} aria-hidden="true" />
+          </g>
         ))}
-        {batchRendered && highlightedGeometry.map(({ connection, renderedPath }) => (
+        {batchRendered && highlightedGeometry.map(({ connection, shaftPath, arrowPath }) => (
+          <g key={`highlight-${connection.id}`}>
           <path
-            key={`highlight-${connection.id}`}
             className={`connection-path selected ${isTitleRoute(connection) ? 'title-connection' : ''} ${connection.lineColor ||
               previewIds.has(connection.id)
               ? 'custom-color'
               : ''}`}
-            d={renderedPath}
+            d={shaftPath}
             style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
             aria-hidden="true"
           />
+          <path className={`connection-arrow selected ${connection.lineColor || previewIds.has(connection.id) ? 'custom-color' : ''}`} d={arrowPath} style={{ '--connection-line': lineColorFor(connection) } as CSSProperties} aria-hidden="true" />
+          </g>
         ))}
-        {!batchRendered && paintOrderedGeometry.map(({ connection, curvePath, renderedPath }) => {
+        {!batchRendered && paintOrderedGeometry.map(({ connection, curvePath, shaftPath, arrowPath }) => {
           const isSelected = selected.has(connection.id);
           const hasLocalColor = Boolean(connection.lineColor ||
             previewIds.has(connection.id));
@@ -849,19 +886,21 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
               />
               <path
                 className={`connection-path ${isTitleRoute(connection) ? 'title-connection' : ''} ${isSelected ? 'selected' : ''} ${connection.id === hoveredId ? 'hovered' : ''} ${hasLocalColor ? 'custom-color' : ''}`}
-                d={renderedPath}
+                d={shaftPath}
                 style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
                 aria-hidden="true"
               />
+              {arrowPath && <path className={`connection-arrow ${isSelected ? 'selected' : ''} ${connection.id === hoveredId ? 'hovered' : ''} ${hasLocalColor ? 'custom-color' : ''}`} data-arrow-for={connection.id} d={arrowPath} style={{ '--connection-line': lineColorFor(connection) } as CSSProperties} aria-hidden="true" />}
             </g>
           );
         })}
-        {draftStart && draftEnd && (
+        {draftGeometry && (<g>
           <path
             className="connection-path draft"
-            d={connectionCurvePathWithArrow(draftStart, draftEnd, camera.zoom)}
+            d={draftGeometry.shaftPath}
           />
-        )}
+          {draftGeometry.arrowPath && <path className="connection-arrow draft" d={draftGeometry.arrowPath} />}
+        </g>)}
         {paintOrderedGeometry.map(({ connection, midpoint }) => {
           const isEditing = labelEditor?.id === connection.id;
           if ((!connection.label && !isEditing) || !midpoint) return null;
@@ -994,23 +1033,12 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
             </foreignObject>
           );
         })}
-        <ConnectionJunctionMarkers client={client} camera={camera} junctions={visibleJunctions} selected={selected} />
+        <ConnectionJunctionMarkers client={client} camera={camera} junctions={paintedJunctions} selected={selected}
+          nodes={nodeMap} titleJunctionIds={titleJunctionIds}
+          targetId={draft.to?.kind === 'junction' ? draft.to.nodeId : undefined} />
       </g>
     </svg>
   );
-}
-
-function connectionPoints(
-  connection: ConnectionRecord,
-  nodes: Map<string, ConnectionNodeGeometry>,
-): { from: ConnectionRenderPoint; to: ConnectionRenderPoint } | undefined {
-  const fromNode = nodes.get(connection.from.nodeId);
-  const toNode = nodes.get(connection.to.nodeId);
-  if (!fromNode || !toNode) return undefined;
-  const endpoints = resolveConnectionRecordEndpoints(connection, fromNode, toNode);
-  const from = endpointPoint(endpoints.from, nodes);
-  const to = endpointPoint(endpoints.to, nodes);
-  return from && to ? { from, to } : undefined;
 }
 
 function modifierMode(event: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }): SelectionMode {
@@ -1023,10 +1051,11 @@ function modifierMode(event: { shiftKey: boolean; altKey: boolean; ctrlKey: bool
 function endpointPoint(
   endpoint: ConnectionEndpoint,
   nodes: Map<string, ConnectionNodeGeometry>,
+  horizontalSide?: ConnectionEndpoint['side'],
 ): ConnectionRenderPoint | undefined {
   const node = nodes.get(endpoint.nodeId);
   if (!node) return undefined;
-  return connectionEndpointPoint(endpoint, node);
+  return connectionEndpointPoint(endpoint, node, horizontalSide);
 }
 
 function connectionBounds(

@@ -5,6 +5,8 @@ export interface ConnectionRenderPoint {
   x: number;
   y: number;
   side?: ConnectionSide;
+  /** Shared forward tangent of a routing vertex, in world coordinates. */
+  tangent?: { x: number; y: number };
 }
 
 export type ConnectionRenderMode = 'interactive-svg' | 'batched-svg';
@@ -68,27 +70,42 @@ export function connectionCurvePath(from: ConnectionRenderPoint, to: ConnectionR
   ].join(' ');
 }
 
-export function connectionCurvePathWithArrow(
+export function connectionStrokeGeometry(
   from: ConnectionRenderPoint,
   to: ConnectionRenderPoint,
   zoom = 1,
-): string {
+  arrow = true,
+): { shaftPath: string; arrowPath: string } {
   const segments = connectionCurveSegments(from, to);
   const final = segments.at(-1);
-  if (!final) return connectionCurvePath(from, to);
-  const tangentX = final.to.x - final.controlTo.x;
-  const tangentY = final.to.y - final.controlTo.y;
+  const full = { shaftPath: connectionCurvePath(from, to), arrowPath: '' };
+  if (!final || !arrow) return full;
+  const length = approximateCubicLength(final);
+  const detailWorldScale = canvasDetailWorldScale(zoom);
+  const arrowLength = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale, length * 0.45);
+  if (arrowLength < 0.001) return full;
+  // Trim on the actual Bézier, preserving both control points and a single forward stroke.
+  let previous = final.to, traversed = 0, trimT = 1;
+  for (let step = 1; step <= 128; step += 1) {
+    const t = 1 - step / 128;
+    const current = pointOnCubicCurve(final, t);
+    const distance = Math.hypot(current.x - previous.x, current.y - previous.y);
+    if (traversed + distance >= arrowLength) {
+      trimT = t + (1 - (arrowLength - traversed) / distance) / 128;
+      break;
+    }
+    traversed += distance; previous = current;
+  }
+  const mix = (a: ConnectionRenderPoint, b: ConnectionRenderPoint) => ({ x: a.x + (b.x - a.x) * trimT, y: a.y + (b.y - a.y) * trimT });
+  const a = mix(final.from, final.controlFrom), b = mix(final.controlFrom, final.controlTo), c = mix(final.controlTo, final.to);
+  const d = mix(a, b), e = mix(b, c), base = mix(d, e);
+  const tangentX = final.to.x - base.x;
+  const tangentY = final.to.y - base.y;
   const tangentLength = Math.hypot(tangentX, tangentY);
-  if (tangentLength === 0) return connectionCurvePath(from, to);
+  if (tangentLength === 0) return full;
   const unitX = tangentX / tangentLength;
   const unitY = tangentY / tangentLength;
-  const detailWorldScale = canvasDetailWorldScale(zoom);
-  const arrowLength = CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale;
-  const arrowHalfWidth = CONNECTION_ARROW_SCREEN_HALF_WIDTH * detailWorldScale;
-  const base = {
-    x: final.to.x - unitX * arrowLength,
-    y: final.to.y - unitY * arrowLength,
-  };
+  const arrowHalfWidth = Math.min(CONNECTION_ARROW_SCREEN_HALF_WIDTH * detailWorldScale, tangentLength / 2);
   const perpendicular = { x: -unitY, y: unitX };
   const firstWing = {
     x: base.x + perpendicular.x * arrowHalfWidth,
@@ -99,17 +116,14 @@ export function connectionCurvePathWithArrow(
     y: base.y - perpendicular.y * arrowHalfWidth,
   };
   const shaftSegments = segments.map((segment, index) => index === segments.length - 1
-    ? { ...segment, to: base }
+    ? { ...segment, controlFrom: a, controlTo: d, to: base }
     : segment);
   const shaft = [
     `M ${formatPoint(from)}`,
     ...shaftSegments.map((segment) =>
       `C ${formatPoint(segment.controlFrom)}, ${formatPoint(segment.controlTo)}, ${formatPoint(segment.to)}`),
-    ...[...shaftSegments].reverse().map((segment) =>
-      `C ${formatPoint(segment.controlTo)}, ${formatPoint(segment.controlFrom)}, ${formatPoint(segment.from)}`),
-    'Z',
   ].join(' ');
-  return `${shaft} M ${formatPoint(firstWing)} L ${formatPoint(final.to)} L ${formatPoint(secondWing)} Z`;
+  return { shaftPath: shaft, arrowPath: `M ${formatPoint(firstWing)} L ${formatPoint(final.to)} L ${formatPoint(secondWing)} Z` };
 }
 
 export function connectionCurveMidpoint(
@@ -217,42 +231,23 @@ function connectionCurveSegments(
   from: ConnectionRenderPoint,
   to: ConnectionRenderPoint,
 ): CubicCurveSegment[] {
-  if (from.side === 'title' || to.side === 'title') {
-    return titleConnectionCurveSegments(from, to);
-  }
   const relativeDirection = to.x >= from.x ? 1 : -1;
-  const fromDirection = from.side === 'right' ? 1 : from.side === 'left' ? -1 : relativeDirection;
-  const toDirection = to.side === 'left' ? 1 : to.side === 'right' ? -1 : relativeDirection;
+  const fromDirection = from.side === 'right' ? 1 : from.side === 'left' || from.side === 'title' ? -1 : relativeDirection;
+  const toDirection = to.side === 'left' || to.side === 'title' ? 1 : to.side === 'right' ? -1 : relativeDirection;
   const bend = Math.min(420, Math.max(
     CONNECTION_MIN_HANDLE_LENGTH,
     Math.abs(to.x - from.x) * 0.62,
     Math.abs(to.y - from.y) * 0.34,
   ));
+  const span = Math.hypot(to.x - from.x, to.y - from.y);
+  const routed = Boolean(from.tangent || to.tangent);
+  const fromHandle = routed ? Math.min(bend, span * (from.tangent ? 0.35 : 0.5)) : bend;
+  const toHandle = routed ? Math.min(bend, span * (to.tangent ? 0.35 : 0.5)) : bend;
   return [{
     kind: 'cubic',
     from,
-    controlFrom: { x: from.x + bend * fromDirection, y: from.y },
-    controlTo: { x: to.x - bend * toDirection, y: to.y },
-    to,
-  }];
-}
-
-function titleConnectionCurveSegments(
-  from: ConnectionRenderPoint,
-  to: ConnectionRenderPoint,
-): CubicCurveSegment[] {
-  const verticalSpan = Math.abs(to.y - from.y);
-  const horizontalSpan = Math.abs(to.x - from.x);
-  const outward = Math.min(320, Math.max(
-    CONNECTION_MIN_HANDLE_LENGTH,
-    96 + Math.sqrt(verticalSpan) * 4.2 + Math.min(48, horizontalSpan * 0.16),
-  ));
-  const controlX = Math.min(from.x, to.x) - outward;
-  return [{
-    kind: 'cubic',
-    from,
-    controlFrom: { x: controlX, y: from.y },
-    controlTo: { x: controlX, y: to.y },
+    controlFrom: { x: from.x + fromHandle * (from.tangent?.x ?? fromDirection), y: from.y + fromHandle * (from.tangent?.y ?? 0) },
+    controlTo: { x: to.x - toHandle * (to.tangent?.x ?? toDirection), y: to.y - toHandle * (to.tangent?.y ?? 0) },
     to,
   }];
 }

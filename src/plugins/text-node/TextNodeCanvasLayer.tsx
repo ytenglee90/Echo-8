@@ -271,14 +271,15 @@ function TextNodeCanvasLayerView({
             {connectionsAvailable && (
               <>
                 {!isTextBox && (
-                  <button
+                  <>{(['left', 'right'] as const).map(titleSide => <button
+                    key={titleSide}
                     type="button"
-                    className="connection-edge title"
-                    aria-label={`从${node.title}标题栏连接`}
-                    title="从标题栏圆点前方创建连线"
+                    className={`connection-edge title title-${titleSide}`}
+                    aria-label={`从${node.title}标题栏${titleSide === 'left' ? '左' : '右'}侧连接`}
+                    title={`从标题栏${titleSide === 'left' ? '左' : '右'}侧创建连线`}
                     tabIndex={-1}
                     onPointerDown={(event) => handleConnectionPort(event, node, 'title')}
-                  />
+                  />)}</>
                 )}
                 <button
                   type="button"

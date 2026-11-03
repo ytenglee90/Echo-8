@@ -15,6 +15,7 @@ import type {
   ClipboardInstantiatePlan,
 } from '../../protocols/clipboard.ts';
 import type { ContentMovePlan, ContentMovePlanRequest, ContentSummary } from '../../protocols/content.ts';
+import type { ConnectionTargetsRequest, ConnectionTarget } from '../../protocols/connections.ts';
 import type {
   GroupDropTarget,
   GroupDropTargetRequest,
@@ -77,8 +78,9 @@ export function createGroupsPlugin(
         'selection.read@1',
         'selection.resolve@1',
       ],
-      optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'layout.snap@1'],
+      optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'canvas.viewport@1', 'layout.snap@1', 'connections.graph@1', 'connections.targets@1', 'connections.detachPlan@1'],
       providesCapabilities: [
+        'connections.targets@1',
         'groups.list@1',
         'entity.deletePlan@1',
         'clipboard.serialize@1',
@@ -107,6 +109,7 @@ export function createGroupsPlugin(
       dispatches: [
         'selection.set',
         'node.moveMany',
+        'connection.create',
         'clipboard.duplicateSelectionAt',
         'interaction.begin',
         'interaction.end',
@@ -132,6 +135,8 @@ export function createGroupsPlugin(
         'appearance.color.preview',
         'content.catalog.invalidated',
         'groups.invalidated',
+        'connection.targets.invalidated', 'connection.draft.preview', 'canvas.entity.hover.preview',
+        'connections.invalidated',
       ],
       ui: ['groups.layer', 'groups.actions', 'groups.membership-panel'],
       actions: [
@@ -165,6 +170,29 @@ export function createGroupsPlugin(
         context.store.readNamespace<Record<string, GroupRecord>>(GROUP_NAMESPACE);
       const membershipPanelOpen = () =>
         context.store.readValue<boolean>(GROUP_MEMBERSHIP_UI_NAMESPACE, 'open') ?? false;
+      const projectTargets = (input: ConnectionTargetsRequest | undefined, nodes: readonly import('../../protocols/connections.ts').ConnectionNodeGeometry[]): ConnectionTarget[] => {
+        if (!Array.isArray(nodes) || nodes.some(node => typeof node.id !== 'string' ||
+          ![node.x, node.y, node.width, node.height].every(Number.isFinite) || node.width < 0 || node.height < 0) ||
+          (input?.excludedIds !== undefined && (!Array.isArray(input.excludedIds) || input.excludedIds.some(id => typeof id !== 'string')))) {
+          throw new Error('连接目标几何参数不正确');
+        }
+        const excluded = new Set(input?.excludedIds ?? []);
+        const byId = new Map(nodes.filter(node => !excluded.has(node.id)).map(node => [node.id, node]));
+        return Object.values(readGroups()).flatMap(group => {
+          if (excluded.has(group.id)) return [];
+          const members = group.memberIds.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
+          return members.length < 2 ? [] : [{ id: group.id, kind: 'group' as const, ...computeGroupBounds(members) }];
+        });
+      };
+      context.capabilities.provide<ConnectionTargetsRequest | undefined, ConnectionTarget[]>({
+        key: 'connections.targets@1',
+        invoke: input => input?.nodes ? projectTargets(input, input.nodes) :
+          context.capabilities.request<ContentSummary[]>('content.summaries@1').then(nodes => projectTargets(input, nodes)),
+      });
+      const detachConnections = async (ids: string[]): Promise<EntityDeletePlan> => {
+        const plans = await context.capabilities.requestAll<EntityDeletePlan>('connections.detachPlan@1', { ids });
+        return { patches: plans.flatMap(plan => plan.patches), events: plans.flatMap(plan => plan.events ?? []) };
+      };
 
       context.commands.register<CreateGroupPayload, { id: string }>({
         type: 'group.create',
@@ -210,16 +238,18 @@ export function createGroupsPlugin(
       context.commands.register<GroupIdPayload>({
         type: 'group.ungroup',
         validate: isGroupIdPayload,
-        handle: (payload) => {
+        handle: async (payload) => {
           const group = context.store.readValue<GroupRecord>(GROUP_NAMESPACE, payload.id);
           if (!group) throw new Error(`Group not found: ${payload.id}`);
+          const detached = await detachConnections([group.id]);
           return {
             transaction: {
               label: '取消群组',
               patches: [
                 { op: 'delete', domain: 'document', namespace: GROUP_NAMESPACE, key: group.id },
+                ...detached.patches,
               ],
-              events: [{ type: 'group.ungrouped', payload: { id: group.id, memberIds: group.memberIds } }],
+              events: [{ type: 'group.ungrouped', payload: { id: group.id, memberIds: group.memberIds } }, ...(detached.events ?? [])],
             },
           };
         },
@@ -232,11 +262,12 @@ export function createGroupsPlugin(
           const groups = Object.values(readGroups());
           const group = groups.find((candidate) => selection.ids.includes(candidate.id));
           if (!group) throw new Error('请先直接选择一个群组');
+          const detached = await detachConnections([group.id]);
           return {
             transaction: {
               label: '取消群组',
-              patches: [{ op: 'delete', domain: 'document', namespace: GROUP_NAMESPACE, key: group.id }],
-              events: [{ type: 'group.ungrouped', payload: { id: group.id, memberIds: group.memberIds } }],
+              patches: [{ op: 'delete', domain: 'document', namespace: GROUP_NAMESPACE, key: group.id }, ...detached.patches],
+              events: [{ type: 'group.ungrouped', payload: { id: group.id, memberIds: group.memberIds } }, ...(detached.events ?? [])],
             },
           };
         },
@@ -249,6 +280,7 @@ export function createGroupsPlugin(
           const selectedGroup = Object.values(readGroups())
             .find((candidate) => selection.ids.includes(candidate.id));
           if (selectedGroup) {
+            const detached = await detachConnections([selectedGroup.id]);
             return {
               transaction: {
                 label: '取消群组',
@@ -257,11 +289,11 @@ export function createGroupsPlugin(
                   domain: 'document' as const,
                   namespace: GROUP_NAMESPACE,
                   key: selectedGroup.id,
-                }],
+                }, ...detached.patches],
                 events: [{
                   type: 'group.ungrouped',
                   payload: { id: selectedGroup.id, memberIds: selectedGroup.memberIds },
-                }],
+                }, ...(detached.events ?? [])],
               },
             };
           }
@@ -448,12 +480,13 @@ export function createGroupsPlugin(
               });
             }
           }
+          const detached = groupPatch.op === 'delete' ? await detachConnections([group.id]) : { patches: [], events: [] };
           return {
             result: target,
             transaction: {
               label: target.action === 'add' ? '移动节点并加入群组' : '移动节点并移出群组',
-              patches: [...movePlan.patches, groupPatch],
-              events: [...(movePlan.events ?? []), ...groupEvents],
+              patches: [...movePlan.patches, groupPatch, ...detached.patches],
+              events: [...(movePlan.events ?? []), ...groupEvents, ...(detached.events ?? [])],
             },
           };
         },
@@ -462,7 +495,7 @@ export function createGroupsPlugin(
       context.commands.register<GroupMembershipPayload>({
         type: 'group.membership.remove',
         validate: isGroupMembershipPayload,
-        handle: (payload) => {
+        handle: async (payload) => {
           const group = context.store.readValue<GroupRecord>(GROUP_NAMESPACE, payload.groupId);
           if (!group) throw new Error('目标群组不存在');
           const requested = new Set(payload.nodeIds);
@@ -470,6 +503,7 @@ export function createGroupsPlugin(
           if (removed.length === 0) throw new Error('选中的文字节点不在该群组中');
           const memberIds = group.memberIds.filter((id) => !requested.has(id));
           const dissolve = memberIds.length < 2;
+          const detached = dissolve ? await detachConnections([group.id]) : { patches: [], events: [] };
           return {
             result: { removed: removed.length, groupId: group.id, dissolved: dissolve },
             transaction: {
@@ -492,7 +526,7 @@ export function createGroupsPlugin(
                   updatedAt: Date.now(),
                 } satisfies GroupRecord,
                 schemaOwner: 'groups',
-              }],
+              }, ...detached.patches],
               events: [
                 {
                   type: 'group.members.changed',
@@ -502,6 +536,7 @@ export function createGroupsPlugin(
                   type: 'group.ungrouped',
                   payload: { id: group.id, memberIds: group.memberIds },
                 }] : []),
+                ...(detached.events ?? []),
               ],
             },
           };
@@ -769,7 +804,7 @@ export function createGroupsPlugin(
         invoke: () => ({ kind: 'groups', label: '群组', count: Object.keys(readGroups()).length }),
       });
 
-      const invalidateGroups = () => context.signals.emit('groups.invalidated');
+      const invalidateGroups = () => { context.signals.emit('groups.invalidated'); context.signals.emit('connection.targets.invalidated'); };
       context.events.subscribe('group.created', invalidateGroups);
       context.events.subscribe('group.members.changed', invalidateGroups);
       context.events.subscribe('group.ungrouped', invalidateGroups);

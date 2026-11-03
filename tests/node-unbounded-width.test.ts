@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { ApplicationKernel } from '../src/core/kernel.ts';
+import { textNodePlugin } from '../src/plugins/text-node/plugin.ts';
+import { parseProject, serializeProject } from '../src/plugins/import-export/codec.ts';
+import type { ContentSummary } from '../src/protocols/content.ts';
+import type { ProjectSource } from '../src/protocols/files.ts';
+
+for (const presentation of ['card', 'text-box'] as const) test(`${presentation} widths exceed the old maximum and survive undo, presentation switches and file reload`, async () => {
+  const kernel = new ApplicationKernel([textNodePlugin]); await kernel.start();
+  const { id } = await kernel.router.dispatch<{ id: string }>('node.create', { title: '宽度测试', width: 3200 }, 'core.test');
+  if (presentation === 'text-box') await kernel.router.dispatch('node.presentation.set', { id, presentation }, 'core.test');
+  const summary = async () => (await kernel.capabilities.request<ContentSummary[]>('content.summaries@1')).find(node => node.id === id)!;
+  const original = await summary();
+  assert.equal(original.resizeLimits?.maxWidth, undefined);
+  if (presentation === 'card') assert.equal(original.width, 3200);
+  await kernel.router.dispatch('node.resize', { id, width: 12000, height: 180 }, 'core.test');
+  assert.equal((await summary()).width, 12000);
+  await kernel.transactions.undo(); assert.equal((await summary()).width, original.width);
+  await kernel.transactions.redo(); assert.equal((await summary()).width, 12000);
+  await kernel.router.dispatch('node.presentation.set', { id, presentation: presentation === 'card' ? 'text-box' : 'card' }, 'core.test');
+  await kernel.router.dispatch('node.presentation.set', { id, presentation }, 'core.test');
+  assert.equal((await summary()).width, 12000);
+  const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
+  const reopened = new ApplicationKernel([textNodePlugin]); await reopened.start();
+  await reopened.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), 'core.test');
+  assert.equal((await reopened.capabilities.request<ContentSummary[]>('content.summaries@1')).find(node => node.id === id)!.width, 12000);
+  await assert.rejects(kernel.router.dispatch('node.resize', { id, width: Infinity, height: 180 }, 'core.test'));
+  await kernel.router.dispatch('node.resize', { id, width: 1, height: 180 }, 'core.test');
+  assert.equal((await summary()).width, presentation === 'card' ? 220 : 120);
+});

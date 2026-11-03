@@ -2536,7 +2536,7 @@ test('object-level appearance migrations keep legacy records inheriting global c
     await annotationMigration.migrate({ annotations: { [legacyAnnotation.id]: legacyAnnotation } }),
     { annotations: { [legacyAnnotation.id]: legacyAnnotation } },
   );
-  assert.equal(connections.manifest.dataVersion, 7);
+  assert.equal(connections.manifest.dataVersion, 8);
   assert.equal(groups.manifest.dataVersion, 2);
   assert.equal(annotations.manifest.dataVersion, 2);
 });
@@ -2583,7 +2583,7 @@ test('global palette persists one contrast-safe connection curve color through t
 
   const source = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
   const descriptor = source.plugins.find((plugin) => plugin.id === 'connections');
-  assert.equal(descriptor?.dataVersion, 7);
+  assert.equal(descriptor?.dataVersion, 8);
   assert.deepEqual(descriptor?.namespaces.sort(), ['connectionAppearance', 'connectionJunction', 'connections']);
 
   const reopened = new ApplicationKernel([
@@ -4844,7 +4844,7 @@ test('title-bar connections stay pinned to title endpoints through movement and 
   assert.deepEqual([resizedConnection.labelWidth, resizedConnection.labelHeight, resizedConnection.revision], [286, 96, 3]);
 
   const source = await harness.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
-  assert.equal(source.plugins.find((plugin) => plugin.id === 'connections')?.dataVersion, 7);
+  assert.equal(source.plugins.find((plugin) => plugin.id === 'connections')?.dataVersion, 8);
   const reopened = new ApplicationKernel([
     textNodePlugin,
     createSelectionPlugin(),
@@ -7346,7 +7346,6 @@ test('text nodes and text boxes convert without losing body or either remembered
   );
   assert.deepEqual(summary.resizeLimits, {
     minWidth: 120,
-    maxWidth: 1600,
     minHeight: 48,
     maxHeight: 1200,
   });

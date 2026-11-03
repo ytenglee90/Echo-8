@@ -34,6 +34,7 @@ import type {
 } from '../../protocols/canvas.ts';
 import {
   type ConnectionSide,
+  type ConnectionEndpoint,
 } from '../../protocols/connections.ts';
 import type {
   ContentMetricsSnapshotV2,
@@ -62,6 +63,7 @@ import { IconButton } from '../../ui/Icon.tsx';
 import { canvasContrastVariables } from '../../ui/canvas-contrast.ts';
 import { SpatialHashIndex } from '../../services/spatial-index.ts';
 import { useCommandAvailability, useContentCatalog } from '../../ui/runtime-hooks.ts';
+import { useConnectionTargets } from '../../ui/use-connection-targets.ts';
 import { CanvasEntityLayerProvider } from '../../ui/canvas-entity-layer-runtime.tsx';
 import { canvasNodeDetail } from '../../services/canvas-lod.ts';
 import { isSupportedDocumentFile } from '../../services/document-files.ts';
@@ -90,7 +92,6 @@ import { CanvasPanSessionController } from './pan-session.ts';
 
 const CULL_MARGIN = 360;
 const MIN_NODE_WIDTH = 220;
-const MAX_NODE_WIDTH = 1600;
 const MIN_NODE_HEIGHT = 120;
 const MAX_NODE_HEIGHT = 1200;
 const SNAP_THRESHOLD_PX = 18;
@@ -191,6 +192,8 @@ export function CanvasSurface({
   const [previews, setPreviews] = useState<Record<string, NodePosition>>({});
   const [snapGuides, setSnapGuides] = useState<CanvasSnapGuide[]>([]);
   const [resizePreviews, setResizePreviews] = useState<Record<string, ResizePreview>>({});
+  const connectionTargetNodes = useMemo(() => new Map([...nodeById].map(([id, node]) => [id, { ...node, ...previews[id], ...resizePreviews[id] }])), [nodeById, previews, resizePreviews]);
+  const externalConnectionTargets = useConnectionTargets(client, connectionTargetNodes);
   const [lassoPreview, setLassoPreview] = useState<LassoPreview>();
   const [surfaceSize, setSurfaceSize] = useState<SurfaceSize>({ width: 1200, height: 800 });
   const [canvasColor, setCanvasColor] = useState('#efefec');
@@ -1057,7 +1060,7 @@ export function CanvasSurface({
     }
     if (connectionDraft.current) {
       const pointer = screenToWorld(event.clientX, event.clientY, camera, event.currentTarget);
-      const session = updateConnectionSession(
+      const session = withPointConnectionTarget(updateConnectionSession(
         connectionDraft.current,
         pointer,
         event.clientX,
@@ -1066,7 +1069,7 @@ export function CanvasSurface({
         previews,
         resizePreviews,
         camera.zoom,
-      );
+      ));
       connectionDraft.current = session;
       setConnectionTargetId(session.to?.nodeId);
       client.emit('connection.draft.preview', connectionDraftPayload(session));
@@ -1208,11 +1211,33 @@ export function CanvasSurface({
     return true;
   };
 
+  const withPointConnectionTarget = (session: ConnectionSession): ConnectionSession => {
+    if (camera.zoom < 0.5) return session;
+    try {
+      const target = client.requestSync<ConnectionEndpoint | undefined>('connections.targetAt@1', {
+        point: session.pointer, excludeId: session.from.nodeId, radius: 18 / camera.zoom,
+      });
+      if (target) return { ...session, to: target };
+    } catch { /* Point provider is optional. */ }
+    const slop = 18 / camera.zoom;
+    // Groups are targeted at their side ports, so member nodes keep their own input regions.
+    let best: { id: string; side: 'left' | 'right'; distance: number } | undefined;
+    for (const target of externalConnectionTargets) {
+      if (target.id === session.from.nodeId) continue;
+      for (const side of ['left', 'right'] as const) {
+        const x = target.x + (side === 'right' ? target.width : 0), y = target.y + target.height / 2;
+        const distance = Math.hypot(session.pointer.x - x, session.pointer.y - y);
+        if (distance <= slop && (!best || distance < best.distance)) best = { id: target.id, side, distance };
+      }
+    }
+    return best ? { ...session, to: { nodeId: best.id, side: best.side, kind: 'group' } } : session;
+  };
+
   const finishGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (finishPendingSurfaceClick(event.pointerId)) return;
     if (connectionDraft.current) {
       const pointer = screenToWorld(event.clientX, event.clientY, camera, event.currentTarget);
-      const session = updateConnectionSession(
+      const session = withPointConnectionTarget(updateConnectionSession(
         connectionDraft.current,
         pointer,
         event.clientX,
@@ -1221,7 +1246,7 @@ export function CanvasSurface({
         previews,
         resizePreviews,
         camera.zoom,
-      );
+      ));
       connectionDraft.current = undefined;
       setConnectionTargetId(undefined);
       client.emit('connection.draft.preview', {});
@@ -1351,7 +1376,9 @@ export function CanvasSurface({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    const pointer = connectionPortPoint(node, side, previews, resizePreviews);
+    const pointer = side === 'title' && surfaceRef.current
+      ? screenToWorld(event.clientX, event.clientY, camera, surfaceRef.current)
+      : connectionPortPoint(node, side, previews, resizePreviews);
     const session: ConnectionSession = {
       from: { nodeId: node.id, side },
       pointer,
@@ -1387,7 +1414,7 @@ export function CanvasSurface({
       originWidth: node.width,
       originHeight: node.height,
       minWidth: node.resizeLimits?.minWidth ?? MIN_NODE_WIDTH,
-      maxWidth: node.resizeLimits?.maxWidth ?? MAX_NODE_WIDTH,
+      maxWidth: node.resizeLimits?.maxWidth ?? Number.POSITIVE_INFINITY,
       minHeight: node.resizeLimits?.minHeight ?? MIN_NODE_HEIGHT,
       maxHeight: node.resizeLimits?.maxHeight ?? MAX_NODE_HEIGHT,
       width: node.width,

@@ -1,0 +1,126 @@
+import { expect, test, type Page } from '@playwright/test';
+import { serializeProject } from '../src/plugins/import-export/codec.ts';
+import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
+import type { ProjectSource } from '../src/protocols/files.ts';
+
+async function openGroups(page: Page) {
+  await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
+  await page.goto('/'); await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+  const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, groups: {}, connections: {}, connectionJunction: {} };
+  for (const [id, x, y] of [['a', 80, 80], ['b', 80, 330], ['c', 760, 80], ['d', 760, 330], ['e', 440, 530]] as const) {
+    const content = createContentStorage(`body-${id}`, `正文${id}`, 1);
+    namespaces.textContent[`body-${id}`] = content.content;
+    for (const patch of content.chunkPatches) if (patch.op === 'set') namespaces.textContentChunk[patch.key] = patch.value;
+    namespaces.textNode[id] = { id, contentId: `body-${id}`, title: `群组测试${id}`, x, y, width: 220, height: 130, titleColor: '#303030', revision: 1, createdAt: 1, updatedAt: 1 };
+  }
+  for (const [id, memberIds] of [['g1', ['a', 'b']], ['g2', ['c', 'd']]] as const) namespaces.groups[id] = {
+    id, memberIds, title: id, titleStyle: { fontSize: 13, fontWeight: 650 }, revision: 1, createdAt: 1, updatedAt: 1,
+  };
+  const blob = await serializeProject({ document: { revision: 1, namespaces }, plugins: [
+    { id: 'text-node', version: '0.1.0', dataVersion: 2, namespaces: ['textNode', 'textContent', 'textContentChunk'], available: true },
+    { id: 'groups', version: '0.1.0', dataVersion: 2, namespaces: ['groups'], available: true },
+    { id: 'connections', version: '0.1.0', dataVersion: 8, namespaces: ['connections', 'connectionJunction'], available: true },
+  ] });
+  await page.keyboard.press('Control+k');
+  const palette = page.getByRole('dialog', { name: '命令面板' });
+  await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开书籍');
+  await palette.getByRole('option', { name: /^打开书籍/u }).click();
+  const notice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' });
+  const chooser = page.waitForEvent('filechooser');
+  await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
+  await (await chooser).setFiles({ name: '群组连线.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
+  await expect(notice).toHaveCount(0);
+  await expect(page.locator('.group-frame')).toHaveCount(2);
+}
+
+async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
+  await page.mouse.move(from.x, from.y); await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 8 }); await page.mouse.up();
+}
+async function port(page: Page, id: string, side: 'left' | 'right') {
+  const group = page.locator(`.group-frame[data-group-id="${id}"]`);
+  await group.focus();
+  const box = await group.locator(`.group-connection-port.${side}`).boundingBox();
+  return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+}
+
+test('title ports on both sides follow node positions during preview, movement and undo', async ({ page }) => {
+  await openGroups(page);
+  const source = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试a"]') });
+  const target = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试c"]') });
+  const from = await source.getByRole('button', { name: '从群组测试a标题栏右侧连接', exact: true }).boundingBox();
+  const to = await target.getByRole('button', { name: '从群组测试c标题栏左侧连接', exact: true }).boundingBox();
+  await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2); await page.mouse.down();
+  await page.mouse.move(to!.x + to!.width / 2, to!.y + to!.height / 2, { steps: 8 });
+  await expect(page.locator('.connection-path.draft')).toHaveAttribute('d', /^M 300 101 C /u);
+  await page.mouse.up();
+  const path = page.locator('.connection-hit-area');
+  await expect(path).toHaveCount(1);
+  const read = async () => (await path.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+  expect((await read()).slice(0, 2)).toEqual([300, 101]);
+  expect((await read()).slice(-2)).toEqual([760, 101]);
+  const header = await source.locator('header').boundingBox();
+  await drag(page, { x: header!.x + 80, y: header!.y + 21 }, { x: header!.x + 860, y: header!.y + 21 });
+  await expect.poll(async () => (await read())[0]).toBeGreaterThan(760);
+  const moved = await read();
+  expect(moved[2]).toBeLessThan(moved[0]);
+  expect(moved[6]).toBe(980); expect(moved[4]).toBeGreaterThan(moved[6]);
+  await expect(page.locator('.connection-path:not(.draft)')).not.toHaveCSS('stroke-dasharray', 'none');
+  await page.keyboard.press('Control+z');
+  await expect.poll(async () => (await read())[0]).toBe(300);
+});
+
+test('groups connect at side midpoints, can receive node/title links and update immediately after member resizing', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await openGroups(page);
+  const from = await port(page, 'g1', 'right'), to = await port(page, 'g2', 'left');
+  await drag(page, from, to);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await expect(page.locator('.connection-path').first()).toHaveCSS('stroke-dasharray', 'none');
+  const checkMidpoints = async () => {
+    const layout = await page.locator('.connection-hit-area').first().evaluate(element => {
+      const path = element as SVGPathElement;
+      const from = path.getPointAtLength(0), to = path.getPointAtLength(path.getTotalLength());
+      const matrix = path.getScreenCTM()!;
+      const a = new DOMPoint(from.x, from.y).matrixTransform(matrix), b = new DOMPoint(to.x, to.y).matrixTransform(matrix);
+      const left = document.querySelector('.group-frame[data-group-id="g1"]')!.getBoundingClientRect();
+      const right = document.querySelector('.group-frame[data-group-id="g2"]')!.getBoundingClientRect();
+      return { from: { x: a.x, y: a.y }, to: { x: b.x, y: b.y }, expectedFrom: { x: left.right, y: left.top + left.height / 2 }, expectedTo: { x: right.left, y: right.top + right.height / 2 } };
+    });
+    expect(Math.abs(layout.from.x - layout.expectedFrom.x)).toBeLessThan(1);
+    expect(Math.abs(layout.from.y - layout.expectedFrom.y)).toBeLessThan(1);
+    expect(Math.abs(layout.to.x - layout.expectedTo.x)).toBeLessThan(1);
+    expect(Math.abs(layout.to.y - layout.expectedTo.y)).toBeLessThan(1);
+  };
+  await checkMidpoints();
+  const member = page.getByRole('article', { name: /文本节点：群组测试b$/u });
+  const handle = await member.getByRole('button', { name: /调整群组测试b的大小/u }).boundingBox();
+  await drag(page, { x: handle!.x + handle!.width / 2, y: handle!.y + handle!.height / 2 }, { x: handle!.x + handle!.width / 2, y: handle!.y + handle!.height / 2 + 90 });
+  await checkMidpoints();
+  // Independent title source aimed at the group side: group stays centred, title stays a title.
+  const title = await page.getByRole('button', { name: '从群组测试e标题栏左侧连接', exact: true }).boundingBox();
+  await drag(page, { x: title!.x + title!.width / 2, y: title!.y + title!.height / 2 }, await port(page, 'g2', 'left'));
+  await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await page.keyboard.press('Control+y'); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  await page.locator('.group-frame[data-group-id="g1"]').focus(); await page.keyboard.press('Enter');
+  await page.keyboard.press('Delete');
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  expect(errors).toEqual([]);
+});
+
+test('group output can reach an ordinary node or a node title, retaining the correct solid/dashed style', async ({ page }) => {
+  await openGroups(page);
+  const node = page.getByRole('article', { name: /文本节点：群组测试e$/u });
+  const box = await node.boundingBox();
+  await drag(page, await port(page, 'g1', 'right'), { x: box!.x + 5, y: box!.y + box!.height / 2 });
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await expect(page.locator('.connection-path').first()).toHaveCSS('stroke-dasharray', 'none');
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(0);
+  await drag(page, await port(page, 'g1', 'right'), { x: box!.x + 4, y: box!.y + 21 });
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
+  await expect(page.locator('.connection-hit-area')).toHaveAttribute('d', /C/u);
+});

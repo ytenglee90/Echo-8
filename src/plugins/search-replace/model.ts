@@ -79,7 +79,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         'search.replace',
         'search.replaceTargets',
       ],
-      dispatches: ['search.close', 'search.run', 'editor.open', 'editor.revealRange', 'selection.set', 'selection.clear'],
+      dispatches: ['search.close', 'search.run', 'editor.open', 'editor.revealRange', 'selection.set', 'selection.clear', 'canvas.focusEntity'],
       events: [
         'search.replaced',
         'content.changed',
@@ -318,7 +318,9 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
           navigationScope = { requestId: source.requestId, nodeIds, selectionAvailable };
         }
         const scope = navigationScope;
-        const target = resolveSearchNavigation(source.hits, scope.nodeIds, navigationState, direction);
+        const emptySelectionScope = Boolean(scope.nodeIds?.length && !source.hits.some(hit => scope.nodeIds!.includes(hit.nodeId)));
+        if (emptySelectionScope && source.hits.length > 0) scope.nodeIds = undefined;
+        const target = resolveSearchNavigation(source.hits, scope.nodeIds, emptySelectionScope ? undefined : navigationState, direction);
         if (!target) {
           throw new Error(scope.nodeIds?.length
             ? '选中的文字节点或文本框中没有这次查找的结果'
@@ -341,6 +343,10 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
           run: async (signal) => {
             if (signal.aborted || latestResult?.requestId !== source.requestId) return;
             if (scope.selectionAvailable) {
+              if (emptySelectionScope) {
+                expectedNavigationSelections.push([]);
+                await context.commands.dispatch('selection.clear');
+              }
               expectedNavigationSelections.push([target.hit.nodeId]);
               await context.commands.dispatch('selection.set', {
                 items: [{ id: target.hit.nodeId, kind: 'text-node' }],
@@ -362,6 +368,10 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
               }
             }
             if (signal.aborted || latestResult?.requestId !== source.requestId) return;
+            if (emptySelectionScope) {
+              try { await context.commands.dispatch('canvas.focusEntity', { id: target.hit.nodeId }); }
+              catch { /* Headless compositions may omit the canvas. */ }
+            }
             highlightedHit = target.hit;
             context.signals.emit('search.match.preview', {
               nodeId: target.hit.nodeId,
@@ -630,6 +640,14 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
           const targets = selectedNodeIds.length > 0 ? new Set(selectedNodeIds) : undefined;
           const hits = targets ? source.hits.filter((hit) => targets.has(hit.nodeId)) : source.hits;
           if (hits.length === 0) {
+            if (selectedNodeIds.length > 0 && source.hits.length > 0) {
+              // A stale selection must not widen a replacement into a canvas-wide write.
+              // Navigate to a real match first; the next explicit replacement uses that highlight.
+              navigationScope = undefined;
+              navigationState = undefined;
+              await context.commands.invoke('search.next');
+              return { result: { replaced: 0 } };
+            }
             throw new Error(selectedNodeIds.length > 0
               ? '所选节点中没有可替换的结果'
               : '全画布没有可替换的结果');

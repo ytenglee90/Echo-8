@@ -19,7 +19,7 @@ import {
   connectionCurveLassoRegions,
   connectionCurveMidpoint,
   connectionCurvePath,
-  connectionCurvePathWithArrow,
+  connectionStrokeGeometry,
   distanceToConnectionCurve,
   orderConnectionsForPaint,
 } from '../src/plugins/connections/rendering.ts';
@@ -37,7 +37,7 @@ const nodeDefaults = {
 const source = { ...nodeDefaults, id: 'source', x: 100, y: 80, width: 320, height: 180 };
 const target = { ...nodeDefaults, id: 'target', x: 120, y: 420, width: 320, height: 180 };
 
-test('title connections retain both title endpoints and anchor before the title dot', () => {
+test('title connections retain their semantic endpoints and project onto either title edge', () => {
   const record: ConnectionRecord = {
     id: 'connection-title',
     from: { nodeId: source.id, side: 'title' },
@@ -55,7 +55,10 @@ test('title connections retain both title endpoints and anchor before the title 
   assert.deepEqual(connectionEndpointPoint(endpoints.from, source), {
     x: source.x,
     y: source.y + CONNECTION_TITLE_ANCHOR_OFFSET_Y,
-    side: 'title',
+    side: 'left',
+  });
+  assert.deepEqual(connectionEndpointPoint(endpoints.from, source, 'right'), {
+    x: source.x + source.width, y: source.y + CONNECTION_TITLE_ANCHOR_OFFSET_Y, side: 'right',
   });
 });
 
@@ -73,19 +76,21 @@ test('dragging from a title port keeps title routing while targeting another nod
   assert.equal(session.to?.nodeId, target.id);
 });
 
-test('title connection curves route outside the title edge and remain bounded', () => {
-  const from = connectionEndpointPoint({ nodeId: source.id, side: 'title' }, source);
-  const to = connectionEndpointPoint({ nodeId: target.id, side: 'title' }, target);
-  const bounds = connectionCurveBounds(from, to);
-  assert.ok(bounds.x < Math.min(from.x, to.x) - 170);
-  assert.ok(bounds.x > Math.min(from.x, to.x) - 230);
-  assert.match(connectionCurvePath(from, to), /^M 100 101 C /u);
+test('title connection curves extend from facing sides using the same smooth handles as node links', () => {
+  const rightNode = { ...target, x: 900 };
+  const from = connectionEndpointPoint({ nodeId: source.id, side: 'title' }, source, 'right');
+  const to = connectionEndpointPoint({ nodeId: rightNode.id, side: 'title' }, rightNode, 'left');
+  const bounds = connectionCurveBounds(from, to, 0);
+  assert.equal(bounds.x, from.x);
+  assert.equal(bounds.x + bounds.width, to.x);
+  assert.match(connectionCurvePath(from, to), /^M 420 101 C /u);
   assert.doesNotMatch(connectionCurvePath(from, to), / L /u);
   const coordinates = connectionCurvePath(from, to).match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
   assert.equal(coordinates[3], from.y);
   assert.equal(coordinates[5], to.y);
   const midpoint = connectionCurveMidpoint(from, to);
-  assert.ok(midpoint.x < Math.min(from.x, to.x));
+  assert.ok(coordinates[2] > from.x && coordinates[4] < to.x);
+  assert.ok(midpoint.x > from.x && midpoint.x < to.x);
   assert.ok(midpoint.y > from.y && midpoint.y < to.y);
   assert.ok(distanceToConnectionCurve(midpoint, from, to) < 1);
   assert.ok(bounds.y <= from.y && bounds.y + bounds.height >= to.y);
@@ -129,51 +134,32 @@ test('ordinary connection handles follow endpoint sides even when endpoint x pos
   assert.ok(coordinates[2] > coordinates[0]);
   assert.ok(coordinates[4] < coordinates[6]);
 
-  const arrow = connectionCurvePathWithArrow(
+  const arrow = connectionStrokeGeometry(
     { x: 320, y: 100, side: 'right' },
     { x: 280, y: 500, side: 'left' },
-  ).match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
+  ).arrowPath.match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
   assert.equal(arrow.at(-4), 280);
   assert.ok(arrow.at(-6)! < arrow.at(-4)!);
   assert.ok(arrow.at(-2)! < arrow.at(-4)!);
 });
 
-test('connection output is one larger integrated solid arrow path without a marker tail', () => {
-  const path = connectionCurvePathWithArrow(
-    { x: 0, y: 0, side: 'right' },
-    { x: 120, y: 300, side: 'left' },
-  );
-  const coordinates = path.match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
-  assert.equal((path.match(/\bM\b/gu) ?? []).length, 2);
-  assert.equal((path.match(/\bC\b/gu) ?? []).length, 2);
-  assert.equal((path.match(/\bL\b/gu) ?? []).length, 2);
-  assert.equal((path.match(/\bZ\b/gu) ?? []).length, 2);
-  assert.equal(coordinates.length, 20);
-  assert.deepEqual(coordinates.slice(6, 8), [
-    120 - CONNECTION_ARROW_SCREEN_LENGTH,
-    300,
-  ]);
-  assert.deepEqual(coordinates.slice(-6), [
-    120 - CONNECTION_ARROW_SCREEN_LENGTH,
-    300 + CONNECTION_ARROW_SCREEN_HALF_WIDTH,
-    120,
-    300,
-    120 - CONNECTION_ARROW_SCREEN_LENGTH,
-    300 - CONNECTION_ARROW_SCREEN_HALF_WIDTH,
-  ]);
-  const zoomed = connectionCurvePathWithArrow(
-    { x: 0, y: 0, side: 'right' },
-    { x: 120, y: 300, side: 'left' },
-    0.5,
-  ).match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
-  const expectedScreenRatio = Math.sqrt(0.5);
-  assert.ok(Math.abs(
-    (120 - zoomed.at(-6)!) * 0.5 - CONNECTION_ARROW_SCREEN_LENGTH * expectedScreenRatio,
-  ) < 0.001);
-  assert.ok(Math.abs(
-    (zoomed.at(-5)! - zoomed.at(-1)!) * 0.5 -
-      CONNECTION_ARROW_SCREEN_HALF_WIDTH * 2 * expectedScreenRatio,
-  ) < 0.001);
+test('a dashed shaft is a single open stroke and its solid arrow is separate and zoom compensated', () => {
+  for (const zoom of [0.4, 0.5, 1, 2.4]) {
+    const geometry = connectionStrokeGeometry({ x: 0, y: 0, side: 'right' }, { x: 520, y: 300, side: 'left' }, zoom);
+    assert.equal((geometry.shaftPath.match(/\bM\b/gu) ?? []).length, 1);
+    assert.equal((geometry.shaftPath.match(/\bC\b/gu) ?? []).length, 1);
+    assert.doesNotMatch(geometry.shaftPath, /[LZ]/u);
+    assert.equal((geometry.arrowPath.match(/\bZ\b/gu) ?? []).length, 1);
+    const triangle = geometry.arrowPath.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+    assert.deepEqual(triangle.slice(2, 4), [520, 300]);
+    const base = { x: (triangle[0] + triangle[4]) / 2, y: (triangle[1] + triangle[5]) / 2 };
+    const expectedScale = zoom < 1 ? 1 / Math.sqrt(zoom) : 1 / zoom;
+    assert.ok(Math.abs(Math.hypot(520 - base.x, 300 - base.y) - CONNECTION_ARROW_SCREEN_LENGTH * expectedScale) < 0.1);
+    assert.ok(Math.abs(Math.hypot(triangle[0] - triangle[4], triangle[1] - triangle[5]) - 2 * CONNECTION_ARROW_SCREEN_HALF_WIDTH * expectedScale) < 0.1);
+  }
+  const junction = connectionStrokeGeometry({ x: 0, y: 0 }, { x: 300, y: 100 }, 1, false);
+  assert.equal(junction.arrowPath, '');
+  assert.equal(junction.shaftPath, connectionCurvePath({ x: 0, y: 0 }, { x: 300, y: 100 }));
 });
 
 test('selected connections paint after ordinary connections without changing either stable order', () => {

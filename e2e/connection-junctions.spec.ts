@@ -3,7 +3,7 @@ import { serializeProject } from '../src/plugins/import-export/codec.ts';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
 import type { ProjectSource } from '../src/protocols/files.ts';
 
-async function openGraph(page: Page, outputs = false, title = false) {
+async function openGraph(page: Page, outputs = false, title = false, rightHandLayout = false) {
   await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
   await page.goto('/');
   await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
@@ -12,7 +12,7 @@ async function openGraph(page: Page, outputs = false, title = false) {
     const content = createContentStorage(`body-${id}`, `正文${id}`, 1);
     namespaces.textContent[`body-${id}`] = content.content;
     for (const patch of content.chunkPatches) if (patch.op === 'set') namespaces.textContentChunk[patch.key] = patch.value;
-    namespaces.textNode[id] = { id, contentId: `body-${id}`, title: `节点${id}`, x, y, width: 280, height: 158, titleColor: '#303030', revision: 1, createdAt: 1, updatedAt: 1 };
+    namespaces.textNode[id] = { id, contentId: `body-${id}`, title: `节点${id}`, x: rightHandLayout && id !== 'c' ? x + 360 : x, y, width: 280, height: 158, titleColor: '#303030', revision: 1, createdAt: 1, updatedAt: 1 };
   }
   for (const [id, from, to] of (outputs ? [['edge-a', 'a', 'b'], ['edge-b', 'a', 'c']] : [['edge-a', 'a', 'c'], ['edge-b', 'b', 'c']])) {
     namespaces.connections[id] = { id, from: { nodeId: from, side: title ? 'title' : 'right' }, to: { nodeId: to, side: title ? 'title' : 'left' }, label: id, labelWidth: 100, labelHeight: 40, revision: 1, createdAt: 1 };
@@ -52,14 +52,13 @@ const label = (page: Page, id: string) => page.locator(`.connection-label-foreig
 async function expectLabelAtSegmentMiddle(page: Page, id: string) {
   const geometry = await page.locator(`.connection-hit-area[data-connection-id="${id}"]`).evaluate((path, edgeId) => {
     const curve = path as SVGPathElement;
-    const from = curve.getPointAtLength(0);
-    const to = curve.getPointAtLength(curve.getTotalLength());
+    const middle = curve.getPointAtLength(curve.getTotalLength() / 2);
     const box = document.querySelector<SVGForeignObjectElement>(`.connection-label-foreign[data-connection-id="${edgeId}"]`)!;
     return { actualX: box.x.baseVal.value + box.width.baseVal.value / 2, actualY: box.y.baseVal.value + box.height.baseVal.value / 2,
-      expectedX: (from.x + to.x) / 2, expectedY: (from.y + to.y) / 2 };
+      expectedX: middle.x, expectedY: middle.y };
   }, id);
-  expect(geometry.actualX).toBeCloseTo(geometry.expectedX, 1);
-  expect(geometry.actualY).toBeCloseTo(geometry.expectedY, 1);
+  expect(Math.abs(geometry.actualX - geometry.expectedX)).toBeLessThan(1);
+  expect(Math.abs(geometry.actualY - geometry.expectedY)).toBeLessThan(1);
 }
 
 test('a right-click adds one movable junction, labels follow its branch and deleting it restores the node connection', async ({ page }) => {
@@ -98,6 +97,8 @@ for (const outputs of [false, true]) test(`multiple ${outputs ? 'outgoing' : 'in
   await openGraph(page, outputs);
   await label(page, 'edge-a').click();
   await label(page, 'edge-b').click({ modifiers: ['Shift'] });
+  await page.locator('.connection-hit-area').first().focus();
+  await expect(page.locator('.connection-hit-area').first()).toHaveCSS('outline-style', 'none');
   await rightClickAt(page, 540, 520);
   await expect(page.locator('.connection-junction')).toHaveCount(1);
   await expect(page.locator('.connection-hit-area')).toHaveCount(3);
@@ -169,4 +170,93 @@ test('title routes and their text boxes stay dashed before and after shared junc
   await page.keyboard.press('Delete');
   await expect(paths).toHaveCount(2);
   for (const path of await paths.all()) await expect(path).toHaveCSS('stroke-dasharray', '6px, 4px');
+});
+
+test('title dashes keep actual gaps and solid arrows, routed junctions are tangent-continuous and follow overview visibility', async ({ page }) => {
+  await openGraph(page, false, true, true);
+  const first = page.locator('.connection-hit-area[data-connection-id="edge-a"]');
+  await first.focus(); await first.press('Enter');
+  const second = await page.locator('.connection-hit-area[data-connection-id="edge-b"]').evaluate(element => {
+    const path = element as SVGPathElement, point = path.getPointAtLength(path.getTotalLength() / 3);
+    const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
+    return { x: screen.x, y: screen.y };
+  });
+  await page.keyboard.down('Shift'); await page.mouse.click(second.x, second.y); await page.keyboard.up('Shift');
+  await rightClickAt(page, 260, 180);
+  await expect(page.locator('.connection-junction')).toHaveCount(1);
+  await expect(page.locator('.connection-arrow')).toHaveCount(1);
+  const shaft = page.locator('.connection-hit-area[data-connection-id="edge-a"] + .connection-path');
+  await expect(shaft).toHaveCSS('fill', 'none');
+  await expect(shaft).toHaveAttribute('d', /^M[^Z]+C[^Z]+$/u);
+  const pixels = await shaft.evaluate(async element => {
+    const path = element as SVGPathElement, box = path.getBBox(), style = getComputedStyle(path);
+    const padding = 8, width = Math.ceil(box.width + padding * 2), height = Math.ceil(box.height + padding * 2);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${box.x - padding} ${box.y - padding} ${width} ${height}"><path d="${path.getAttribute('d')}" fill="${style.fill}" stroke="black" stroke-width="${style.strokeWidth}" stroke-dasharray="${style.strokeDasharray}" stroke-linecap="${style.strokeLinecap}"/></svg>`;
+    const image = new Image(); image.src = `data:image/svg+xml,${encodeURIComponent(svg)}`; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    const context = canvas.getContext('2d')!; context.drawImage(image, 0, 0);
+    let gaps = 0, ink = 0;
+    for (let distance = 10; distance < path.getTotalLength() - 10; distance += 1) {
+      const point = path.getPointAtLength(distance);
+      const alpha = context.getImageData(Math.round(point.x - box.x + padding), Math.round(point.y - box.y + padding), 1, 1).data[3];
+      if (alpha < 15) gaps += 1; else if (alpha > 100) ink += 1;
+    }
+    return { gaps, ink };
+  });
+  expect(pixels.gaps).toBeGreaterThan(10); expect(pixels.ink).toBeGreaterThan(20);
+  await expect(page.locator('.connection-arrow')).toHaveCSS('stroke', 'none');
+  await expect(page.locator('.connection-arrow')).toHaveCSS('stroke-dasharray', 'none');
+  const joins = await page.locator('.connection-hit-area').evaluateAll(paths => paths.map(element => {
+    const path = element as SVGPathElement, numbers = path.getAttribute('d')!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+    return { from: { x: numbers[0], y: numbers[1] }, controlFrom: { x: numbers[2], y: numbers[3] }, controlTo: { x: numbers[4], y: numbers[5] }, to: { x: numbers[6], y: numbers[7] } };
+  }));
+  const trunk = joins.find(curve => Math.abs(curve.from.x - 260) < 1)!;
+  const screenshotPath = test.info().outputPath('title-routing.png');
+  await page.screenshot({ path: screenshotPath });
+  await test.info().attach('title-junction-routing', { path: screenshotPath, contentType: 'image/png' });
+  expect(trunk.controlFrom.x).toBeGreaterThan(260);
+  for (const branch of joins.filter(curve => Math.abs(curve.to.x - 260) < 1)) {
+    const a = { x: branch.to.x - branch.controlTo.x, y: branch.to.y - branch.controlTo.y };
+    const b = { x: trunk.controlFrom.x - trunk.from.x, y: trunk.controlFrom.y - trunk.from.y };
+    expect(Math.abs(a.x * b.y - a.y * b.x) / Math.hypot(a.x, a.y) / Math.hypot(b.x, b.y)).toBeLessThan(.001);
+    expect(a.x * b.x + a.y * b.y).toBeGreaterThan(0);
+  }
+  await page.locator('.canvas-surface').click({ position: { x: 10, y: 650 } });
+  await page.mouse.move(1, 1);
+  const zoom = page.locator('.canvas-zoom-status input');
+  await zoom.fill('40'); await zoom.press('Enter');
+  await expect(page.locator('.connection-path:not(.draft)')).toHaveCount(0);
+  await expect(page.locator('.connection-junction')).toHaveCount(0);
+  await zoom.fill('100'); await zoom.press('Enter');
+  await expect(page.locator('.connection-junction')).toHaveCount(1);
+});
+
+test('a node can connect into a junction and its separate port can pull out a new connection without moving the point', async ({ page }) => {
+  await openGraph(page);
+  await label(page, 'edge-a').click();
+  await rightClickAt(page, 540, 520);
+  const marker = page.locator('.connection-junction');
+  const original = await marker.getAttribute('transform');
+  const point = await pointOnScreen(page, 540, 520);
+  const inputPort = page.getByRole('button', { name: '从节点b右侧连接', exact: true });
+  const portBox = await inputPort.boundingBox();
+  await page.mouse.move(portBox!.x + portBox!.width / 2, portBox!.y + portBox!.height / 2);
+  await page.mouse.down(); await page.mouse.move(point.x, point.y, { steps: 8 }); await page.mouse.up();
+  await expect(page.locator('.connection-hit-area')).toHaveCount(4);
+  await expect(marker).toHaveAttribute('transform', original!);
+  await marker.locator('.connection-junction-dot').click();
+  await expect(marker).toHaveCSS('outline-style', 'none');
+  const outputPort = marker.getByRole('button', { name: '从中转点拉出连接线' });
+  const outBox = await outputPort.boundingBox();
+  const destination = await pointOnScreen(page, 220, 410);
+  await page.mouse.move(outBox!.x + outBox!.width / 2, outBox!.y + outBox!.height / 2);
+  await page.mouse.down(); await page.mouse.move(destination.x, destination.y, { steps: 8 });
+  await expect(page.locator('.connection-path.draft')).toHaveCount(1);
+  await page.mouse.up();
+  await expect(page.locator('.connection-hit-area')).toHaveCount(5);
+  await expect(marker).toHaveAttribute('transform', original!);
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('.connection-hit-area')).toHaveCount(4);
+  await page.keyboard.press('Control+y');
+  await expect(page.locator('.connection-hit-area')).toHaveCount(5);
 });

@@ -15,7 +15,7 @@
 .canvas-minimap .minimap-surface:active { cursor: grabbing; }
 .canvas-minimap .minimap-blocks rect { cursor: pointer; }
 .canvas-minimap .minimap-blocks rect:focus-visible { outline: 2px solid var(--minimap-ink); outline-offset: 2px; }
-.canvas-minimap .minimap-surface:focus-visible { outline: 2px solid var(--minimap-ink); outline-offset: -3px; }
+.canvas-minimap .minimap-surface:focus { outline: none; }
 .canvas-minimap .minimap-viewport { fill: none; stroke: var(--minimap-ink); stroke-width: 1.2; opacity: .65; pointer-events: none; }
 .canvas-minimap .minimap-click-pulse {
   fill: color-mix(in srgb, var(--minimap-ink) 16%, transparent); stroke: var(--minimap-ink);
@@ -488,11 +488,12 @@
 .connection-edge.title {
   top: 5px;
   bottom: auto;
-  left: -8px;
   width: 28px;
   height: 32px;
   outline: none;
 }
+.connection-edge.title-left { left: -8px; }
+.connection-edge.title-right { right: -8px; }
 
 .text-node-card.connection-target {
   border-color: var(--canvas-selection, var(--selection));
@@ -575,7 +576,8 @@
   pointer-events: none !important;
 }
 
-.connection-layer.lasso-hit-disabled .connection-junction { pointer-events: none !important; }
+.connection-layer.lasso-hit-disabled .connection-junction,
+.connection-layer.lasso-hit-disabled .connection-junction * { pointer-events: none !important; }
 
 @scope ([data-ui-contribution="connections:connections.layer"]) {
   .connection-junction { cursor: move; pointer-events: all; touch-action: none; outline: none; }
@@ -621,9 +623,19 @@
   box-shadow: 0 0 0 2px var(--canvas-selection-soft, color-mix(in srgb, var(--selection) 20%, transparent));
 }
 .group-frame:focus-visible { outline: 2px solid var(--canvas-selection, var(--selection)); outline-offset: 3px; }
+.group-connection-port {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 18px; height: 18px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--canvas-line); background: var(--canvas-background); color: var(--canvas-line);
+  pointer-events: auto; cursor: crosshair; opacity: 0;
+}
+.group-connection-port.left { left: 0; }
+.group-connection-port.right { left: 100%; }
+.group-frame:is(:hover, .selected, :focus-within) .group-connection-port { opacity: 1; }
+.group-connection-port:focus-visible { outline: 2px solid var(--canvas-selection); outline-offset: 2px; opacity: 1; }
 
 .connection-path {
-  fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
+  fill: none;
   fill-rule: evenodd;
   filter: none;
   stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
@@ -636,6 +648,18 @@
 .connection-path-batch {
   pointer-events: none;
 }
+.connection-arrow { fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62))); stroke: none; pointer-events: none; }
+.connection-layer .connection-hit-area:is(:focus, :focus-visible),
+.connection-layer .connection-junction:is(:focus, :focus-visible),
+.connection-layer .connection-junction-port:is(:focus, :focus-visible) { outline: none; }
+.connection-junction-port-bridge { fill: transparent; }
+.connection-junction-port { opacity: 0; pointer-events: none; cursor: crosshair; outline: none; }
+.connection-junction:is(:hover, :focus-within, .selected) .connection-junction-port { opacity: 1; pointer-events: all; }
+.connection-junction-port circle { fill: var(--canvas-background); stroke: var(--canvas-selection); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.connection-junction-port path { fill: none; stroke: var(--canvas-selection); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+.connection-junction:is(.connection-target, :focus-within) .connection-junction-ring { opacity: 1; }
+.connection-arrow:is(.selected, .hovered):not(.custom-color),
+.connection-hit-area:focus-visible ~ .connection-arrow:not(.custom-color) { fill: var(--canvas-selection, var(--selection)); }
 
 .connection-hit-area {
   fill: none;
@@ -651,7 +675,7 @@
 .connection-hit-area:focus-visible + .connection-path,
 .connection-path.hovered,
 .connection-path.selected {
-  fill: var(--canvas-selection, var(--selection));
+  fill: none;
   stroke: var(--canvas-selection, var(--selection));
   stroke-width: var(--connection-highlight-stroke-width, 3px);
 }
@@ -660,13 +684,13 @@
 .connection-hit-area:focus-visible + .connection-path.custom-color,
 .connection-path.hovered.custom-color,
 .connection-path.selected.custom-color {
-  fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
+  fill: none;
   stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
   stroke-width: var(--connection-highlight-stroke-width, 3px);
 }
 
 .connection-path.draft {
-  fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
+  fill: none;
   stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
   stroke-dasharray: 5 5;
   pointer-events: none;
@@ -674,6 +698,7 @@
 
 .connection-path.title-connection {
   stroke-dasharray: var(--connection-dash-length, 6px) var(--connection-dash-gap, 4px);
+  stroke-linecap: butt;
 }
 
 .connection-label-display.title-connection,

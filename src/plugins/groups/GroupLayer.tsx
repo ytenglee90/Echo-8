@@ -20,6 +20,7 @@ import type {
 } from '../../protocols/canvas.ts';
 import type { ContentSummary, NodePosition } from '../../protocols/content.ts';
 import type { GroupMembershipPreview, GroupRecord } from '../../protocols/groups.ts';
+import type { ConnectionGraphSnapshot, ConnectionNodeGeometry } from '../../protocols/connections.ts';
 import type { SmartSnapRequest, SmartSnapResult } from '../../protocols/layout.ts';
 import type {
   SelectionMode,
@@ -30,6 +31,9 @@ import { useCanvasLayerEnvironment } from '../../ui/use-canvas-layer-environment
 import { canvasContrastVariables } from '../../ui/canvas-contrast.ts';
 import { resolveGroupDropTarget } from './drop-target.ts';
 import { computeGroupBounds } from './layout.ts';
+import { useConnectionGesture } from '../../ui/use-connection-gesture.ts';
+import { useConnectionTargets } from '../../ui/use-connection-targets.ts';
+import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 
 const CULL_MARGIN = 360;
 const SNAP_THRESHOLD_PX = 18;
@@ -75,6 +79,17 @@ export function GroupLayer({ client }: { client: ViewClient }) {
   const [membershipPreview, setMembershipPreview] = useState<GroupMembershipPreview>();
   const drag = useRef<GroupDrag | undefined>(undefined);
   const pendingDrag = useRef<PendingGroupDrag | undefined>(undefined);
+  const [junctions, setJunctions] = useState<ConnectionNodeGeometry[]>([]);
+  const connectionAvailable = useCommandAvailability(client, 'connection.create');
+  useEffect(() => {
+    let current = true;
+    const refresh = () => void client.request<ConnectionGraphSnapshot>('connections.graph@1').then(graph => {
+      if (current) setJunctions(graph.junctions.map(point => ({ id: point.id, x: point.x, y: point.y, width: 0, height: 0, kind: 'junction' })));
+    }).catch(() => { if (current) setJunctions([]); });
+    refresh();
+    const unsubscribe = client.subscribeSignal('connections.invalidated', refresh);
+    return () => { current = false; unsubscribe(); };
+  }, [capabilityVersion, client]);
 
   useEffect(() => {
     let current = true;
@@ -142,6 +157,9 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     [previews, sizePreviews, stableNodeMap],
   );
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const connectionTargets = useConnectionTargets(client, nodeMap);
+  const connectionGeometry = useMemo(() => new Map<string, ConnectionNodeGeometry>([...nodeMap, ...connectionTargets.map(target => [target.id, target] as const), ...junctions.map(point => [point.id, point] as const)]), [connectionTargets, junctions, nodeMap]);
+  const connect = useConnectionGesture(client, camera, connectionGeometry);
   const membershipTarget = useMemo(() => {
     if (!membershipPreview || 'clear' in membershipPreview || !membershipPreview.active) return undefined;
     return resolveGroupDropTarget(groups, nodes, membershipPreview);
@@ -430,6 +448,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
           return (
             <section
               key={group.id}
+              data-group-id={group.id}
               className={`group-frame ${isSelected ? 'selected' : ''}`}
               style={{
                 left: bounds.x,
@@ -446,7 +465,10 @@ export function GroupLayer({ client }: { client: ViewClient }) {
               onPointerMove={moveDrag}
               onPointerUp={finishDrag}
               onPointerCancel={cancelDrag}
+              onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: group.id })}
+              onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: group.id, clear: true })}
               onKeyDown={(event) => {
+                if (event.key === 'Escape') { connect.cancel(); return; }
                 if (event.key !== 'Enter' && event.key !== ' ') return;
                 event.preventDefault();
                 void client.dispatch('selection.set', {
@@ -455,6 +477,12 @@ export function GroupLayer({ client }: { client: ViewClient }) {
                 });
               }}
             >
+              {connectionAvailable && camera.zoom >= 0.5 && (['left', 'right'] as const).map(side => <button
+                key={side} type="button" className={`group-connection-port ${side}`} aria-label={`从群组${side === 'left' ? '左' : '右'}侧连接`}
+                data-group-id={group.id} title="拖动连接到节点、群组或中转点"
+                onPointerDown={event => connect.begin(event, { id: group.id, ...bounds, kind: 'group' }, false, side)}
+                onPointerMove={connect.move} onPointerUp={event => connect.finish(event)}
+                onPointerCancel={event => connect.finish(event, true)} onLostPointerCapture={event => connect.finish(event, true)} />)}
             </section>
           );
         })}

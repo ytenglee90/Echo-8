@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
-import type { ConnectionGraphSnapshot } from '../../protocols/connections.ts';
+import type { ConnectionGraphSnapshot, ConnectionTarget } from '../../protocols/connections.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import { IconButton } from '../../ui/Icon.tsx';
@@ -38,12 +38,14 @@ export function ConnectionToolbarAction({ client }: { client: ViewClient }) {
     void (async () => {
       try {
         const selection = await client.request<SelectionSnapshot>('selection.read@1');
-        const [nodes, graph] = await Promise.all([
+        const [nodes, graph, targets] = await Promise.all([
           client.request<ContentSummary[]>('content.summariesById@1', { nodeIds: selection.ids }),
           client.request<ConnectionGraphSnapshot>('connections.graph@1'),
+          client.requestAll<ConnectionTarget[]>('connections.targets@1'),
         ]);
         if (!current) return;
-        const selected = nodes.map((node) => node.id);
+        const known = new Set([...nodes.map(node => node.id), ...targets.flat().map(target => target.id), ...graph.junctions.map(point => point.id)]);
+        const selected = selection.ids.filter(id => known.has(id));
         const singleNodeCanDisconnect = selected.length === 1 && graph.connections.some((connection) =>
           connection.from.nodeId === selected[0] || connection.to.nodeId === selected[0],
         );

@@ -4,7 +4,8 @@ export type ContentNodePresentation = 'card' | 'text-box';
 
 export interface ContentNodeResizeLimits {
   minWidth: number;
-  maxWidth: number;
+  /** Omission means no maximum width; older providers may still declare a finite limit. */
+  maxWidth?: number;
   minHeight: number;
   maxHeight: number;
 }

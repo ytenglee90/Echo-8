@@ -161,7 +161,7 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
       const resolveSelection = async (payload: SelectionResolutionRequest): Promise<SelectionResolution> => {
         await ensureCatalogReady();
         const declaredItems = payload.items;
-        if (!declaredItems && (payload.ids ?? []).some((id) => !catalog.get(id))) {
+        if ((declaredItems?.map(item => item.id) ?? payload.ids ?? []).some((id) => !catalog.get(id))) {
           await ensureCatalogCurrent();
         }
         const incoming = payload.items ?? (payload.ids ?? []).map((id) => ({

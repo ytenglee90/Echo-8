@@ -59,6 +59,11 @@ test('minimap contains only colored node/text-box blocks, focuses a clicked bloc
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await openMap(page);
+  const toolbarOrder = await page.getByRole('group', { name: '画布状态', exact: true }).evaluate(element =>
+    [...element.querySelectorAll('button, input')].map(control => control.getAttribute('aria-label') ?? ''));
+  expect(toolbarOrder.findIndex(label => label === '关闭小地图')).toBe(toolbarOrder.findIndex(label => label.startsWith('聚焦选中项')) + 1);
+  await page.locator('.minimap-surface').focus();
+  await expect(page.locator('.minimap-surface')).toHaveCSS('outline-style', 'none');
   const map = page.getByRole('region', { name: '画布小地图', exact: true });
   await expect(map.locator('text, foreignObject, path, line')).toHaveCount(0);
   await expect(map).toHaveText('');
