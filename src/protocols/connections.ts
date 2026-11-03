@@ -173,6 +173,9 @@ function clampLabelDimension(value: unknown, fallback: number, minimum: number, 
 }
 
 export interface ConnectionDraft {
+  /** In-place preview of an existing edge; cleared only after its replacement revision is projected. */
+  reconnectId?: string;
+  reconnectRevision?: number;
   from?: ConnectionEndpoint;
   to?: ConnectionEndpoint;
   pointer?: { x: number; y: number };
@@ -191,13 +194,19 @@ export interface ConnectionNodeGeometry {
   presentation?: 'card' | 'text-box';
 }
 
+/** Only two ordinary text boxes use split title/body edge regions. */
+export function connectionTextBoxPair(from: ConnectionNodeGeometry | undefined, to: ConnectionNodeGeometry | undefined): boolean {
+  return from?.presentation === 'text-box' && to?.presentation === 'text-box' && !from.kind && !to.kind;
+}
+
 /** Semantic drop target shared by node, group and junction gesture adapters. */
 export function connectionTitlePortHit(node: ConnectionNodeGeometry, pointer: { x: number; y: number }): boolean {
   return !node.kind && node.presentation !== 'text-box' &&
     pointer.y >= node.y - 18 && pointer.y <= node.y + 42 &&
     Math.min(Math.abs(pointer.x - node.x), Math.abs(pointer.x - node.x - node.width)) <= 24;
 }
-export function connectionTargetSide(node: ConnectionNodeGeometry, pointer: { x: number; y: number }, titleRoute = false): ConnectionSide {
+export function connectionTargetSide(node: ConnectionNodeGeometry, pointer: { x: number; y: number }, titleRoute = false, source?: ConnectionNodeGeometry): ConnectionSide {
+  if (connectionTextBoxPair(source, node)) return pointer.y < node.y + node.height / 2 ? 'title' : pointer.x < node.x + node.width / 2 ? 'left' : 'right';
   return titleRoute || connectionTitlePortHit(node, pointer) ? 'title' : pointer.x < node.x + node.width / 2 ? 'left' : 'right';
 }
 
@@ -243,9 +252,9 @@ export function resolveConnectionRecordEndpoints(
   const automatic = resolveConnectionEndpoints(fromNode, toNode);
   const title = isTitleConnection(connection);
   return {
-    from: connection.from.kind ? { ...automatic.from, kind: connection.from.kind }
+    from: connection.from.kind ? { ...automatic.from, kind: connection.from.kind, ...(connection.from.kind === 'junction' ? { side: 'right' as const } : {}) }
       : { ...automatic.from, side: title ? 'title' : automatic.from.side },
-    to: connection.to.kind ? { ...automatic.to, kind: connection.to.kind }
+    to: connection.to.kind ? { ...automatic.to, kind: connection.to.kind, ...(connection.to.kind === 'junction' ? { side: 'left' as const } : {}) }
       : { ...automatic.to, side: title ? 'title' : automatic.to.side },
   };
 }
@@ -253,9 +262,9 @@ export function resolveConnectionRecordEndpoints(
 export function connectionEndpointPoint(
   endpoint: ConnectionEndpoint,
   node: ConnectionNodeGeometry,
-  horizontalSide: ConnectionSide = 'left',
+  horizontalSide: ConnectionSide = endpoint.side === 'title' ? 'left' : endpoint.side,
 ): { x: number; y: number; side: ConnectionSide } {
-  if (endpoint.kind === 'junction') return { x: node.x, y: node.y, side: endpoint.side };
+  if (endpoint.kind === 'junction') return { x: node.x, y: node.y, side: horizontalSide };
   if (endpoint.side === 'title') {
     return {
       x: node.x + (horizontalSide === 'right' ? node.width : 0),
@@ -274,7 +283,12 @@ export function connectionEndpointPoint(
 export function connectionHorizontalSides(connection: Pick<ConnectionRecord, 'from' | 'to' | 'titleRoute'>, from: ConnectionNodeGeometry, to: ConnectionNodeGeometry) {
   const sides = resolveConnectionEndpoints(from, to);
   const endpoints = resolveConnectionRecordEndpoints(connection, from, to);
+  if (endpoints.from.kind === 'junction') sides.from.side = 'right';
+  if (endpoints.to.kind === 'junction') sides.to.side = 'left';
   if (!endpoints.from.kind && !endpoints.to.kind && endpoints.from.side === 'title' && endpoints.to.side === 'title' &&
-    from.presentation !== 'text-box' && to.presentation !== 'text-box') sides.to.side = sides.from.side;
+    from.presentation !== 'text-box' && to.presentation !== 'text-box') {
+    sides.from.side = sides.from.side === 'right' ? 'left' : 'right';
+    sides.to.side = sides.from.side;
+  }
   return sides;
 }

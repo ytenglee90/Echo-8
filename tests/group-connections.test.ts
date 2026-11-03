@@ -53,7 +53,7 @@ test('group endpoints stay at the derived side midpoint, preserve line kinds and
   assert.deepEqual((await targets())[0], after);
 });
 
-test('group links round-trip with routed labels, clipboard identity remapping and data-version-seven compatibility', async () => {
+test('routed group links survive file reload and version-seven compatibility but stay out of group clipboard copies', async () => {
   const { kernel, groups, graph } = await setup();
   const created = await kernel.router.dispatch<{ id: string }>('connection.create', {
     from: { nodeId: groups[0], kind: 'group', side: 'right' }, to: { nodeId: groups[1], kind: 'group', side: 'left' },
@@ -65,10 +65,9 @@ test('group links round-trip with routed labels, clipboard identity remapping an
   await kernel.router.dispatch('clipboard.copy', undefined, source);
   await kernel.router.dispatch('clipboard.paste', undefined, source);
   const pasted = await graph();
-  assert.equal(pasted.junctions.length, 2); assert.equal(pasted.connections.length, 4);
+  assert.equal(pasted.junctions.length, 1); assert.equal(pasted.connections.length, 2);
   const copied = pasted.connections.filter(edge => !original.connections.some(old => old.id === edge.id));
-  assert.equal(copied.filter(edge => edge.label === '群组路线').length, 1);
-  assert.ok(copied.some(edge => edge.from.kind === 'group' && !groups.includes(edge.from.nodeId)));
+  assert.deepEqual(copied, [], 'group copies exclude every junction and routed segment');
   await kernel.router.dispatch('history.undo', undefined, source);
   assert.deepEqual(await graph(), original);
   const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, source);
@@ -133,4 +132,23 @@ test('group selections use ordinary and title shortcuts in order, with stale end
   assert.equal(edge.from.kind, 'group'); assert.equal(edge.to.side, 'title');
   assert.equal(isTitleConnection(edge), true);
   await assert.rejects(kernel.router.dispatch('connection.create', { from: { nodeId: 'missing', kind: 'group', side: 'right' }, to: edge.to }, source), /不存在/u);
+});
+
+for (const duplicate of [false, true]) test(`group ${duplicate ? 'Alt duplication' : 'copy/paste'} excludes routed edges and points while copying ordinary internal edges`, async () => {
+  const { kernel, ids, groups, graph } = await setup();
+  const refs: Array<{ id: string; revision: number }> = [];
+  for (const from of ids.slice(0, 2)) refs.push({ ...(await kernel.router.dispatch<{ id: string }>('connection.create', { from: { nodeId: from, side: 'right' }, to: { nodeId: ids[4], side: 'left' } }, source)), revision: 1 });
+  await kernel.router.dispatch('connection.addJunction', { x: 500, y: 250, connections: refs }, source);
+  await kernel.router.dispatch('connection.create', { from: { nodeId: ids[0], side: 'right' }, to: { nodeId: ids[1], side: 'left' } }, source);
+  const original = await graph();
+  await kernel.router.dispatch('selection.set', { items: [{ id: groups[0], kind: 'group' }] }, source);
+  const history = kernel.history.getState().undoCount;
+  if (duplicate) await kernel.router.dispatch('clipboard.duplicateSelectionAt', { offset: { x: 350, y: 80 } }, source);
+  else { await kernel.router.dispatch('clipboard.copy', undefined, source); await kernel.router.dispatch('clipboard.paste', undefined, source); }
+  const copied = await graph();
+  assert.equal(copied.junctions.length, 1); assert.equal(copied.connections.length, 5);
+  const added = copied.connections.filter(e => !original.connections.some(old => old.id === e.id));
+  assert.equal(added.length, 1); assert.equal(added[0].from.kind, undefined); assert.equal(added[0].to.kind, undefined);
+  assert.equal(kernel.history.getState().undoCount, history + 1);
+  await kernel.transactions.undo(); assert.deepEqual(await graph(), original);
 });

@@ -111,4 +111,7 @@
 | [0099](ADR-0099-GROUP-CONNECTION-PREVIEW.md) | 群组透明端口与成员变更锚点预览 | 有效；补充 0091、0095、0097 |
 | [0100](ADR-0100-TITLE-SAME-SIDES-AND-MINIMAP-GROUP-FILLS.md) | 仅标题互连同侧端口与小地图群组底色 | 有效；部分替代 0093、0096 |
 | [0101](ADR-0101-CONNECTION-RECONNECT-AND-LABEL-INTERACTIONS.md) | 箭头重接、标签缩放会话与统一描边和实体已用色 | 有效；补充 0089、0091、0097、0099 |
+| [0102](ADR-0102-JUNCTION-HORIZONTAL-PORTS-AND-TITLE-SIDE-CORRECTION.md) | 中转点左入右出与标题互连选边方向修正 | 有效；替代 0091 平均切线，修正 0100 |
+| [0103](ADR-0103-TEXT-BOX-TARGET-REGIONS.md) | 文本框互连按目标上/下区判定线型，保持中点锚点 | 有效；补充 0097、0102 |
+| [0104](ADR-0104-JUNCTION-LINE-TYPES-AND-GROUP-COPY.md) | 中转组件线型隔离与群组复制排除中转图 | 有效；部分替代 0091 群组复制规则 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

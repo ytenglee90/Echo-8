@@ -2,6 +2,7 @@ import type { CameraState, LassoPreview } from '../../protocols/canvas.ts';
 import {
   connectionEndpointPoint,
   connectionTargetSide,
+  connectionTextBoxPair,
   resolveConnectionEndpoints,
   type ConnectionDraft,
   type ConnectionEndpoint,
@@ -116,6 +117,11 @@ export function updateConnectionSession(
   ) >= CONNECTION_DRAG_THRESHOLD;
   const sourceSide = session.sourceSide ?? session.from.side;
   if (source && target) {
+    if (connectionTextBoxPair(source, target)) {
+      const automatic = resolveConnectionEndpoints(source, target);
+      return { ...session, from: { ...automatic.from, side: connectionTargetSide(target, pointer, false, source) === 'title' ? 'title' : automatic.from.side },
+        to: { ...automatic.to, side: connectionTargetSide(target, pointer, false, source) }, sourceSide, pointer, moved };
+    }
     const endpoints = sourceSide === 'title' || connectionTargetSide(target, pointer) === 'title'
       ? {
           from: { nodeId: source.id, side: 'title' as const },

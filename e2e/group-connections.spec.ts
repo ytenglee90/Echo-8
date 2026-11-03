@@ -3,7 +3,7 @@ import { serializeProject } from '../src/plugins/import-export/codec.ts';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
 import type { ProjectSource } from '../src/protocols/files.ts';
 
-async function openGroups(page: Page) {
+async function openGroups(page: Page, routedCopy = false) {
   await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
   await page.goto('/'); await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, groups: {}, connections: {}, connectionJunction: {} };
@@ -16,6 +16,12 @@ async function openGroups(page: Page) {
   for (const [id, memberIds] of [['g1', ['a', 'b']], ['g2', ['c', 'd']]] as const) namespaces.groups[id] = {
     id, memberIds, title: id, titleStyle: { fontSize: 13, fontWeight: 650 }, revision: 1, createdAt: 1, updatedAt: 1,
   };
+  if (routedCopy) {
+    namespaces.connectionJunction.j = { id: 'j', x: 570, y: 230, revision: 1, branchSide: 'incoming' };
+    for (const id of ['a', 'b']) namespaces.connections[id] = { id, from: { nodeId: id, side: 'right' }, to: { nodeId: 'j', kind: 'junction', side: 'left' }, revision: 1, createdAt: 1 };
+    namespaces.connections.trunk = { id: 'trunk', from: { nodeId: 'j', kind: 'junction', side: 'right' }, to: { nodeId: 'c', side: 'left' }, revision: 1, createdAt: 1 };
+    namespaces.connections.internal = { id: 'internal', from: { nodeId: 'a', side: 'right' }, to: { nodeId: 'b', side: 'left' }, revision: 1, createdAt: 1 };
+  }
   const blob = await serializeProject({ document: { revision: 1, namespaces }, plugins: [
     { id: 'text-node', version: '0.1.0', dataVersion: 2, namespaces: ['textNode', 'textContent', 'textContentChunk'], available: true },
     { id: 'groups', version: '0.1.0', dataVersion: 2, namespaces: ['groups'], available: true },
@@ -173,22 +179,22 @@ test('title ports on both sides follow node positions during preview, movement a
   const to = await target.getByRole('button', { name: '从群组测试c标题栏左侧连接', exact: true }).boundingBox();
   await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2); await page.mouse.down();
   await page.mouse.move(to!.x + to!.width / 2, to!.y + to!.height / 2, { steps: 8 });
-  await expect(page.locator('.connection-path.draft')).toHaveAttribute('d', /^M 300 101 C /u);
+  await expect(page.locator('.connection-path.draft')).toHaveAttribute('d', /^M 80 101 C /u);
   await page.mouse.up();
   const path = page.locator('.connection-hit-area');
   await expect(path).toHaveCount(1);
   const read = async () => (await path.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-  expect((await read()).slice(0, 2)).toEqual([300, 101]);
-  expect((await read()).slice(-2)).toEqual([980, 101]);
+  expect((await read()).slice(0, 2)).toEqual([80, 101]);
+  expect((await read()).slice(-2)).toEqual([760, 101]);
   const header = await source.locator('header').boundingBox();
   await drag(page, { x: header!.x + 80, y: header!.y + 21 }, { x: header!.x + 860, y: header!.y + 21 });
-  await expect.poll(async () => (await read())[6]).toBe(760);
+  await expect.poll(async () => (await read())[6]).toBe(980);
   const moved = await read();
-  expect(moved[2]).toBeLessThan(moved[0]);
-  expect(moved[6]).toBe(760); expect(moved[4]).toBeLessThan(moved[6]);
+  expect(moved[2]).toBeGreaterThan(moved[0]);
+  expect(moved[6]).toBe(980); expect(moved[4]).toBeGreaterThan(moved[6]);
   await expect(page.locator('.connection-path:not(.draft)')).not.toHaveCSS('stroke-dasharray', 'none');
   await page.keyboard.press('Control+z');
-  await expect.poll(async () => (await read())[0]).toBe(300);
+  await expect.poll(async () => (await read())[0]).toBe(80);
 });
 
 test('groups connect at side midpoints, can receive node/title links and update immediately after member resizing', async ({ page }) => {
@@ -259,4 +265,27 @@ test('Alt dragging an entire group displays its copied frame before committing, 
   await page.mouse.up(); await page.keyboard.up('Alt');
   await expect(ghost).toHaveCount(0); await expect(page.locator('.group-frame')).toHaveCount(3);
   await page.keyboard.press('Control+z'); await expect(page.locator('.group-frame')).toHaveCount(2);
+});
+
+for (const method of ['keyboard', 'toolbar', 'alt']) test(`copying a routed group through ${method} leaves its junction and routed links behind`, async ({ page }) => {
+  await openGroups(page, true);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(4); await expect(page.locator('.connection-junction')).toHaveCount(1);
+  const original = await page.locator('.connection-junction').getAttribute('transform');
+  const group = page.locator('.group-frame[data-group-id="g1"]'), box = await group.boundingBox();
+  if (method === 'alt') {
+    await page.keyboard.down('Alt'); await drag(page, { x: box!.x + 14, y: box!.y + 16 }, { x: box!.x + 360, y: box!.y + 96 }); await page.keyboard.up('Alt');
+  } else {
+    await group.click({ position: { x: 14, y: 16 } });
+    await expect(group).toHaveAttribute('aria-pressed', 'true');
+    if (method === 'keyboard') { await page.keyboard.press('Control+c'); await page.keyboard.press('Control+v'); }
+    else {
+      await page.locator('.clipboard-actions').getByRole('button', { name: /^复制/u }).click();
+      await page.locator('.clipboard-actions').getByRole('button', { name: /^粘贴/u }).click();
+    }
+  }
+  await expect(page.locator('.group-frame')).toHaveCount(3); await expect(page.locator('.text-node-card')).toHaveCount(8);
+  await expect(page.locator('.connection-junction')).toHaveCount(1); await expect(page.locator('.connection-junction')).toHaveAttribute('transform', original!);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(5);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.group-frame')).toHaveCount(2);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(4);
 });

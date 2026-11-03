@@ -82,7 +82,12 @@ export function connectionStrokeGeometry(
   if (!final || !arrow) return full;
   const length = approximateCubicLength(final);
   const detailWorldScale = canvasDetailWorldScale(zoom);
-  const arrowLength = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale, length * 0.45);
+  const forwardRoute = Boolean(from.tangent || to.tangent) &&
+    final.controlFrom.y === final.from.y && final.controlTo.y === final.to.y &&
+    (final.controlFrom.x - final.from.x) * (final.to.x - final.from.x) > 0 &&
+    (final.to.x - final.controlTo.x) * (final.to.x - final.from.x) > 0;
+  const arrowLength = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale, length * 0.45,
+    forwardRoute ? Math.abs(final.to.x - final.from.x) * 0.4 : Infinity);
   if (arrowLength < 0.001) return full;
   // Trim on the actual Bézier, preserving both control points and a single forward stroke.
   let previous = final.to, traversed = 0, trimT = 1;
@@ -108,7 +113,9 @@ export function connectionStrokeGeometry(
   const unitY = tangentY / tangentLength;
   const base = { x: final.to.x - unitX * arrowLength, y: final.to.y - unitY * arrowLength };
   const terminalHandle = Math.max(0.001, Math.hypot(curveBase.x - d.x, curveBase.y - d.y));
-  const controlTo = { x: base.x - unitX * terminalHandle, y: base.y - unitY * terminalHandle };
+  const shaftHandleLimit = forwardRoute ? Math.abs(base.x - final.from.x) / 2 : Infinity;
+  const controlFrom = forwardRoute ? { ...a, x: final.from.x + unitX * Math.min(Math.abs(a.x - final.from.x), shaftHandleLimit) } : a;
+  const controlTo = { x: base.x - unitX * Math.min(terminalHandle, shaftHandleLimit), y: base.y - unitY * terminalHandle };
   const arrowHalfWidth = Math.min(CONNECTION_ARROW_SCREEN_HALF_WIDTH * detailWorldScale, arrowLength / 2);
   const perpendicular = { x: -unitY, y: unitX };
   const firstWing = {
@@ -120,7 +127,7 @@ export function connectionStrokeGeometry(
     y: base.y - perpendicular.y * arrowHalfWidth,
   };
   const shaftSegments = segments.map((segment, index) => index === segments.length - 1
-    ? { ...segment, controlFrom: a, controlTo, to: base }
+    ? { ...segment, controlFrom, controlTo, to: base }
     : segment);
   const shaft = [
     `M ${formatPoint(from)}`,
@@ -251,8 +258,16 @@ function connectionCurveSegments(
   ));
   const span = Math.hypot(to.x - from.x, to.y - from.y);
   const routed = Boolean(from.tangent || to.tangent);
-  const fromHandle = routed ? Math.min(bend, span * (from.tangent ? 0.35 : 0.5)) : bend;
-  const toHandle = routed ? Math.min(bend, span * (to.tangent ? 0.35 : 0.5)) : bend;
+  let fromHandle = routed ? Math.min(bend, span * (from.tangent ? 0.35 : 0.5)) : bend;
+  let toHandle = routed ? Math.min(bend, span * (to.tangent ? 0.35 : 0.5)) : bend;
+  // Fixed horizontal ports must not overshoot merely because the vertical separation is large.
+  if (routed && (!from.tangent || from.tangent.y === 0) && (!to.tangent || to.tangent.y === 0) &&
+    Math.abs(to.x - from.x) > 0.001 && (from.tangent?.x ?? fromDirection) === relativeDirection &&
+    (to.tangent?.x ?? toDirection) === relativeDirection) {
+    const limit = Math.abs(to.x - from.x) / 2;
+    fromHandle = Math.min(fromHandle, limit);
+    toHandle = Math.min(toHandle, limit);
+  }
   return [{
     kind: 'cubic',
     from,

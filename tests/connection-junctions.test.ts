@@ -185,10 +185,9 @@ test('legacy logical endpoints remain compatible and existing link commands oper
   assert.equal(duplicate.id, original.connections[0].id);
   assert.equal((await graph()).connections.length, 3);
   await kernel.router.dispatch('selection.set', { ids: [ids[0], ids[2]] }, source);
-  await kernel.router.dispatch('connection.toggleTitleSelected', undefined, source);
-  const titled = await graph();
-  assert.equal(titled.junctions.length, 1);
-  assert.equal(titled.connections.filter(isTitleConnection).length, 2);
+  const beforeConversion = await graph();
+  await assert.rejects(kernel.router.dispatch('connection.toggleTitleSelected', undefined, source), /虚线与实线不能共用/u);
+  assert.deepEqual(await graph(), beforeConversion);
   await kernel.router.dispatch('connection.toggleSelected', undefined, source);
   assert.equal((await graph()).connections.length, 2);
   assert.ok((await graph()).connections.some((edge) => edge.label === '分支1'));
@@ -238,7 +237,7 @@ test('all branches share a forward tangent at a junction, including the left-of-
     ['c', { id: 'c', x: 800, y: 210, width: 280, height: 158 }],
     ['j', { id: 'j', x: 260, y: 180, width: 0, height: 0 }],
   ]);
-  const points = connectionGraphPoints(edges, nodes, [{ id: 'j', x: 260, y: 180, revision: 1, branchSide: 'incoming' }]);
+  const points = connectionGraphPoints(edges, nodes);
   for (const id of ['a', 'b']) {
     const incoming = points.get(id)!, outgoing = points.get('trunk')!;
     assert.deepEqual(incoming.to.tangent, outgoing.from.tangent);

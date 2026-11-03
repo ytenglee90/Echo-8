@@ -16,6 +16,7 @@ import {
   DEFAULT_CONNECTION_LABEL_HEIGHT,
   DEFAULT_CONNECTION_LABEL_WIDTH,
   resolveConnectionEndpoints,
+  connectionTextBoxPair,
   resolveConnectionRecordEndpoints,
   MAX_CONNECTION_LABEL_LENGTH,
   normalizeConnectionLabelSize,
@@ -52,6 +53,7 @@ import {
 } from './rendering.ts';
 
 import {
+  assertJunctionChanges, assertJunctionLineTypes,
   JUNCTION_NAMESPACE, isJunction, isAddJunctionRequest, isMoveJunctionRequest,
   junctionGeometry, logicalConnectionPaths, planConnectionGraphDeletion, serializeConnectionGraph, splitConnectionsAtJunction,
 } from './junctions.ts';
@@ -272,6 +274,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             return record;
           });
           const split = splitConnectionsAtJunction(records, payload);
+          assertJunctionChanges(Object.values(all), split.connections);
           return {
             result: { id: split.junction.id },
             transaction: {
@@ -479,6 +482,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             revision: (current?.revision ?? 0) + 1,
           };
           if (reference) delete connection.titleRoute;
+          assertJunctionChanges(Object.values(readConnections()), [connection]);
           return {
             result: { id },
             transaction: {
@@ -675,6 +679,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             revision: 1,
             createdAt: Date.now(),
           };
+          assertJunctionChanges(records, [connection]);
           return {
             result: { id },
             transaction: {
@@ -719,6 +724,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
               to: edge.to.kind ? edge.to : { ...edge.to, side: 'title' as const },
               revision: edge.revision + 1,
             }));
+            assertJunctionChanges(Object.values(readConnections()), updated);
             return {
               result: { id: existing!.id, converted: true },
               transaction: {
@@ -1049,7 +1055,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           const nodeMap = new Map<string, import('../../protocols/connections.ts').ConnectionNodeGeometry>(nodes.map((node) => [node.id, node]));
           for (const target of await readTargets()) nodeMap.set(target.id, target);
           for (const point of Object.values(readJunctions())) nodeMap.set(point.id, junctionGeometry(point));
-          const graphPoints = connectionGraphPoints(Object.values(readConnections()), nodeMap, Object.values(readJunctions()));
+          const graphPoints = connectionGraphPoints(Object.values(readConnections()), nodeMap);
           return {
             owner: 'connections',
             entities: [...Object.values(readJunctions()).map((point) => ({
@@ -1120,9 +1126,13 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
 
       context.capabilities.provide<{ ids: string[] }, ClipboardFragment>({
         key: 'clipboard.serialize@1',
-        invoke: (input) => {
+        invoke: async (input) => {
           const selected = new Set(Array.isArray(input?.ids) ? input.ids : []);
-          const graph = serializeConnectionGraph(Object.values(readConnections()), Object.values(readJunctions()), selected);
+          const records = Object.values(readConnections());
+          const copyingGroup = (await readTargets()).some(target => selected.has(target.id));
+          const graph = copyingGroup
+            ? { connections: records.filter(edge => edge.from.kind !== 'junction' && edge.to.kind !== 'junction' && selected.has(edge.from.nodeId) && selected.has(edge.to.nodeId)), junctions: [] }
+            : serializeConnectionGraph(records, Object.values(readJunctions()), selected);
           return {
             owner: 'connections', version: 1,
             entityIds: [...graph.connections.map((record) => record.id), ...graph.junctions.map((point) => point.id)],
@@ -1139,6 +1149,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           const connections = fragment.payload.connections.filter(
             (connection) => input.idMap[connection.from.nodeId] && input.idMap[connection.to.nodeId],
           );
+          assertJunctionLineTypes(connections);
           return {
             selectIds: (fragment.payload.junctions ?? []).flatMap((point) => input.idMap[point.id] ? [input.idMap[point.id]] : []),
             events: [{ type: 'connection.changed', payload: { pasted: true } }],
@@ -1269,6 +1280,9 @@ function resolveRequestedConnectionEndpoints(
   fromNode: ConnectionNodeGeometry,
   toNode: ConnectionNodeGeometry,
 ): { from: ConnectionEndpoint; to: ConnectionEndpoint } {
+  if (connectionTextBoxPair(fromNode, toNode)) return payload.to.side === 'title'
+    ? { from: { nodeId: fromNode.id, side: 'title' }, to: { nodeId: toNode.id, side: 'title' } }
+    : resolveConnectionEndpoints(fromNode, toNode);
   if (payload.from.kind || payload.to.kind) {
     return resolveConnectionRecordEndpoints(payload, fromNode, toNode);
   }

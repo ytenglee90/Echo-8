@@ -199,3 +199,9 @@ Group connector hit areas are transparent. Explicit title ports take precedence 
 Only actual card-title pairs use a shared automatically selected side; body, box, group and junction routes retain facing semantics. Minimap groups are inherited-color translucent fills without outlines, and connector drafts use the same live solid/title-dashed classification as committed lines (ADR-0097, ADR-0100).
 
 Arrow reconnection uses revision-checked connection.reconnect v1 with create-equivalent validation and identity-preserving owner patches. Label resize sessions capture on the stable SVG root and release by token on completion, Escape, capture loss or teardown. SVG label borders share shaft dash geometry and canvas background; appearance catalogs include entity colors only. Whole-group duplicate frames remain transient (ADR-0101).
+
+Junction endpoints always enter from the left and leave to the right, with a fixed positive-X horizontal tangent in both drafts and committed projection. Forward routed control handles are bounded by horizontal distance, including arrow-trimmed shafts. Only card-title pairs use corrected same-side selection: source left means left/left, source right means right/right. Legacy side/branch fields round-trip without rewriting (ADR-0102).
+
+Only text-box pairs classify line type from the target drop half: above centre is title/dashed, centre or below is body/solid. Source height is ignored, and all endpoints remain at side midpoints in drafts, creation and arrow reconnection. Existing endpoint schemas and data versions remain unchanged (ADR-0103).
+
+Connection commands reject mixed solid/title-dashed styles in edited junction components before committing. Legacy unrelated components remain readable. Group clipboard projections omit junctions and routed segments through the shared serializer, while retaining direct internal edges and ordinary node-copy graph behavior (ADR-0104).

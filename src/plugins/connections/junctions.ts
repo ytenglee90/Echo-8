@@ -42,12 +42,48 @@ function sameEndpoint(left: ConnectionEndpoint, right: ConnectionEndpoint): bool
   return left.nodeId === right.nodeId && left.kind === right.kind;
 }
 
+/** Validate only edited components; legacy unrelated mixed graphs remain readable and removable. */
+export function assertJunctionLineTypes(records: readonly ConnectionRecord[], touched?: ReadonlySet<string>): void {
+  const parent = new Map<string, string>();
+  const find = (id: string): string => {
+    let root = id;
+    while (parent.has(root) && parent.get(root) !== root) root = parent.get(root)!;
+    for (let current = id; parent.has(current) && parent.get(current) !== root;) {
+      const next = parent.get(current)!; parent.set(current, root); current = next;
+    }
+    return root;
+  };
+  for (const edge of records) for (const endpoint of [edge.from, edge.to]) if (endpoint.kind === 'junction') parent.set(endpoint.nodeId, endpoint.nodeId);
+  for (const edge of records) if (edge.from.kind === 'junction' && edge.to.kind === 'junction') parent.set(find(edge.to.nodeId), find(edge.from.nodeId));
+  const roots = touched ? new Set([...touched].map(find)) : undefined;
+  const types = new Map<string, boolean>();
+  for (const edge of records) {
+    const point = edge.from.kind === 'junction' ? edge.from : edge.to.kind === 'junction' ? edge.to : undefined;
+    if (!point) continue;
+    const root = find(point.nodeId);
+    if (roots && !roots.has(root)) continue;
+    const title = isTitleConnection(edge);
+    if (types.has(root) && types.get(root) !== title) throw new Error('虚线与实线不能共用同一个中转点，请分别添加中转点');
+    types.set(root, title);
+  }
+}
+
+/** Check a proposed edge replacement without changing unrelated legacy components. */
+export function assertJunctionChanges(before: readonly ConnectionRecord[], changed: readonly ConnectionRecord[]): void {
+  const ids = new Set(changed.map(edge => edge.id));
+  const touched = new Set<string>();
+  for (const edge of [...before.filter(edge => ids.has(edge.id)), ...changed]) for (const endpoint of [edge.from, edge.to]) if (endpoint.kind === 'junction') touched.add(endpoint.nodeId);
+  if (!touched.size) return;
+  assertJunctionLineTypes([...before.filter(edge => !ids.has(edge.id)), ...changed], touched);
+}
+
 /** Keep each original identity/label on its branch and create exactly one common trunk. */
 export function splitConnectionsAtJunction(
   records: ConnectionRecord[],
   point: { x: number; y: number },
 ): { junction: ConnectionJunction; connections: ConnectionRecord[] } {
   if (records.length === 0 || records.length > MAX_JUNCTION_BATCH) throw new Error('请先选中连接线');
+  if (new Set(records.map(isTitleConnection)).size > 1) throw new Error('虚线与实线不能共用同一个中转点，请分别添加中转点');
   const commonTo = records.every((record) => sameEndpoint(record.to, records[0].to)) &&
     !(records.length === 1 && records[0].from.kind === 'junction' && records[0].to.kind !== 'junction');
   const commonFrom = records.every((record) => sameEndpoint(record.from, records[0].from));

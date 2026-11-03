@@ -3,7 +3,7 @@
 import { useEffect, useRef, type PointerEvent } from 'react';
 import { createId, type ViewClient } from '../core/contracts.ts';
 import type { CameraState, CanvasViewportSize } from '../protocols/canvas.ts';
-import { connectionTargetSide, connectionTitlePortHit, type ConnectionDraft, type ConnectionEndpoint, type ConnectionReconnectRequest, type ConnectionNodeGeometry } from '../protocols/connections.ts';
+import { connectionTargetSide, connectionTextBoxPair, connectionTitlePortHit, type ConnectionDraft, type ConnectionEndpoint, type ConnectionReconnectRequest, type ConnectionNodeGeometry } from '../protocols/connections.ts';
 
 interface ConnectGesture {
   token: string; pointerId: number; startX: number; startY: number; point: ConnectionNodeGeometry;
@@ -14,11 +14,17 @@ interface ConnectGesture {
 /** Shared governed endpoint drag adapter. Feature providers supply target geometry and endpoint kinds. */
 export function useConnectionGesture(client: ViewClient, camera: CameraState, nodes: ReadonlyMap<string, ConnectionNodeGeometry>) {
   const active = useRef<ConnectGesture | undefined>(undefined);
+  const previewOwner = useRef<string | undefined>(undefined);
+  const clear = (session: ConnectGesture) => {
+    if (previewOwner.current !== session.token) return;
+    previewOwner.current = undefined;
+    client.emit('connection.draft.preview', {});
+  };
   useEffect(() => () => {
     const session = active.current;
     active.current = undefined;
+    if (previewOwner.current) { previewOwner.current = undefined; client.emit('connection.draft.preview', {}); }
     if (!session) return;
-    client.emit('connection.draft.preview', {});
     void client.dispatch('interaction.end', { mode: 'connecting', sessionId: session.token }).catch(() => undefined);
   }, [client]);
   const begin = (event: PointerEvent<SVGElement | HTMLElement>, point: ConnectionNodeGeometry, title = false, side: ConnectionEndpoint['side'] = 'right', reconnect?: Pick<ConnectionReconnectRequest, 'id' | 'expectedRevision'>) => {
@@ -30,16 +36,17 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
     const session: ConnectGesture = {
       token: createId('connection-drag'), pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
       point, moved: false, admitted: false, title, reconnect,
-      draft: { from: { nodeId: point.id, kind: point.kind, side }, titleRoute: title, pointer: { x: point.x + (side === 'right' ? point.width : 0), y: point.y + point.height / 2 } },
+      draft: { reconnectId: reconnect?.id, reconnectRevision: reconnect?.expectedRevision, from: { nodeId: point.id, kind: point.kind, side }, titleRoute: title, pointer: { x: point.x + (side === 'right' ? point.width : 0), y: point.y + point.height / 2 } },
     };
     active.current = session;
+    previewOwner.current = session.token;
     client.emit('connection.draft.preview', session.draft);
     void client.dispatch('interaction.begin', { mode: 'connecting', sessionId: session.token }).then(() => {
       session.admitted = true;
     }).catch(() => {
       if (active.current !== session) return;
       active.current = undefined;
-      client.emit('connection.draft.preview', {});
+      clear(session);
     });
   };
   const move = (event: PointerEvent<SVGElement | HTMLElement>) => {
@@ -80,10 +87,13 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
       const distance = Math.hypot(pointer.x - node.x - node.width / 2, pointer.y - node.y - node.height / 2);
       if (distance < nearest) {
         nearest = distance;
-        target = { nodeId: id, side: connectionTargetSide(node, pointer, session.title) };
+        target = { nodeId: id, side: connectionTargetSide(node, pointer, session.title, session.point) };
       }
     }
-    session.draft = { ...session.draft, from: { nodeId: session.point.id, kind: session.point.kind, side: session.title && !session.point.kind && session.point.presentation !== 'text-box' ? 'title' : pointer.x < session.point.x + session.point.width / 2 ? 'left' : 'right' }, to: target, pointer };
+    const boxPair = target && connectionTextBoxPair(session.point, nodes.get(target.nodeId));
+    const title = boxPair ? target?.side === 'title' : session.title;
+    session.draft = { ...session.draft, titleRoute: title, from: { nodeId: session.point.id, kind: session.point.kind,
+      side: session.point.kind === 'junction' ? 'right' : title && !session.point.kind ? 'title' : pointer.x < session.point.x + session.point.width / 2 ? 'left' : 'right' }, to: target, pointer };
     client.emit('connection.draft.preview', session.draft);
   };
   const finish = (event?: PointerEvent<SVGElement | HTMLElement>, cancel = false) => {
@@ -92,13 +102,13 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
     event?.preventDefault(); event?.stopPropagation();
     if (event && !cancel) move(event);
     active.current = undefined;
-    client.emit('connection.draft.preview', {});
+    if (!session.reconnect || cancel || !session.moved || !session.draft.to) clear(session);
     void client.dispatch('interaction.end', { mode: 'connecting', sessionId: session.token }).then(() => {
-      if (cancel || !session.admitted || !session.moved || !session.draft.to) return;
+      if (cancel || !session.admitted || !session.moved || !session.draft.to) { clear(session); return; }
       return session.reconnect
         ? client.dispatch('connection.reconnect', { ...session.reconnect, from: session.draft.from!, to: session.draft.to })
         : client.dispatch('connection.create', { from: session.draft.from!, to: session.draft.to });
-    }).catch(() => undefined);
+    }).then(() => { if (previewOwner.current === session.token) previewOwner.current = undefined; }).catch(() => clear(session));
   };
   return { begin, move, finish, cancel: () => finish(undefined, true) };
 }

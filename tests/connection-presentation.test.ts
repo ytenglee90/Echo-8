@@ -45,8 +45,8 @@ test('a text box recognizes either title port and leaving the port restores the 
 test('only title-to-title cards use same sides and both switch automatically when their order reverses', () => {
   const a = { id: 'a', x: 0, y: 0, width: 280, height: 160 }, b = { ...a, id: 'b', x: 700 };
   const titles = { from: { nodeId: 'a', side: 'title' as const }, to: { nodeId: 'b', side: 'title' as const } };
-  assert.deepEqual(Object.values(connectionHorizontalSides(titles, a, b)).map(endpoint => endpoint.side), ['right', 'right']);
-  assert.deepEqual(Object.values(connectionHorizontalSides(titles, { ...a, x: 1000 }, b)).map(endpoint => endpoint.side), ['left', 'left']);
+  assert.deepEqual(Object.values(connectionHorizontalSides(titles, a, b)).map(endpoint => endpoint.side), ['left', 'left']);
+  assert.deepEqual(Object.values(connectionHorizontalSides(titles, { ...a, x: 1000 }, b)).map(endpoint => endpoint.side), ['right', 'right']);
   assert.deepEqual(Object.values(connectionHorizontalSides(titles, { ...a, presentation: 'text-box' }, b)).map(endpoint => endpoint.side), ['right', 'left']);
   assert.deepEqual(Object.values(connectionHorizontalSides({ from: { nodeId: 'a', side: 'right' }, to: { nodeId: 'b', side: 'left' } }, a, b)).map(endpoint => endpoint.side), ['right', 'left']);
   assert.deepEqual(Object.values(connectionHorizontalSides({ ...titles, from: { ...titles.from, kind: 'group' } }, { ...a, kind: 'group' }, b)).map(endpoint => endpoint.side), ['right', 'left']);
@@ -65,7 +65,7 @@ test('same-size presentation conversions preserve line attributes, project the c
   const dashed = graph.connections.find(isTitleConnection)!, solid = graph.connections.find(edge => !isTitleConnection(edge))!;
   const points = async (app = kernel) => {
     const nodes = await app.capabilities.request<ContentSummary[]>('content.summaries@1');
-    return connectionGraphPoints(graph.connections, new Map(nodes.map(node => [node.id, node])), []);
+    return connectionGraphPoints(graph.connections, new Map(nodes.map(node => [node.id, node])));
   };
   assert.equal((await points()).get(dashed.id)!.from.y, 180);
   assert.equal((await points()).get(dashed.id)!.to.y, 121);

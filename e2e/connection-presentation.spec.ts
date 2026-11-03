@@ -147,15 +147,72 @@ for (const id of ['solid', 'dashed']) test(`resizing ${id} labels repeatedly, ca
   await expect(page.getByText(/Illegal interaction transition/u)).toHaveCount(0); expect(errors).toEqual([]);
 });
 
-test('dragging an arrow reconnects the existing labelled edge and undo restores its target', async ({ page }) => {
+test('dragging an arrow moves its existing shaft, arrow and label during preview, commits in place and cancels cleanly', async ({ page }) => {
   await openFixture(page, true, false, true);
-  const arrow = page.locator('[data-arrow-for="solid"]');
+  const arrow = page.locator('[data-arrow-for="solid"]'), edge = path(page, 'solid');
+  const original = await edge.getAttribute('d');
+  const label = page.locator('.connection-label-foreign[data-connection-id="solid"]');
+  const labelBefore = await label.boundingBox();
   const start = await arrow.evaluate(e => { const b = e.getBoundingClientRect(); return { x: b.x + b.width / 3, y: b.y + b.height / 2 }; });
   const target = await page.locator('.text-node-card').filter({ has: page.locator('strong[title="演示d"]') }).boundingBox();
-  await drag(page, start, { x: target!.x, y: target!.y + target!.height / 2 });
+  await page.mouse.move(start.x, start.y); await page.mouse.down();
+  await page.mouse.move(610, 350, { steps: 10 });
+  await expect(edge).not.toHaveAttribute('d', original!);
+  await expect(arrow).toHaveCount(1); await expect(page.locator('.connection-path.draft')).toHaveCount(0);
+  await expect.poll(async () => (await label.boundingBox())!.y).not.toBe(labelBefore!.y);
+  await page.mouse.move(target!.x, target!.y + target!.height / 2, { steps: 10 });
+  await expect.poll(async () => (await coordinates(page, 'solid')).slice(-2)).toEqual([780, 420]);
+  await page.screenshot({ path: test.info().outputPath('arrow-reconnect-preview.png') });
+  await page.mouse.up();
+  await expect(page.locator('.connection-layer')).not.toHaveAttribute('data-reconnecting-id');
   await expect.poll(async () => (await coordinates(page, 'solid')).slice(-2)).toEqual([780, 420]);
   await expect(page.locator('.connection-hit-area')).toHaveCount(3);
   await expect(page.locator('.connection-label-text').filter({ hasText: '标签solid' })).toHaveCount(1);
   await page.keyboard.press('Control+z');
-  await expect.poll(async () => (await coordinates(page, 'solid')).slice(-2)).toEqual([780, 170]);
+  await expect(edge).toHaveAttribute('d', original!);
+  const cancelStart = await arrow.evaluate(e => { const b = e.getBoundingClientRect(); return { x: b.x + b.width / 3, y: b.y + b.height / 2 }; });
+  await page.mouse.move(cancelStart.x, cancelStart.y); await page.mouse.down();
+  await page.mouse.move(610, 350, { steps: 10 }); await expect(edge).not.toHaveAttribute('d', original!);
+  await page.keyboard.press('Escape'); await page.mouse.up();
+  await expect(edge).toHaveAttribute('d', original!); await expect(label).toHaveCount(1);
+});
+
+for (const sourceUpper of [false, true]) for (const targetUpper of [false, true]) test(`box-to-box uses only the target ${targetUpper ? 'upper' : 'lower'} half when starting in the ${sourceUpper ? 'upper' : 'lower'} half and keeps centred anchors`, async ({ page }) => {
+  await openFixture(page);
+  const source = await page.getByRole('button', { name: '从演示b右侧连接', exact: true }).boundingBox();
+  const target = await page.locator('.text-node-card').filter({ has: page.locator('strong[title="演示d"]') }).boundingBox();
+  await page.mouse.move(source!.x + source!.width / 2, source!.y + source!.height * (sourceUpper ? .25 : .75)); await page.mouse.down();
+  const draft = page.locator('.connection-path.draft');
+  for (const fraction of [.25, .5, .75, targetUpper ? .25 : .75]) {
+    const upper = fraction < .5;
+    await page.mouse.move(target!.x, target!.y + target!.height * fraction, { steps: 6 });
+    if (upper) await expect(draft).toHaveClass(/title-connection/u); else await expect(draft).not.toHaveClass(/title-connection/u);
+    const points = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+    expect(points.slice(0, 2)).toEqual([360, 420]); expect(points[7]).toBe(420);
+  }
+  await page.mouse.up(); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  const edge = page.locator('.connection-hit-area:not([data-connection-id="incoming"])');
+  expect((await coordinates(page, (await edge.getAttribute('data-connection-id'))!)).slice(-2)).toEqual([780, 420]);
+  const rendered = edge.locator('..').locator('.connection-path');
+  if (targetUpper) await expect(rendered).toHaveClass(/title-connection/u); else await expect(rendered).not.toHaveClass(/title-connection/u);
+});
+
+test('box-to-box arrow reconnection switches upper and lower target regions live without moving the centre anchor', async ({ page }) => {
+  await openFixture(page);
+  const source = await page.getByRole('button', { name: '从演示b右侧连接', exact: true }).boundingBox();
+  const target = await page.locator('.text-node-card').filter({ has: page.locator('strong[title="演示d"]') }).boundingBox();
+  await drag(page, { x: source!.x + source!.width / 2, y: source!.y + source!.height / 2 }, { x: target!.x, y: target!.y + 20 });
+  const edge = page.locator('.connection-hit-area:not([data-connection-id="incoming"])');
+  const id = (await edge.getAttribute('data-connection-id'))!;
+  const rendered = () => edge.locator('..').locator('.connection-path');
+  for (const upper of [false, true]) {
+    const arrow = await page.locator(`[data-arrow-for="${id}"]`).boundingBox();
+    await page.mouse.move(arrow!.x + arrow!.width / 3, arrow!.y + arrow!.height / 2); await page.mouse.down();
+    await page.mouse.move(target!.x, target!.y + target!.height * (upper ? .25 : .75), { steps: 8 });
+    if (upper) await expect(rendered()).toHaveClass(/title-connection/u); else await expect(rendered()).not.toHaveClass(/title-connection/u);
+    expect((await coordinates(page, id)).slice(-2)).toEqual([780, 420]);
+    await page.mouse.up(); await expect(page.locator('.connection-layer')).not.toHaveAttribute('data-reconnecting-id');
+    if (upper) await expect(rendered()).toHaveClass(/title-connection/u); else await expect(rendered()).not.toHaveClass(/title-connection/u);
+  }
+  await expect(page.locator('.connection-hit-area')).toHaveCount(2);
 });
