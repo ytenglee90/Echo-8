@@ -37,6 +37,11 @@ export interface CanvasEntityHoverPreview {
   clear?: boolean;
 }
 
+/** Version-one canvas context gesture, interpreted by participating feature owners. */
+export interface CanvasContextRequest {
+  point: { x: number; y: number };
+}
+
 export type CanvasToolMode = 'select' | 'hand';
 
 export interface CanvasZoomRequest {

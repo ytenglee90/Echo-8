@@ -1,4 +1,5 @@
 import type { EventDeclaration, PatchOperation } from './state.ts';
+import type { CanvasContextRequest } from './canvas.ts';
 
 export const MAX_CONNECTION_LABEL_LENGTH = 200;
 export const DEFAULT_CONNECTION_LABEL_WIDTH = 180;
@@ -15,7 +16,40 @@ export const CONNECTION_TITLE_ANCHOR_OFFSET_Y = 21;
 export interface ConnectionEndpoint {
   nodeId: string;
   side: ConnectionSide;
+  /** Endpoint schema v2. Omission retains the v1 text-node endpoint meaning. */
+  kind?: 'junction';
 }
+
+export interface ConnectionJunction {
+  id: string;
+  /** World-space centre; this is a connection-owned vertex, never text content. */
+  x: number;
+  y: number;
+  revision: number;
+  /** Identifies the original labelled branches when only one branch survives. */
+  branchSide?: 'incoming' | 'outgoing';
+}
+
+export interface ConnectionGraphSnapshot {
+  version: 1;
+  connections: ConnectionRecord[];
+  junctions: ConnectionJunction[];
+}
+
+export interface ConnectionAddJunctionRequest {
+  x: number;
+  y: number;
+  connections: Array<{ id: string; revision: number }>;
+}
+
+export interface ConnectionMoveJunctionRequest {
+  id: string;
+  x: number;
+  y: number;
+  expectedRevision: number;
+}
+
+export type ConnectionJunctionPreview = { id: string; x: number; y: number } | { clear: true };
 
 export interface ConnectionRecord {
   id: string;
@@ -28,8 +62,18 @@ export interface ConnectionRecord {
   lineColor?: string;
   labelBackgroundColor?: string;
   labelTextColor?: string;
+  /** Schema v2 routing segment; original branch records keep this absent. */
+  junctionTrunk?: boolean;
+  /** Keeps title-route styling on segments whose two ends are junctions. */
+  titleRoute?: boolean;
   revision: number;
   createdAt: number;
+}
+
+export function isTitleConnection(connection: Pick<ConnectionRecord, 'from' | 'to' | 'titleRoute'>): boolean {
+  return connection.titleRoute === true ||
+    (connection.from.kind !== 'junction' && connection.from.side === 'title') ||
+    (connection.to.kind !== 'junction' && connection.to.side === 'title');
 }
 
 export interface ConnectionAppearanceSnapshot {
@@ -53,6 +97,12 @@ export interface ConnectionResizeLabelRequest {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'connection.addJunction': CommandContract<ConnectionAddJunctionRequest, { id: string }>;
+    'connection.addJunctionFromContext': CommandContract<CanvasContextRequest, { id?: string }>;
+    'connection.addJunctionAtPointer': CommandContract<undefined, { id?: string }>;
+    'connection.moveJunction': CommandContract<ConnectionMoveJunctionRequest, { revision: number }>;
+    'connection.nudgeJunction': CommandContract<{ id: string; dx: number; dy: number }, { revision: number }>;
+    'connection.removeSelectedJunctions': CommandContract<undefined, { removed: number }>;
     'connection.create': CommandContract<{
       from: ConnectionEndpoint;
       to: ConnectionEndpoint;
@@ -69,6 +119,12 @@ declare module './commands.ts' {
       id?: string;
       converted?: boolean;
     }>;
+  }
+}
+
+declare module './messages.ts' {
+  interface ApplicationCapabilityMap {
+    'connections.graph@1': MessageContract<undefined, ConnectionGraphSnapshot>;
   }
 }
 
@@ -150,6 +206,17 @@ export function resolveConnectionRecordEndpoints(
   fromNode: ConnectionNodeGeometry,
   toNode: ConnectionNodeGeometry,
 ): { from: ConnectionEndpoint; to: ConnectionEndpoint } {
+  if (connection.from.kind === 'junction' || connection.to.kind === 'junction') {
+    const automatic = resolveConnectionEndpoints(fromNode, toNode);
+    return {
+      from: connection.from.kind === 'junction'
+        ? { ...automatic.from, kind: 'junction' }
+        : connection.from.side === 'title' ? { ...connection.from } : automatic.from,
+      to: connection.to.kind === 'junction'
+        ? { ...automatic.to, kind: 'junction' }
+        : connection.to.side === 'title' ? { ...connection.to } : automatic.to,
+    };
+  }
   if (connection.from.side === 'title' || connection.to.side === 'title') {
     return {
       from: { nodeId: fromNode.id, side: 'title' },
@@ -163,6 +230,7 @@ export function connectionEndpointPoint(
   endpoint: ConnectionEndpoint,
   node: ConnectionNodeGeometry,
 ): { x: number; y: number; side: ConnectionSide } {
+  if (endpoint.kind === 'junction') return { x: node.x, y: node.y, side: endpoint.side };
   if (endpoint.side === 'title') {
     return {
       x: node.x,

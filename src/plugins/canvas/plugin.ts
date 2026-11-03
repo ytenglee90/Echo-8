@@ -80,6 +80,7 @@ export const canvasPlugin: PluginDefinition = {
       'selection.clear',
       'selection.box',
       'connection.create',
+      'connection.addJunctionFromContext',
       'file.importDocuments',
       'file.openProject',
       'interaction.begin',

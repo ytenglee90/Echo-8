@@ -20,7 +20,7 @@ import { snapDraggedBounds, snapResizedBounds } from './alignment.ts';
 
 interface SnapEntity extends WorldBounds {
   id: string;
-  kind: 'text-node' | 'group';
+  kind: 'text-node' | 'group' | 'connection-junction';
   contains?: string[];
 }
 
@@ -40,7 +40,7 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
         'node.arrangeSelectedGrid.vertical',
       ],
       events: ['plugin.lifecycle.changed'],
-      signals: ['content.catalog.invalidated', 'groups.invalidated'],
+      signals: ['content.catalog.invalidated', 'groups.invalidated', 'connections.invalidated'],
       ui: ['smart-layout.arrange-grid'],
       actions: [
         'smart-layout.arrange-grid-action',
@@ -85,6 +85,7 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
 
       context.signals.subscribe('content.catalog.invalidated', scheduleRefresh);
       context.signals.subscribe('groups.invalidated', scheduleRefresh);
+      context.signals.subscribe('connections.invalidated', scheduleRefresh);
       context.events.subscribe('plugin.lifecycle.changed', scheduleRefresh);
       await refreshReferences();
 
@@ -228,13 +229,19 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
 }
 
 function toSnapEntity(entity: SelectableEntity): SnapEntity[] {
-  if (!entity.bounds || (entity.kind !== 'text-node' && entity.kind !== 'group')) return [];
+  if (!entity.bounds || (entity.kind !== 'text-node' && entity.kind !== 'group' && entity.kind !== 'connection-junction')) return [];
   const values = [entity.bounds.x, entity.bounds.y, entity.bounds.width, entity.bounds.height];
   if (!values.every(Number.isFinite)) return [];
   return [{
     id: entity.id,
     kind: entity.kind,
     ...entity.bounds,
+    ...(entity.kind === 'connection-junction' ? {
+      x: entity.bounds.x + entity.bounds.width / 2,
+      y: entity.bounds.y + entity.bounds.height / 2,
+      width: 0,
+      height: 0,
+    } : {}),
     ...(entity.contains ? { contains: [...entity.contains] } : {}),
   }];
 }

@@ -14,6 +14,7 @@ interface IndexedItem<T> {
 export class SpatialHashIndex<T> {
   private readonly cells = new Map<string, Set<string>>();
   private readonly items = new Map<string, IndexedItem<T>>();
+  private readonly wideItems = new Set<string>();
   private readonly cellSize: number;
 
   constructor(cellSize = 640) {
@@ -30,7 +31,9 @@ export class SpatialHashIndex<T> {
     this.delete(id);
     const normalized = normalizeBounds(bounds);
     this.items.set(id, { item, bounds: normalized });
-    for (const key of cellKeys(normalized, this.cellSize)) {
+    const keys = cellKeys(normalized, this.cellSize);
+    if (!keys) { this.wideItems.add(id); return; }
+    for (const key of keys) {
       const members = this.cells.get(key) ?? new Set<string>();
       members.add(id);
       this.cells.set(key, members);
@@ -40,7 +43,8 @@ export class SpatialHashIndex<T> {
   delete(id: string): void {
     const existing = this.items.get(id);
     if (!existing) return;
-    for (const key of cellKeys(existing.bounds, this.cellSize)) {
+    this.wideItems.delete(id);
+    for (const key of cellKeys(existing.bounds, this.cellSize) ?? []) {
       const members = this.cells.get(key);
       members?.delete(id);
       if (members?.size === 0) this.cells.delete(key);
@@ -50,8 +54,9 @@ export class SpatialHashIndex<T> {
 
   query(bounds: SpatialBounds): T[] {
     const normalized = normalizeBounds(bounds);
-    const candidates = new Set<string>();
-    for (const key of cellKeys(normalized, this.cellSize)) {
+    const keys = cellKeys(normalized, this.cellSize);
+    const candidates = new Set(keys ? this.wideItems : this.items.keys());
+    for (const key of keys ?? []) {
       for (const id of this.cells.get(key) ?? []) candidates.add(id);
     }
     const result: T[] = [];
@@ -69,14 +74,19 @@ export class SpatialHashIndex<T> {
   clear(): void {
     this.cells.clear();
     this.items.clear();
+    this.wideItems.clear();
   }
 }
 
-function cellKeys(bounds: SpatialBounds, cellSize: number): string[] {
+function cellKeys(bounds: SpatialBounds, cellSize: number): string[] | undefined {
   const left = Math.floor(bounds.x / cellSize);
   const right = Math.floor((bounds.x + Math.max(0, bounds.width)) / cellSize);
   const top = Math.floor(bounds.y / cellSize);
   const bottom = Math.floor((bounds.y + Math.max(0, bounds.height)) / cellSize);
+  // A freely routed long edge must not allocate millions of grid buckets.
+  // Unsafe coordinates also cannot be advanced reliably by an integer loop.
+  if (![left, right, top, bottom].every(Number.isSafeInteger) ||
+    (right - left + 1) * (bottom - top + 1) > 4096) return undefined;
   const keys: string[] = [];
   for (let y = top; y <= bottom; y += 1) {
     for (let x = left; x <= right; x += 1) keys.push(`${x}:${y}`);

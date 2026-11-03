@@ -6,7 +6,7 @@ import type {
   AppearanceUpdatePlan,
   AppearanceUpdateRequest,
 } from '../../protocols/appearance.ts';
-import type { CanvasAppearanceSnapshot } from '../../protocols/canvas.ts';
+import type { CanvasAppearanceSnapshot, CanvasContextRequest, CanvasPointerSnapshot } from '../../protocols/canvas.ts';
 import type {
   ClipboardFragment,
   ClipboardInstantiateInput,
@@ -25,6 +25,8 @@ import {
   type ConnectionEndpoint,
   type ConnectionMutationPlan,
   type ConnectionRecord,
+  type ConnectionJunction,
+  type ConnectionGraphSnapshot,
   type ConnectionResizeLabelRequest,
   type ConnectionSetLabelRequest,
 } from '../../protocols/connections.ts';
@@ -44,6 +46,11 @@ import {
   connectionCurveLassoRegions,
 } from './rendering.ts';
 
+import {
+  JUNCTION_NAMESPACE, isJunction, isAddJunctionRequest, isMoveJunctionRequest,
+  junctionGeometry, logicalConnectionPaths, planConnectionGraphDeletion, serializeConnectionGraph, splitConnectionsAtJunction,
+} from './junctions.ts';
+
 const CONNECTION_NAMESPACE = 'connections';
 const CONNECTION_APPEARANCE_NAMESPACE = 'connectionAppearance';
 const CONNECTION_APPEARANCE_KEY = 'line';
@@ -59,17 +66,20 @@ interface CreateConnectionPayload {
 }
 
 interface SerializedConnections {
+  schemaVersion?: 2;
+  junctions?: ConnectionJunction[];
   connections: ConnectionRecord[];
 }
 
 export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('connections', '连线', {
-      dataVersion: 6,
-      namespaces: [CONNECTION_NAMESPACE, CONNECTION_APPEARANCE_NAMESPACE],
+      dataVersion: 7,
+      namespaces: [CONNECTION_NAMESPACE, CONNECTION_APPEARANCE_NAMESPACE, JUNCTION_NAMESPACE],
       namespaceDomains: {
         [CONNECTION_NAMESPACE]: 'document',
         [CONNECTION_APPEARANCE_NAMESPACE]: 'document',
+        [JUNCTION_NAMESPACE]: 'document',
       },
       requiresCapabilities: [
         'content.summaries@1',
@@ -77,9 +87,10 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'content.catalog@2',
         'selection.read@1',
       ],
-      optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1'],
+      optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'canvas.pointer@1', 'layout.snap@1'],
       providesCapabilities: [
         'connections.list@1',
+        'connections.graph@1',
         'connections.available@1',
         'connections.createPlan@1',
         'connections.appearance@1',
@@ -95,14 +106,21 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       ],
       commands: [
         'connection.create',
+        'connection.addJunction',
+        'connection.addJunctionFromContext',
+        'connection.addJunctionAtPointer',
+        'connection.moveJunction',
+        'connection.nudgeJunction',
+        'connection.removeSelectedJunctions',
         'connection.setLabel',
         'connection.resizeLabel',
         'connection.toggleSelected',
         'connection.toggleTitleSelected',
       ],
-      dispatches: ['selection.set', 'selection.clear', 'interaction.begin', 'interaction.end'],
+      dispatches: ['selection.set', 'selection.clear', 'interaction.begin', 'interaction.end', 'connection.addJunction', 'connection.moveJunction'],
       asks: ['editor.openPanes'],
       events: [
+        'entity.deleted',
         'connection.created',
         'connection.changed',
         'connection.appearance.changed',
@@ -113,6 +131,9 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       ],
       signals: [
         'canvas.camera.preview',
+        'canvas.pointer.preview',
+        'canvas.snap.preview',
+        'connection.junction.preview',
         'canvas.drag.preview',
         'canvas.node.resize.preview',
         'canvas.appearance.invalidated',
@@ -130,8 +151,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'canvas.lasso.external.finished',
       ],
       ui: ['connections.layer', 'connections.toolbar-action'],
-      actions: ['connections.toggle-selected-action', 'connections.toggle-title-selected-action'],
-      shortcuts: ['connections.toggle-selected-shortcut', 'connections.toggle-title-selected-shortcut'],
+      actions: ['connections.toggle-selected-action', 'connections.toggle-title-selected-action', 'connections.add-junction-action', 'connections.remove-junction-action'],
+      shortcuts: ['connections.toggle-selected-shortcut', 'connections.toggle-title-selected-shortcut', 'connections.add-junction-shortcut', 'connections.remove-junction-shortcut'],
       permissions: [
         'store.own.read',
         'store.own.write',
@@ -184,11 +205,22 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       from: 5,
       to: 6,
       migrate: (data) => data,
+    }, {
+      from: 6,
+      to: 7,
+      migrate: (data) => ({ ...data, [JUNCTION_NAMESPACE]: data[JUNCTION_NAMESPACE] ?? {} }),
     }],
 
     start(context) {
       const readConnections = () =>
         context.store.readNamespace<Record<string, ConnectionRecord>>(CONNECTION_NAMESPACE);
+      const readJunctions = () => {
+        const points = context.store.readNamespace<Record<string, ConnectionJunction>>(JUNCTION_NAMESPACE);
+        for (const [id, point] of Object.entries(points)) {
+          if (!isJunction(point) || point.id !== id) throw new Error('中转点数据不正确，请从完整的书籍副本恢复');
+        }
+        return points;
+      };
       const readConnectionAppearance = (): ConnectionAppearanceSnapshot => {
         const value = context.store.readValue<unknown>(
           CONNECTION_APPEARANCE_NAMESPACE,
@@ -209,6 +241,113 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         }
       };
 
+      context.commands.register({
+        type: 'connection.addJunction',
+        validate: isAddJunctionRequest,
+        handle: (payload) => {
+          const all = readConnections();
+          const ids = new Set(payload.connections.map((reference) => reference.id));
+          if (ids.size !== payload.connections.length) throw new Error('连接线选择不能重复');
+          const records = payload.connections.map((reference) => {
+            const record = all[reference.id];
+            if (!record || record.revision !== reference.revision) throw new Error('连接线已变化，请重新选择后添加中转点');
+            return record;
+          });
+          const split = splitConnectionsAtJunction(records, payload);
+          return {
+            result: { id: split.junction.id },
+            transaction: {
+              label: '添加连接中转点',
+              patches: [
+                { op: 'set' as const, domain: 'document' as const, namespace: JUNCTION_NAMESPACE, key: split.junction.id, value: split.junction },
+                ...split.connections.map((record) => ({ op: 'set' as const, domain: 'document' as const, namespace: CONNECTION_NAMESPACE, key: record.id, value: record })),
+              ],
+              events: [{ type: 'connection.changed', payload: { ids: split.connections.map((record) => record.id) } }],
+            },
+          };
+        },
+      });
+      const selectedConnectionReferences = async () => {
+        const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+        const records = readConnections();
+        return selection.ids.flatMap((id) => records[id] ? [{ id, revision: records[id].revision }] : []);
+      };
+      context.commands.register({
+        type: 'connection.addJunctionAtPointer',
+        handle: async () => {
+          const references = await selectedConnectionReferences();
+          if (references.length === 0) throw new Error('请先选中连接线');
+          const pointer = await context.capabilities.request<CanvasPointerSnapshot>('canvas.pointer@1');
+          if (!('point' in pointer)) throw new Error('请先将鼠标移到画布中的中转位置');
+          const result = await context.commands.invoke('connection.addJunction', { ...pointer.point, connections: references });
+          return { result };
+        },
+      });
+      context.commands.register({
+        type: 'connection.addJunctionFromContext',
+        validate: (value): value is CanvasContextRequest => isRecord(value) && isRecord(value.point) &&
+          Number.isFinite(value.point.x) && Number.isFinite(value.point.y),
+        handle: async (payload) => {
+          const references = await selectedConnectionReferences();
+          if (references.length === 0) return { result: {} };
+          return { result: await context.commands.invoke('connection.addJunction', { ...payload.point, connections: references }) };
+        },
+      });
+      context.commands.register({
+        type: 'connection.moveJunction',
+        validate: isMoveJunctionRequest,
+        handle: (payload) => {
+          const point = readJunctions()[payload.id];
+          if (!point || point.revision !== payload.expectedRevision) throw new Error('中转点已变化，请重新移动');
+          if (point.x === payload.x && point.y === payload.y) return { result: { revision: point.revision } };
+          const next = { ...point, x: payload.x, y: payload.y, revision: point.revision + 1 };
+          return {
+            result: { revision: next.revision },
+            transaction: {
+              label: '移动连接中转点',
+              patches: [{ op: 'set' as const, domain: 'document' as const, namespace: JUNCTION_NAMESPACE, key: point.id, value: next }],
+              events: [{ type: 'connection.changed', payload: { junctionId: point.id } }],
+            },
+          };
+        },
+      });
+      context.commands.register({
+        type: 'connection.removeSelectedJunctions',
+        handle: async () => {
+          const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+          const points = Object.values(readJunctions());
+          const selected = new Set(points.filter((point) => selection.ids.includes(point.id)).map((point) => point.id));
+          const plan = planConnectionGraphDeletion(Object.values(readConnections()), points, selected);
+          return {
+            result: { removed: selected.size },
+            transaction: plan.patches.length ? {
+              label: '删除中转点并恢复连接', patches: plan.patches,
+              events: [
+                { type: 'connection.changed', payload: { ids: plan.changedIds } },
+                { type: 'connections.deleted', payload: { ids: plan.removedIds } },
+                { type: 'entity.deleted', payload: { ids: [...selected] } },
+              ],
+            } : undefined,
+          };
+        },
+      });
+      context.commands.register({
+        type: 'connection.nudgeJunction',
+        validate: (value): value is { id: string; dx: number; dy: number } => isRecord(value) &&
+          typeof value.id === 'string' && Number.isFinite(value.dx) && Number.isFinite(value.dy),
+        handle: async (payload) => {
+          const point = readJunctions()[payload.id];
+          if (!point) throw new Error('中转点已经不存在');
+          return { result: await context.commands.invoke('connection.moveJunction', {
+            id: point.id, x: point.x + payload.dx, y: point.y + payload.dy, expectedRevision: point.revision,
+          }) };
+        },
+      });
+      context.capabilities.provide<undefined, ConnectionGraphSnapshot>({
+        key: 'connections.graph@1',
+        invoke: () => ({ version: 1, connections: Object.values(readConnections()), junctions: Object.values(readJunctions()) }),
+      });
+
       context.commands.register<CreateConnectionPayload, { id?: string }>({
         type: 'connection.create',
         validate: isCreateConnectionPayload,
@@ -222,7 +361,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             throw new Error('连接端点不存在');
           }
           const connections = Object.values(readConnections());
-          const duplicate = connections.find((connection) => sameNodePair(connection, payload));
+          const duplicate = logicalConnectionPaths(connections).map((item) => item.record).find((connection) => sameNodePair(connection, payload));
           if (duplicate) return { result: { id: duplicate.id } };
           const id = createId('connection');
           const endpoints = resolveRequestedConnectionEndpoints(payload, fromNode, toNode);
@@ -361,7 +500,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           }
 
           const selectedIds = new Set(selected.map((node) => node.id));
-          const existing = Object.values(readConnections()).filter((connection) =>
+          const existing = logicalConnectionPaths(Object.values(readConnections())).map((item) => item.record).filter((connection) =>
             selectedIds.has(connection.from.nodeId) && selectedIds.has(connection.to.nodeId),
           );
           if (existing.length > 0) {
@@ -426,9 +565,26 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           if (selected.length !== 2) throw new Error('请选择两个文字节点');
 
           const selectedIds = new Set(selected.map((node) => node.id));
-          const existing = Object.values(readConnections()).find((connection) =>
-            selectedIds.has(connection.from.nodeId) && selectedIds.has(connection.to.nodeId),
-          );
+          const route = logicalConnectionPaths(Object.values(readConnections())).find(({ record }) =>
+            selectedIds.has(record.from.nodeId) && selectedIds.has(record.to.nodeId));
+          const existing = route?.record;
+          if (route && route.path.length > 1 && existing?.from.side !== 'title' && existing?.to.side !== 'title') {
+            const updated = route.path.map((edge) => ({
+              ...edge,
+              titleRoute: true,
+              from: edge.from.kind === 'junction' ? edge.from : { ...edge.from, side: 'title' as const },
+              to: edge.to.kind === 'junction' ? edge.to : { ...edge.to, side: 'title' as const },
+              revision: edge.revision + 1,
+            }));
+            return {
+              result: { id: existing!.id, converted: true },
+              transaction: {
+                label: '转换中转连线的标题端点',
+                patches: updated.map((edge) => ({ op: 'set' as const, domain: 'document' as const, namespace: CONNECTION_NAMESPACE, key: edge.id, value: edge })),
+                events: [{ type: 'connection.changed', payload: { ids: updated.map((edge) => edge.id) } }],
+              },
+            };
+          }
           if (existing?.from.side === 'title' || existing?.to.side === 'title') {
             return {
               result: { removed: 1 },
@@ -495,8 +651,9 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         key: 'connections.list@1',
         invoke: async () => {
           const nodes = await context.capabilities.request<ContentSummary[]>('content.summaries@1');
-          const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-          return Object.values(readConnections()).map((connection) => {
+          const nodeMap = new Map<string, import('../../protocols/connections.ts').ConnectionNodeGeometry>(nodes.map((node) => [node.id, node]));
+          for (const point of Object.values(readJunctions())) nodeMap.set(point.id, junctionGeometry(point));
+          return logicalConnectionPaths(Object.values(readConnections())).map(({ record: connection }) => {
             const fromNode = nodeMap.get(connection.from.nodeId);
             const toNode = nodeMap.get(connection.to.nodeId);
             if (!fromNode || !toNode) return connection;
@@ -714,7 +871,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         invoke: (input) => {
           if (!isConnectionCreatePlanRequest(input)) throw new Error('connections.createPlan request is invalid');
           if (input.fromNodeId === input.toNodeId) throw new Error('不能把节点连接到自己');
-          const duplicate = Object.values(readConnections()).find((connection) => sameNodeIds(
+          const duplicate = logicalConnectionPaths(Object.values(readConnections())).map((item) => item.record).find((connection) => sameNodeIds(
             connection,
             input.fromNodeId,
             input.toNodeId,
@@ -748,10 +905,14 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         key: 'selection.entities@1',
         invoke: async () => {
           const nodes = await context.capabilities.request<ContentSummary[]>('content.summaries@1');
-          const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+          const nodeMap = new Map<string, import('../../protocols/connections.ts').ConnectionNodeGeometry>(nodes.map((node) => [node.id, node]));
+          for (const point of Object.values(readJunctions())) nodeMap.set(point.id, junctionGeometry(point));
           return {
             owner: 'connections',
-            entities: Object.values(readConnections()).flatMap((connection) => {
+            entities: [...Object.values(readJunctions()).map((point) => ({
+              id: point.id, kind: 'connection-junction', geometryRevision: point.revision,
+              bounds: { x: point.x - 6, y: point.y - 6, width: 12, height: 12 },
+            })), ...Object.values(readConnections()).flatMap((connection) => {
               const fromNode = nodeMap.get(connection.from.nodeId);
               const toNode = nodeMap.get(connection.to.nodeId);
               if (!fromNode || !toNode) return [];
@@ -781,7 +942,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
                 bounds,
                 boxRegions: connectionCurveLassoRegions(from, to),
               }];
-            }),
+            })],
           };
         },
       });
@@ -789,21 +950,13 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         key: 'entity.deletePlan@1',
         invoke: (input) => {
           const selected = new Set(Array.isArray(input?.ids) ? input.ids : []);
-          const removed = Object.values(readConnections()).filter(
-            (connection) => selected.has(connection.id) || selected.has(connection.from.nodeId) ||
-              selected.has(connection.to.nodeId),
-          );
+          const plan = planConnectionGraphDeletion(Object.values(readConnections()), Object.values(readJunctions()), selected);
           return {
-            patches: removed.map((connection) => ({
-              op: 'delete' as const,
-              domain: 'document' as const,
-              namespace: CONNECTION_NAMESPACE,
-              key: connection.id,
-              schemaOwner: 'connections',
-            })),
-            events: removed.length > 0
-              ? [{ type: 'connections.deleted', payload: { ids: removed.map((item) => item.id) } }]
-              : [],
+            patches: plan.patches,
+            events: plan.patches.length ? [
+              { type: 'connections.deleted', payload: { ids: plan.removedIds } },
+              { type: 'connection.changed', payload: { ids: plan.changedIds } },
+            ] : [],
           };
         },
       });
@@ -812,14 +965,11 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         key: 'clipboard.serialize@1',
         invoke: (input) => {
           const selected = new Set(Array.isArray(input?.ids) ? input.ids : []);
-          const connections = Object.values(readConnections()).filter(
-            (connection) => selected.has(connection.from.nodeId) && selected.has(connection.to.nodeId),
-          );
+          const graph = serializeConnectionGraph(Object.values(readConnections()), Object.values(readJunctions()), selected);
           return {
-            owner: 'connections',
-            version: 1,
-            entityIds: connections.map((connection) => connection.id),
-            payload: { connections } satisfies SerializedConnections,
+            owner: 'connections', version: 1,
+            entityIds: [...graph.connections.map((record) => record.id), ...graph.junctions.map((point) => point.id)],
+            payload: { schemaVersion: 2, ...graph } satisfies SerializedConnections,
           };
         },
       });
@@ -833,7 +983,13 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             (connection) => input.idMap[connection.from.nodeId] && input.idMap[connection.to.nodeId],
           );
           return {
-            patches: connections.map((connection) => {
+            selectIds: (fragment.payload.junctions ?? []).flatMap((point) => input.idMap[point.id] ? [input.idMap[point.id]] : []),
+            events: [{ type: 'connection.changed', payload: { pasted: true } }],
+            patches: [
+              ...(fragment.payload.junctions ?? []).filter((point) => input.idMap[point.id]).map((point) => ({
+                op: 'set' as const, domain: 'document' as const, namespace: JUNCTION_NAMESPACE, key: input.idMap[point.id],
+                value: { ...point, id: input.idMap[point.id], x: point.x + input.offset.x, y: point.y + input.offset.y, revision: 1 }, schemaOwner: 'connections',
+              })), ...connections.map((connection) => {
               const id = input.idMap[connection.id] ?? createId('connection');
               const size = normalizeConnectionLabelSize(connection.labelWidth, connection.labelHeight);
               return {
@@ -853,7 +1009,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
                 },
                 schemaOwner: 'connections',
               };
-            }),
+            })],
           };
         },
       });
@@ -907,6 +1063,13 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         category: '节点与连线',
         instruction: '先选标题为输出端，后选标题为带箭头的输入端。',
       });
+      for (const [suffix, command, label] of [
+        ['add', 'connection.addJunctionAtPointer', '在鼠标位置添加连接中转点'],
+        ['remove', 'connection.removeSelectedJunctions', '删除选中中转点并恢复节点连接'],
+      ] as const) {
+        context.ui.shortcut({ id: 'connections.' + suffix + '-junction-shortcut', command, label, category: '节点与连线' });
+        context.ui.action({ id: 'connections.' + suffix + '-junction-action', command, label, category: '节点与连线', keywords: ['连线', '中转点', '连接点', 'junction', 'route'], priority: 65 });
+      }
       context.ui.action({
         id: 'connections.toggle-selected-action',
         label: '连接两个节点或断开选中节点的连线',
@@ -966,6 +1129,7 @@ function isEndpoint(value: unknown): value is ConnectionEndpoint {
   return (
     isRecord(value) &&
     typeof value.nodeId === 'string' &&
+    (value.kind === undefined || value.kind === 'junction') &&
     (value.side === 'left' || value.side === 'right' || value.side === 'title')
   );
 }
@@ -1054,6 +1218,8 @@ function normalizeConnectionLabel(label: string): string {
 function isSerializedConnections(payload: unknown): payload is SerializedConnections {
   return (
     isRecord(payload) &&
+    (payload.schemaVersion === undefined || payload.schemaVersion === 2) &&
+    (payload.junctions === undefined || (Array.isArray(payload.junctions) && payload.junctions.length <= 10_000 && payload.junctions.every(isJunction))) &&
     Array.isArray(payload.connections) &&
     payload.connections.every(
       (connection) =>
@@ -1068,6 +1234,8 @@ function isSerializedConnections(payload: unknown): payload is SerializedConnect
         (connection.lineColor === undefined || isHexColor(connection.lineColor)) &&
         (connection.labelBackgroundColor === undefined || isHexColor(connection.labelBackgroundColor)) &&
         (connection.labelTextColor === undefined || isHexColor(connection.labelTextColor)) &&
+        (connection.junctionTrunk === undefined || typeof connection.junctionTrunk === 'boolean') &&
+        (connection.titleRoute === undefined || typeof connection.titleRoute === 'boolean') &&
         (connection.revision === undefined ||
           (Number.isInteger(connection.revision) && Number(connection.revision) > 0)),
     )

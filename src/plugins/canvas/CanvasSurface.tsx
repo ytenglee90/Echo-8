@@ -1549,6 +1549,17 @@ export function CanvasSurface({
         beginSurfaceGesture(event);
       }}
       onPointerDown={beginSurfaceGesture}
+      onContextMenu={(event) => {
+        if ((event.target as Element).closest('input, textarea, [contenteditable]')) return;
+        if (!client.isCommandAvailable('connection.addJunctionFromContext')) return;
+        try {
+          const selection = client.requestSync<SelectionSnapshot>('selection.read@1');
+          if (!selection.items.some((item) => item.kind === 'connection')) return;
+        } catch { return; }
+        event.preventDefault();
+        const point = screenToWorld(event.clientX, event.clientY, cameraRef.current, event.currentTarget);
+        void client.dispatch('connection.addJunctionFromContext', { point }).catch(() => undefined);
+      }}
       onPointerEnter={publishPointer}
       onPointerMove={(event) => {
         publishPointer(event);
