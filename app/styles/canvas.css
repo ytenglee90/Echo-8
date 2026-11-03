@@ -16,7 +16,7 @@
 .canvas-minimap :is([data-map-node], [data-map-group]) { cursor: pointer; }
 .canvas-minimap :is([data-map-node], [data-map-group]):focus-visible { outline: 2px solid var(--minimap-ink); outline-offset: 2px; }
 .canvas-minimap .minimap-entity-hit { pointer-events: all; }
-.canvas-minimap .minimap-groups rect { pointer-events: stroke; opacity: .7; }
+.canvas-minimap .minimap-groups rect { pointer-events: none; }
 .canvas-minimap .minimap-surface:focus { outline: none; }
 .canvas-minimap .minimap-viewport { fill: none; stroke: var(--minimap-ink); stroke-width: 1.2; opacity: .65; pointer-events: none; }
 .canvas-minimap .minimap-click-pulse {
@@ -627,14 +627,13 @@
 .group-frame:focus-visible { outline: 2px solid var(--canvas-selection, var(--selection)); outline-offset: 3px; }
 .group-connection-port {
   position: absolute; top: 50%; transform: translate(-50%, -50%);
-  width: 18px; height: 18px; padding: 0; border-radius: 50%;
-  border: 1px solid var(--canvas-line); background: var(--canvas-background); color: var(--canvas-line);
-  pointer-events: auto; cursor: crosshair; opacity: 0;
+  width: 18px; height: 18px; padding: 0; border-radius: 4px;
+  border: 0; background: transparent; color: var(--canvas-line); box-shadow: none;
+  pointer-events: auto; cursor: crosshair;
 }
 .group-connection-port.left { left: 0; }
 .group-connection-port.right { left: 100%; }
-.group-frame:is(:hover, .selected, :focus-within) .group-connection-port { opacity: 1; }
-.group-connection-port:focus-visible { outline: 2px solid var(--canvas-selection); outline-offset: 2px; opacity: 1; }
+.group-connection-port:focus-visible { outline: 2px solid var(--canvas-selection); outline-offset: 2px; }
 
 .connection-path {
   fill: none;
@@ -651,6 +650,7 @@
   pointer-events: none;
 }
 .connection-arrow { fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62))); stroke: none; pointer-events: none; }
+.connection-layer .connection-arrow:is(:focus, :focus-visible),
 .connection-layer .connection-hit-area:is(:focus, :focus-visible),
 .connection-layer .connection-junction:is(:focus, :focus-visible),
 .connection-layer .connection-junction-port:is(:focus, :focus-visible) { outline: none; }
@@ -660,8 +660,8 @@
 .connection-junction-port circle { fill: var(--canvas-background); stroke: var(--canvas-selection); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .connection-junction-port path { fill: none; stroke: var(--canvas-selection); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 .connection-junction:is(.connection-target, :focus-within) .connection-junction-ring { opacity: 1; }
-.connection-arrow:is(.selected, .hovered):not(.custom-color),
-.connection-hit-area:focus-visible ~ .connection-arrow:not(.custom-color) { fill: var(--canvas-selection, var(--selection)); }
+.connection-arrow:is(.selected, .hovered),
+.connection-hit-area:focus-visible ~ .connection-arrow { fill: var(--canvas-selection, var(--selection)); }
 
 .connection-hit-area {
   fill: none;
@@ -682,23 +682,14 @@
   stroke-width: var(--connection-highlight-stroke-width, 3px);
 }
 
-.connection-hit-area:hover + .connection-path.custom-color,
-.connection-hit-area:focus-visible + .connection-path.custom-color,
-.connection-path.hovered.custom-color,
-.connection-path.selected.custom-color {
-  fill: none;
-  stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
-  stroke-width: var(--connection-highlight-stroke-width, 3px);
-}
-
 .connection-path.draft {
   fill: none;
   stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
-  stroke-dasharray: 5 5;
+  stroke-dasharray: none;
   pointer-events: none;
 }
 
-.connection-path.title-connection {
+.connection-path.title-connection, .connection-label-border.title-connection {
   stroke-dasharray: var(--connection-dash-length, 6px) var(--connection-dash-gap, 4px);
   stroke-linecap: butt;
 }
@@ -725,7 +716,7 @@
   margin: 0;
   border: 1px solid var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
   border-radius: 7px;
-  background: var(--connection-label-background, var(--canvas-background));
+  background: var(--canvas-background);
   color: var(--connection-label-text, var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62))));
   box-shadow: none;
   font-family: inherit;
@@ -841,3 +832,9 @@
 .right-rail:has(.shortcut-center) .editor-dock,
 .right-rail:has(.diagnostic-center) .editor-dock,
 .right-rail:has(.ai-assistant-panel) .editor-dock { display: none; }
+
+.connection-arrow[data-arrow-for] { pointer-events: visiblePainted; cursor: crosshair; }
+.group-copy-preview { pointer-events: none; }
+.connection-label-border { fill: var(--canvas-background); stroke: var(--connection-line); stroke-width: var(--connection-stroke-width); pointer-events: none; }
+.connection-label-border:is(.selected, .hovered) { stroke: var(--canvas-selection); stroke-width: var(--connection-highlight-stroke-width); }
+.connection-label-display, .connection-label-editor textarea, .connection-label-editor textarea:focus, .connection-label-editor textarea:focus-visible { border-color: transparent; background: transparent; }

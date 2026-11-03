@@ -103,6 +103,17 @@ export interface ContentMovePlan {
   events?: EventDeclaration[];
 }
 
+/** Owner-planned attachments composed into the same node movement transaction. */
+export interface ContentMoveAttachmentsRequest extends ContentMovePlanRequest {
+  nodes: Array<Pick<ContentSummary, 'id' | 'x' | 'y' | 'width' | 'height' | 'presentation'>>;
+}
+export interface ContentMoveAttachmentsPlan { patches: PatchOperation[]; events?: EventDeclaration[] }
+declare module './messages.ts' {
+  interface ApplicationCapabilityMap {
+    'content.moveAttachmentsPlan@1': import('./messages.ts').MessageContract<ContentMoveAttachmentsRequest, ContentMoveAttachmentsPlan>;
+  }
+}
+
 export interface ContentRenamePlanRequest {
   nodeId: string;
   title: string;

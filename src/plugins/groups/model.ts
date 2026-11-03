@@ -180,9 +180,14 @@ export function createGroupsPlugin(
         }
         const excluded = new Set(input?.excludedIds ?? []);
         const byId = new Map(nodes.filter(node => !excluded.has(node.id)).map(node => [node.id, node]));
+        const membership = input?.membership;
+        const target = membership ? resolveGroupDropTarget(Object.values(readGroups()), nodes, membership) : undefined;
+        const requested = new Set(membership?.nodeIds ?? (membership ? [membership.nodeId] : []));
         return Object.values(readGroups()).flatMap(group => {
           if (excluded.has(group.id)) return [];
-          const members = group.memberIds.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
+          const memberIds = target?.action === 'remove' ? group.memberIds.filter(id => !requested.has(id)) :
+            target?.groupId === group.id && target.action === 'add' ? [...new Set([...group.memberIds, ...requested])] : group.memberIds;
+          const members = memberIds.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
           return members.length < 2 ? [] : [{ id: group.id, kind: 'group' as const, ...computeGroupBounds(members) }];
         });
       };

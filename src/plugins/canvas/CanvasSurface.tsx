@@ -793,6 +793,8 @@ export function CanvasSurface({
         return moveNormally();
       }
       if (!target) return moveNormally();
+      membershipPreviewVisible.current = true;
+      client.emit('group.membership.preview', { nodeId: primaryId, nodeIds: positions.map(position => position.id), pointer, active: true } satisfies GroupMembershipPreview);
       return client.dispatch('group.membership.drop', {
         nodeId: primaryId,
         nodeIds: positions.map(position => position.id),
@@ -803,6 +805,7 @@ export function CanvasSurface({
     };
     void commit().finally(() => {
       clearReferenceDragPreview();
+      syncGroupMembershipPreview('', 0, 0, false);
       return client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined);
     });
   };
@@ -841,6 +844,7 @@ export function CanvasSurface({
         );
       } else {
         clearReferenceDragPreview();
+        syncGroupMembershipPreview('', 0, 0, false);
         finishNodeClick(request.primaryId, request.selectionMode, request.toggleOnClick);
       }
       return;
@@ -1274,7 +1278,7 @@ export function CanvasSurface({
       pendingDrag.current.released = true;
       setNodeDragActive(false);
       setDragOriginPreview([]);
-      syncGroupMembershipPreview('', 0, 0, false);
+      if (!pendingDrag.current.membershipActiveOnRelease) syncGroupMembershipPreview('', 0, 0, false);
     }
     if (resize.current) {
       const next = resize.current;
@@ -1300,7 +1304,7 @@ export function CanvasSurface({
       client.emit('canvas.drag.preview', { clear: true });
       client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
       const membershipActive = client.isShortcutPressed('canvas.group-membership-modifier');
-      syncGroupMembershipPreview('', 0, 0, false);
+      if (!membershipActive || !current.moved) syncGroupMembershipPreview('', 0, 0, false);
       if (current.moved) {
         commitNodeDrag(
           current.primaryId,

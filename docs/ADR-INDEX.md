@@ -106,4 +106,9 @@
 | [0094](ADR-0094-UNBOUNDED-NODE-WIDTH.md) | 节点与文本框取消宽度上限 | 有效；替代旧宽度上限 |
 | [0095](ADR-0095-BATCH-GROUP-DROP.md) | Ctrl 拖拽批量加入和移出群组 | 有效；扩展原单节点成员操作 |
 | [0096](ADR-0096-MINIMAP-ENTITY-SHAPES.md) | 小地图群组轮廓与文本框边框横杆 | 有效；部分替代 0090 |
+| [0097](ADR-0097-CONNECTION-PRESENTATION-AND-TERMINAL-TANGENTS.md) | 形态转换的连接投影与水平箭头接入 | 有效；补充 0093，部分替代 0091 |
+| [0098](ADR-0098-JUNCTION-BATCH-MOVEMENT-AND-FOLLOW.md) | 中转点批量移动与相连对象平均位移跟随 | 有效；扩展 0089、0097 |
+| [0099](ADR-0099-GROUP-CONNECTION-PREVIEW.md) | 群组透明端口与成员变更锚点预览 | 有效；补充 0091、0095、0097 |
+| [0100](ADR-0100-TITLE-SAME-SIDES-AND-MINIMAP-GROUP-FILLS.md) | 仅标题互连同侧端口与小地图群组底色 | 有效；部分替代 0093、0096 |
+| [0101](ADR-0101-CONNECTION-RECONNECT-AND-LABEL-INTERACTIONS.md) | 箭头重接、标签缩放会话与统一描边和实体已用色 | 有效；补充 0089、0091、0097、0099 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

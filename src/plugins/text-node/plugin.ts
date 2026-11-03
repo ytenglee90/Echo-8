@@ -129,6 +129,7 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       [FORMAT_MARK_NAMESPACE]: 'document',
     },
     optionalCapabilities: [
+      'content.moveAttachmentsPlan@1',
       'canvas.viewportCenter@1',
       'selection.read@1',
       'content.anchorTransformPlan@1',
@@ -643,14 +644,12 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       handle: async (payload) => {
         const node = context.store.readValue<TextNodeRecord>(NODE_NAMESPACE, payload.id);
         if (!node) throw new Error(`Text node not found: ${payload.id}`);
-        const next = { ...node, x: payload.x, y: payload.y, revision: node.revision + 1, updatedAt: Date.now() };
+        const plan = await buildMovePlan(context, [{ id: payload.id, x: payload.x, y: payload.y }]);
         return {
           transaction: {
             label: '移动文本节点',
-            patches: [
-              { op: 'set', domain: 'document', namespace: NODE_NAMESPACE, key: node.id, value: next },
-            ],
-            events: [{ type: 'node.moved', payload: { id: node.id, x: next.x, y: next.y } }],
+            patches: plan.patches,
+            events: [{ type: 'node.moved', payload: { id: node.id, x: payload.x, y: payload.y } }, ...(plan.events ?? []).filter(event => event.type !== 'nodes.moved')],
           },
         };
       },
@@ -659,8 +658,8 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
     context.commands.register<MoveManyPayload>({
       type: 'node.moveMany',
       validate: isMoveManyPayload,
-      handle: (payload) => {
-        const plan = buildMovePlan(context, payload.positions);
+      handle: async (payload) => {
+        const plan = await buildMovePlan(context, payload.positions);
         return {
           transaction: {
             label: payload.positions.length > 1 ? `移动 ${payload.positions.length} 个节点` : '移动文本节点',

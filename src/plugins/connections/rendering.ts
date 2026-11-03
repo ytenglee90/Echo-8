@@ -98,14 +98,18 @@ export function connectionStrokeGeometry(
   }
   const mix = (a: ConnectionRenderPoint, b: ConnectionRenderPoint) => ({ x: a.x + (b.x - a.x) * trimT, y: a.y + (b.y - a.y) * trimT });
   const a = mix(final.from, final.controlFrom), b = mix(final.controlFrom, final.controlTo), c = mix(final.controlTo, final.to);
-  const d = mix(a, b), e = mix(b, c), base = mix(d, e);
-  const tangentX = final.to.x - base.x;
-  const tangentY = final.to.y - base.y;
+  const d = mix(a, b), e = mix(b, c), curveBase = mix(d, e);
+  // The terminal derivative, rather than the trimmed chord, owns the port direction.
+  const tangentX = final.to.x - final.controlTo.x;
+  const tangentY = final.to.y - final.controlTo.y;
   const tangentLength = Math.hypot(tangentX, tangentY);
   if (tangentLength === 0) return full;
   const unitX = tangentX / tangentLength;
   const unitY = tangentY / tangentLength;
-  const arrowHalfWidth = Math.min(CONNECTION_ARROW_SCREEN_HALF_WIDTH * detailWorldScale, tangentLength / 2);
+  const base = { x: final.to.x - unitX * arrowLength, y: final.to.y - unitY * arrowLength };
+  const terminalHandle = Math.max(0.001, Math.hypot(curveBase.x - d.x, curveBase.y - d.y));
+  const controlTo = { x: base.x - unitX * terminalHandle, y: base.y - unitY * terminalHandle };
+  const arrowHalfWidth = Math.min(CONNECTION_ARROW_SCREEN_HALF_WIDTH * detailWorldScale, arrowLength / 2);
   const perpendicular = { x: -unitY, y: unitX };
   const firstWing = {
     x: base.x + perpendicular.x * arrowHalfWidth,
@@ -116,7 +120,7 @@ export function connectionStrokeGeometry(
     y: base.y - perpendicular.y * arrowHalfWidth,
   };
   const shaftSegments = segments.map((segment, index) => index === segments.length - 1
-    ? { ...segment, controlFrom: a, controlTo: d, to: base }
+    ? { ...segment, controlFrom: a, controlTo, to: base }
     : segment);
   const shaft = [
     `M ${formatPoint(from)}`,
@@ -231,6 +235,12 @@ function connectionCurveSegments(
   from: ConnectionRenderPoint,
   to: ConnectionRenderPoint,
 ): CubicCurveSegment[] {
+  if (!from.tangent && !to.tangent && from.side === to.side && (from.side === 'left' || from.side === 'right')) {
+    const direction = from.side === 'right' ? 1 : -1;
+    const outward = Math.min(320, Math.max(CONNECTION_MIN_HANDLE_LENGTH, 96 + Math.sqrt(Math.abs(to.y - from.y)) * 4.2));
+    const controlX = (direction > 0 ? Math.max(from.x, to.x) : Math.min(from.x, to.x)) + direction * outward;
+    return [{ kind: 'cubic', from, to, controlFrom: { x: controlX, y: from.y }, controlTo: { x: controlX, y: to.y } }];
+  }
   const relativeDirection = to.x >= from.x ? 1 : -1;
   const fromDirection = from.side === 'right' ? 1 : from.side === 'left' || from.side === 'title' ? -1 : relativeDirection;
   const toDirection = to.side === 'left' || to.side === 'title' ? 1 : to.side === 'right' ? -1 : relativeDirection;

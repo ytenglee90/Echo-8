@@ -41,7 +41,7 @@ export interface ConnectionGraphSnapshot {
 export interface ConnectionTargetAtRequest { point: { x: number; y: number }; excludeId: string; radius: number }
 type ConnectionTargetAtContract = CapabilityContract<ConnectionTargetAtRequest, ConnectionEndpoint | undefined>;
 /** Geometry-only target projection. Supplying node geometry permits synchronous frame previews. */
-export interface ConnectionTargetsRequest { nodes?: ConnectionNodeGeometry[]; excludedIds?: string[] }
+export interface ConnectionTargetsRequest { nodes?: ConnectionNodeGeometry[]; excludedIds?: string[]; membership?: import('./groups.ts').GroupDropTargetRequest }
 export interface ConnectionTarget extends ConnectionNodeGeometry { kind: 'group' }
 type ConnectionTargetsContract = CapabilityContract<ConnectionTargetsRequest | undefined, ConnectionTarget[]>;
 type ConnectionDetachContract = CapabilityContract<{ ids: string[] }, import('./selection.ts').EntityDeletePlan>;
@@ -59,7 +59,7 @@ export interface ConnectionMoveJunctionRequest {
   expectedRevision: number;
 }
 
-export type ConnectionJunctionPreview = { id: string; x: number; y: number } | { clear: true };
+export type ConnectionJunctionPreview = { id: string; x: number; y: number } | { positions: Array<{ id: string; x: number; y: number }> } | { clear: true };
 
 export interface ConnectionRecord {
   id: string;
@@ -92,6 +92,9 @@ export interface ConnectionAppearanceSnapshot {
   revision: number;
 }
 
+/** Revision-checked endpoint replacement, v1; retains the connection identity and label. */
+export interface ConnectionReconnectRequest { id: string; from: ConnectionEndpoint; to: ConnectionEndpoint; expectedRevision: number }
+
 export interface ConnectionSetLabelRequest {
   id: string;
   label: string;
@@ -107,6 +110,8 @@ export interface ConnectionResizeLabelRequest {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'connection.reconnect': CommandContract<ConnectionReconnectRequest, { id?: string }>;
+    'connection.moveJunctions': CommandContract<{ positions: ConnectionMoveJunctionRequest[] }, { moved: number }>;
     'connection.connectSelectedEndpoints': CommandContract<undefined, { id?: string }>;
     'connection.addJunction': CommandContract<ConnectionAddJunctionRequest, { id: string }>;
     'connection.addJunctionFromContext': CommandContract<CanvasContextRequest, { id?: string }>;
@@ -171,6 +176,8 @@ export interface ConnectionDraft {
   from?: ConnectionEndpoint;
   to?: ConnectionEndpoint;
   pointer?: { x: number; y: number };
+  /** Inherited title-route styling for a junction with no title endpoint yet. */
+  titleRoute?: boolean;
 }
 
 export interface ConnectionNodeGeometry {
@@ -180,6 +187,18 @@ export interface ConnectionNodeGeometry {
   width: number;
   height: number;
   kind?: ConnectionEndpoint['kind'];
+  /** Presentation controls the projected anchor; legacy providers default to a card. */
+  presentation?: 'card' | 'text-box';
+}
+
+/** Semantic drop target shared by node, group and junction gesture adapters. */
+export function connectionTitlePortHit(node: ConnectionNodeGeometry, pointer: { x: number; y: number }): boolean {
+  return !node.kind && node.presentation !== 'text-box' &&
+    pointer.y >= node.y - 18 && pointer.y <= node.y + 42 &&
+    Math.min(Math.abs(pointer.x - node.x), Math.abs(pointer.x - node.x - node.width)) <= 24;
+}
+export function connectionTargetSide(node: ConnectionNodeGeometry, pointer: { x: number; y: number }, titleRoute = false): ConnectionSide {
+  return titleRoute || connectionTitlePortHit(node, pointer) ? 'title' : pointer.x < node.x + node.width / 2 ? 'left' : 'right';
 }
 
 /**
@@ -217,28 +236,18 @@ export function resolveConnectionEndpoints(
 }
 
 export function resolveConnectionRecordEndpoints(
-  connection: Pick<ConnectionRecord, 'from' | 'to'>,
+  connection: Pick<ConnectionRecord, 'from' | 'to' | 'titleRoute'>,
   fromNode: ConnectionNodeGeometry,
   toNode: ConnectionNodeGeometry,
 ): { from: ConnectionEndpoint; to: ConnectionEndpoint } {
-  if (connection.from.kind || connection.to.kind) {
-    const automatic = resolveConnectionEndpoints(fromNode, toNode);
-    return {
-      from: connection.from.kind
-        ? { ...automatic.from, kind: connection.from.kind }
-        : connection.from.side === 'title' ? { ...connection.from } : automatic.from,
-      to: connection.to.kind
-        ? { ...automatic.to, kind: connection.to.kind }
-        : connection.to.side === 'title' ? { ...connection.to } : automatic.to,
-    };
-  }
-  if (connection.from.side === 'title' || connection.to.side === 'title') {
-    return {
-      from: { nodeId: fromNode.id, side: 'title' },
-      to: { nodeId: toNode.id, side: 'title' },
-    };
-  }
-  return resolveConnectionEndpoints(fromNode, toNode);
+  const automatic = resolveConnectionEndpoints(fromNode, toNode);
+  const title = isTitleConnection(connection);
+  return {
+    from: connection.from.kind ? { ...automatic.from, kind: connection.from.kind }
+      : { ...automatic.from, side: title ? 'title' : automatic.from.side },
+    to: connection.to.kind ? { ...automatic.to, kind: connection.to.kind }
+      : { ...automatic.to, side: title ? 'title' : automatic.to.side },
+  };
 }
 
 export function connectionEndpointPoint(
@@ -250,7 +259,7 @@ export function connectionEndpointPoint(
   if (endpoint.side === 'title') {
     return {
       x: node.x + (horizontalSide === 'right' ? node.width : 0),
-      y: node.y + CONNECTION_TITLE_ANCHOR_OFFSET_Y,
+      y: node.y + (node.presentation === 'text-box' ? node.height / 2 : CONNECTION_TITLE_ANCHOR_OFFSET_Y),
       side: horizontalSide === 'right' ? 'right' : 'left',
     };
   }
@@ -259,4 +268,13 @@ export function connectionEndpointPoint(
     y: node.y + node.height / 2,
     side: endpoint.side,
   };
+}
+
+/** Only two actual card title bars share a side; boxes and non-title endpoints retain facing sides. */
+export function connectionHorizontalSides(connection: Pick<ConnectionRecord, 'from' | 'to' | 'titleRoute'>, from: ConnectionNodeGeometry, to: ConnectionNodeGeometry) {
+  const sides = resolveConnectionEndpoints(from, to);
+  const endpoints = resolveConnectionRecordEndpoints(connection, from, to);
+  if (!endpoints.from.kind && !endpoints.to.kind && endpoints.from.side === 'title' && endpoints.to.side === 'title' &&
+    from.presentation !== 'text-box' && to.presentation !== 'text-box') sides.to.side = sides.from.side;
+  return sides;
 }

@@ -379,7 +379,7 @@ export const canvasPlugin: PluginDefinition = {
     });
     context.capabilities.provide<undefined, AppearanceColorContribution>({
       key: 'appearance.colors@1',
-      invoke: () => ({ colors: [{ color: readAppearance().color, count: 1 }] }),
+      invoke: () => ({ colors: [] }),
     });
     context.capabilities.provide<undefined, AppearanceUpdatePlan>({
       key: 'appearance.resetPlan@1',

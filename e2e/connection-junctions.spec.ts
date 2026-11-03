@@ -49,6 +49,21 @@ async function rightClickAt(page: Page, x: number, y: number) {
 
 const label = (page: Page, id: string) => page.locator(`.connection-label-foreign[data-connection-id="${id}"]`);
 
+async function addVisibleConnection(page: Page, id: string) {
+  const hit = page.locator(`.connection-hit-area[data-connection-id="${id}"]`);
+  const point = await hit.evaluate(element => {
+    const path = element as SVGPathElement, length = path.getTotalLength(), matrix = path.getScreenCTM()!;
+    for (let step = 5; step < 96; step += 3) {
+      const point = path.getPointAtLength(length * step / 100);
+      const screen = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+      if (document.elementFromPoint(screen.x, screen.y) === path) return { x: screen.x, y: screen.y };
+    }
+    throw new Error('No exposed connection segment');
+  });
+  await page.keyboard.down('Shift'); await page.mouse.click(point.x, point.y); await page.keyboard.up('Shift');
+  await expect(hit).toHaveAttribute('aria-pressed', 'true');
+}
+
 async function expectLabelAtSegmentMiddle(page: Page, id: string) {
   const geometry = await page.locator(`.connection-hit-area[data-connection-id="${id}"]`).evaluate((path, edgeId) => {
     const curve = path as SVGPathElement;
@@ -96,7 +111,7 @@ test('a right-click adds one movable junction, labels follow its branch and dele
 for (const outputs of [false, true]) test(`multiple ${outputs ? 'outgoing' : 'incoming'} lines share exactly one junction and deleting its trunk leaves the branches intact`, async ({ page }) => {
   await openGraph(page, outputs);
   await label(page, 'edge-a').click();
-  await label(page, 'edge-b').click({ modifiers: ['Shift'] });
+  await addVisibleConnection(page, 'edge-b');
   await page.locator('.connection-hit-area').first().focus();
   await expect(page.locator('.connection-hit-area').first()).toHaveCSS('outline-style', 'none');
   await rightClickAt(page, 540, 520);
@@ -160,7 +175,7 @@ test('title routes and their text boxes stay dashed before and after shared junc
   await page.keyboard.press('Enter');
   await firstHit.focus();
   await firstHit.press('Enter');
-  await label(page, 'edge-b').click({ modifiers: ['Shift'] });
+  await addVisibleConnection(page, 'edge-b');
   await rightClickAt(page, 540, 520);
   await expect(page.locator('.connection-junction')).toHaveCount(1);
   await expect(paths).toHaveCount(3);
@@ -176,12 +191,8 @@ test('title dashes keep actual gaps and solid arrows, routed junctions are tange
   await openGraph(page, false, true, true);
   const first = page.locator('.connection-hit-area[data-connection-id="edge-a"]');
   await first.focus(); await first.press('Enter');
-  const second = await page.locator('.connection-hit-area[data-connection-id="edge-b"]').evaluate(element => {
-    const path = element as SVGPathElement, point = path.getPointAtLength(path.getTotalLength() / 3);
-    const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
-    return { x: screen.x, y: screen.y };
-  });
-  await page.keyboard.down('Shift'); await page.mouse.click(second.x, second.y); await page.keyboard.up('Shift');
+  await addVisibleConnection(page, 'edge-b');
+  await expect(page.locator('.connection-hit-area[aria-pressed="true"]')).toHaveCount(2);
   await rightClickAt(page, 260, 180);
   await expect(page.locator('.connection-junction')).toHaveCount(1);
   await expect(page.locator('.connection-arrow')).toHaveCount(1);

@@ -212,7 +212,7 @@ const MapGroups = memo(function MapGroups({ groups, projection, focus }: {
     role="button" tabIndex={0} aria-label={`聚焦群组 ${index + 1}`}
     x={group.x * projection.scale + projection.x} y={group.y * projection.scale + projection.y}
     width={Math.max(2, group.width * projection.scale)} height={Math.max(2, group.height * projection.scale)}
-    fill="none" stroke={group.color ?? 'var(--minimap-ink)'} strokeWidth={1} rx={2}
+    fill={group.color ?? 'var(--minimap-ink)'} fillOpacity={0.16} stroke="none" rx={2}
     onKeyDown={event => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault(); event.stopPropagation(); focus(group.id);

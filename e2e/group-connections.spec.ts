@@ -44,6 +44,45 @@ async function port(page: Page, id: string, side: 'left' | 'right') {
   return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
 }
 
+test('invisible group ports retain dragging and connect to the upper-left title port inside another group', async ({ page }) => {
+  await openGroups(page);
+  const from = await port(page, 'g1', 'right');
+  const control = page.locator('.group-frame[data-group-id="g1"] .group-connection-port.right');
+  await expect(control).toHaveCSS('border-top-width', '0px'); await expect(control).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  const target = await page.getByRole('button', { name: '从群组测试c标题栏左侧连接', exact: true }).boundingBox();
+  await drag(page, from, { x: target!.x + 2, y: target!.y + target!.height / 2 });
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await expect(page.locator('.connection-path:not(.draft)')).toHaveClass(/title-connection/u);
+  const values = (await page.locator('.connection-hit-area').getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+  expect(values.slice(-2)).toEqual([760, 101]);
+});
+
+test('removing a member keeps the group connector on its remaining frame throughout preview and commit', async ({ page }) => {
+  await openGroups(page);
+  const member = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试e"]') });
+  const header = await member.locator('header strong').boundingBox();
+  await page.keyboard.down('Control');
+  await drag(page, { x: header!.x + 30, y: header!.y + 10 }, { x: 190, y: 270 }); await page.keyboard.up('Control');
+  const frame = page.locator('.group-frame[data-group-id="g1"]');
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 3 个节点');
+  await drag(page, await port(page, 'g1', 'right'), await port(page, 'g2', 'left'));
+  const line = page.locator('.connection-hit-area'), initial = await line.getAttribute('d');
+  const moved = await member.locator('header strong').boundingBox();
+  await page.keyboard.down('Control'); await page.mouse.move(moved!.x + 30, moved!.y + 10); await page.mouse.down();
+  await page.mouse.move(580, 570, { steps: 12 });
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  const remaining = await frame.evaluate(element => {
+    const style = (element as HTMLElement).style;
+    return { x: parseFloat(style.left) + parseFloat(style.width), y: parseFloat(style.top) + parseFloat(style.height) / 2 };
+  });
+  await expect.poll(async () => (await line.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number).slice(0, 2)).toEqual([remaining.x, remaining.y]);
+  const preview = await line.getAttribute('d');
+  await page.mouse.up(); await page.keyboard.up('Control');
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点'); await expect(line).toHaveAttribute('d', preview!);
+  await page.keyboard.press('Control+z'); await expect(frame).toHaveAttribute('aria-label', '群组，包含 3 个节点');
+  await expect(line).toHaveAttribute('d', initial!);
+});
+
 for (const textBox of [false, true]) test(`Alt copying a grouped ${textBox ? 'text box' : 'node'} keeps its original group frame and connections fixed throughout preview`, async ({ page }) => {
   await openGroups(page);
   await drag(page, await port(page, 'g1', 'right'), await port(page, 'g2', 'left'));
@@ -140,13 +179,13 @@ test('title ports on both sides follow node positions during preview, movement a
   await expect(path).toHaveCount(1);
   const read = async () => (await path.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
   expect((await read()).slice(0, 2)).toEqual([300, 101]);
-  expect((await read()).slice(-2)).toEqual([760, 101]);
+  expect((await read()).slice(-2)).toEqual([980, 101]);
   const header = await source.locator('header').boundingBox();
   await drag(page, { x: header!.x + 80, y: header!.y + 21 }, { x: header!.x + 860, y: header!.y + 21 });
-  await expect.poll(async () => (await read())[0]).toBeGreaterThan(760);
+  await expect.poll(async () => (await read())[6]).toBe(760);
   const moved = await read();
   expect(moved[2]).toBeLessThan(moved[0]);
-  expect(moved[6]).toBe(980); expect(moved[4]).toBeGreaterThan(moved[6]);
+  expect(moved[6]).toBe(760); expect(moved[4]).toBeLessThan(moved[6]);
   await expect(page.locator('.connection-path:not(.draft)')).not.toHaveCSS('stroke-dasharray', 'none');
   await page.keyboard.press('Control+z');
   await expect.poll(async () => (await read())[0]).toBe(300);
@@ -205,4 +244,19 @@ test('group output can reach an ordinary node or a node title, retaining the cor
   await expect(page.locator('.connection-hit-area')).toHaveCount(1);
   await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
   await expect(page.locator('.connection-hit-area')).toHaveAttribute('d', /C/u);
+});
+
+test('Alt dragging an entire group displays its copied frame before committing, while the original stays fixed', async ({ page }) => {
+  await openGroups(page);
+  const group = page.locator('[data-group-id="g1"].group-frame');
+  const original = await group.boundingBox();
+  await page.keyboard.down('Alt'); await page.mouse.move(original!.x + 14, original!.y + 16); await page.mouse.down();
+  await page.mouse.move(original!.x + 360, original!.y + 96, { steps: 10 });
+  const ghost = page.locator('[data-group-copy-preview="g1"]');
+  await expect(ghost).toBeVisible();
+  expect((await group.boundingBox())!.x).toBe(original!.x);
+  expect((await ghost.boundingBox())!.x).toBeGreaterThan(original!.x + 300);
+  await page.mouse.up(); await page.keyboard.up('Alt');
+  await expect(ghost).toHaveCount(0); await expect(page.locator('.group-frame')).toHaveCount(3);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.group-frame')).toHaveCount(2);
 });

@@ -141,5 +141,6 @@ export function mergeContentCatalogDeltas(
 }
 
 function sameGeometry(left: ContentSummary, right: ContentSummary): boolean {
-  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
+  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height &&
+    (left.presentation ?? 'card') === (right.presentation ?? 'card');
 }

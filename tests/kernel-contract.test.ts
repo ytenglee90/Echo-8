@@ -2154,7 +2154,7 @@ test('selection palette recolors mixed module kinds in one undoable transaction 
   );
 });
 
-test('selection palette persists independent line, label-box, and label-text colors', async () => {
+test('selection palette changes line and label text while label backgrounds stay fixed', async () => {
   const harness = createHarness();
   harness.plugins.register(textNodePlugin);
   harness.plugins.register(createSelectionPlugin());
@@ -2186,8 +2186,8 @@ test('selection palette persists independent line, label-box, and label-text col
     { part: 'line', kind: 'connection-line', field: 'lineColor', color: '#315f9f' },
     {
       part: 'label-background',
-      kind: 'connection-label-background',
-      field: 'labelBackgroundColor',
+      kind: 'connection-line',
+      field: 'lineColor',
       color: '#f0d989',
     },
     {
@@ -2229,8 +2229,8 @@ test('selection palette persists independent line, label-box, and label-text col
   await harness.transactions.undo();
   const undone = (await harness.capabilities.request<ConnectionRecord[]>('connections.list@1'))[0];
   assert.equal(undone.labelTextColor, undefined);
-  assert.equal(undone.labelBackgroundColor, '#f0d989');
-  assert.equal(undone.lineColor, '#315f9f');
+  assert.equal(undone.labelBackgroundColor, undefined);
+  assert.equal(undone.lineColor, '#f0d989');
 });
 
 test('selection palette stores group and annotation overrides without changing global defaults', async () => {
@@ -2660,9 +2660,10 @@ test('global color picker is an ephemeral governed modal and lists canvas colors
   assert.equal(globalPicker.sessionId.startsWith(`node-title:${first.id}:`), true);
   assert.equal(
     globalPicker.colors.reduce((total, record) => total + record.count, 0),
-    nodes.length * 2 + 5,
+    nodes.length * 2,
   );
   assert.equal(globalPicker.colors.some((record) => record.color === '#202124'), true);
+  assert.equal(globalPicker.colors.some((record) => record.color === '#f1f1ef'), false);
   assert.equal(harness.history.getState().undoCount, historyBeforeOpen);
 
   await harness.router.dispatch('palette.nodeTitlePicker.close', undefined, 'core.test');

@@ -80,8 +80,9 @@ test('minimap distinguishes colored node blocks, outlined text boxes and groups,
     return Math.abs(line.y1.baseVal.value - rect.y.baseVal.value - rect.height.baseVal.value / 2) < .001 &&
       line.y1.baseVal.value === line.y2.baseVal.value && Math.abs(line.x2.baseVal.value - line.x1.baseVal.value - rect.width.baseVal.value) < .001;
   })).toBe(true);
-  await expect(map.locator('[data-map-group="group"]')).toHaveAttribute('fill', 'none');
-  await expect(map.locator('[data-map-group="group"]')).toHaveAttribute('stroke', '#b65fcf');
+  await expect(map.locator('[data-map-group="group"]')).toHaveAttribute('fill', '#b65fcf');
+  await expect(map.locator('[data-map-group="group"]')).toHaveAttribute('fill-opacity', '0.16');
+  await expect(map.locator('[data-map-group="group"]')).toHaveAttribute('stroke', 'none');
   await map.screenshot({ path: test.info().outputPath('minimap-entities.png') });
   const hostBox = await page.locator('.canvas-host').boundingBox();
   const mapBox = await map.boundingBox();
@@ -102,7 +103,7 @@ test('minimap distinguishes colored node blocks, outlined text boxes and groups,
   expect(errors).toEqual([]);
 });
 
-test('minimap group outlines focus the group and disappear when its provider is disabled without hiding nodes', async ({ page }) => {
+test('minimap group fills support keyboard focus and disappear when their provider is disabled without hiding nodes', async ({ page }) => {
   await openMap(page);
   const group = page.locator('[data-map-group="group"]');
   await group.focus(); await group.press('Enter');

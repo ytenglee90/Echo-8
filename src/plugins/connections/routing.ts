@@ -1,4 +1,4 @@
-import { connectionEndpointPoint, resolveConnectionEndpoints, resolveConnectionRecordEndpoints, type ConnectionJunction, type ConnectionNodeGeometry, type ConnectionRecord } from '../../protocols/connections.ts';
+import { connectionEndpointPoint, connectionHorizontalSides, resolveConnectionRecordEndpoints, type ConnectionJunction, type ConnectionNodeGeometry, type ConnectionRecord } from '../../protocols/connections.ts';
 import type { ConnectionRenderPoint } from './rendering.ts';
 
 export interface ConnectionPoints { from: ConnectionRenderPoint; to: ConnectionRenderPoint }
@@ -12,7 +12,7 @@ export function connectionGraphPoints(records: readonly ConnectionRecord[], node
     const fromNode = nodes.get(record.from.nodeId), toNode = nodes.get(record.to.nodeId);
     if (!fromNode || !toNode) continue;
     const endpoints = resolveConnectionRecordEndpoints(record, fromNode, toNode);
-    const sides = resolveConnectionEndpoints(fromNode, toNode);
+    const sides = connectionHorizontalSides(record, fromNode, toNode);
     const from = connectionEndpointPoint(endpoints.from, fromNode, sides.from.side), to = connectionEndpointPoint(endpoints.to, toNode, sides.to.side);
     points.set(record.id, { from, to });
     const length = Math.hypot(to.x - from.x, to.y - from.y);

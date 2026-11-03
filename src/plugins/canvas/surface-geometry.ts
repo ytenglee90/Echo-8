@@ -1,6 +1,7 @@
 import type { CameraState, LassoPreview } from '../../protocols/canvas.ts';
 import {
   connectionEndpointPoint,
+  connectionTargetSide,
   resolveConnectionEndpoints,
   type ConnectionDraft,
   type ConnectionEndpoint,
@@ -51,6 +52,8 @@ export interface ResizePreview {
 
 export interface ConnectionSession {
   from: ConnectionEndpoint;
+  /** The starting port remains stable while a hovered target changes the route style. */
+  sourceSide?: ConnectionEndpoint['side'];
   to?: ConnectionEndpoint;
   pointer: { x: number; y: number };
   pointerId: number;
@@ -111,20 +114,22 @@ export function updateConnectionSession(
     clientX - session.startClientX,
     clientY - session.startClientY,
   ) >= CONNECTION_DRAG_THRESHOLD;
+  const sourceSide = session.sourceSide ?? session.from.side;
   if (source && target) {
-    const endpoints = session.from.side === 'title'
+    const endpoints = sourceSide === 'title' || connectionTargetSide(target, pointer) === 'title'
       ? {
           from: { nodeId: source.id, side: 'title' as const },
           to: { nodeId: target.id, side: 'title' as const },
         }
       : resolveConnectionEndpoints(source, target);
-    return { ...session, ...endpoints, pointer, moved };
+    return { ...session, ...endpoints, sourceSide, pointer, moved };
   }
   if (!source) return { ...session, to: undefined, pointer, moved };
-  if (session.from.side === 'title') {
+  if (sourceSide === 'title') {
     return {
       ...session,
       from: { nodeId: source.id, side: 'title' },
+      sourceSide,
       to: undefined,
       pointer,
       moved,
@@ -134,6 +139,7 @@ export function updateConnectionSession(
   return {
     ...session,
     from: { nodeId: source.id, side: pointer.x < sourceCenter ? 'left' : 'right' },
+    sourceSide,
     to: undefined,
     pointer,
     moved,

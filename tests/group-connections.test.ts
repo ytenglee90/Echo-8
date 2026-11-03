@@ -105,6 +105,20 @@ test('ungrouping, member dissolution and deletion remove attached group links at
   }
 });
 
+test('membership previews project remaining group bounds without writing or following the expelled node', async () => {
+  const { kernel, ids, groups, targets } = await setup();
+  const initial = (await targets()).find(group => group.id === groups[0])!;
+  await kernel.router.dispatch('group.membership.add', { groupId: groups[0], nodeIds: [ids[4]] }, source);
+  const nodes = await kernel.capabilities.request<import('../src/protocols/content.ts').ContentSummary[]>('content.summaries@1');
+  const before = kernel.store.snapshot().document, history = kernel.history.getState().undoCount;
+  const projected = kernel.capabilities.requestSync<ConnectionTarget[]>('connections.targets@1', {
+    nodes: nodes.map(node => node.id === ids[4] ? { ...node, x: 1800, y: 1800 } : node),
+    membership: { nodeId: ids[4], nodeIds: [ids[4]], pointer: { x: 1800, y: 1800 } },
+  });
+  assert.deepEqual(projected.find(group => group.id === groups[0]), initial);
+  assert.deepEqual(kernel.store.snapshot().document, before); assert.equal(kernel.history.getState().undoCount, history);
+});
+
 test('group selections use ordinary and title shortcuts in order, with stale endpoint rejection', async () => {
   const { kernel, groups, ids, graph } = await setup();
   await kernel.router.dispatch('selection.set', { ids: [groups[0], groups[1]] }, source);

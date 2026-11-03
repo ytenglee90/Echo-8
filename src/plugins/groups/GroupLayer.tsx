@@ -158,7 +158,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     [duplicateOriginIds, previews, sizePreviews, stableNodeMap],
   );
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const connectionTargets = useConnectionTargets(client, nodeMap);
+  const connectionTargets = useConnectionTargets(client, nodeMap, membershipPreview && !('clear' in membershipPreview) && membershipPreview.active ? membershipPreview : undefined);
   const connectionGeometry = useMemo(() => new Map<string, ConnectionNodeGeometry>([...nodeMap, ...connectionTargets.map(target => [target.id, target] as const), ...junctions.map(point => [point.id, point] as const)]), [connectionTargets, junctions, nodeMap]);
   const connect = useConnectionGesture(client, camera, connectionGeometry);
   const membershipTarget = useMemo(() => {
@@ -429,6 +429,14 @@ export function GroupLayer({ client }: { client: ViewClient }) {
         className="group-world"
         style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}
       >
+        {visibleGroups.filter(group => selected.has(group.id) && group.memberIds.every(id => duplicateOriginIds.has(id) && previews[id])).map(group => {
+          const members = group.memberIds.flatMap(id => { const node = stableNodeMap.get(id); return node ? [{ ...node, ...previews[id], ...sizePreviews[id] }] : []; });
+          if (members.length < 2) return null;
+          const bounds = computeGroupBounds(members);
+          return <section key={`copy-${group.id}`} data-group-copy-preview={group.id} className="group-frame group-copy-preview selected" aria-hidden="true"
+            style={{ left: bounds.x, top: bounds.y, width: bounds.width, height: bounds.height,
+              ...(group.color ? { '--group-background': group.color } : {}) } as CSSProperties} />;
+        })}
         {visibleGroups.map((group) => {
           let previewMemberIds = group.memberIds;
           if (membershipTarget && membershipPreview && !('clear' in membershipPreview)) {

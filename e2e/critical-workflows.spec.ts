@@ -1889,11 +1889,11 @@ test('title-bar ports create persistent connections on facing left and right tit
     const match = /translate(?:3d)?\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform);
     return Number(match?.[1]);
   })).toBeLessThan(sourceBeforeMove.x - 40);
-  // Leave room between facing edges for the label and its resize handle.
+  // Keep the outward same-side title curve and its label above the target's body.
   const targetTitleBox = await target.locator('strong').boundingBox();
   await page.mouse.move(targetTitleBox!.x + 80, targetTitleBox!.y + 10);
   await page.mouse.down();
-  await page.mouse.move(targetTitleBox!.x + 330, targetTitleBox!.y + 10, { steps: 8 });
+  await page.mouse.move(targetTitleBox!.x + 80, targetTitleBox!.y + 300, { steps: 8 });
   await page.mouse.up();
   const sourcePort = source.getByRole('button', { name: '从AI 助手使用指南标题栏左侧连接', exact: true });
   await expect(sourcePort).toHaveCSS('outline-style', 'none');
@@ -1947,14 +1947,14 @@ test('title-bar ports create persistent connections on facing left and right tit
   expect(coordinates).toHaveLength(8);
   expect(coordinates[0]).toBeCloseTo(sourcePosition.x + (sourceIsLeft ? sourceWidth : 0), 4);
   expect(coordinates[1]).toBeCloseTo(sourcePosition.y + 21, 4);
-  expect(coordinates.at(-2)).toBeCloseTo(targetPosition.x + (sourceIsLeft ? 0 : targetWidth), 4);
+  expect(coordinates.at(-2)).toBeCloseTo(targetPosition.x + (sourceIsLeft ? targetWidth : 0), 4);
   expect(coordinates.at(-1)).toBeCloseTo(targetPosition.y + 21, 4);
   expect(coordinates[3]).toBeCloseTo(coordinates[1], 4);
   expect(coordinates[5]).toBeCloseTo(coordinates[7], 4);
   expect(renderedCoordinates.at(-4)).toBeCloseTo(coordinates.at(-2)!, 4);
   expect(renderedCoordinates.at(-3)).toBeCloseTo(coordinates.at(-1)!, 4);
   expect((coordinates[2] - coordinates[0]) * (sourceIsLeft ? 1 : -1)).toBeGreaterThan(0);
-  expect((coordinates[6] - coordinates[4]) * (sourceIsLeft ? 1 : -1)).toBeGreaterThan(0);
+  expect((coordinates[6] - coordinates[4]) * (sourceIsLeft ? -1 : 1)).toBeGreaterThan(0);
 
   const connectionPoint = await connection.evaluate((element) => {
     const hitPath = element as SVGPathElement;
@@ -3230,7 +3230,7 @@ test('global color presets keep canvas strokes adaptive on bright, dark and eye-
   )).toBe('#fafaf9');
 });
 
-test('a custom-color connection keeps the exact picker color through selection and hover', async ({ page }) => {
+test('a custom-color connection uses the shared gray highlight and restores its picker color afterwards', async ({ page }) => {
   await openApplication(page);
   const cards = page.locator('.text-node-card');
   await cards.nth(0).click({ position: { x: 80, y: 90 } });
@@ -3256,8 +3256,8 @@ test('a custom-color connection keeps the exact picker color through selection a
     return { fill: style.fill, stroke: style.stroke, width: style.strokeWidth };
   });
   expect(selectedAppearance.fill).toBe('none');
-  await expect(page.locator('.connection-arrow').first()).toHaveCSS('fill', 'rgb(255, 238, 0)');
-  expect(selectedAppearance.stroke).toBe('rgb(255, 238, 0)');
+  await expect(page.locator('.connection-arrow').first()).toHaveCSS('fill', 'rgb(102, 102, 107)');
+  expect(selectedAppearance.stroke).toBe('rgb(102, 102, 107)');
   expect(Number.parseFloat(selectedAppearance.width)).toBeGreaterThan(1.5);
 
   await page.keyboard.press('Escape');

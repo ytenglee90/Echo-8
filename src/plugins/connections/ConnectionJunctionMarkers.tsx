@@ -7,16 +7,17 @@ import { canvasDetailWorldScale } from '../../ui/canvas-screen-scale.ts';
 import { useJunctionDrag } from './use-junction-drag.ts';
 import { useJunctionConnect } from './use-junction-connect.ts';
 
-export function ConnectionJunctionMarkers({ client, camera, junctions, selected, nodes, titleJunctionIds, targetId }: {
+export function ConnectionJunctionMarkers({ client, camera, junctions, allJunctions, selected, nodes, titleJunctionIds, targetId }: {
   client: ViewClient;
   camera: CameraState;
   junctions: ConnectionJunction[];
+  allJunctions: ConnectionJunction[];
   selected: ReadonlySet<string>;
   nodes: ReadonlyMap<string, ConnectionNodeGeometry>;
   titleJunctionIds: ReadonlySet<string>;
   targetId?: string;
 }) {
-  const drag = useJunctionDrag(client, camera);
+  const drag = useJunctionDrag(client, camera, allJunctions, selected);
   const connect = useJunctionConnect(client, camera, nodes);
   const scale = canvasDetailWorldScale(camera.zoom);
   return <g className="connection-junction-layer">
@@ -38,7 +39,7 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, selected,
       onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: point.id, clear: true })}
       onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') { connect.cancel(); event.stopPropagation(); return; }
+        if (event.key === 'Escape') { connect.cancel(); drag.cancel(); event.stopPropagation(); return; }
         const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
         if (!direction) return;
         event.preventDefault();

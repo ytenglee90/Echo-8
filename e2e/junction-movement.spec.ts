@@ -1,0 +1,78 @@
+import { expect, test, type Page } from '@playwright/test';
+import { serializeProject } from '../src/plugins/import-export/codec.ts';
+import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
+import type { ProjectSource } from '../src/protocols/files.ts';
+
+async function openFixture(page: Page) {
+  await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
+  await page.goto('/'); await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+  const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, connections: {}, connectionJunction: {} };
+  for (const [id, x] of [['a', 80], ['b', 900]] as const) {
+    const content = createContentStorage(`body-${id}`, id, 1); namespaces.textContent[`body-${id}`] = content.content;
+    for (const patch of content.chunkPatches) if (patch.op === 'set') namespaces.textContentChunk[patch.key] = patch.value;
+    namespaces.textNode[id] = { id, contentId: `body-${id}`, title: `跟随${id}`, x, y: 80, width: 220, height: 130, titleColor: '#303030', revision: 1, createdAt: 1, updatedAt: 1 };
+  }
+  namespaces.connectionJunction.j1 = { id: 'j1', x: 400, y: 240, revision: 1 };
+  namespaces.connectionJunction.j2 = { id: 'j2', x: 650, y: 240, revision: 1 };
+  for (const [id, from, to] of [['one', { nodeId: 'a', side: 'right' }, { nodeId: 'j1', kind: 'junction', side: 'left' }],
+    ['two', { nodeId: 'j1', kind: 'junction', side: 'right' }, { nodeId: 'j2', kind: 'junction', side: 'left' }],
+    ['three', { nodeId: 'j2', kind: 'junction', side: 'right' }, { nodeId: 'b', side: 'left' }]] as const) namespaces.connections[id] = { id, from, to, revision: 1, createdAt: 1 };
+  const blob = await serializeProject({ document: { revision: 1, namespaces }, plugins: [
+    { id: 'text-node', version: '0.1.0', dataVersion: 2, namespaces: ['textNode', 'textContent', 'textContentChunk'], available: true },
+    { id: 'connections', version: '0.1.0', dataVersion: 8, namespaces: ['connections', 'connectionJunction'], available: true },
+  ] });
+  await page.keyboard.press('Control+k'); const palette = page.getByRole('dialog', { name: '命令面板' });
+  await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开书籍'); await palette.getByRole('option', { name: /^打开书籍/u }).click();
+  const notice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' }); const chooser = page.waitForEvent('filechooser');
+  await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
+  await (await chooser).setFiles({ name: '中转点移动.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
+  await expect(notice).toHaveCount(0); await expect(page.locator('.connection-junction')).toHaveCount(2);
+}
+async function points(page: Page) { return page.locator('.connection-junction').evaluateAll(elements => elements.map(element => element.getAttribute('transform')!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number))); }
+
+test('multiple junctions drag and nudge together, retain spacing, undo once and cancel with Escape', async ({ page }) => {
+  await openFixture(page);
+  const markers = page.locator('.connection-junction'), dots = page.locator('.connection-junction-dot');
+  await dots.nth(0).click(); await dots.nth(1).click({ modifiers: ['Shift'] });
+  await expect(page.locator('.connection-junction.selected')).toHaveCount(2);
+  const initial = await points(page), box = await dots.nth(0).boundingBox();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down();
+  await page.mouse.move(box!.x + 120, box!.y + 70, { steps: 10 }); await page.mouse.up();
+  await expect.poll(async () => (await points(page))[0][0]).toBeGreaterThan(initial[0][0] + 50);
+  const moved = await points(page);
+  expect(moved[1][0] - moved[0][0]).toBe(initial[1][0] - initial[0][0]); expect(moved[1][1] - moved[0][1]).toBe(initial[1][1] - initial[0][1]);
+  await page.keyboard.press('Control+z'); await expect.poll(() => points(page)).toEqual(initial);
+  await page.keyboard.press('Control+Shift+z'); await expect.poll(() => points(page)).toEqual(moved);
+  await markers.nth(0).focus(); await markers.nth(0).press('Shift+ArrowRight');
+  await expect.poll(async () => (await points(page))[1][0]).toBe(moved[1][0] + 10);
+  await page.keyboard.press('Control+z'); await expect.poll(() => points(page)).toEqual(moved);
+  const current = await dots.nth(0).boundingBox();
+  await page.mouse.move(current!.x + current!.width / 2, current!.y + current!.height / 2); await page.mouse.down();
+  await page.mouse.move(current!.x + 80, current!.y + 80, { steps: 8 }); await page.keyboard.press('Escape'); await page.mouse.up();
+  await expect.poll(() => points(page)).toEqual(moved);
+});
+
+for (const textBox of [false, true]) test(`moving one ${textBox ? 'text box' : 'node'} previews mean junction movement and commits with a single undo`, async ({ page }) => {
+  await openFixture(page);
+  const node = page.locator('.text-node-card').filter({ has: page.locator('strong[title="跟随a"]') });
+  if (textBox) {
+    await node.locator('header strong').click();
+    await page.getByRole('button', { name: '文本框与文字节点相互转换', exact: true }).click();
+    await expect(node).toHaveClass(/text-box/u);
+  }
+  const initial = await points(page), header = await node.locator(textBox ? '.text-box-title' : 'header strong').boundingBox();
+  const position = () => node.evaluate(element => {
+    const values = /translate(?:3d)?\(([-\d.]+)px,\s*([-\d.]+)px/u.exec((element as HTMLElement).style.transform)!;
+    return [Number(values[1]), Number(values[2])];
+  });
+  const origin = await position();
+  await page.mouse.move(header!.x + 30, header!.y + 10); await page.mouse.down();
+  await page.mouse.move(header!.x + 230, header!.y + 110, { steps: 10 });
+  await expect.poll(async () => (await points(page))[0][0]).toBeGreaterThan(initial[0][0] + 50);
+  await expect.poll(async () => { const p = await position(), j = await points(page); return Math.abs(j[0][0] - initial[0][0] - (p[0] - origin[0]) / 2); }).toBeLessThan(0.01);
+  const target = await position(), preview = await points(page);
+  expect(preview[0][0] - initial[0][0]).toBeCloseTo((target[0] - origin[0]) / 2);
+  expect(preview[0][1] - initial[0][1]).toBeCloseTo((target[1] - origin[1]) / 2);
+  await page.mouse.up(); await expect.poll(() => points(page)).toEqual(preview);
+  await page.keyboard.press('Control+z'); await expect.poll(() => points(page)).toEqual(initial);
+});

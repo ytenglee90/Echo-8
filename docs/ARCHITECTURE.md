@@ -189,3 +189,13 @@ Title connections expose left and right title ports and project facing sides thr
 Ctrl membership drags carry an optional complete nodeIds batch in the existing versioned group contracts. Canvas preserves the selected batch during drag while retaining Ctrl-click toggles, and groups composes every affected membership change, movement and dissolved-group connection cleanup into one transaction (ADR-0095).
 
 The minimap retains solid node blocks, draws text boxes as inherited-color outlines with a centre bar, and receives group outlines through owner-projected canvas.overview@1 geometry. Provider invalidations and lifecycle changes expire the overview cache; canvas.focusEntity also accepts these projected entities (ADR-0096).
+
+Connection target gestures share semantic title-port detection. Presentation-aware anchors preserve dashed/title versus solid/body meaning through same-size card/text-box conversion, and geometry caches include presentation. Visible shafts meet arrows on the exact terminal tangent rather than a trimmed chord (ADR-0097); stored connection fields and file versions stay unchanged.
+
+Junction batches retain relative spacing and commit through revision-checked connection.moveJunctions. The connection owner plans mean endpoint-displacement following through content.moveAttachmentsPlan@1; content movement composes these patches atomically, and canvas previews use the same pure component projection (ADR-0098). No stored fields or data versions change.
+
+Group connector hit areas are transparent. Explicit title ports take precedence over surrounding group hit regions, and connections.targets@1 optionally projects membership previews so connector anchors and remaining group frames agree before and after the atomic drop (ADR-0099).
+
+Only actual card-title pairs use a shared automatically selected side; body, box, group and junction routes retain facing semantics. Minimap groups are inherited-color translucent fills without outlines, and connector drafts use the same live solid/title-dashed classification as committed lines (ADR-0097, ADR-0100).
+
+Arrow reconnection uses revision-checked connection.reconnect v1 with create-equivalent validation and identity-preserving owner patches. Label resize sessions capture on the stable SVG root and release by token on completion, Escape, capture loss or teardown. SVG label borders share shaft dash geometry and canvas background; appearance catalogs include entity colors only. Whole-group duplicate frames remain transient (ADR-0101).

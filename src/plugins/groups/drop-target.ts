@@ -1,4 +1,4 @@
-import type { ContentSummary } from '../../protocols/content.ts';
+import type { ConnectionNodeGeometry } from '../../protocols/connections.ts';
 import type {
   GroupDropTarget,
   GroupDropTargetRequest,
@@ -8,7 +8,7 @@ import { computeGroupBounds } from './layout.ts';
 
 export function resolveGroupDropTarget(
   groups: readonly GroupRecord[],
-  nodes: readonly ContentSummary[],
+  nodes: readonly ConnectionNodeGeometry[],
   request: GroupDropTargetRequest,
 ): GroupDropTarget | undefined {
   if (!isDropTargetRequest(request)) {
@@ -25,7 +25,7 @@ export function resolveGroupDropTarget(
   if (currentGroup) return { action: 'remove', groupId: currentGroup.id };
 
   const candidates = groups.flatMap((group) => {
-    const members = group.memberIds.map((id) => nodeMap.get(id)).filter(Boolean) as ContentSummary[];
+    const members = group.memberIds.map((id) => nodeMap.get(id)).filter(Boolean) as ConnectionNodeGeometry[];
     if (members.length < 2) return [];
     const bounds = computeGroupBounds(members);
     return pointInside(request.pointer, bounds) ? [{ group, area: bounds.width * bounds.height }] : [];

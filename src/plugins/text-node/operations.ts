@@ -370,11 +370,11 @@ export function isMovePayload(payload: unknown): payload is MoveNodePayload {
   );
 }
 
-export function buildMovePlan(
+export async function buildMovePlan(
   context: PluginContext,
   positions: NodePosition[],
   portable = false,
-): ContentMovePlan {
+): Promise<ContentMovePlan> {
   const updatedAt = Date.now();
   const normalized = positions.map((position) => ({ ...position }));
   const patches = normalized.map((position) => {
@@ -395,10 +395,15 @@ export function buildMovePlan(
       ...(portable ? { schemaOwner: 'text-node' } : {}),
     };
   });
+  const attachments = await context.capabilities.requestAll<import('../../protocols/content.ts').ContentMoveAttachmentsPlan>('content.moveAttachmentsPlan@1', {
+    positions: normalized,
+    nodes: Object.values(context.store.readNamespace<Record<string, TextNodeRecord>>(NODE_NAMESPACE)).filter(isCanvasTextNode)
+      .map(node => ({ id: node.id, x: node.x, y: node.y, width: node.width, height: nodeHeight(node), presentation: nodePresentation(node) })),
+  });
   return {
     positions: normalized,
-    patches,
-    events: [{ type: 'nodes.moved', payload: { positions: normalized } }],
+    patches: [...patches, ...attachments.flatMap(plan => plan.patches)],
+    events: [{ type: 'nodes.moved', payload: { positions: normalized } }, ...attachments.flatMap(plan => plan.events ?? [])],
   };
 }
 

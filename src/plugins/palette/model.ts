@@ -261,11 +261,6 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
             // The picker still records personal interface colors without a content provider.
           }
         }
-        add(preferences.editorBackground);
-        add(preferences.editorChromeBackground);
-        add(preferences.toolbarBackground);
-        add(preferences.annotationColor);
-        add(preferences.groupBackground);
         return [...counts.entries()]
           .map(([color, count]) => ({ color, count }))
           .sort((left, right) => right.count - left.count || left.color.localeCompare(right.color));
