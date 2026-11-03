@@ -13,8 +13,10 @@
 .canvas-minimap[data-tone="dark"] { --minimap-background: rgba(24,25,27,.72); --minimap-ink: #f2f2f3; }
 .canvas-minimap .minimap-surface { display: block; width: 100%; touch-action: none; cursor: crosshair; }
 .canvas-minimap .minimap-surface:active { cursor: grabbing; }
-.canvas-minimap .minimap-blocks rect { cursor: pointer; }
-.canvas-minimap .minimap-blocks rect:focus-visible { outline: 2px solid var(--minimap-ink); outline-offset: 2px; }
+.canvas-minimap :is([data-map-node], [data-map-group]) { cursor: pointer; }
+.canvas-minimap :is([data-map-node], [data-map-group]):focus-visible { outline: 2px solid var(--minimap-ink); outline-offset: 2px; }
+.canvas-minimap .minimap-entity-hit { pointer-events: all; }
+.canvas-minimap .minimap-groups rect { pointer-events: stroke; opacity: .7; }
 .canvas-minimap .minimap-surface:focus { outline: none; }
 .canvas-minimap .minimap-viewport { fill: none; stroke: var(--minimap-ink); stroke-width: 1.2; opacity: .65; pointer-events: none; }
 .canvas-minimap .minimap-click-pulse {

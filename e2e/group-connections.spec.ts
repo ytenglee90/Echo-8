@@ -7,11 +7,11 @@ async function openGroups(page: Page) {
   await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
   await page.goto('/'); await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, groups: {}, connections: {}, connectionJunction: {} };
-  for (const [id, x, y] of [['a', 80, 80], ['b', 80, 330], ['c', 760, 80], ['d', 760, 330], ['e', 440, 530]] as const) {
+  for (const [id, x, y] of [['a', 80, 80], ['b', 80, 330], ['c', 760, 80], ['d', 760, 330], ['e', 440, 530], ['f', 440, 330]] as const) {
     const content = createContentStorage(`body-${id}`, `正文${id}`, 1);
     namespaces.textContent[`body-${id}`] = content.content;
     for (const patch of content.chunkPatches) if (patch.op === 'set') namespaces.textContentChunk[patch.key] = patch.value;
-    namespaces.textNode[id] = { id, contentId: `body-${id}`, title: `群组测试${id}`, x, y, width: 220, height: 130, titleColor: '#303030', revision: 1, createdAt: 1, updatedAt: 1 };
+    namespaces.textNode[id] = { id, contentId: `body-${id}`, title: `群组测试${id}`, x, y, width: 220, height: 130, ...(id === 'f' ? { presentation: 'text-box', width: 160, height: 64 } : {}), titleColor: '#303030', revision: 1, createdAt: 1, updatedAt: 1 };
   }
   for (const [id, memberIds] of [['g1', ['a', 'b']], ['g2', ['c', 'd']]] as const) namespaces.groups[id] = {
     id, memberIds, title: id, titleStyle: { fontSize: 13, fontWeight: 650 }, revision: 1, createdAt: 1, updatedAt: 1,
@@ -43,6 +43,88 @@ async function port(page: Page, id: string, side: 'left' | 'right') {
   const box = await group.locator(`.group-connection-port.${side}`).boundingBox();
   return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
 }
+
+for (const textBox of [false, true]) test(`Alt copying a grouped ${textBox ? 'text box' : 'node'} keeps its original group frame and connections fixed throughout preview`, async ({ page }) => {
+  await openGroups(page);
+  await drag(page, await port(page, 'g1', 'right'), await port(page, 'g2', 'left'));
+  const node = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试a"]') });
+  await node.locator('header').click();
+  if (textBox) {
+    await page.getByRole('button', { name: '文本框与文字节点相互转换', exact: true }).click();
+    await expect(node).toHaveClass(/text-box/u);
+  }
+  const frame = page.locator('.group-frame[data-group-id="g1"]');
+  if (textBox) await expect(frame).toHaveCSS('width', '290px');
+  const bounds = () => frame.evaluate(element => {
+    const style = (element as HTMLElement).style;
+    return { left: style.left, top: style.top, width: style.width, height: style.height };
+  });
+  const original = await bounds();
+  const connection = page.locator('.connection-hit-area');
+  const path = await connection.getAttribute('d');
+  const title = await node.locator(textBox ? '.text-box-title' : 'header strong').boundingBox();
+  await page.keyboard.down('Alt');
+  await page.mouse.move(title!.x + 30, title!.y + 10); await page.mouse.down();
+  await page.mouse.move(title!.x + 390, title!.y + 110, { steps: 10 });
+  await expect(page.locator('.text-node-card.duplicate-origin')).toHaveCount(1);
+  await expect.poll(bounds).toEqual(original);
+  await expect(connection).toHaveAttribute('d', path!);
+  await page.keyboard.up('Alt');
+  await expect.poll(async () => (await bounds()).width).not.toBe(original.width);
+  await page.keyboard.down('Alt');
+  await expect.poll(bounds).toEqual(original);
+  await page.mouse.up(); await page.keyboard.up('Alt');
+  await expect(page.locator('.text-node-card:not(.duplicate-origin)')).toHaveCount(7);
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  await expect.poll(bounds).toEqual(original);
+  await expect(connection).toHaveAttribute('d', path!);
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('.text-node-card:not(.duplicate-origin)')).toHaveCount(6);
+  await expect.poll(bounds).toEqual(original);
+});
+
+test('Ctrl dragging selected nodes and text boxes adds or removes the whole batch, with cancellation and ordinary Ctrl clicks', async ({ page }) => {
+  await openGroups(page);
+  const node = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试e"]') });
+  const box = page.locator('.text-node-card.text-box').filter({ has: page.locator('strong[title="群组测试f"]') });
+  const frame = page.locator('.group-frame[data-group-id="g1"]');
+  await node.locator('header').click();
+  await box.locator('.text-box-title').click({ modifiers: ['Shift'] });
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
+  await box.locator('.text-box-title').click({ modifiers: ['Control'] });
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(1);
+  await box.locator('.text-box-title').click({ modifiers: ['Control'] });
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
+  const title = await box.locator('.text-box-title').boundingBox();
+  await page.keyboard.down('Control');
+  await page.mouse.move(title!.x + 30, title!.y + 10); await page.mouse.down();
+  await page.mouse.move(190, 270, { steps: 10 });
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+  await page.mouse.up(); await page.keyboard.up('Control');
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
+  await page.keyboard.press('Control+z');
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  await page.keyboard.press('Control+Shift+z');
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+  const movedTitle = await box.locator('.text-box-title').boundingBox();
+  await page.keyboard.down('Control');
+  await page.mouse.move(movedTitle!.x + 30, movedTitle!.y + 10); await page.mouse.down();
+  await page.mouse.move(560, 230, { steps: 10 });
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  // Releasing the modifier before the pointer keeps membership and commits only movement.
+  await page.keyboard.up('Control'); await page.mouse.up();
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+  await page.keyboard.press('Control+z');
+  await expect.poll(async () => (await box.locator('.text-box-title').boundingBox())!.x).toBeCloseTo(movedTitle!.x);
+  const resetTitle = await box.locator('.text-box-title').boundingBox();
+  await page.keyboard.down('Control');
+  await drag(page, { x: resetTitle!.x + 30, y: resetTitle!.y + 10 }, { x: 560, y: 230 });
+  await page.keyboard.up('Control');
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  await page.keyboard.press('Control+z');
+  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+});
 
 test('title ports on both sides follow node positions during preview, movement and undo', async ({ page }) => {
   await openGroups(page);

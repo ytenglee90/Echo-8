@@ -28,6 +28,8 @@ export interface GroupDropPointer {
 
 export interface GroupDropTargetRequest {
   nodeId: string;
+  /** Complete dragged batch; omission preserves legacy single-node behavior. */
+  nodeIds?: string[];
   pointer: GroupDropPointer;
 }
 
@@ -40,6 +42,7 @@ export interface GroupDropTarget {
 export type GroupMembershipPreview =
   | {
       nodeId: string;
+      nodeIds?: string[];
       pointer: GroupDropPointer;
       active: boolean;
     }

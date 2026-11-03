@@ -11,11 +11,14 @@ export function resolveGroupDropTarget(
   nodes: readonly ContentSummary[],
   request: GroupDropTargetRequest,
 ): GroupDropTarget | undefined {
-  if (!isDropTargetRequest(request) || !nodes.some((node) => node.id === request.nodeId)) {
+  if (!isDropTargetRequest(request)) {
     return undefined;
   }
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-  const currentGroup = groups.find((group) => group.memberIds.includes(request.nodeId));
+  const requested = new Set(request.nodeIds ?? [request.nodeId]);
+  if ([...requested].some(id => !nodeMap.has(id))) return undefined;
+  const currentGroup = groups.find(group => group.memberIds.includes(request.nodeId)) ??
+    groups.find(group => group.memberIds.some(id => requested.has(id)));
 
   // Ctrl explicitly means "remove" for an existing member. Pointer location no
   // longer latches or vetoes the operation; releasing Ctrl cancels the preview.
@@ -34,6 +37,8 @@ export function resolveGroupDropTarget(
 
 function isDropTargetRequest(value: GroupDropTargetRequest): boolean {
   return typeof value?.nodeId === 'string' &&
+    (value.nodeIds === undefined || (Array.isArray(value.nodeIds) && value.nodeIds.length > 0 && value.nodeIds.length <= 10_000 &&
+      value.nodeIds.every(id => typeof id === 'string') && new Set(value.nodeIds).size === value.nodeIds.length && value.nodeIds.includes(value.nodeId))) &&
     Number.isFinite(value.pointer?.x) &&
     Number.isFinite(value.pointer?.y);
 }

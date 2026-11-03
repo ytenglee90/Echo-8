@@ -107,6 +107,7 @@ interface DragSession {
   latest: NodePosition[];
   moved: boolean;
   duplicateOnCommit?: boolean;
+  toggleOnClick?: boolean;
 }
 
 interface PendingNodeDrag {
@@ -121,6 +122,7 @@ interface PendingNodeDrag {
   cancelled: boolean;
   membershipActiveOnRelease?: boolean;
   duplicateOnCommit?: boolean;
+  toggleOnClick?: boolean;
 }
 
 interface PendingLassoGesture {
@@ -231,7 +233,7 @@ export function CanvasSurface({
     active: boolean,
   ) => {
     const surface = surfaceRef.current;
-    if (!active || !surface) {
+    if (!active || !surface || drag.current?.duplicateOnCommit || pendingDrag.current?.duplicateOnCommit) {
       if (!membershipPreviewVisible.current) return;
       membershipPreviewVisible.current = false;
       client.emit('group.membership.preview', { clear: true } satisfies GroupMembershipPreview);
@@ -240,6 +242,7 @@ export function CanvasSurface({
     membershipPreviewVisible.current = true;
     client.emit('group.membership.preview', {
       nodeId,
+      nodeIds: drag.current?.origins.map(position => position.id) ?? [nodeId],
       pointer: screenToWorld(clientX, clientY, cameraRef.current, surface),
       active: true,
     } satisfies GroupMembershipPreview);
@@ -784,7 +787,7 @@ export function CanvasSurface({
       try {
         target = await client.request<GroupDropTarget | undefined>(
           'group.dropTarget@1',
-          { nodeId: primaryId, pointer } satisfies GroupDropTargetRequest,
+          { nodeId: primaryId, nodeIds: positions.map(position => position.id), pointer } satisfies GroupDropTargetRequest,
         );
       } catch {
         return moveNormally();
@@ -792,6 +795,7 @@ export function CanvasSurface({
       if (!target) return moveNormally();
       return client.dispatch('group.membership.drop', {
         nodeId: primaryId,
+        nodeIds: positions.map(position => position.id),
         positions,
         pointer,
         target,
@@ -837,7 +841,7 @@ export function CanvasSurface({
         );
       } else {
         clearReferenceDragPreview();
-        finishNodeClick(request.primaryId, request.selectionMode);
+        finishNodeClick(request.primaryId, request.selectionMode, request.toggleOnClick);
       }
       return;
     }
@@ -852,6 +856,7 @@ export function CanvasSurface({
       latest,
       moved,
       duplicateOnCommit: request.duplicateOnCommit,
+      toggleOnClick: request.toggleOnClick,
     };
     setDragOriginPreview(moved ? origins : []);
     if (moved) {
@@ -880,6 +885,9 @@ export function CanvasSurface({
     event.stopPropagation();
     const duplicateOnCommit = event.altKey || duplicateModifierActive;
     const mode = duplicateOnCommit ? 'replace' : modifierMode(event);
+    const preserveMembershipSelection = !duplicateOnCommit && mode === 'toggle' && selected.has(node.id) &&
+      client.isShortcutPressed('canvas.group-membership-modifier');
+    const resolutionMode = preserveMembershipSelection ? 'replace' : mode;
     event.currentTarget.setPointerCapture(event.pointerId);
     const request: PendingNodeDrag = {
       primaryId: node.id,
@@ -892,6 +900,7 @@ export function CanvasSurface({
       released: false,
       cancelled: false,
       duplicateOnCommit,
+      toggleOnClick: preserveMembershipSelection,
     };
     pendingDrag.current = request;
     setNodeDragActive(true);
@@ -899,7 +908,7 @@ export function CanvasSurface({
     void client.dispatch('interaction.begin', { mode: 'dragging-node' }).then(() => {
       void client.request<SelectionResolution>('selection.resolve@1', {
         items: [{ id: node.id, kind: 'text-node' }],
-        mode,
+        mode: resolutionMode,
         preserveIfSelected: true,
         moveContainedItemsDirectly: true,
       }).then((resolution) => {
@@ -915,9 +924,9 @@ export function CanvasSurface({
         activateNodeDrag(request, resolution.expandedIds);
       }).catch(() => {
         if (request.cancelled) return;
-        const nextSelection = selectionAfterPointer(selectedIds, node.id, mode);
+        const nextSelection = preserveMembershipSelection ? selectedIds : selectionAfterPointer(selectedIds, node.id, mode);
         void client.dispatch('selection.set', { ids: nextSelection, mode: 'replace' });
-        if (mode === 'remove' || (mode === 'toggle' && selected.has(node.id))) {
+        if (!preserveMembershipSelection && (mode === 'remove' || (mode === 'toggle' && selected.has(node.id)))) {
           if (pendingDrag.current === request) pendingDrag.current = undefined;
           setNodeDragActive(false);
           clearReferenceDragPreview();
@@ -937,11 +946,11 @@ export function CanvasSurface({
     });
   };
 
-  const finishNodeClick = (nodeId: string, mode: SelectionMode) => {
-    const selection = mode === 'replace'
+  const finishNodeClick = (nodeId: string, mode: SelectionMode, toggleOnClick = false) => {
+    const selection = mode === 'replace' || toggleOnClick
       ? client.dispatch('selection.set', {
           items: [{ id: nodeId, kind: 'text-node' }],
-          mode: 'replace',
+          mode: toggleOnClick ? 'toggle' : 'replace',
         })
       : Promise.resolve();
     void selection.catch(() => undefined).finally(() =>
@@ -1303,7 +1312,7 @@ export function CanvasSurface({
         );
       } else {
         clearReferenceDragPreview();
-        finishNodeClick(current.primaryId, current.selectionMode);
+        finishNodeClick(current.primaryId, current.selectionMode, current.toggleOnClick);
       }
     }
     const completedPan = pan.current.release(event.pointerId);

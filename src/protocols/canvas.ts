@@ -1,6 +1,17 @@
 import type { NodePosition } from './content.ts';
 import type { SelectionMode } from './selection.ts';
 import type { CommandContract } from './commands.ts';
+import type { MessageContract as CapabilityContract } from './messages.ts';
+import type { WorldBounds } from './viewport.ts';
+
+/** Geometry-only overview projection. Providers own their bounds and color. */
+export interface CanvasOverviewRequest { nodes: Array<WorldBounds & { id: string }> }
+export interface CanvasOverviewEntity extends WorldBounds { id: string; kind: 'group'; color?: string }
+declare module './messages.ts' {
+  interface ApplicationCapabilityMap {
+    'canvas.overview@1': CapabilityContract<CanvasOverviewRequest, CanvasOverviewEntity[]>;
+  }
+}
 type CanvasFocusCommand = CommandContract<{ id: string }, boolean>;
 
 declare module './commands.ts' {

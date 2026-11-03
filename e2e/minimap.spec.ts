@@ -7,7 +7,7 @@ async function openMap(page: Page) {
   await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
   await page.goto('/');
   await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
-  const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, connections: {} };
+  const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, connections: {}, groups: {} };
   for (const [id, x, y, color, presentation] of [
     ['a', -1600, -600, '#db4545', 'card'], ['b', 200, 100, '#38a16a', 'card'], ['c', 2200, 1100, '#547ce0', 'text-box'],
   ] as const) {
@@ -18,9 +18,11 @@ async function openMap(page: Page) {
       presentation, titleColor: color, revision: 1, createdAt: 1, updatedAt: 1 };
   }
   namespaces.connections.edge = { id: 'edge', from: { nodeId: 'a', side: 'right' }, to: { nodeId: 'b', side: 'left' }, label: '不显示的连线文字框', revision: 1, createdAt: 1 };
+  namespaces.groups.group = { id: 'group', memberIds: ['a', 'b'], color: '#b65fcf', title: '群组', titleStyle: { fontSize: 13, fontWeight: 650 }, revision: 1, createdAt: 1, updatedAt: 1 };
   const blob = await serializeProject({ document: { revision: 1, namespaces }, plugins: [
     { id: 'text-node', version: '0.1.0', dataVersion: 2, namespaces: ['textNode', 'textContent', 'textContentChunk'], available: true },
     { id: 'connections', version: '0.1.0', dataVersion: 7, namespaces: ['connections', 'connectionJunction'], available: true },
+    { id: 'groups', version: '0.1.0', dataVersion: 2, namespaces: ['groups'], available: true },
   ] });
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: '命令面板' });
@@ -55,7 +57,7 @@ async function mapLocation(page: Page, x: number, y: number) {
   }, { x, y });
 }
 
-test('minimap contains only colored node/text-box blocks, focuses a clicked block and pans blank clicks without zooming', async ({ page }) => {
+test('minimap distinguishes colored node blocks, outlined text boxes and groups, and preserves click navigation', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await openMap(page);
@@ -65,10 +67,22 @@ test('minimap contains only colored node/text-box blocks, focuses a clicked bloc
   await page.locator('.minimap-surface').focus();
   await expect(page.locator('.minimap-surface')).toHaveCSS('outline-style', 'none');
   const map = page.getByRole('region', { name: '画布小地图', exact: true });
-  await expect(map.locator('text, foreignObject, path, line')).toHaveCount(0);
+  await expect(map.locator('text, foreignObject, path')).toHaveCount(0);
+  await expect(map.locator('line')).toHaveCount(1);
   await expect(map).toHaveText('');
   await expect(map.locator('[data-map-node="a"]')).toHaveAttribute('fill', '#db4545');
-  await expect(map.locator('[data-map-node="c"]')).toHaveAttribute('fill', '#547ce0');
+  const textBox = map.locator('[data-map-node="c"]');
+  await expect(textBox).toHaveAttribute('fill', 'none');
+  await expect(textBox).toHaveAttribute('stroke', '#547ce0');
+  await expect(textBox.locator('.minimap-text-box-outline')).toHaveCSS('fill', 'none');
+  expect(await textBox.locator('line').evaluate(element => {
+    const line = element as SVGLineElement, rect = element.parentElement!.querySelector<SVGRectElement>('.minimap-text-box-outline')!;
+    return Math.abs(line.y1.baseVal.value - rect.y.baseVal.value - rect.height.baseVal.value / 2) < .001 &&
+      line.y1.baseVal.value === line.y2.baseVal.value && Math.abs(line.x2.baseVal.value - line.x1.baseVal.value - rect.width.baseVal.value) < .001;
+  })).toBe(true);
+  await expect(map.locator('[data-map-group="group"]')).toHaveAttribute('fill', 'none');
+  await expect(map.locator('[data-map-group="group"]')).toHaveAttribute('stroke', '#b65fcf');
+  await map.screenshot({ path: test.info().outputPath('minimap-entities.png') });
   const hostBox = await page.locator('.canvas-host').boundingBox();
   const mapBox = await map.boundingBox();
   expect(mapBox!.x - hostBox!.x).toBeLessThan(20);
@@ -86,6 +100,25 @@ test('minimap contains only colored node/text-box blocks, focuses a clicked bloc
   await page.getByRole('button', { name: '关闭小地图', exact: true }).click();
   await expect(map).toHaveCount(0);
   expect(errors).toEqual([]);
+});
+
+test('minimap group outlines focus the group and disappear when its provider is disabled without hiding nodes', async ({ page }) => {
+  await openMap(page);
+  const group = page.locator('[data-map-group="group"]');
+  await group.focus(); await group.press('Enter');
+  await expect(page.locator('.group-frame.selected')).toHaveCount(1);
+  await expect.poll(async () => Math.round((await camera(page)).x)).toBe(-560);
+  await expect.poll(async () => Math.round((await camera(page)).y)).toBe(-171);
+  await page.keyboard.press('Control+k');
+  const palette = page.getByRole('dialog', { name: '命令面板' });
+  await palette.getByRole('textbox', { name: '搜索命令' }).fill('插件');
+  await palette.getByRole('option', { name: /插件中心/u }).click();
+  const plugin = page.locator('.plugin-row').filter({ hasText: '群组' });
+  await plugin.getByRole('switch', { name: '停用群组', exact: true }).click();
+  await expect(group).toHaveCount(0);
+  await expect(page.locator('[data-map-node]')).toHaveCount(3);
+  await plugin.getByRole('switch', { name: '启用群组', exact: true }).click();
+  await expect(group).toHaveCount(1);
 });
 
 test('dragging from a block pans live and never focuses; cancelling restores the initial view and releases interaction', async ({ page }) => {

@@ -66,6 +66,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     nodeById,
     camera,
     previews,
+    duplicateOriginIds,
     sizePreviews,
     selectedIds,
     canvasColor,
@@ -152,9 +153,9 @@ export function GroupLayer({ client }: { client: ViewClient }) {
   const nodeMap = useMemo(
     () => new Map([...stableNodeMap].map(([id, node]) => [
       id,
-      { ...node, ...previews[id], ...sizePreviews[id] },
+      { ...node, ...(duplicateOriginIds.has(id) ? undefined : previews[id]), ...sizePreviews[id] },
     ])),
-    [previews, sizePreviews, stableNodeMap],
+    [duplicateOriginIds, previews, sizePreviews, stableNodeMap],
   );
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
   const connectionTargets = useConnectionTargets(client, nodeMap);
@@ -430,10 +431,11 @@ export function GroupLayer({ client }: { client: ViewClient }) {
       >
         {visibleGroups.map((group) => {
           let previewMemberIds = group.memberIds;
-          if (membershipTarget?.groupId === group.id && membershipPreview && !('clear' in membershipPreview)) {
+          if (membershipTarget && membershipPreview && !('clear' in membershipPreview)) {
+            const requested = new Set(membershipPreview.nodeIds ?? [membershipPreview.nodeId]);
             previewMemberIds = membershipTarget.action === 'remove'
-              ? group.memberIds.filter((id) => id !== membershipPreview.nodeId)
-              : [...new Set([...group.memberIds, membershipPreview.nodeId])];
+              ? group.memberIds.filter((id) => !requested.has(id))
+              : membershipTarget.groupId === group.id ? [...new Set([...group.memberIds, ...requested])] : group.memberIds;
           }
           const members = previewMemberIds.map((id) => nodeMap.get(id)).filter(Boolean) as ContentSummary[];
           if (members.length < 2) return null;

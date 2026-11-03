@@ -5,6 +5,7 @@ import { createId, type ViewClient } from '../../core/contracts.ts';
 import type { AppearancePreview } from '../../protocols/appearance.ts';
 import type { CameraState, CanvasAppearanceSnapshot, CanvasPanRequest, CanvasViewportSize } from '../../protocols/canvas.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
+import type { CanvasOverviewEntity } from '../../protocols/canvas.ts';
 import type { MinimapState } from '../../protocols/minimap.ts';
 import { viewportCenterInWorld, worldViewport } from '../../protocols/viewport.ts';
 import { IconButton } from '../../ui/Icon.tsx';
@@ -38,6 +39,15 @@ interface Gesture {
 
 function MapView({ client }: { client: ViewClient }) {
   const { summaries } = useContentCatalog(client, { visualOnly: true });
+  const capabilities = useSyncExternalStore(client.subscribeCapabilities, client.getCapabilityVersion, () => 0);
+  const [overviewRevision, setOverviewRevision] = useState(0);
+  useEffect(() => client.subscribeSignal('canvas.overview.invalidated', () => setOverviewRevision(version => version + 1)), [client]);
+  const groups = useMemo(() => {
+    try { return client.requestSync<CanvasOverviewEntity[]>('canvas.overview@1', {
+      nodes: summaries.map(({ id, x, y, width, height }) => ({ id, x, y, width, height })),
+    }); } catch { return []; }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Provider lifecycle and owner invalidation revisions expire the geometry cache.
+  }, [client, summaries, capabilities, overviewRevision]);
   const [camera, setCamera] = useState<CameraState>(() => client.requestSync<CameraState>('canvas.camera@1'));
   const [size, setSize] = useState<CanvasViewportSize>(() => {
     try { return client.requestSync<CanvasViewportSize>('canvas.viewport@1'); }
@@ -46,7 +56,7 @@ function MapView({ client }: { client: ViewClient }) {
   const [background, setBackground] = useState('#efefec');
   const [previewBackground, setPreviewBackground] = useState<string>();
   const [pulse, setPulse] = useState<{ x: number; y: number; key: string }>();
-  const projection = useMemo(() => mapProjection(summaries), [summaries]);
+  const projection = useMemo(() => mapProjection([...groups, ...summaries]), [groups, summaries]);
   const [frozenProjection, setFrozenProjection] = useState<MapProjection>();
   const shownProjection = frozenProjection ?? projection;
   const session = useRef<Gesture | undefined>(undefined);
@@ -124,7 +134,8 @@ function MapView({ client }: { client: ViewClient }) {
         const active: Gesture = {
           id: createId('map-pan'), pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
           projection, origin: viewportCenterInWorld(camera, size), point: mapPoint(projection, point),
-          nodeId: (event.target as Element).closest('[data-map-node]')?.getAttribute('data-map-node') ?? undefined,
+          nodeId: (event.target as Element).closest('[data-map-node], [data-map-group]')?.getAttribute('data-map-node') ??
+            (event.target as Element).closest('[data-map-group]')?.getAttribute('data-map-group') ?? undefined,
           moved: false, admitted: false, admission: Promise.resolve(false),
         };
         session.current = active;
@@ -157,6 +168,7 @@ function MapView({ client }: { client: ViewClient }) {
           y: center.y + direction[1] * size.height / camera.zoom * 0.1 }, true);
       }}
     >
+      <MapGroups groups={groups} projection={shownProjection} focus={focus} />
       <MapBlocks nodes={summaries} projection={shownProjection} focus={focus} />
       <rect className="minimap-viewport" aria-hidden="true"
         x={viewport.x * shownProjection.scale + shownProjection.x}
@@ -172,14 +184,37 @@ const MapBlocks = memo(function MapBlocks({ nodes, projection, focus }: {
   nodes: ContentSummary[]; projection: MapProjection; focus: (id: string) => void;
 }) {
   return <g className="minimap-blocks">
-    {nodes.map((node) => <rect key={node.id} data-map-node={node.id} role="button" tabIndex={0}
-      aria-label={`聚焦${node.presentation === 'text-box' ? '文本框' : '节点'}：${node.title}`}
-      x={node.x * projection.scale + projection.x} y={node.y * projection.scale + projection.y}
-      width={Math.max(2, node.width * projection.scale)} height={Math.max(2, node.height * projection.scale)}
+    {nodes.map((node) => {
+      const x = node.x * projection.scale + projection.x, y = node.y * projection.scale + projection.y;
+      const width = Math.max(2, node.width * projection.scale), height = Math.max(node.presentation === 'text-box' ? 4 : 2, node.height * projection.scale);
+      const common = { 'data-map-node': node.id, role: 'button', tabIndex: 0,
+        'aria-label': `聚焦${node.presentation === 'text-box' ? '文本框' : '节点'}：${node.title}`,
+        onKeyDown: (event: import('react').KeyboardEvent<SVGElement>) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault(); event.stopPropagation(); focus(node.id);
+        } };
+      return node.presentation === 'text-box' ? <g key={node.id} {...common} className="minimap-text-box" fill="none" stroke={node.titleColor} strokeWidth={1.2}>
+        <rect className="minimap-entity-hit" x={x} y={y} width={width} height={height} fill="transparent" stroke="none" />
+        <rect className="minimap-text-box-outline" x={x} y={y} width={width} height={height} rx={1} />
+        <line className="minimap-text-box-bar" x1={x} x2={x + width} y1={y + height / 2} y2={y + height / 2} />
+      </g> : <rect key={node.id} {...common}
+      x={x} y={y} width={width} height={height}
       fill={node.titleColor} rx={1}
-      onKeyDown={(event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault(); event.stopPropagation(); focus(node.id);
-      }} />)}
+      />;
+    })}
   </g>;
+});
+
+const MapGroups = memo(function MapGroups({ groups, projection, focus }: {
+  groups: CanvasOverviewEntity[]; projection: MapProjection; focus: (id: string) => void;
+}) {
+  return <g className="minimap-groups">{groups.map((group, index) => <rect key={group.id} data-map-group={group.id}
+    role="button" tabIndex={0} aria-label={`聚焦群组 ${index + 1}`}
+    x={group.x * projection.scale + projection.x} y={group.y * projection.scale + projection.y}
+    width={Math.max(2, group.width * projection.scale)} height={Math.max(2, group.height * projection.scale)}
+    fill="none" stroke={group.color ?? 'var(--minimap-ink)'} strokeWidth={1} rx={2}
+    onKeyDown={event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault(); event.stopPropagation(); focus(group.id);
+    }} />)}</g>;
 });

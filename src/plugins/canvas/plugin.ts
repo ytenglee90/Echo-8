@@ -8,6 +8,7 @@ import type {
 } from '../../protocols/appearance.ts';
 import type {
   CameraState,
+  CanvasOverviewEntity,
   CanvasPointerSnapshot,
   CanvasToolMode,
   CanvasViewportCenter,
@@ -41,6 +42,7 @@ export const canvasPlugin: PluginDefinition = {
     sessionOnlyWorkspace: { [VIEW_NAMESPACE]: true },
     requiresCapabilities: ['content.summaries@1', 'content.catalog@2', 'content.metrics@2'],
     optionalCapabilities: [
+      'canvas.overview@1',
       'selection.read@1',
       'selection.resolve@1',
       'selection.entities@1',
@@ -280,8 +282,11 @@ export const canvasPlugin: PluginDefinition = {
       validate: (payload): payload is { id: string } =>
         isRecord(payload) && typeof payload.id === 'string' && payload.id.length > 0,
       handle: async (payload) => {
-        const entity = (await context.capabilities.request<ContentSummary[]>('content.summaries@1'))
-          .find((summary) => summary.id === payload.id);
+        const nodes = await context.capabilities.request<ContentSummary[]>('content.summaries@1');
+        const entity = nodes.find((summary) => summary.id === payload.id) ??
+          (await context.capabilities.requestAll<CanvasOverviewEntity[]>('canvas.overview@1', {
+            nodes: nodes.map(({ id, x, y, width, height }) => ({ id, x, y, width, height })),
+          })).flat().find(entity => entity.id === payload.id);
         if (!entity) return { result: false };
         context.signals.emit('canvas.focus.requested', {
           bounds: { x: entity.x, y: entity.y, width: entity.width, height: entity.height },

@@ -16,6 +16,7 @@ import type {
 } from '../../protocols/clipboard.ts';
 import type { ContentMovePlan, ContentMovePlanRequest, ContentSummary } from '../../protocols/content.ts';
 import type { ConnectionTargetsRequest, ConnectionTarget } from '../../protocols/connections.ts';
+import type { CanvasOverviewEntity, CanvasOverviewRequest } from '../../protocols/canvas.ts';
 import type {
   GroupDropTarget,
   GroupDropTargetRequest,
@@ -80,6 +81,7 @@ export function createGroupsPlugin(
       ],
       optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'canvas.viewport@1', 'layout.snap@1', 'connections.graph@1', 'connections.targets@1', 'connections.detachPlan@1'],
       providesCapabilities: [
+        'canvas.overview@1',
         'connections.targets@1',
         'groups.list@1',
         'entity.deletePlan@1',
@@ -135,7 +137,7 @@ export function createGroupsPlugin(
         'appearance.color.preview',
         'content.catalog.invalidated',
         'groups.invalidated',
-        'connection.targets.invalidated', 'connection.draft.preview', 'canvas.entity.hover.preview',
+        'connection.targets.invalidated', 'connection.draft.preview', 'canvas.entity.hover.preview', 'canvas.overview.invalidated',
         'connections.invalidated',
       ],
       ui: ['groups.layer', 'groups.actions', 'groups.membership-panel'],
@@ -188,6 +190,15 @@ export function createGroupsPlugin(
         key: 'connections.targets@1',
         invoke: input => input?.nodes ? projectTargets(input, input.nodes) :
           context.capabilities.request<ContentSummary[]>('content.summaries@1').then(nodes => projectTargets(input, nodes)),
+      });
+      context.capabilities.provide<CanvasOverviewRequest, CanvasOverviewEntity[]>({
+        key: 'canvas.overview@1', invoke: input => {
+          if (!input || !Array.isArray(input.nodes)) throw new Error('概览几何参数不正确');
+          const groups = readGroups();
+          return projectTargets({ nodes: input.nodes }, input.nodes).map(target => ({
+            ...target, color: groups[target.id]?.color,
+          }));
+        },
       });
       const detachConnections = async (ids: string[]): Promise<EntityDeletePlan> => {
         const plans = await context.capabilities.requestAll<EntityDeletePlan>('connections.detachPlan@1', { ids });
@@ -425,7 +436,9 @@ export function createGroupsPlugin(
         validate: isGroupMembershipDropRequest,
         handle: async (payload) => {
           const nodes = await context.capabilities.request<ContentSummary[]>('content.summaries@1');
-          const target = resolveGroupDropTarget(Object.values(readGroups()), nodes, payload);
+          const groups = Object.values(readGroups());
+          const requested = new Set(payload.nodeIds ?? [payload.nodeId]);
+          const target = resolveGroupDropTarget(groups, nodes, payload);
           if (!target || target.action !== payload.target.action || target.groupId !== payload.target.groupId) {
             throw new Error('群组边界已经变化，请重新拖动节点');
           }
@@ -433,59 +446,64 @@ export function createGroupsPlugin(
             'content.movePlan@1',
             { positions: payload.positions } satisfies ContentMovePlanRequest,
           );
-          const group = context.store.readValue<GroupRecord>(GROUP_NAMESPACE, target.groupId);
-          if (!group) throw new Error('目标群组不存在');
           const now = Date.now();
           const groupEvents: NonNullable<ContentMovePlan['events']> = [];
-          let groupPatch: ContentMovePlan['patches'][number];
-          if (target.action === 'add') {
-            const memberIds = [...new Set([...group.memberIds, payload.nodeId])];
-            groupPatch = {
-              op: 'set' as const,
-              domain: 'document' as const,
-              namespace: GROUP_NAMESPACE,
-              key: group.id,
-              value: { ...group, memberIds, revision: group.revision + 1, updatedAt: now },
-              schemaOwner: 'groups',
-            };
-            groupEvents.push({
-              type: 'group.members.changed',
-              payload: { groupId: group.id, added: [payload.nodeId], removed: [] },
-            });
-          } else {
-            const memberIds = group.memberIds.filter((id) => id !== payload.nodeId);
-            const dissolve = memberIds.length < 2;
-            groupPatch = dissolve ? {
-              op: 'delete' as const,
-              domain: 'document' as const,
-              namespace: GROUP_NAMESPACE,
-              key: group.id,
-              schemaOwner: 'groups',
-            } : {
-              op: 'set' as const,
-              domain: 'document' as const,
-              namespace: GROUP_NAMESPACE,
-              key: group.id,
-              value: { ...group, memberIds, revision: group.revision + 1, updatedAt: now },
-              schemaOwner: 'groups',
-            };
-            groupEvents.push({
-              type: 'group.members.changed',
-              payload: { groupId: group.id, added: [], removed: [payload.nodeId], dissolved: dissolve },
-            });
-            if (dissolve) {
-              groupEvents.push({
-                type: 'group.ungrouped',
-                payload: { id: group.id, memberIds: group.memberIds },
+          const groupPatches: ContentMovePlan['patches'] = [];
+          const dissolvedIds: string[] = [];
+          const affected = target.action === 'add' ? groups.filter(group => group.id === target.groupId) :
+            groups.filter(group => group.memberIds.some(id => requested.has(id)));
+          for (const group of affected) {
+            if (target.action === 'add') {
+              const memberIds = [...new Set([...group.memberIds, ...requested])];
+              groupPatches.push({
+                op: 'set' as const,
+                domain: 'document' as const,
+                namespace: GROUP_NAMESPACE,
+                key: group.id,
+                value: { ...group, memberIds, revision: group.revision + 1, updatedAt: now },
+                schemaOwner: 'groups',
               });
+              groupEvents.push({
+                type: 'group.members.changed',
+                payload: { groupId: group.id, added: [...requested], removed: [] },
+              });
+            } else {
+              const removed = group.memberIds.filter(id => requested.has(id));
+              const memberIds = group.memberIds.filter((id) => !requested.has(id));
+              const dissolve = memberIds.length < 2;
+              groupPatches.push(dissolve ? {
+                op: 'delete' as const,
+                domain: 'document' as const,
+                namespace: GROUP_NAMESPACE,
+                key: group.id,
+                schemaOwner: 'groups',
+              } : {
+                op: 'set' as const,
+                domain: 'document' as const,
+                namespace: GROUP_NAMESPACE,
+                key: group.id,
+                value: { ...group, memberIds, revision: group.revision + 1, updatedAt: now },
+                schemaOwner: 'groups',
+              });
+              groupEvents.push({
+                type: 'group.members.changed',
+                payload: { groupId: group.id, added: [], removed, dissolved: dissolve },
+              });
+              if (dissolve) {
+                dissolvedIds.push(group.id);
+                groupEvents.push({
+                  type: 'group.ungrouped',
+                  payload: { id: group.id, memberIds: group.memberIds },
+                });
+              }
             }
           }
-          const detached = groupPatch.op === 'delete' ? await detachConnections([group.id]) : { patches: [], events: [] };
+          const detached = dissolvedIds.length ? await detachConnections(dissolvedIds) : { patches: [], events: [] };
           return {
             result: target,
             transaction: {
               label: target.action === 'add' ? '移动节点并加入群组' : '移动节点并移出群组',
-              patches: [...movePlan.patches, groupPatch, ...detached.patches],
+              patches: [...movePlan.patches, ...groupPatches, ...detached.patches],
               events: [...(movePlan.events ?? []), ...groupEvents, ...(detached.events ?? [])],
             },
           };
@@ -804,14 +822,23 @@ export function createGroupsPlugin(
         invoke: () => ({ kind: 'groups', label: '群组', count: Object.keys(readGroups()).length }),
       });
 
-      const invalidateGroups = () => { context.signals.emit('groups.invalidated'); context.signals.emit('connection.targets.invalidated'); };
+      let overviewRevision = context.store.revision(GROUP_NAMESPACE);
+      const invalidateGroups = () => {
+        context.signals.emit('groups.invalidated');
+        context.signals.emit('connection.targets.invalidated');
+        const revision = context.store.revision(GROUP_NAMESPACE);
+        if (revision !== overviewRevision) {
+          overviewRevision = revision;
+          context.signals.emit('canvas.overview.invalidated');
+        }
+      };
       context.events.subscribe('group.created', invalidateGroups);
       context.events.subscribe('group.members.changed', invalidateGroups);
       context.events.subscribe('group.ungrouped', invalidateGroups);
       context.events.subscribe('group.appearance.changed', invalidateGroups);
       context.events.subscribe('nodes.pasted', invalidateGroups);
       context.events.subscribe('history.changed', invalidateGroups);
-      context.events.subscribe('document.replaced', invalidateGroups);
+      context.events.subscribe('document.replaced', () => { overviewRevision = -1; invalidateGroups(); });
 
       context.ui.contribute({
         id: 'groups.layer',
@@ -929,10 +956,16 @@ function isGroupMembershipPayload(payload: unknown): payload is GroupMembershipP
 function isGroupMembershipDropRequest(payload: unknown): payload is GroupMembershipDropRequest {
   if (!isGroupDropTargetRequest(payload)) return false;
   const candidate = payload as GroupDropTargetRequest & { positions?: unknown; target?: unknown };
-  return Array.isArray(candidate.positions) &&
-    candidate.positions.length > 0 &&
-    candidate.positions.some((position) => isRecord(position) && position.id === candidate.nodeId) &&
-    candidate.positions.every((position) => isRecord(position) &&
+  const positions = candidate.positions;
+  const positionIds = new Set(Array.isArray(positions) ? positions.map(position => isRecord(position) ? position.id : undefined) : []);
+  return Array.isArray(positions) &&
+    positions.length > 0 &&
+    positions.length <= 10_000 &&
+    positionIds.size === positions.length &&
+    (candidate.nodeIds === undefined || (candidate.nodeIds.length === positions.length &&
+      candidate.nodeIds.every(id => positionIds.has(id)))) &&
+    positions.some((position) => isRecord(position) && position.id === candidate.nodeId) &&
+    positions.every((position) => isRecord(position) &&
       typeof position.id === 'string' && Number.isFinite(position.x) && Number.isFinite(position.y)) &&
     isRecord(candidate.target) &&
     (candidate.target.action === 'add' || candidate.target.action === 'remove') &&
@@ -942,6 +975,8 @@ function isGroupMembershipDropRequest(payload: unknown): payload is GroupMembers
 function isGroupDropTargetRequest(payload: unknown): payload is GroupDropTargetRequest {
   return isRecord(payload) &&
     typeof payload.nodeId === 'string' &&
+    (payload.nodeIds === undefined || (Array.isArray(payload.nodeIds) && payload.nodeIds.length > 0 && payload.nodeIds.length <= 10_000 &&
+      payload.nodeIds.every(id => typeof id === 'string') && new Set(payload.nodeIds).size === payload.nodeIds.length && payload.nodeIds.includes(payload.nodeId))) &&
     isRecord(payload.pointer) &&
     Number.isFinite(payload.pointer.x) &&
     Number.isFinite(payload.pointer.y);

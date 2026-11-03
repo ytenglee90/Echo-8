@@ -7,6 +7,12 @@ import { defineManifest } from '../src/plugins/manifest.ts';
 import { mergeContentCatalogDeltas } from '../src/ui/runtime-hooks.ts';
 import type { ContentSummary } from '../src/protocols/content.ts';
 import type { MinimapState } from '../src/protocols/minimap.ts';
+import type { CanvasOverviewEntity } from '../src/protocols/canvas.ts';
+import { textNodePlugin } from '../src/plugins/text-node/plugin.ts';
+import { createSelectionPlugin } from '../src/plugins/selection/model.ts';
+import { createGroupsPlugin } from '../src/plugins/groups/model.ts';
+import type { ProjectSource } from '../src/protocols/files.ts';
+import { parseProject, serializeProject } from '../src/plugins/import-export/codec.ts';
 
 test('minimap visibility is workspace-only, retained on restart and removes all owned contributions on stop', async () => {
   const provider = { manifest: defineManifest('navigation-fixture', '导航环境', {
@@ -72,4 +78,34 @@ test('visual catalog invalidation ignores text-only edits but includes recolorin
     assert.equal(delta(changed).visualChanged, true);
   }
   assert.equal(mergeContentCatalogDeltas(current, [{ version: 3, reset: false, summaries: [], removedIds: ['a'] }]).visualChanged, true);
+});
+
+test('group overview geometry is owner-projected, color-preserving and removable with its provider', async () => {
+  const kernel = new ApplicationKernel([textNodePlugin, createSelectionPlugin(), createGroupsPlugin()]);
+  await kernel.start(); const ids: string[] = [];
+  for (const x of [100, 700]) ids.push((await kernel.router.dispatch<{ id: string }>('node.create', { title: `概览${x}`, x, y: 100, width: 220, height: 130 }, 'core.test')).id);
+  await kernel.router.dispatch('selection.set', { ids }, 'core.test');
+  const { id } = await kernel.router.dispatch<{ id: string }>('group.create', undefined, 'core.test');
+  const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
+  project.document.namespaces.groups[id] = { ...project.document.namespaces.groups[id] as object, color: '#b65fcf' };
+  await kernel.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), 'core.test');
+  const nodes = await kernel.capabilities.request<ContentSummary[]>('content.summaries@1');
+  const before = kernel.store.snapshot().document;
+  const [group] = kernel.capabilities.requestSync<CanvasOverviewEntity[]>('canvas.overview@1', { nodes });
+  assert.deepEqual(group, { id, kind: 'group', x: 75, y: 75, width: 870, height: 180, color: '#b65fcf' });
+  assert.deepEqual(kernel.store.snapshot().document, before);
+  const [preview] = kernel.capabilities.requestSync<CanvasOverviewEntity[]>('canvas.overview@1', { nodes: nodes.map(node => node.id === ids[1] ? { ...node, width: 1200 } : node) });
+  assert.equal(preview.width, 1850);
+  assert.deepEqual(kernel.store.snapshot().document, before);
+  await kernel.plugins.stop('groups');
+  assert.deepEqual(await kernel.capabilities.requestAll('canvas.overview@1', { nodes }), []);
+  await kernel.plugins.start('groups');
+  assert.equal(kernel.capabilities.requestSync<CanvasOverviewEntity[]>('canvas.overview@1', { nodes })[0].color, '#b65fcf');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  let invalidations = 0;
+  const unsubscribe = kernel.router.subscribeSignal('core.test', 'canvas.overview.invalidated', () => { invalidations += 1; });
+  await kernel.router.dispatch('content.applyDelta', { nodeId: ids[0], start: 0, deleteCount: 0, insert: '正文输入' }, 'core.test');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(invalidations, 0, 'text-only history must not redraw the overview');
+  unsubscribe();
 });
