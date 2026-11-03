@@ -231,6 +231,9 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
         <Slot kernel={kernel} slot="canvas.connections" />
         <Slot kernel={kernel} slot="canvas.content" />
         <Slot kernel={kernel} slot="canvas.selection" />
+        <div className="canvas-navigation-layer">
+          <Slot kernel={kernel} slot="canvas.navigation" />
+        </div>
       </section>
 
       <aside className="right-rail">

@@ -26,13 +26,14 @@ export function useCommandTooltip(
   );
 }
 
-export function useContentCatalog(client: ViewClient, options?: { geometryOnly?: boolean }): {
+export function useContentCatalog(client: ViewClient, options?: { geometryOnly?: boolean; visualOnly?: boolean }): {
   summaries: ContentSummary[];
   byId: ReadonlyMap<string, ContentSummary>;
   geometryById: ReadonlyMap<string, ContentSummary>;
   unavailable: boolean;
 } {
   const geometryOnly = options?.geometryOnly ?? false;
+  const visualOnly = options?.visualOnly ?? false;
   const capabilityVersion = useSyncExternalStore(
     client.subscribeCapabilities,
     client.getCapabilityVersion,
@@ -60,7 +61,7 @@ export function useContentCatalog(client: ViewClient, options?: { geometryOnly?:
       const merged = mergeContentCatalogDeltas(catalog.current, deltas);
       const geometryChanged = merged.geometryChanged;
       catalog.current = merged.catalog;
-      if (geometryChanged || !geometryOnly) {
+      if (visualOnly ? merged.visualChanged : geometryChanged || !geometryOnly) {
         const snapshot = new Map(catalog.current);
         setById(snapshot);
         setSummaries([...snapshot.values()]);
@@ -76,7 +77,7 @@ export function useContentCatalog(client: ViewClient, options?: { geometryOnly?:
       setSummaries([]);
       setUnavailable(true);
     });
-  }, [client, geometryOnly]);
+  }, [client, geometryOnly, visualOnly]);
 
   useEffect(() => {
     generation.current += 1;
@@ -115,22 +116,28 @@ export function applyCatalogDelta(
 export function mergeContentCatalogDeltas(
   current: ReadonlyMap<string, ContentSummary>,
   deltas: readonly ContentCatalogDelta[],
-): { catalog: Map<string, ContentSummary>; geometryChanged: boolean } {
+): { catalog: Map<string, ContentSummary>; geometryChanged: boolean; visualChanged: boolean } {
   const reset = deltas.length > 1 || deltas.some((delta) => delta.reset);
   const catalog = reset ? new Map<string, ContentSummary>() : new Map(current);
   let geometryChanged = reset;
+  let visualChanged = false;
   for (const delta of deltas) {
     for (const id of delta.removedIds) {
+      visualChanged ||= catalog.has(id);
       geometryChanged ||= catalog.has(id);
       catalog.delete(id);
     }
     for (const summary of delta.summaries) {
-      const previous = catalog.get(summary.id);
+      const previous = reset ? current.get(summary.id) : catalog.get(summary.id);
+      visualChanged ||= !previous || !sameGeometry(previous, summary) ||
+        previous.titleColor !== summary.titleColor || previous.textColor !== summary.textColor ||
+        previous.presentation !== summary.presentation || previous.title !== summary.title;
       geometryChanged ||= !previous || !sameGeometry(previous, summary);
       catalog.set(summary.id, summary);
     }
   }
-  return { catalog, geometryChanged };
+  visualChanged ||= catalog.size !== current.size;
+  return { catalog, geometryChanged, visualChanged };
 }
 
 function sameGeometry(left: ContentSummary, right: ContentSummary): boolean {

@@ -22,6 +22,7 @@ import type {
   CanvasSnapGuide,
   CanvasSnapPreview,
   CanvasPointerSnapshot,
+  CanvasPanRequest,
   CanvasToolMode,
   CanvasViewportSize,
   CanvasWheelZoomRequest,
@@ -439,6 +440,19 @@ export function CanvasSurface({
     }),
     [client],
   );
+
+  useEffect(() => client.subscribeSignal<CanvasPanRequest>('canvas.pan.requested', (message) => {
+    const { point, commit } = message.payload;
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    if (focusFrame.current !== undefined) cancelAnimationFrame(focusFrame.current);
+    focusFrame.current = undefined;
+    const size = surfaceSizeRef.current;
+    const zoom = cameraRef.current.zoom;
+    const next = { x: size.width / 2 - point.x * zoom, y: size.height / 2 - point.y * zoom, zoom };
+    cameraRef.current = next;
+    client.emit('canvas.camera.preview', next);
+    if (commit) void client.dispatch('canvas.camera.commit', next);
+  }), [client]);
 
   const applyWheelZoom = useCallback((clientX: number, clientY: number, deltaY: number) => {
     const surface = surfaceRef.current;

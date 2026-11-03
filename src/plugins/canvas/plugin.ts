@@ -98,6 +98,7 @@ export const canvasPlugin: PluginDefinition = {
       'canvas.viewport.preview',
       'canvas.pointer.preview',
       'canvas.zoom.requested',
+      'canvas.pan.requested',
       'canvas.wheel.requested',
       'canvas.lasso.preview',
       'canvas.lasso.external.requested',

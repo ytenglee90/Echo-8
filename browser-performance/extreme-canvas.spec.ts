@@ -31,6 +31,12 @@ test('a real browser opens, culls and edits the supported extreme canvas envelop
   const ordinaryVisibleCards = await page.getByRole('article', { name: /文本节点：/u }).count();
   expect(ordinaryVisibleCards).toBeLessThan(200);
 
+  const mapOpenedAt = performance.now();
+  await page.getByRole('button', { name: '打开小地图', exact: true }).click();
+  await expect(page.locator('[data-map-node]')).toHaveCount(NODE_COUNT);
+  expect(performance.now() - mapOpenedAt).toBeLessThan(FULL_SELECTION_BUDGET_MS);
+  // Keep the navigator open through selection, panning and the huge-document edit below.
+
   const zoomStatus = page.locator('.canvas-zoom-status input');
   await zoomStatus.fill('40');
   await zoomStatus.press('Enter');

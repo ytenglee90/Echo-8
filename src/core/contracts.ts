@@ -109,6 +109,7 @@ export type UISlot =
   | 'canvas.content'
   | 'canvas.connections'
   | 'canvas.selection'
+  | 'canvas.navigation'
   | 'ai.settings'
   | 'ai.retrieval'
   | 'right.primary'

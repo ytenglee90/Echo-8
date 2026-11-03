@@ -65,6 +65,11 @@ test('the generated single HTML starts from the library and edits without extern
   await expect(commandPalette.getByRole('option', { name: /^进入当前画布/u })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await library.press('Escape');
+  await page.getByRole('button', { name: '打开小地图', exact: true }).click();
+  await expect(page.locator('.canvas-minimap')).toBeVisible();
+  await expect(page.locator('[data-map-node]')).toHaveCount(2);
+  await page.getByRole('button', { name: '关闭小地图', exact: true }).click();
+  await expect(page.locator('.canvas-minimap')).toHaveCount(0);
   await expect(page.getByRole('article', { name: /文本节点：/u })).toHaveCount(2);
   await expect(page.getByRole('status').filter({ hasText: '纠错规则尚未导入' })).toBeVisible();
 

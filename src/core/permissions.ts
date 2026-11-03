@@ -47,6 +47,7 @@ const SLOT_PERMISSIONS: Record<UISlot, string> = {
   'canvas.content': 'ui.canvas.contribute',
   'canvas.connections': 'ui.canvas.contribute',
   'canvas.selection': 'ui.canvas.contribute',
+  'canvas.navigation': 'ui.canvas.contribute',
   'ai.settings': 'ui.ai-settings.contribute',
   'ai.retrieval': 'ui.ai-settings.contribute',
   'right.primary': 'ui.right.contribute',

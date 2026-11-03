@@ -1,4 +1,32 @@
 /* Canvas, nodes, connections and groups. */
+/* Governed navigation slot stays above canvas interactions, below application overlays. */
+.canvas-navigation-layer { position: absolute; inset: 0; z-index: 23; pointer-events: none; }
+.canvas-minimap {
+  position: absolute; left: 16px; bottom: 16px;
+  width: min(240px, calc(100% - 32px));
+  border: 1px solid color-mix(in srgb, var(--minimap-ink) 24%, transparent);
+  border-radius: 12px; overflow: hidden; pointer-events: auto;
+  background: var(--minimap-background); color: var(--minimap-ink);
+  box-shadow: var(--shadow); backdrop-filter: blur(8px);
+}
+.canvas-minimap[data-tone="light"] { --minimap-background: rgba(255,255,255,.72); --minimap-ink: #18181a; }
+.canvas-minimap[data-tone="dark"] { --minimap-background: rgba(24,25,27,.72); --minimap-ink: #f2f2f3; }
+.canvas-minimap .minimap-surface { display: block; width: 100%; touch-action: none; cursor: crosshair; }
+.canvas-minimap .minimap-surface:active { cursor: grabbing; }
+.canvas-minimap .minimap-blocks rect { cursor: pointer; }
+.canvas-minimap .minimap-blocks rect:focus-visible { outline: 2px solid var(--minimap-ink); outline-offset: 2px; }
+.canvas-minimap .minimap-surface:focus-visible { outline: 2px solid var(--minimap-ink); outline-offset: -3px; }
+.canvas-minimap .minimap-viewport { fill: none; stroke: var(--minimap-ink); stroke-width: 1.2; opacity: .65; pointer-events: none; }
+.canvas-minimap .minimap-click-pulse {
+  fill: color-mix(in srgb, var(--minimap-ink) 16%, transparent); stroke: var(--minimap-ink);
+  stroke-width: 1.5; pointer-events: none; transform-box: fill-box; transform-origin: center;
+  animation: minimap-click 380ms ease-out forwards;
+}
+@keyframes minimap-click { from { transform: scale(.5); opacity: .9; } to { transform: scale(3); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .canvas-minimap .minimap-click-pulse { animation: minimap-click-still 100ms linear forwards; }
+  @keyframes minimap-click-still { to { opacity: 0; } }
+}
 .canvas-host {
   position: relative;
   grid-area: canvas;

@@ -1,5 +1,13 @@
 import type { NodePosition } from './content.ts';
 import type { SelectionMode } from './selection.ts';
+import type { CommandContract } from './commands.ts';
+type CanvasFocusCommand = CommandContract<{ id: string }, boolean>;
+
+declare module './commands.ts' {
+  interface ApplicationCommandMap {
+    'canvas.focusEntity': CanvasFocusCommand;
+  }
+}
 
 export interface CameraState {
   x: number;
@@ -46,6 +54,12 @@ export type CanvasToolMode = 'select' | 'hand';
 
 export interface CanvasZoomRequest {
   zoom: number;
+  commit?: boolean;
+}
+
+/** Version-one navigation signal: center a world point without changing zoom. */
+export interface CanvasPanRequest {
+  point: { x: number; y: number };
   commit?: boolean;
 }
 

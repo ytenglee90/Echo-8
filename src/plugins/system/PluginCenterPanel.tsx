@@ -120,7 +120,7 @@ const PLUGIN_SECTIONS: readonly PluginSection[] = [
     id: 'canvas-writing',
     label: '画布与写作',
     copy: '节点、编辑、选择、连线和历史。',
-    pluginIds: ['canvas', 'text-node', 'selection', 'connections', 'editor', 'history-controls'],
+    pluginIds: ['canvas', 'minimap', 'text-node', 'selection', 'connections', 'editor', 'history-controls'],
   },
   {
     id: 'organize-find',

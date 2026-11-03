@@ -21,6 +21,7 @@ const allowedSlots = new Set<UISlot>([
   'canvas.content',
   'canvas.connections',
   'canvas.selection',
+  'canvas.navigation',
   'ai.settings',
   'ai.retrieval',
   'right.primary',

@@ -14,7 +14,7 @@ export type IconName =
   | 'font-size' | 'font-weight' | 'line-height' | 'letter-spacing'
   | 'first-indent' | 'paragraph-spacing' | 'text-color'
   | 'spellcheck' | 'autocomplete' | 'comment' | 'globe' | 'echo-8' | 'echo-file' | 'template'
-  | 'sync' | 'logout';
+  | 'sync' | 'logout' | 'map';
 
 export function Icon({
   name,
@@ -138,6 +138,7 @@ export function IconButton({
 
 function iconPaths(name: string) {
   switch (name) {
+    case 'map': return <><rect x="3" y="4" width="18" height="16" rx="2" /><rect x="6" y="7" width="5" height="4" rx=".5" /><path d="M14 8h4M6 15h4" /><rect x="13" y="12" width="5" height="5" rx=".5" /></>;
     case 'add': return <><path d="M12 5v14M5 12h14" /><rect x="3" y="3" width="18" height="18" rx="5" /></>;
     case 'search': return <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" /></>;
     case 'replace': return <><path d="M4 7h12l-3-3m3 3-3 3M20 17H8l3 3m-3-3 3-3" /></>;
