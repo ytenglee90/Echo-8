@@ -29,6 +29,7 @@ export function FormatBar({
   brushActive,
   textAssist,
   onBrush,
+  onClearFormat,
   onEnterImmersive,
   onChange,
 }: {
@@ -39,6 +40,7 @@ export function FormatBar({
   brushActive?: boolean;
   textAssist: TextAssistRuntime;
   onBrush?: () => void;
+  onClearFormat?: () => void;
   onEnterImmersive: () => void;
   onChange: (patch: Partial<TextDocumentFormat>) => void;
 }) {
@@ -56,10 +58,12 @@ export function FormatBar({
       <legend>有选区时修改选区；没有选区时修改默认格式</legend>
       <IconButton
         icon="paintbrush"
-        label={brushActive ? '取消格式刷' : '格式刷：先选中源文字，再点击目标文字'}
+        label={brushActive ? '取消格式刷；双击清除全部正文格式' : '格式刷：选中源文字后单击，再选中目标文字；双击清除全部正文格式'}
         className={`icon-button format-brush-button ${brushActive ? 'active' : ''}`}
         aria-pressed={brushActive}
-        onClick={onBrush}
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={(event) => { if (event.detail < 2) onBrush?.(); }}
+        onDoubleClick={onClearFormat}
       />
       <FormatSelect icon="font-size" label="字号" value={format.fontSize} options={[...FORMAT_STEP_OPTIONS.fontSize]} onChange={(fontSize) => onChange({ fontSize })} suffix="px" />
       <FormatSelect icon="font-weight" label="字重" value={format.fontWeight} options={[...FORMAT_STEP_OPTIONS.fontWeight]} onChange={(fontWeight) => onChange({ fontWeight })} />
@@ -199,6 +203,7 @@ function FormatSelect({
     <label className="format-control format-control-inline" title={label}>
       <Icon name={icon} size={15} />
       <select value={value} aria-label={label} onChange={(event) => onChange(Number(event.target.value))}>
+        {!options.includes(value) && <option value={value} hidden disabled>{value}{suffix}</option>}
         {options.map((option) => <option value={option} key={option}>{option}{suffix}</option>)}
       </select>
     </label>

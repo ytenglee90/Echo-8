@@ -165,7 +165,7 @@ function TextNodeCanvasLayerView({
         const isSelected = selected.has(node.id);
         return (
           <article
-            className={`text-node-card ${isTextBox ? 'text-box' : ''} ${isSelected ? 'selected' : ''} ${isSelected && detail === 'title-only' ? 'overview-selected' : ''} ${connectionTargetId === node.id ? 'connection-target' : ''} ${!isTextBox && detail === 'title-only' ? 'compact' : ''}`}
+            className={`text-node-card ${isTextBox ? 'text-box' : ''} ${isSelected ? 'selected' : ''} ${isSelected && detail === 'title-only' ? 'overview-selected' : ''} ${detail === 'title-only' ? 'overview-detail' : ''} ${connectionTargetId === node.id ? 'connection-target' : ''} ${!isTextBox && detail === 'title-only' ? 'compact' : ''}`}
             key={node.id}
             style={{
               width: renderedFrame.width,

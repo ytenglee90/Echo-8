@@ -100,6 +100,7 @@ export function createEditorPlugin(
         'editor.activateNext',
         'editor.toggleImmersive',
         'editor.toggleFormatBrush',
+        'editor.clearFormat',
         'editor.increaseFontSize',
         'editor.decreaseFontSize',
         'editor.increaseFontWeight',
@@ -132,6 +133,7 @@ export function createEditorPlugin(
         'content.moveRange',
         'content.setDocumentFormat',
         'content.setRangeFormat',
+        'content.resetFormat',
         'node.rename',
         'interaction.begin',
         'interaction.end',
@@ -848,6 +850,11 @@ export function createEditorPlugin(
         type: 'editor.toggleFormatBrush',
         validate: isOptionalNodeIdPayload,
         handle: (payload) => emitActiveEditorIntent('editor.formatBrush.requested', {}, payload?.id),
+      });
+      context.commands.register({
+        type: 'editor.clearFormat',
+        validate: isOptionalNodeIdPayload,
+        handle: (payload) => emitActiveEditorIntent('editor.formatBrush.requested', { action: 'clear' }, payload?.id),
       });
       const formatSteps = [
         ['editor.increaseFontSize', 'fontSize', 1],

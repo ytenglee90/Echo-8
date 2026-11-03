@@ -47,6 +47,7 @@ import {
   connectionRenderMode,
   connectionVisibleForOverview,
   CONNECTION_LINE_SCREEN_WIDTH,
+  CONNECTION_HIGHLIGHT_SCREEN_WIDTH,
   distanceToConnectionCurve,
   orderConnectionsForPaint,
   type ConnectionRenderPoint,
@@ -619,6 +620,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         '--connection-line': globalConnectionLineColor,
         '--connection-label-background': canvasColor,
         '--connection-stroke-width': `${CONNECTION_LINE_SCREEN_WIDTH * detailWorldScale}px`,
+        '--connection-highlight-stroke-width': `${CONNECTION_HIGHLIGHT_SCREEN_WIDTH * detailWorldScale}px`,
         pointerEvents: lassoActive ? 'none' : undefined,
       } as CSSProperties}
       aria-label="节点连线"
@@ -774,7 +776,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
                 }}
               />
               <path
-                className={`connection-path ${isSelected ? 'selected' : ''} ${hasLocalColor ? 'custom-color' : ''}`}
+                className={`connection-path ${isSelected ? 'selected' : ''} ${connection.id === hoveredId ? 'hovered' : ''} ${hasLocalColor ? 'custom-color' : ''}`}
                 d={renderedPath}
                 style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
                 aria-hidden="true"

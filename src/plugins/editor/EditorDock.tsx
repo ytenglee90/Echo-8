@@ -19,7 +19,7 @@ import type {
   EditorRevealRequest,
   WritingMetricsSnapshot,
 } from '../../protocols/editor.ts';
-import type { TextDocumentFormat } from '../../protocols/formatting.ts';
+import type { TextDocumentFormat, TextFormatMark } from '../../protocols/formatting.ts';
 import {
   inferFormatTarget,
   resolveActiveFormat,
@@ -66,8 +66,9 @@ export function EditorDock({ client }: { client: ViewClient }) {
   const dockRef = useRef<HTMLElement>(null);
   const paneListRef = useRef<HTMLDivElement>(null);
   useEffect(
-    () => client.subscribeSignal<{ id: string }>('editor.formatBrush.requested', (message) => {
-      runtime.toggleFormatBrush(message.payload.id);
+    () => client.subscribeSignal<{ id: string; action?: 'clear' }>('editor.formatBrush.requested', (message) => {
+      if (message.payload.action === 'clear') runtime.clearFormat(message.payload.id);
+      else runtime.toggleFormatBrush(message.payload.id);
     }),
     [client, runtime],
   );
@@ -116,6 +117,7 @@ export function EditorDock({ client }: { client: ViewClient }) {
               onFormat={runtime.commitFormat}
               formatBrushActive={Boolean(runtime.formatBrush)}
               onFormatBrush={() => void client.dispatch('editor.toggleFormatBrush', { id: document.id })}
+              onClearFormat={() => void client.dispatch('editor.clearFormat', { id: document.id })}
               onSelection={runtime.previewSelection}
               onWindowChange={runtime.loadWindow}
               onClose={() => void client.dispatch('editor.close', {
@@ -332,6 +334,7 @@ function EditorPane({
   onFormat,
   formatBrushActive,
   onFormatBrush,
+  onClearFormat,
   onSelection,
   onWindowChange,
   onClose,
@@ -347,14 +350,15 @@ function EditorPane({
   error?: string;
   titleError?: string;
   revealRequest?: EditorRevealRequest;
-  onBodyPreview: (id: string, windowStart: number, previous: string, body: string, delta?: TextDelta) => void;
+  onBodyPreview: (id: string, windowStart: number, previous: string, body: string, delta?: TextDelta, marks?: TextFormatMark[]) => void;
   onBodyEdit: (id: string, edit: BodyEdit) => Promise<void>;
   onRename: (id: string, title: string, previousTitle: string) => void;
   onTitleInput: (id: string) => void;
   onFormat: (id: string, patch: Partial<TextDocumentFormat>) => void;
   formatBrushActive?: boolean;
   onFormatBrush?: () => void;
-  onSelection: (id: string, selection: Omit<SelectionPreview, 'id'>) => void;
+  onClearFormat?: () => void;
+  onSelection: (id: string, selection: Omit<SelectionPreview, 'id'>, completed?: boolean) => void;
   onWindowChange: (id: string, start: number) => void;
   onClose?: () => void;
 }) {
@@ -481,6 +485,7 @@ function EditorPane({
           brushActive={formatBrushActive}
           textAssist={textAssist}
           onBrush={onFormatBrush}
+          onClearFormat={onClearFormat}
           onEnterImmersive={enterImmersive}
           onChange={(patch) => onFormat(document.id, patch)}
         />
@@ -490,9 +495,9 @@ function EditorPane({
           client={client}
           document={renderedDocument}
           onWindowChange={(start) => onWindowChange(document.id, start)}
-          onPreview={(previous, next, delta) => onBodyPreview(document.id, document.windowStart, previous, next, delta)}
+          onPreview={(previous, next, delta, marks) => onBodyPreview(document.id, document.windowStart, previous, next, delta, marks)}
           onEdit={(edit) => onBodyEdit(document.id, { ...edit, baseOffset: document.windowStart })}
-          onSelection={(selection) => onSelection(document.id, selection)}
+          onSelection={(selection, completed) => onSelection(document.id, selection, completed)}
           revealRequest={revealRequest}
           textAssist={textAssist}
         />
@@ -506,9 +511,9 @@ function EditorPane({
           marks={renderedDocument.marks}
           windowStart={0}
           label={`${document.title} 正文`}
-          onPreview={(previous, next, delta) => onBodyPreview(document.id, 0, previous, next, delta)}
+          onPreview={(previous, next, delta, marks) => onBodyPreview(document.id, 0, previous, next, delta, marks)}
           onEdit={(edit) => onBodyEdit(document.id, { ...edit, baseOffset: 0 })}
-          onSelection={(selection) => onSelection(document.id, selection)}
+          onSelection={(selection, completed) => onSelection(document.id, selection, completed)}
           revealRequest={revealRequest}
           textAssist={textAssist}
         />
@@ -540,9 +545,9 @@ function LargeDocumentEditor({
   client: ViewClient;
   document: LoadedDocument;
   onWindowChange: (start: number) => void;
-  onPreview: (previous: string, next: string, delta?: TextDelta) => void;
+  onPreview: (previous: string, next: string, delta?: TextDelta, marks?: TextFormatMark[]) => void;
   onEdit: (edit: BodyEdit) => Promise<void>;
-  onSelection: (selection: Omit<SelectionPreview, 'id'>) => void;
+  onSelection: (selection: Omit<SelectionPreview, 'id'>, completed?: boolean) => void;
   revealRequest?: EditorRevealRequest;
   textAssist: TextAssistRuntime;
 }) {

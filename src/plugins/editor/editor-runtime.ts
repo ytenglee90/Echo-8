@@ -65,6 +65,7 @@ interface BodyPreview {
   characters: number;
   writingUnits: number;
   source: string;
+  marks?: TextFormatMark[];
 }
 
 export interface EditorSelectionPreview {
@@ -135,6 +136,7 @@ export function useEditorRuntime(client: ViewClient) {
   const [previewDockWidth, setPreviewDockWidth] = useState<number>();
   const [previewPaneRatios, setPreviewPaneRatios] = useState<Record<string, number>>();
   const [formatBrush, setFormatBrush] = useState<FormatBrush>();
+  const formatBrushRef = useRef<FormatBrush | undefined>(undefined);
   const [appearancePreview, setAppearancePreview] = useState<AppearancePreview>();
   const [reloadToken, setReloadToken] = useState(0);
   // Body and format commands share one per-node lane because both can advance
@@ -165,6 +167,8 @@ export function useEditorRuntime(client: ViewClient) {
   useEffect(() => {
     let current = true;
     const loadEpoch = authorityEpoch.current;
+    const loadContentRevisions = new Map(contentRevisions.current);
+    const loadFormatRevisions = new Map(formatRevisions.current);
     const load = async () => {
       const summaries = await client.request<EditorDocumentSummary[]>('content.summariesById@1', {
         nodeIds: state.openPanes,
@@ -174,7 +178,7 @@ export function useEditorRuntime(client: ViewClient) {
         if (!summary) return undefined;
         const existing = documents.find((item) => item.id === id);
         const pending = (pendingContent.current.get(id) ?? 0) > 0;
-        const formatPending = (pendingFormats.current.get(id) ?? 0) > 0;
+        const formatPending = pending || (pendingFormats.current.get(id) ?? 0) > 0;
         const tooLarge = summary.length > MAX_DOM_DOCUMENT;
         const requestedWindow = tooLarge ? state.paneWindows[id] ?? existing?.windowStart ?? 0 : 0;
         const windowStart = tooLarge
@@ -229,14 +233,19 @@ export function useEditorRuntime(client: ViewClient) {
       const preserveFormat = new Set<string>();
       for (const loadedDocument of loaded.filter(Boolean)) {
         const document = loadedDocument!;
-        if (!document.contentAuthoritative || (pendingContent.current.get(document.id) ?? 0) > 0) {
+        if (!document.contentAuthoritative || (pendingContent.current.get(document.id) ?? 0) > 0 ||
+          (document.revision !== contentRevisions.current.get(document.id) &&
+            loadContentRevisions.get(document.id) !== contentRevisions.current.get(document.id))) {
           preserveContent.add(document.id);
         } else {
           contentRevisions.current.set(document.id, document.revision);
           contentLengths.current.set(document.id, document.length);
           contentFaults.current.delete(document.id);
         }
-        if (!document.formatAuthoritative || (pendingFormats.current.get(document.id) ?? 0) > 0) {
+        if (!document.formatAuthoritative || (pendingContent.current.get(document.id) ?? 0) > 0 ||
+          (pendingFormats.current.get(document.id) ?? 0) > 0 ||
+          (document.formatRevision !== formatRevisions.current.get(document.id) &&
+            loadFormatRevisions.get(document.id) !== formatRevisions.current.get(document.id))) {
           preserveFormat.add(document.id);
         } else {
           formatRevisions.current.set(document.id, document.formatRevision);
@@ -352,6 +361,7 @@ export function useEditorRuntime(client: ViewClient) {
             body: message.payload.body,
             characters: message.payload.characters,
             writingUnits: message.payload.writingUnits,
+            marks: message.payload.marks ?? document.marks,
           }
         : document));
     }),
@@ -369,11 +379,12 @@ export function useEditorRuntime(client: ViewClient) {
 
   useEffect(
     () => client.subscribeSignal<FormatPreview>('editor.format.preview', (message) => {
-      setDocuments((current) => current.map((document) => message.payload.nodeId === document.id
+      setDocuments((current) => current.map((document) => message.payload.nodeId === document.id &&
+        message.payload.revision >= (formatRevisions.current.get(document.id) ?? 0)
         ? {
             ...document,
             format: message.payload.format,
-            marks: message.payload.marks,
+            marks: (pendingContent.current.get(document.id) ?? 0) > 0 ? document.marks : message.payload.marks,
             formatRevision: message.payload.revision,
           }
         : document));
@@ -444,6 +455,7 @@ export function useEditorRuntime(client: ViewClient) {
     previous: string,
     body: string,
     preparedDelta?: TextDelta,
+    marks?: TextFormatMark[],
   ) => {
     const delta = preparedDelta ?? calculateTextDelta(previous, body);
     const characters = Math.max(
@@ -466,6 +478,7 @@ export function useEditorRuntime(client: ViewClient) {
       characters,
       writingUnits,
       source: instanceId,
+      marks,
     } satisfies BodyPreview);
   };
 
@@ -586,6 +599,20 @@ export function useEditorRuntime(client: ViewClient) {
         } else if (remaining === 0 && rebased) {
           setReloadToken((value) => value + 1);
         }
+        if (remaining === 0 && !failed && !contentFaults.current.has(id)) {
+          // Replace optimistic inherited marks with the text owner's bounded
+          // snapshot only when it describes the current, fully committed body.
+          void client.request<TextFormattingSnapshot>('content.formatting@2', {
+            nodeId: id,
+            start: document.windowStart,
+            length: Math.min(EDITOR_READ_WINDOW, (contentLengths.current.get(id) ?? document.length) - document.windowStart),
+          }).then((snapshot) => {
+            if ((pendingContent.current.get(id) ?? 0) > 0 || (pendingFormats.current.get(id) ?? 0) > 0 ||
+              snapshot.contentRevision !== contentRevisions.current.get(id) ||
+              snapshot.revision !== (formatRevisions.current.get(id) ?? document.formatRevision)) return;
+            client.emit('editor.format.preview', { ...snapshot, source: instanceId } satisfies FormatPreview);
+          }).catch(() => undefined);
+        }
       });
     mutationQueues.current.set(id, next);
     return next;
@@ -596,6 +623,7 @@ export function useEditorRuntime(client: ViewClient) {
     patch: Partial<TextDocumentFormat>,
     target: ReturnType<typeof inferFormatTarget>,
     range?: { start: number; end: number },
+    clearAll = false,
   ) => {
     const document = documents.find((item) => item.id === id);
     if (!document) return;
@@ -606,7 +634,7 @@ export function useEditorRuntime(client: ViewClient) {
       }));
       return;
     }
-    if (target === 'document') {
+    if (target === 'document' && !clearAll) {
       const optimistic: TextFormattingSnapshot = {
         nodeId: id,
         revision: document.formatRevision,
@@ -628,17 +656,21 @@ export function useEditorRuntime(client: ViewClient) {
           throw new Error('正文正在重新同步，完成后请再次设置格式');
         }
         const expectedRevision = formatRevisions.current.get(id) ?? document.formatRevision;
-        const result = target === 'document'
+        const result = clearAll
+          ? await client.dispatch('content.resetFormat', {
+              nodeId: id,
+              expectedRevision,
+              expectedContentRevision: contentRevisions.current.get(id) ?? document.revision,
+            })
+          : target === 'document'
           ? await client.dispatch('content.setDocumentFormat', {
               nodeId: id,
               expectedRevision,
               patch,
-            }).then((snapshot) => ({
-              ...snapshot,
-              contentRevision: contentRevisions.current.get(id) ?? document.revision,
-              rangeStart: document.windowStart,
-              rangeLength: document.body.length,
-              marks: document.marks,
+            }).then(() => client.request<TextFormattingSnapshot>('content.formatting@2', {
+              nodeId: id,
+              start: document.windowStart,
+              length: EDITOR_READ_WINDOW,
             }))
           : await client.dispatch('content.setRangeFormat', {
               nodeId: id,
@@ -688,7 +720,8 @@ export function useEditorRuntime(client: ViewClient) {
   };
 
   const toggleFormatBrush = (id: string) => {
-    if (formatBrush) {
+    if (formatBrushRef.current) {
+      formatBrushRef.current = undefined;
       setFormatBrush(undefined);
       return;
     }
@@ -698,27 +731,41 @@ export function useEditorRuntime(client: ViewClient) {
       setErrors((current) => ({ ...current, [id]: '请先选中作为格式来源的文字' }));
       return;
     }
-    setFormatBrush({
+    const brush: FormatBrush = {
       sourceNodeId: id,
       sourceStart: selection.start,
       sourceEnd: selection.end,
       format: resolveFormatAtOffset(document.format, document.marks, selection.start),
-    });
+    };
+    formatBrushRef.current = brush;
+    setFormatBrush(brush);
     setErrors((current) => omitKey(current, id));
   };
 
-  const previewSelection = (id: string, selection: Omit<EditorSelectionPreview, 'id'>) => {
+  const clearFormat = (id: string) => {
+    formatBrushRef.current = undefined;
+    setFormatBrush(undefined);
+    commitResolvedFormat(id, {}, 'document', undefined, true);
+  };
+
+  const previewSelection = (
+    id: string,
+    selection: Omit<EditorSelectionPreview, 'id'>,
+    completed = false,
+  ) => {
     const next = { id, ...selection } satisfies EditorSelectionPreview;
     selectionRanges.current.set(id, next);
     setSelections((current) => ({ ...current, [id]: next }));
     client.emit('editor.selection.preview', next);
-    if (!formatBrush || (formatBrush.sourceNodeId === id &&
-      formatBrush.sourceStart === selection.start && formatBrush.sourceEnd === selection.end)) return;
+    const brush = formatBrushRef.current;
+    if (!completed || !selection.focused || selection.end <= selection.start || !brush ||
+      (brush.sourceNodeId === id && brush.sourceStart === selection.start && brush.sourceEnd === selection.end)) return;
     const document = documents.find((item) => item.id === id);
     if (!document) return;
     const range = resolveFormatBrushRange(document, selection);
     if (!range) return;
-    const sourceFormat = formatBrush.format;
+    const sourceFormat = brush.format;
+    formatBrushRef.current = undefined;
     setFormatBrush(undefined);
     commitResolvedFormat(id, sourceFormat, 'selection', range);
   };
@@ -767,6 +814,7 @@ export function useEditorRuntime(client: ViewClient) {
     formatBrush,
     appearancePreview,
     toggleFormatBrush,
+    clearFormat,
     previewSelection,
     loadWindow,
   };

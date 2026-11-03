@@ -142,6 +142,7 @@ export interface MoveContentRangeRequest {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'editor.clearFormat': CommandContract<{ id?: string } | undefined, boolean>;
     'editor.open': CommandContract<EditorOpenRequest, EditorOpenResult>;
     'editor.closeAll': CommandContract<undefined, boolean>;
     'content.applyDelta': CommandContract<ApplyContentDeltaRequest, ApplyContentDeltaResult>;

@@ -50,6 +50,13 @@ export interface SetTextDocumentFormatRequest {
   patch: Partial<TextDocumentFormat>;
 }
 
+/** Schema version 1: reset the node's defaults and range marks atomically. */
+export interface ResetTextFormatRequest {
+  nodeId: string;
+  expectedRevision: number;
+  expectedContentRevision: number;
+}
+
 export interface SetTextRangeFormatRequest {
   nodeId: string;
   expectedRevision: number;
@@ -69,6 +76,7 @@ export interface TextFormattingRequest {
 declare module './commands.ts' {
   interface ApplicationCommandMap {
     'content.setDocumentFormat': CommandContract<SetTextDocumentFormatRequest, TextFormatSnapshot>;
+    'content.resetFormat': CommandContract<ResetTextFormatRequest, TextFormattingSnapshot>;
     'content.setRangeFormat': CommandContract<SetTextRangeFormatRequest, TextFormattingSnapshot>;
   }
 }

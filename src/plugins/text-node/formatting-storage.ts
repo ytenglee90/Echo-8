@@ -14,6 +14,7 @@ import {
   type TextFormatSnapshot,
   type TextFormattingSnapshot,
 } from '../../protocols/formatting.ts';
+import { transformTextFormatMarks, type TextFormattingEdit } from '../../services/text-format-anchors.ts';
 import type { TextContentRecord } from './content-storage.ts';
 
 export const FORMAT_NAMESPACE = 'textFormat';
@@ -36,12 +37,6 @@ export interface TextFormatRecord {
   markIds?: string[];
   revision: number;
   format: TextDocumentFormat;
-}
-
-interface FormattingEdit {
-  start: number;
-  deleteCount: number;
-  insertLength: number;
 }
 
 interface FormattingInheritance {
@@ -125,7 +120,7 @@ export function toFormattingSnapshot(
 export function planFormattingEdits(
   context: PluginContext,
   nodeId: string,
-  edits: FormattingEdit[],
+  edits: TextFormattingEdit[],
   inheritance?: FormattingInheritance,
 ): { patches: PatchOperation[]; revision?: number } {
   const record = readFormatRecord(context, nodeId);
@@ -133,13 +128,7 @@ export function planFormattingEdits(
   if ((originalMarks.length === 0 || edits.length === 0) && !inheritance) return { patches: [] };
   let marks = originalMarks;
   for (const edit of edits) {
-    marks = marks.flatMap((mark) => {
-      const start = transformAnchor(mark.start, edit);
-      const end = transformAnchor(mark.end, edit);
-      if (start.offset >= end.offset) return [];
-      if (start.offset === mark.start.offset && end.offset === mark.end.offset) return [mark];
-      return [{ ...mark, start, end, revision: mark.revision + 1 }];
-    });
+    marks = transformTextFormatMarks(marks, edit);
   }
   if (inheritance && inheritance.length > 0) {
     const start = inheritance.start;
@@ -336,24 +325,6 @@ function sameFormatMark(left: TextFormatMark, right: TextFormatMark): boolean {
     left.start.offset === right.start.offset && left.start.bias === right.start.bias &&
     left.end.offset === right.end.offset && left.end.bias === right.end.bias &&
     JSON.stringify(left.format) === JSON.stringify(right.format);
-}
-
-function transformAnchor(anchor: TextAnchor, edit: FormattingEdit): TextAnchor {
-  const end = edit.start + edit.deleteCount;
-  if (edit.deleteCount === 0) {
-    if (anchor.offset < edit.start || (anchor.offset === edit.start && anchor.bias === 'before')) {
-      return { ...anchor };
-    }
-    return { ...anchor, offset: anchor.offset + edit.insertLength };
-  }
-  if (anchor.offset < edit.start) return { ...anchor };
-  if (anchor.offset > end) {
-    return { ...anchor, offset: anchor.offset - edit.deleteCount + edit.insertLength };
-  }
-  return {
-    ...anchor,
-    offset: anchor.bias === 'after' ? edit.start + edit.insertLength : edit.start,
-  };
 }
 
 export function validateFormatPatch(patch: Partial<TextDocumentFormat>): Partial<TextDocumentFormat> {

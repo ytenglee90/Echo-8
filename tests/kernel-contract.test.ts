@@ -10354,3 +10354,53 @@ function testEnvelope(id: string): MessageEnvelope {
     payload: undefined,
   };
 }
+
+
+test('clearing all body formatting is revision checked, atomic, replayable and undoable after editor stop', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createEditorPlugin());
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('editor');
+  const node = await harness.router.dispatch<{ id: string }>('node.create', { body: '前段\n格式保持' }, 'core.test');
+  const read = () => harness.capabilities.request<import('../src/protocols/formatting.ts').TextFormattingSnapshot>(
+    'content.formatting@2', { nodeId: node.id });
+  let snapshot = await read();
+  await harness.router.dispatch('content.setRangeFormat', {
+    nodeId: node.id, expectedRevision: snapshot.revision, expectedContentRevision: snapshot.contentRevision,
+    start: 3, end: 7, scope: 'selection', patch: { fontSize: 36, fontWeight: 900, color: '#ff0000' },
+  }, 'core.test');
+  snapshot = await read();
+  await harness.router.dispatch('content.setDocumentFormat', {
+    nodeId: node.id, expectedRevision: snapshot.revision, patch: { lineHeight: 2.6, firstLineIndent: 4 },
+  }, 'core.test');
+  snapshot = await read();
+  assert.equal(snapshot.marks.length, 1, 'default changes must preserve existing selection marks');
+  const before = snapshot;
+  await assert.rejects(harness.router.dispatch('content.resetFormat', {
+    nodeId: node.id, expectedRevision: snapshot.revision - 1, expectedContentRevision: snapshot.contentRevision,
+  }, 'core.test'), /版本已变化/u);
+  await assert.rejects(harness.router.dispatch('content.resetFormat', {
+    nodeId: node.id, expectedRevision: snapshot.revision, expectedContentRevision: snapshot.contentRevision - 1,
+  }, 'core.test'), /版本已变化/u);
+  const historyBefore = harness.history.getState().undoCount;
+  await harness.router.dispatch('content.resetFormat', {
+    nodeId: node.id, expectedRevision: snapshot.revision, expectedContentRevision: snapshot.contentRevision,
+  }, 'core.test');
+  snapshot = await read();
+  assert.deepEqual(snapshot.format, DEFAULT_TEXT_DOCUMENT_FORMAT);
+  assert.deepEqual(snapshot.marks, []);
+  assert.equal(snapshot.contentRevision, before.contentRevision);
+  assert.equal(harness.history.getState().undoCount, historyBefore + 1);
+  const saved = await serializeProject({ document: harness.store.snapshot().document, plugins: [] });
+  const reopened = await parseProject(saved);
+  assert.deepEqual((reopened.document.namespaces.textFormat[node.id] as { format: unknown }).format, DEFAULT_TEXT_DOCUMENT_FORMAT);
+  assert.deepEqual((reopened.document.namespaces.textFormat[node.id] as { markIds: string[] }).markIds, []);
+  await harness.plugins.stop('editor');
+  await harness.transactions.undo();
+  snapshot = await read();
+  assert.deepEqual(snapshot.format, before.format);
+  assert.deepEqual(snapshot.marks, before.marks);
+  await harness.transactions.redo();
+  assert.deepEqual((await read()).marks, []);
+});

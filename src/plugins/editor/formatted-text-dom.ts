@@ -5,6 +5,19 @@ import {
   type TextFormatMark,
 } from '../../protocols/formatting.ts';
 
+/** Revisions and mark IDs do not change the pixels of the editor projection. */
+export function textProjectionKey(
+  format: TextDocumentFormat,
+  marks: TextFormatMark[],
+  decorations: TextAssistDecoration[] = [],
+): string {
+  return JSON.stringify([
+    format,
+    marks.map((mark) => [mark.scope, mark.start.offset, mark.end.offset, mark.format]),
+    decorations,
+  ]);
+}
+
 /**
  * Rebuilds the visible content-editable projection from authoritative text,
  * format marks, and derived text-assistance decorations. No generated DOM is

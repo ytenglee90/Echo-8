@@ -1965,12 +1965,12 @@ test('title-bar ports create persistent connections before the title dot', async
   });
   await expect(renderedConnection).toHaveCSS('stroke-width', '1.5px');
   await page.mouse.move(connectionPoint.x, connectionPoint.y);
-  await expect(renderedConnection).toHaveCSS('stroke-width', '1.5px');
+  await expect(renderedConnection).toHaveCSS('stroke-width', '3px');
   await page.mouse.dblclick(connectionPoint.x, connectionPoint.y);
   const labelInput = page.getByRole('textbox', { name: '连接文字', exact: true });
   await expect(labelInput).toBeVisible();
   await expect(connection).toHaveAttribute('aria-pressed', 'true');
-  await expect(renderedConnection).toHaveCSS('stroke-width', '1.5px');
+  await expect(renderedConnection).toHaveCSS('stroke-width', '3px');
   const wrappingLabel = '因果关系说明会根据文字框宽度自动换行显示';
   await labelInput.fill(wrappingLabel);
   await labelInput.press('Enter');
@@ -1991,6 +1991,7 @@ test('title-bar ports create persistent connections before the title dot', async
   ]).then(([textColor, lineColor]) => textColor === lineColor)).toBe(true);
   await page.keyboard.press('Escape');
   await expect(connection).toHaveAttribute('aria-pressed', 'false');
+  await page.mouse.move(12, 12);
   await expect(renderedConnection).toHaveCSS('stroke-width', '1.5px');
   await expect.poll(() => Promise.all([
     label.evaluate((element) => getComputedStyle(element).color),
@@ -2764,9 +2765,9 @@ test('completion leaves the caret outside its node link and rapid format changes
 
   await editor.focus();
   await page.keyboard.press('Control+a');
-  await page.getByLabel('字号').selectOption('20');
+  await page.getByLabel('字号').selectOption('24');
   await expect.poll(() => editor.locator('span').first().evaluate((element) => getComputedStyle(element).fontSize))
-    .toBe('20px');
+    .toBe('24px');
   await editor.focus();
   await editor.press('End');
   await editor.pressSequentially('快速输入');
@@ -2776,6 +2777,219 @@ test('completion leaves the caret outside its node link and rapid format changes
   await editor.pressSequentially('保持稳定');
   await expect(page.locator('.editor-error')).toHaveCount(0);
   await expect(editor).toContainText('画布基本操作指南兼容继续快速输入保持稳定');
+});
+
+test('format brush waits for the final drag range and double click resets all formatting with one undo', async ({ page }) => {
+  await openApplication(page);
+  await page.getByRole('button', { name: '新建文本', exact: true }).click();
+  const card = page.getByRole('article', { name: '文本节点：未命名节点', exact: true });
+  await card.getByRole('paragraph').dblclick({ position: { x: 80, y: 80 } });
+  const editor = page.locator('.editor-writing-area').first();
+  await editor.focus();
+  await editor.pressSequentially('源文字 保持原样 目标文本 结束');
+  await selectEditorRange(editor, 0, 3);
+  await page.getByLabel('字号', { exact: true }).selectOption('24');
+  await page.getByLabel('字重', { exact: true }).selectOption('900');
+  const styled = () => editor.locator('span').evaluateAll((spans) => spans
+    .filter((span) => getComputedStyle(span).fontSize === '24px')
+    .map((span) => span.textContent).join(''));
+  await expect.poll(styled).toBe('源文字');
+  for (const label of ['字号', '字重', '行距', '字距', '首行缩进', '段后空行']) {
+    await expect(page.getByLabel(label, { exact: true }).locator('option:not([disabled])')).toHaveCount(3);
+  }
+  const brush = page.locator('.format-brush-button');
+  await brush.click();
+  await expect(brush).toHaveAttribute('aria-pressed', 'true');
+  const points = await editor.evaluate((root) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const point = (offset: number) => {
+      walker.currentNode = root;
+      let node = walker.nextNode();
+      while (node) {
+        if (offset <= (node.textContent?.length ?? 0)) {
+          const range = document.createRange();
+          range.setStart(node, offset);
+          range.collapse(true);
+          const box = range.getBoundingClientRect();
+          return { x: box.x, y: box.y + box.height / 2 };
+        }
+        offset -= node.textContent?.length ?? 0;
+        node = walker.nextNode();
+      }
+      throw new Error('missing target text');
+    };
+    return { start: point(9), end: point(13) };
+  });
+  await page.mouse.move(points.start.x, points.start.y);
+  await page.mouse.down();
+  await page.mouse.move(points.end.x, points.end.y, { steps: 12 });
+  await expect(brush).toHaveAttribute('aria-pressed', 'true');
+  expect(await styled()).toBe('源文字');
+  await page.mouse.up();
+  await expect.poll(styled).toBe('源文字目标文本');
+  await expect(brush).toHaveAttribute('aria-pressed', 'false');
+  // A collapsed target keeps the brush armed; reverse selection applies only
+  // to the newly chosen text, even when it precedes the source.
+  await selectEditorRange(editor, 9, 13);
+  await brush.click();
+  await expect(brush).toHaveAttribute('aria-pressed', 'true');
+  await selectEditorRange(editor, 4);
+  await expect(brush).toHaveAttribute('aria-pressed', 'true');
+  await selectEditorRange(editor, 4, 8);
+  await expect.poll(styled).toBe('源文字保持原样目标文本');
+  await brush.dblclick();
+  await expect.poll(styled).toBe('');
+  await expect(editor).toHaveText('源文字 保持原样 目标文本 结束');
+  await expect(brush).toHaveAttribute('aria-pressed', 'false');
+  await editor.focus();
+  await page.keyboard.press('Control+z');
+  await expect.poll(styled).toBe('源文字保持原样目标文本');
+  await page.keyboard.press('Control+y');
+  await expect.poll(styled).toBe('');
+  await expect(page.locator('.editor-error')).toHaveCount(0);
+});
+
+test('typing before a formatted range preserves its characters through newlines, paste, IME and reopen', async ({ page }) => {
+  await openApplication(page);
+  await page.getByRole('button', { name: '新建文本', exact: true }).click();
+  const card = page.getByRole('article', { name: '文本节点：未命名节点', exact: true });
+  await card.getByRole('paragraph').dblclick({ position: { x: 80, y: 80 } });
+  const editor = page.locator('.editor-writing-area').first();
+  await editor.focus();
+  await editor.pressSequentially('前段格式保持末尾');
+  await selectEditorRange(editor, 2, 6);
+  await page.getByLabel('字号', { exact: true }).selectOption('36');
+  const styled = () => editor.locator('span').evaluateAll((spans) => spans
+    .filter((span) => getComputedStyle(span).fontSize === '36px')
+    .map((span) => span.textContent).join(''));
+  await expect.poll(styled).toBe('格式保持');
+  await selectEditorRange(editor, 0);
+  await editor.pressSequentially('连续输入');
+  await expect.poll(styled).toBe('格式保持');
+  await editor.press('Enter');
+  await editor.pressSequentially('上一行');
+  await editor.press('Enter');
+  await expect.poll(styled).toBe('格式保持');
+  await selectEditorRange(editor, 1);
+  await dispatchEditorClipboard(editor, 'paste', [['text/plain', '粘贴😀\n新段']]);
+  await expect.poll(styled).toBe('格式保持');
+  // Commit a native IME edit in the first paragraph, ahead of the styled text.
+  await selectEditorRange(editor, 0);
+  await editor.evaluate((root) => {
+    root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    const text = root.firstChild?.firstChild?.firstChild as Text;
+    text.insertData(0, '中文');
+    const range = document.createRange();
+    range.setStart(text, 2);
+    range.collapse(true);
+    getSelection()?.removeAllRanges();
+    getSelection()?.addRange(range);
+    root.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', data: '中文' }));
+    root.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文' }));
+  });
+  await expect.poll(styled).toBe('格式保持');
+  await page.getByRole('button', { name: '关闭编辑器', exact: true }).click();
+  await page.getByRole('article', { name: /文本节点：未命名节点$/u }).getByRole('paragraph')
+    .dblclick({ position: { x: 80, y: 80 } });
+  await expect.poll(styled).toBe('格式保持');
+  await expect(editor).toContainText('中文');
+  await expect(page.locator('.editor-error')).toHaveCount(0);
+});
+
+test('styled text stays painted during typing, completion and correction replacement', async ({ page }) => {
+  await openApplication(page);
+  await page.getByRole('button', { name: '新建文本', exact: true }).click();
+  await page.getByRole('article', { name: '文本节点：未命名节点', exact: true })
+    .getByRole('paragraph').dblclick({ position: { x: 80, y: 80 } });
+  const editor = page.locator('.editor-writing-area').first();
+  await editor.focus();
+  await editor.pressSequentially('保留格式 ');
+  await selectEditorRange(editor, 0, 2);
+  await page.getByLabel('字号', { exact: true }).selectOption('24');
+  const retainedStyle = () => editor.locator('span').evaluateAll((spans) => spans
+    .filter((span) => getComputedStyle(span).fontSize === '24px').map((span) => span.textContent).join(''));
+  await expect.poll(retainedStyle).toBe('保留');
+  await editor.evaluate((root) => {
+    const probe = { frames: 0, badFrames: [] as string[], stopped: false };
+    Reflect.set(root, '__formatPaintProbe', probe);
+    const sample = () => {
+      if (probe.stopped) return;
+      probe.frames += 1;
+      const styled = [...root.querySelectorAll('span')]
+        .filter((span) => getComputedStyle(span).fontSize === '24px')
+        .map((span) => span.textContent).join('');
+      if (styled !== '保留') probe.badFrames.push(styled);
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  await selectEditorRange(editor, 5);
+  await editor.pressSequentially('画布基', { delay: 35 });
+  const completion = page.getByRole('listbox', { name: '文字补全候选' });
+  await expect(completion).toBeVisible();
+  await expect.poll(retainedStyle).toBe('保留');
+  await page.keyboard.press('Enter');
+  await expect(editor).toContainText('画布基本操作指南');
+  await expect.poll(retainedStyle).toBe('保留');
+  await editor.pressSequentially(' 因该', { delay: 35 });
+  const correction = editor.locator('.text-assist-correction').filter({ hasText: '因该' });
+  await expect(correction).toBeVisible();
+  const correctionStart = await editor.evaluate((root) => root.textContent!.indexOf('因该'));
+  await selectEditorRange(editor, correctionStart, correctionStart + 2);
+  await page.getByLabel('字号', { exact: true }).selectOption('36');
+  await expect(correction).toHaveCSS('font-size', '36px');
+  await correction.click();
+  await page.getByRole('complementary', { name: '纠错建议' }).getByRole('button', { name: '应该', exact: true }).click();
+  await expect(editor).toContainText('应该');
+  await expect.poll(() => editor.locator('span').evaluateAll((spans) => spans
+    .filter((span) => getComputedStyle(span).fontSize === '36px').map((span) => span.textContent).join('')))
+    .toBe('应该');
+  await expect.poll(retainedStyle).toBe('保留');
+  const paint = await editor.evaluate((root) => {
+    const probe = Reflect.get(root, '__formatPaintProbe') as { frames: number; badFrames: string[]; stopped: boolean };
+    probe.stopped = true;
+    return probe;
+  });
+  expect(paint.frames).toBeGreaterThan(5);
+  expect(paint.badFrames).toEqual([]);
+  await expect(page.locator('.editor-error')).toHaveCount(0);
+});
+
+test('node and text box hover use the selection outline at full size and overview zoom', async ({ page }) => {
+  await openApplication(page);
+  const card = page.locator('.text-node-card').first();
+  await page.mouse.move(12, 12);
+  const outlineContent = () => card.evaluate((element) => getComputedStyle(element, '::after').content);
+  await expect.poll(outlineContent).toBe('none');
+  const before = await card.boundingBox();
+  await card.hover({ position: { x: 80, y: 90 } });
+  await expect(card).not.toHaveClass(/\bselected\b/u);
+  const hovered = await selectedNodeOverlayStyle(card);
+  expect(hovered).toMatchObject({ borderWidth: '4px', pointerEvents: 'none', inset: '-2px -2px -2px -2px' });
+  expect(await card.boundingBox()).toEqual(before);
+  await card.click({ position: { x: 80, y: 90 } });
+  await page.mouse.move(12, 12);
+  expect(await selectedNodeOverlayStyle(card)).toEqual(hovered);
+  await page.getByRole('button', { name: '文本框与文字节点相互转换', exact: true }).click();
+  await expect(card).toHaveClass(/\btext-box\b/u);
+  await page.keyboard.press('Escape');
+  await page.mouse.move(12, 12);
+  await expect.poll(outlineContent).toBe('none');
+  await card.hover();
+  const hoveredBox = await selectedNodeOverlayStyle(card);
+  expect(hoveredBox).toMatchObject({ borderWidth: '4px', inset: '-3px -3px -3px -3px', pointerEvents: 'none' });
+  await card.click();
+  await page.mouse.move(12, 12);
+  expect(await selectedNodeOverlayStyle(card)).toEqual(hoveredBox);
+  await page.keyboard.press('Escape');
+  const zoom = page.locator('.canvas-zoom-status input');
+  await zoom.fill('40');
+  await zoom.press('Enter');
+  await card.hover();
+  await expect(card).not.toHaveClass(/\bselected\b/u);
+  expect(await selectedNodeOverlayStyle(card)).toMatchObject({ borderWidth: '10px', pointerEvents: 'none' });
+  await page.mouse.move(12, 12);
+  await expect.poll(outlineContent).toBe('none');
 });
 
 test('completion follows a multiline caret and Escape dismisses only the active candidate list', async ({ page }) => {

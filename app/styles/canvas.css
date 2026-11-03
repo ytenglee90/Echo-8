@@ -283,8 +283,6 @@
   user-select: none;
 }
 
-.text-node-card:hover { border-color: var(--border-strong); }
-
 .text-node-card.text-box {
   --canvas-node-border-width: 2px;
   display: flex;
@@ -339,12 +337,12 @@
   outline: none;
 }
 
-.text-node-card.selected {
+.text-node-card:is(.selected, :hover) {
   z-index: 2;
   outline: none;
 }
 
-.text-node-card.selected::after {
+.text-node-card:is(.selected, :hover)::after {
   position: absolute;
   z-index: 1;
   inset: -2px;
@@ -355,13 +353,14 @@
   pointer-events: none;
 }
 
-.text-node-card.text-box.selected::after {
+.text-node-card.text-box:is(.selected, :hover)::after {
   inset: -3px;
   border-radius: calc(var(--canvas-node-radius) + 3px);
 }
 
 .text-node-card.overview-selected::after,
-.text-node-card.text-box.overview-selected::after {
+.text-node-card.text-box.overview-selected::after,
+.text-node-card.overview-detail:hover::after {
   inset: -5px;
   border-width: 10px;
   border-radius: calc(var(--canvas-node-radius) + 5px);
@@ -383,7 +382,7 @@
   overflow: hidden;
 }
 
-.text-node-card.compact.selected { overflow: visible; }
+.text-node-card.compact:is(.selected, :hover) { overflow: visible; }
 
 .text-node-card.compact .node-zoom-title {
   display: block;
@@ -606,22 +605,21 @@
 }
 
 .connection-hit-area:hover + .connection-path,
-.connection-hit-area:focus-visible + .connection-path {
-  fill: var(--canvas-selection, var(--selection));
-  stroke: var(--canvas-selection, var(--selection));
-}
-
+.connection-hit-area:focus-visible + .connection-path,
+.connection-path.hovered,
 .connection-path.selected {
   fill: var(--canvas-selection, var(--selection));
   stroke: var(--canvas-selection, var(--selection));
+  stroke-width: var(--connection-highlight-stroke-width, 3px);
 }
 
 .connection-hit-area:hover + .connection-path.custom-color,
 .connection-hit-area:focus-visible + .connection-path.custom-color,
+.connection-path.hovered.custom-color,
 .connection-path.selected.custom-color {
   fill: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
   stroke: var(--connection-line, var(--canvas-line, rgba(35, 35, 39, 0.62)));
-  stroke-width: calc(var(--connection-stroke-width, 1.5px) + 1.5px);
+  stroke-width: var(--connection-highlight-stroke-width, 3px);
 }
 
 .connection-path.draft {

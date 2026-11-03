@@ -152,6 +152,7 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       'content.migrateStorage',
       'content.setDocumentFormat',
       'content.setRangeFormat',
+      'content.resetFormat',
     ],
     dispatches: ['editor.open', 'connection.create'],
     queries: ['textNode.count'],
@@ -1218,7 +1219,7 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
           throw new Error(`节点“${node.title}”格式版本已变化，请重新同步后设置`);
         }
         const next: TextFormatRecord = {
-          nodeId: node.id,
+          ...current,
           revision: current.revision + 1,
           format: validateDocumentFormat({ ...current.format, ...payload.patch }),
         };
@@ -1243,6 +1244,43 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
                 payload: { nodeId: node.id, revision: next.revision },
               },
             ],
+          },
+        };
+      },
+    });
+
+    context.commands.register({
+      type: 'content.resetFormat',
+      validate: (payload): payload is import('../../protocols/formatting.ts').ResetTextFormatRequest =>
+        isRecord(payload) && typeof payload.nodeId === 'string' &&
+        Number.isInteger(payload.expectedRevision) && Number.isInteger(payload.expectedContentRevision),
+      handle: (payload) => {
+        const node = context.store.readValue<TextNodeRecord>(NODE_NAMESPACE, payload.nodeId);
+        if (!node) throw new Error(`Text node not found: ${payload.nodeId}`);
+        const content = context.store.readValue<TextContentRecord>(CONTENT_NAMESPACE, node.contentId);
+        if (!content) throw new Error(`Content not found: ${node.contentId}`);
+        const current = readFormatRecord(context, node.id);
+        if (payload.expectedRevision !== current.revision || payload.expectedContentRevision !== content.revision) {
+          throw new Error('正文或格式版本已变化，请重新同步后清除格式');
+        }
+        const next: TextFormatRecord = {
+          ...current,
+          storageVersion: 2,
+          markIds: [],
+          revision: current.revision + 1,
+          format: { ...DEFAULT_TEXT_DOCUMENT_FORMAT },
+        };
+        return {
+          result: toFormattingSnapshot(context, next, content, 0, content.length, []),
+          transaction: {
+            label: '清除全部正文格式',
+            patches: [
+              ...(current.markIds ?? []).map((id): PatchOperation => ({
+                op: 'delete', domain: 'document', namespace: FORMAT_MARK_NAMESPACE, key: id,
+              })),
+              { op: 'set' as const, domain: 'document' as const, namespace: FORMAT_NAMESPACE, key: node.id, value: next },
+            ],
+            events: [{ type: 'content.format.changed', payload: { nodeId: node.id, revision: next.revision } }],
           },
         };
       },

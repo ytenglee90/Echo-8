@@ -8,12 +8,14 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
+import { transformTextFormatMarks } from '../../services/text-format-anchors.ts';
 import { isAbortError } from '../../services/abort.ts';
 import { countNonWhitespaceGraphemes, countWritingUnits } from '../../services/text-metrics.ts';
 import {
@@ -48,7 +50,7 @@ import {
   selectionScreenAnchor,
   textOffsetFromClientPoint,
 } from './dom-text-selection.ts';
-import { editorDocumentTextColor, writeFormattedText } from './formatted-text-dom.ts';
+import { editorDocumentTextColor, textProjectionKey, writeFormattedText } from './formatted-text-dom.ts';
 import {
   collectAnnotationClipboardItems,
   decodeAnnotationClipboard,
@@ -100,9 +102,9 @@ export function PlainTextWritingArea({
   marks: TextFormatMark[];
   windowStart: number;
   label: string;
-  onPreview: (previous: string, next: string, delta?: TextDelta) => void;
+  onPreview: (previous: string, next: string, delta?: TextDelta, marks?: TextFormatMark[]) => void;
   onEdit: (edit: BodyEdit) => Promise<void>;
-  onSelection: (selection: Omit<SelectionPreview, 'id'>) => void;
+  onSelection: (selection: Omit<SelectionPreview, 'id'>, completed?: boolean) => void;
   onWindowBoundary?: (direction: 'previous' | 'next') => boolean;
   revealRequest?: EditorRevealRequest;
   textAssist: TextAssistRuntime;
@@ -111,6 +113,7 @@ export function PlainTextWritingArea({
   const rootRef = useRef<HTMLDivElement>(null);
   const onSelectionRef = useRef(onSelection);
   const localText = useRef(body);
+  const localMarks = useRef(marks);
   const composing = useRef(false);
   const compositionBase = useRef(body);
   const inputType = useRef('insertText');
@@ -165,16 +168,18 @@ export function PlainTextWritingArea({
       textAssist.settings.completionEnabled,
       textAssist.settings.correctionEnabled,
     ]);
-  const decorationKey = visibleDecorations
-    .map((decoration) => `${decoration.id}:${decoration.start}:${decoration.end}`)
-    .join('|') ?? '';
-  const durableFormattingKey = JSON.stringify([format, marks]);
-  const formattingKey = `${durableFormattingKey}|${decorationKey}`;
+  const durableFormattingKey = textProjectionKey(format, marks);
+  const formattingKey = textProjectionKey(format, marks, visibleDecorations);
   const lastFormattingKey = useRef(formattingKey);
   const lastWindowStart = useRef(windowStart);
   const boundaryRequest = useRef<'previous' | 'next' | undefined>(undefined);
   const lastNativeInputAt = useRef(0);
   const projectionTimer = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined);
+
+  const writeProjection: typeof writeFormattedText = (root, text, defaultFormat, rangeMarks, start, decorations = []) => {
+    writeFormattedText(root, text, defaultFormat, rangeMarks, start, decorations);
+    lastFormattingKey.current = textProjectionKey(defaultFormat, rangeMarks, decorations);
+  };
 
   useEffect(() => {
     onSelectionRef.current = onSelection;
@@ -251,7 +256,7 @@ export function PlainTextWritingArea({
     windowStart,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = rootRef.current;
     if (composing.current) return;
     if (!root || (localText.current === body && lastFormattingKey.current === formattingKey &&
@@ -279,7 +284,8 @@ export function PlainTextWritingArea({
       : { start: requestedCaret, end: requestedCaret, text: '' };
     const textChanged = localText.current !== body || lastWindowStart.current !== windowStart;
     const scroll = pendingScrollRestore.current ?? captureEditorScroll(root);
-    writeFormattedText(root, body, format, marks, windowStart, visibleDecorations);
+    localMarks.current = marks;
+    writeProjection(root, body, format, marks, windowStart, visibleDecorations);
     setAnnotationLayoutRevision((value) => value + 1);
     localText.current = body;
     lastFormattingKey.current = formattingKey;
@@ -331,13 +337,14 @@ export function PlainTextWritingArea({
   useEffect(() => {
     const root = rootRef.current;
     if (!root || root.childNodes.length > 0) return;
-    writeFormattedText(root, body, format, marks, windowStart, visibleDecorations);
+    localMarks.current = marks;
+    writeProjection(root, body, format, marks, windowStart, visibleDecorations);
     localText.current = body;
     lastFormattingKey.current = formattingKey;
     lastWindowStart.current = windowStart;
   }, [body, durableFormattingKey, format, formattingKey, marks, visibleDecorations, windowStart]);
 
-  const publishCurrentSelection = (focusOverride = focusedRef.current) => {
+  const publishCurrentSelection = (focusOverride = focusedRef.current, completed = false) => {
     const selection = readSelectionRange(rootRef.current);
     if (!selection) return;
     stableSelection.current = selection;
@@ -348,7 +355,7 @@ export function PlainTextWritingArea({
       writingUnits: countWritingUnits(selection.text),
       focused: focusOverride,
       screenAnchor: selectionScreenAnchor(rootRef.current),
-    });
+    }, completed);
     setAssistInput((current) => {
       const cursor = windowStart + selection.end;
       return current.cursor === cursor ? current : { text: current.text, cursor };
@@ -423,6 +430,22 @@ export function PlainTextWritingArea({
     }
   };
 
+  const advanceLocalFormatting = (delta: TextDelta, inheritFormat?: TextDocumentFormat) => {
+    localMarks.current = transformTextFormatMarks(localMarks.current, {
+      start: windowStart + delta.start,
+      deleteCount: delta.deleteCount,
+      insertLength: delta.insert.length,
+    });
+    if (inheritFormat && delta.insert.length > 0) {
+      localMarks.current = [...localMarks.current, {
+        id: 'editor-inherited-preview', nodeId, scope: 'selection',
+        start: { offset: windowStart + delta.start, bias: 'after' },
+        end: { offset: windowStart + delta.start + delta.insert.length, bias: 'before' },
+        format: inheritFormat, revision: 0,
+      }];
+    }
+  };
+
   const handleInput = () => {
     const root = rootRef.current;
     if (!root) return;
@@ -437,11 +460,11 @@ export function PlainTextWritingArea({
       // internal drops remain one undoable transaction and external drops are
       // copies from this editor.
       const selection = stableSelection.current;
-      writeFormattedText(
+      writeProjection(
         root,
         localText.current,
         format,
-        marks,
+        localMarks.current,
         windowStart,
         visibleDecorations,
       );
@@ -468,6 +491,7 @@ export function PlainTextWritingArea({
     }
     const previous = localText.current;
     const delta = calculateTextDelta(previous, next);
+    advanceLocalFormatting(delta);
     const selection = readSelectionRange(root) ?? stableSelection.current;
     const rebasedAssistance = rebaseTextAssistAnalysis(
       assistance,
@@ -481,11 +505,11 @@ export function PlainTextWritingArea({
     // span, that edit can be inserted inside the span and inherit its node-link
     // underline/click target. Rebuild the derived projection immediately from
     // half-open text ranges, then put the caret after the decoration boundary.
-    writeFormattedText(
+    writeProjection(
       root,
       next,
       format,
-      marks,
+      localMarks.current,
       windowStart,
       visibleTextAssistDecorations(rebasedAssistance, textAssist),
     );
@@ -500,7 +524,7 @@ export function PlainTextWritingArea({
     localText.current = next;
     setAssistInput({ text: next, cursor: windowStart + (selection?.end ?? next.length) });
     setCompletionAllowed(/^insert(?:Text|ReplacementText)$/u.test(inputType.current));
-    onPreview(previous, next, delta);
+    onPreview(previous, next, delta, localMarks.current);
     commitEdit({
       previous,
       next,
@@ -539,6 +563,10 @@ export function PlainTextWritingArea({
       deletedText: previous.slice(start, end),
       insert,
     };
+    const inheritFormat = end > start || nextInputType === 'insertFromPaste'
+      ? resolveFormatAtOffset(format, localMarks.current, windowStart + start)
+      : undefined;
+    advanceLocalFormatting(delta, inheritFormat);
     const rebasedAssistance = rebaseTextAssistAnalysis(
       assistance,
       { start, deleteCount: end - start, insert },
@@ -548,11 +576,11 @@ export function PlainTextWritingArea({
     setAssistance(rebasedAssistance);
     setMenu(undefined);
     setCompletionAllowed(/^insert(?:Text|ReplacementText)$/u.test(nextInputType));
-    writeFormattedText(
+    writeProjection(
       root,
       next,
       format,
-      marks,
+      localMarks.current,
       windowStart,
       visibleTextAssistDecorations(rebasedAssistance, textAssist),
     );
@@ -564,7 +592,7 @@ export function PlainTextWritingArea({
     localText.current = next;
     setAssistInput({ text: next, cursor: windowStart + cursor });
     inputType.current = nextInputType;
-    onPreview(previous, next, delta);
+    onPreview(previous, next, delta, localMarks.current);
     commitEdit({
       previous,
       next,
@@ -572,9 +600,7 @@ export function PlainTextWritingArea({
       kind: classifyWritingInput(nextInputType, delta),
       typingSessionId: typingSessionRef.current,
       annotationCopies,
-      ...(end > start || nextInputType === 'insertFromPaste'
-        ? { inheritFormat: resolveFormatAtOffset(format, marks, windowStart + start) }
-        : {}),
+      inheritFormat,
     });
     publishCurrentSelection();
   };
@@ -613,11 +639,11 @@ export function PlainTextWritingArea({
       setAssistance(rebasedAssistance);
       setMenu(undefined);
       setCompletionAllowed(false);
-      writeFormattedText(
+      writeProjection(
         root,
         internalMove.next,
         format,
-        marks,
+        localMarks.current,
         windowStart,
         visibleTextAssistDecorations(rebasedAssistance, textAssist),
       );
@@ -648,7 +674,8 @@ export function PlainTextWritingArea({
       dropped,
     );
     const delta: TextDelta = { start: offset, deleteCount: 0, deletedText: '', insert: dropped };
-    const inheritFormat = resolveFormatAtOffset(format, marks, windowStart + offset);
+    const inheritFormat = resolveFormatAtOffset(format, localMarks.current, windowStart + offset);
+    advanceLocalFormatting(delta, inheritFormat);
     const rebasedAssistance = rebaseTextAssistAnalysis(
       assistance,
       { start: offset, deleteCount: 0, insert: dropped },
@@ -657,11 +684,11 @@ export function PlainTextWritingArea({
     setAssistance(rebasedAssistance);
     setMenu(undefined);
     setCompletionAllowed(false);
-    writeFormattedText(
+    writeProjection(
       root,
       next,
       format,
-      marks,
+      localMarks.current,
       windowStart,
       visibleTextAssistDecorations(rebasedAssistance, textAssist),
     );
@@ -677,7 +704,7 @@ export function PlainTextWritingArea({
     localText.current = next;
     setAssistInput({ text: next, cursor: windowStart + offset + dropped.length });
     inputType.current = 'insertFromDrop';
-    onPreview(previous, next, delta);
+    onPreview(previous, next, delta, localMarks.current);
     commitEdit({
       previous,
       next,
@@ -760,7 +787,8 @@ export function PlainTextWritingArea({
       insert: replacement,
     };
     const cursor = localStart + replacement.length;
-    const inheritFormat = resolveFormatAtOffset(format, marks, start);
+    const inheritFormat = resolveFormatAtOffset(format, localMarks.current, start);
+    advanceLocalFormatting(delta, inheritFormat);
     const rebasedAssistance = rebaseTextAssistAnalysis(
       assistance,
       { start: localStart, deleteCount: localEnd - localStart, insert: replacement },
@@ -769,11 +797,11 @@ export function PlainTextWritingArea({
     setAssistance(rebasedAssistance);
     setMenu(undefined);
     setCompletionAllowed(false);
-    writeFormattedText(
+    writeProjection(
       root,
       next,
       format,
-      marks,
+      localMarks.current,
       windowStart,
       visibleTextAssistDecorations(rebasedAssistance, textAssist),
     );
@@ -788,7 +816,7 @@ export function PlainTextWritingArea({
     restoreEditorScroll(root, scroll);
     localText.current = next;
     setAssistInput({ text: next, cursor: windowStart + cursor });
-    onPreview(previous, next, delta);
+    onPreview(previous, next, delta, localMarks.current);
     commitEdit({
       previous,
       next,
@@ -813,6 +841,8 @@ export function PlainTextWritingArea({
   };
 
   const handleAssistPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // A pointer gesture owns its anchor instead of the selection saved on blur.
+    focusRestore.current = undefined;
     const target = event.target instanceof Element
       ? event.target.closest<HTMLElement>('[data-text-assist-id]')
       : undefined;
@@ -982,6 +1012,7 @@ export function PlainTextWritingArea({
           const previous = compositionBase.current;
           const selection = readSelectionRange(root) ?? stableSelection.current;
           const delta = calculateTextDelta(previous, next);
+          advanceLocalFormatting(delta);
           const rebasedAssistance = rebaseTextAssistAnalysis(
             assistance,
             delta,
@@ -990,11 +1021,11 @@ export function PlainTextWritingArea({
           composing.current = false;
           setAssistance(rebasedAssistance);
           setMenu(undefined);
-          writeFormattedText(
+          writeProjection(
             root,
             next,
             format,
-            marks,
+            localMarks.current,
             windowStart,
             visibleTextAssistDecorations(rebasedAssistance, textAssist),
           );
@@ -1009,7 +1040,7 @@ export function PlainTextWritingArea({
           localText.current = next;
           setAssistInput({ text: next, cursor: windowStart + (selection?.end ?? next.length) });
           setCompletionAllowed(true);
-          onPreview(previous, next, delta);
+          onPreview(previous, next, delta, localMarks.current);
           commitEdit({ previous, next, delta, kind: 'composition', typingSessionId: typingSessionRef.current });
         }}
         onFocus={() => {
@@ -1046,10 +1077,10 @@ export function PlainTextWritingArea({
           setCompletionAllowed(false);
         }}
         onSelect={() => publishCurrentSelection()}
-        onKeyUp={() => publishCurrentSelection()}
+        onKeyUp={() => publishCurrentSelection(focusedRef.current, true)}
         onPointerUp={() => {
           setCompletionAllowed(false);
-          publishCurrentSelection();
+          publishCurrentSelection(focusedRef.current, true);
         }}
         onDragStart={(event) => {
           const selection = readSelectionRange(rootRef.current) ?? stableSelection.current;
