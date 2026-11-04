@@ -24,7 +24,7 @@ async function openFixture(page: Page, existing = false, titleRoute = false, lab
     { id: 'text-node', version: '0.1.0', dataVersion: 2, namespaces: ['textNode', 'textContent', 'textContentChunk'], available: true },
     { id: 'connections', version: '0.1.0', dataVersion: 8, namespaces: ['connections', 'connectionJunction'], available: true },
   ] });
-  await page.keyboard.press('Control+k');
+  await page.getByRole('button', { name: '命令面板', exact: true }).click();
   const palette = page.getByRole('dialog', { name: '命令面板' });
   await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开书籍');
   await palette.getByRole('option', { name: /^打开书籍/u }).click();
@@ -39,6 +39,32 @@ async function coordinates(page: Page, id: string) { return (await path(page, id
 async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
   await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 10 }); await page.mouse.up();
 }
+
+test('Ctrl double click opens a text-box side editor while ordinary double click retains inline editing', async ({ page }) => {
+  await openFixture(page);
+  const box = page.locator('.text-node-card.text-box').filter({ has: page.locator('strong[title="演示b"]') });
+  await box.locator('.text-box-title').dblclick({ modifiers: ['Control'] });
+  await expect(page.locator('.editor-writing-area')).toHaveCount(1);
+  await expect(page.locator('.editor-writing-area')).toHaveText('正文b');
+  await expect(box.locator('.text-box-title-input')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await box.locator('.text-box-title').dblclick();
+  await expect(page.getByRole('textbox', { name: '编辑演示b的文本框文字', exact: true })).toBeVisible();
+});
+
+for (const boxes of [false, true]) test(`the same ${boxes ? 'box' : 'card'} pair accepts solid and dashed lines without replacing either`, async ({ page }) => {
+  await openFixture(page);
+  const from = page.getByRole('button', { name: boxes ? '从演示b右侧连接' : '从演示a右侧连接', exact: true });
+  const target = page.locator('.text-node-card').filter({ has: page.locator(`strong[title="${boxes ? '演示d' : '演示c'}"]`) });
+  for (const title of [false, true]) {
+    const start = await from.boundingBox(), end = await target.boundingBox();
+    await drag(page, { x: start!.x + start!.width / 2, y: start!.y + start!.height * .75 },
+      { x: end!.x + 8, y: end!.y + (title ? boxes ? end!.height * .2 : 21 : end!.height * .75) });
+  }
+  await expect(page.locator('.connection-hit-area')).toHaveCount(3);
+  await expect(page.locator('.connection-path:not(.draft).title-connection')).toHaveCount(1);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+});
 
 test('drag previews switch immediately between solid body targets and dashed title targets', async ({ page }) => {
   await openFixture(page);
@@ -114,7 +140,7 @@ for (const titleRoute of [false, true]) test(`${titleRoute ? 'dashed' : 'solid'}
   await page.screenshot({ path: test.info().outputPath('horizontal-junction-branches.png') });
 });
 
-for (const upper of [true, false]) test(`junction-to-text-box uses target ${upper ? 'upper' : 'lower'} region and rejects the opposite component style`, async ({ page }) => {
+for (const upper of [true, false]) test(`junction-to-text-box inherits ${upper ? 'dashed' : 'solid'} style across target regions and arrow reconnection`, async ({ page }) => {
   await openFixture(page, false, upper);
   const marker = page.locator('.connection-junction'); await marker.focus();
   const plus = await marker.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
@@ -123,7 +149,7 @@ for (const upper of [true, false]) test(`junction-to-text-box uses target ${uppe
   const draft = page.locator('.connection-path.draft');
   for (const fraction of [.25, .75, upper ? .25 : .75]) {
     await page.mouse.move(target!.x + target!.width, target!.y + target!.height * fraction, { steps: 8 });
-    if (fraction < .5) await expect(draft).toHaveClass(/title-connection/u); else await expect(draft).not.toHaveClass(/title-connection/u);
+    if (upper) await expect(draft).toHaveClass(/title-connection/u); else await expect(draft).not.toHaveClass(/title-connection/u);
   }
   await page.mouse.up(); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
   const edge = page.locator('.connection-hit-area:not([data-connection-id="incoming"])');
@@ -132,7 +158,7 @@ for (const upper of [true, false]) test(`junction-to-text-box uses target ${uppe
   const arrow = await page.locator(`[data-arrow-for="${id}"]`).boundingBox();
   await page.mouse.move(arrow!.x + arrow!.width / 3, arrow!.y + arrow!.height / 2); await page.mouse.down();
   await page.mouse.move(target!.x, target!.y + target!.height * (upper ? .75 : .25), { steps: 8 }); await page.mouse.up();
-  await expect(page.getByText('虚线与实线不能共用同一个中转点，请分别添加中转点', { exact: true })).toBeVisible();
+  await expect(page.getByText('虚线与实线不能共用同一个中转点，请分别添加中转点', { exact: true })).toHaveCount(0);
   await expect(page.locator('.connection-layer')).not.toHaveAttribute('data-reconnecting-id');
   const line = edge.locator('..').locator('.connection-path');
   if (upper) await expect(line).toHaveClass(/title-connection/u); else await expect(line).not.toHaveClass(/title-connection/u);
@@ -251,6 +277,7 @@ test('vertically stacked text-box title links use the same side in preview, afte
     const title = await box.locator('.text-box-title').boundingBox();
     await drag(page, { x: title!.x + 30, y: title!.y + 10 }, { x: title!.x + 30 + dx, y: title!.y + 10 + dy });
   }
+  await expect.poll(async () => { const a = await source.evaluate(e => new DOMMatrix(getComputedStyle(e).transform).m41); const b = await target.evaluate(e => new DOMMatrix(getComputedStyle(e).transform).m41); return a - b; }).toBe(0);
   const sourceX = await source.evaluate(e => new DOMMatrix(getComputedStyle(e).transform).m41);
   const targetX = await target.evaluate(e => new DOMMatrix(getComputedStyle(e).transform).m41);
   expect(sourceX).toBe(targetX);
@@ -274,11 +301,11 @@ test('vertically stacked text-box title links use the same side in preview, afte
   await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 280, targetX + 280]);
   const title = await source.locator('.text-box-title').boundingBox();
   await drag(page, { x: title!.x + 30, y: title!.y + 10 }, { x: title!.x + 430, y: title!.y + 10 });
-  await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 400, targetX]);
+  await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 680, targetX + 280]);
   await page.keyboard.press('Control+z');
   await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 280, targetX + 280]);
-  const boxTitle = await source.locator('.text-box-title').boundingBox();
-  await page.mouse.click(boxTitle!.x + 30, boxTitle!.y + 10);
+  await source.click({ position: { x: 80, y: 80 } });
+  await expect(source).toHaveAttribute('aria-label', /^已选中，/u);
   await page.getByRole('button', { name: '文本框与文字节点相互转换', exact: true }).click();
   await expect(source).not.toHaveClass(/text-box/u);
   await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 280, targetX + 280]);

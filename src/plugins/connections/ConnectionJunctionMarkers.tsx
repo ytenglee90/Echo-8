@@ -20,7 +20,18 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
   const drag = useJunctionDrag(client, camera, allJunctions, selected);
   const connect = useJunctionConnect(client, camera, nodes);
   const scale = canvasDetailWorldScale(camera.zoom);
-  return <g className="connection-junction-layer">
+  return <g className="connection-junction-layer" tabIndex={-1}
+    onKeyDown={event => {
+      if (event.key === 'Escape') { connect.cancel(); drag.cancel(); event.preventDefault(); event.stopPropagation(); return; }
+      const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+      const id = allJunctions.find(point => selected.has(point.id))?.id;
+      if (!direction || !id) return;
+      event.preventDefault(); event.stopPropagation();
+      const step = event.shiftKey ? 10 : 1;
+      void client.dispatch('connection.nudgeJunction', { id, dx: direction[0] * step, dy: direction[1] * step });
+    }}
+    onPointerMove={drag.move} onPointerUp={event => drag.finish(event)}
+    onPointerCancel={event => drag.finish(event, true)} onLostPointerCapture={event => drag.finish(event, true)}>
     {junctions.map((point, index) => <g
       key={point.id}
       className={`connection-junction ${selected.has(point.id) ? 'selected' : ''} ${targetId === point.id ? 'connection-target' : ''}`}
@@ -31,10 +42,6 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
       aria-label={`连接中转点 ${index + 1}`}
       aria-pressed={selected.has(point.id)}
       onPointerDown={(event) => drag.begin(event, point)}
-      onPointerMove={drag.move}
-      onPointerUp={(event) => drag.finish(event)}
-      onPointerCancel={(event) => drag.finish(event, true)}
-      onLostPointerCapture={(event) => drag.finish(event, true)}
       onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: point.id })}
       onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: point.id, clear: true })}
       onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); }}

@@ -34,7 +34,6 @@ import {
   type ConnectionNodeGeometry,
 } from '../../protocols/connections.ts';
 import { connectionGraphPoints, connectionStrokeForEndpoints, junctionRenderPoint } from './routing.ts';
-import { junctionFollowPositions } from './junction-follow.ts';
 import type { GroupMembershipPreview } from '../../protocols/groups.ts';
 import { ConnectionJunctionMarkers } from './ConnectionJunctionMarkers.tsx';
 import { junctionGeometry, logicalConnectionPaths } from './junctions.ts';
@@ -272,11 +271,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     { ...node, ...(duplicateOriginIds.has(id) ? {} : previews[id]), ...sizePreviews[id] } ])),
   [duplicateOriginIds, nodeById, previews, sizePreviews]);
   const liveTargets = useConnectionTargets(client, previewNodes, membershipPreview && !('clear' in membershipPreview) && membershipPreview.active ? membershipPreview : undefined);
-  const previewBaseMap = useMemo(() => new Map<string, ConnectionNodeGeometry>([...previewNodes, ...liveTargets.map(target => [target.id, target] as const)]), [previewNodes, liveTargets]);
-  const liveJunctions = useMemo(() => {
-    const follows = new Map(junctionFollowPositions(connections, junctions, stableNodeMap, previewBaseMap).map(point => [point.id, point]));
-    return junctions.map(point => ({ ...point, ...follows.get(point.id), ...junctionPreview[point.id] }));
-  }, [connections, junctions, stableNodeMap, previewBaseMap, junctionPreview]);
+  const liveJunctions = useMemo(() => junctions.map(point => ({ ...point, ...junctionPreview[point.id] })), [junctions, junctionPreview]);
   const nodeMap = useMemo(() => new Map<string, ConnectionNodeGeometry>([...previewNodes, ...liveTargets.map(target => [target.id, target] as const),
     ...liveJunctions.map((point): [string, ConnectionNodeGeometry] => [point.id, { ...junctionGeometry(point), kind: 'junction' }])]),
   [liveJunctions, liveTargets, previewNodes]);
@@ -412,15 +407,16 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const draftFromNode = draft.from ? nodeMap.get(draft.from.nodeId) : undefined;
   const draftToNode = draft.to ? nodeMap.get(draft.to.nodeId) : draft.pointer ? { id: '', ...draft.pointer, width: 0, height: 0 } : undefined;
   const draftTitleOrigin = draft.titleStartSide && draftFromNode && draftToNode
-    ? { side: draft.titleStartSide, sourceIsLeft: draftFromNode.x + draftFromNode.width / 2 <= draftToNode.x + draftToNode.width / 2 } : draft.titleOrigin;
+    ? { side: draft.titleStartSide, sourceIsLeft: draftFromNode.x + draftFromNode.width / 2 <= draftToNode.x + draftToNode.width / 2,
+      sourceCenterX: draftFromNode.x + draftFromNode.width / 2, targetCenterX: draftToNode.x + draftToNode.width / 2 } : draft.titleOrigin;
   const draftSides = draft.from && draftFromNode && draftToNode ? connectionHorizontalSides({ from: draft.from,
     to: draft.to ?? { nodeId: '', side: 'left' }, titleRoute: draft.titleRoute, titleOrigin: draftTitleOrigin }, draftFromNode, draftToNode) : undefined;
   const draftStart = draft.from ? endpointPoint(draft.from, nodeMap, draftSides?.from.side) : undefined;
   const draftEnd = draft.to ? endpointPoint(draft.to, nodeMap, draftSides?.to.side) : draft.pointer;
   const draftGeometry = draft.from && draftStart && draftEnd ? connectionStrokeForEndpoints(
     { from: draft.from, to: draft.to ?? { nodeId: '', side: 'left' }, titleRoute: draft.titleRoute },
-    { from: draft.from.kind === 'junction' ? junctionRenderPoint(draftStart, 'source') : draftStart,
-      to: draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target') : draftEnd }, camera.zoom,
+    { from: draft.from.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd) : draftStart,
+      to: draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart) : draftEnd }, camera.zoom,
   ) : undefined;
   const renderableConnections = drawable;
   const committedGeometry = useMemo<DrawableConnection[]>(() => renderableConnections.flatMap((connection) => {
@@ -438,8 +434,8 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const reconnectGeometry = useMemo<DrawableConnection | undefined>(() => {
     const connection = draft.reconnectId ? connectionLookup.byId.get(draft.reconnectId) : undefined;
     if (!connection || !draftStart || !draftEnd || !draftGeometry) return undefined;
-    const from = draft.from?.kind === 'junction' ? junctionRenderPoint(draftStart, 'source') : draftStart;
-    const to = draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target') : draftEnd;
+    const from = draft.from?.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd) : draftStart;
+    const to = draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart) : draftEnd;
     return { connection, from, to, midpoint: connectionCurveMidpoint(from, to), curvePath: connectionCurvePath(from, to), ...draftGeometry };
   }, [connectionLookup.byId, draft.reconnectId, draft.from?.kind, draft.to?.kind, draftStart, draftEnd, draftGeometry]);
   const drawableGeometry = useMemo(() => reconnectGeometry

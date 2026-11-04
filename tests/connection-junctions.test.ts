@@ -127,8 +127,8 @@ test('deleting one routed segment preserves its junction and every other branch'
 
 test('junction graphs survive clipboard remapping, file reload and plugin hot-stop history', async () => {
   const { kernel, graph, add, ids } = await setup();
-  await add();
-  await kernel.router.dispatch('selection.set', { ids }, source);
+  const point = await add();
+  await kernel.router.dispatch('selection.set', { ids: [...ids, point.id] }, source);
   await kernel.router.dispatch('clipboard.copy', undefined, source);
   await kernel.router.dispatch('clipboard.paste', undefined, source);
   const copied = await graph();
@@ -141,7 +141,7 @@ test('junction graphs survive clipboard remapping, file reload and plugin hot-st
     assert.ok((endpoint.kind === 'junction' ? pointIds : nodeIds).has(endpoint.nodeId));
   }
   const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, source);
-  assert.equal(project.plugins.find((item) => item.id === 'connections')?.dataVersion, 9);
+  assert.equal(project.plugins.find((item) => item.id === 'connections')?.dataVersion, 10);
   const reopened = new ApplicationKernel([textNodePlugin, createSelectionPlugin(), createConnectionsPlugin()]);
   await reopened.start();
   await reopened.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), source);
@@ -186,8 +186,10 @@ test('legacy logical endpoints remain compatible and existing link commands oper
   assert.equal((await graph()).connections.length, 3);
   await kernel.router.dispatch('selection.set', { ids: [ids[0], ids[2]] }, source);
   const beforeConversion = await graph();
-  await assert.rejects(kernel.router.dispatch('connection.toggleTitleSelected', undefined, source), /虚线与实线不能共用/u);
-  assert.deepEqual(await graph(), beforeConversion);
+  await kernel.router.dispatch('connection.toggleTitleSelected', undefined, source);
+  assert.equal((await graph()).connections.length, beforeConversion.connections.length + 1);
+  assert.deepEqual((await graph()).junctions, beforeConversion.junctions);
+  await kernel.transactions.undo();
   await kernel.router.dispatch('connection.toggleSelected', undefined, source);
   assert.equal((await graph()).connections.length, 2);
   assert.ok((await graph()).connections.some((edge) => edge.label === '分支1'));

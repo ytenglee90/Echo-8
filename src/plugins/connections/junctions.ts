@@ -175,7 +175,7 @@ export function planConnectionGraphDeletion(
       for (const [index, trunk] of secondary.entries()) {
         const from = useOutgoing ? trunk.from : branch.from;
         const to = useOutgoing ? branch.to : trunk.to;
-        if (sameEndpoint(from, to) || next.some((record) => sameEndpoint(record.from, from) && sameEndpoint(record.to, to))) continue;
+        if (sameEndpoint(from, to) || next.some((record) => isTitleConnection(record) === isTitleConnection(branch) && sameEndpoint(record.from, from) && sameEndpoint(record.to, to))) continue;
         const labelSource = branch.label || !trunk.label ? branch : trunk;
         next.push({
           ...labelSource,
@@ -199,47 +199,10 @@ export function planConnectionGraphDeletion(
   return { patches, removedIds: [...removedIds, ...selectedPoints.map((point) => point.id)], changedIds: changed.map((record) => record.id) };
 }
 
-/** Include only junctions whose surviving copy links at least two selected ends. */
+/** Copy only explicitly selected vertices; content selection never expands into a routed network. */
 export function serializeConnectionGraph(
-  records: ConnectionRecord[],
-  junctions: ConnectionJunction[],
-  selected: ReadonlySet<string>,
+  records: ConnectionRecord[], junctions: ConnectionJunction[], selected: ReadonlySet<string>,
 ): { connections: ConnectionRecord[]; junctions: ConnectionJunction[] } {
-  const pointIds = new Set(junctions.map((point) => point.id));
-  const byEndpoint = new Map<string, ConnectionRecord[]>();
-  for (const record of records) for (const endpoint of [record.from, record.to]) {
-    const list = byEndpoint.get(endpoint.nodeId) ?? [];
-    list.push(record);
-    byEndpoint.set(endpoint.nodeId, list);
-  }
-  const included = new Set(selected);
-  const queue = [...selected];
-  for (let index = 0; index < queue.length; index += 1) {
-    for (const record of byEndpoint.get(queue[index]) ?? []) for (const endpoint of [record.from, record.to]) {
-      if (!pointIds.has(endpoint.nodeId) || included.has(endpoint.nodeId)) continue;
-      included.add(endpoint.nodeId);
-      queue.push(endpoint.nodeId);
-    }
-  }
-  let edges = records.filter((record) => included.has(record.from.nodeId) && included.has(record.to.nodeId));
-  const activeEdges = new Set(edges.map((edge) => edge.id));
-  const degree = new Map<string, number>();
-  for (const edge of edges) for (const endpoint of [edge.from, edge.to]) degree.set(endpoint.nodeId, (degree.get(endpoint.nodeId) ?? 0) + 1);
-  const leaves = junctions.filter((point) => included.has(point.id) && !selected.has(point.id) && (degree.get(point.id) ?? 0) < 2).map((point) => point.id);
-  for (let index = 0; index < leaves.length; index += 1) {
-    const id = leaves[index];
-    if (!included.delete(id)) continue;
-    for (const edge of byEndpoint.get(id) ?? []) {
-      if (!activeEdges.delete(edge.id)) continue;
-      for (const endpoint of [edge.from, edge.to]) {
-        const neighbor = endpoint.nodeId;
-        if (neighbor === id || !pointIds.has(neighbor) || selected.has(neighbor)) continue;
-        const remaining = (degree.get(neighbor) ?? 0) - 1;
-        degree.set(neighbor, remaining);
-        if (remaining < 2) leaves.push(neighbor);
-      }
-    }
-  }
-  edges = edges.filter((edge) => activeEdges.has(edge.id));
-  return { connections: edges, junctions: junctions.filter((point) => included.has(point.id)) };
+  return { connections: records.filter(edge => selected.has(edge.from.nodeId) && selected.has(edge.to.nodeId)),
+    junctions: junctions.filter(point => selected.has(point.id)) };
 }

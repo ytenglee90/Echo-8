@@ -44,13 +44,14 @@ test('creating and reconnecting mismatched branches fail atomically, while match
   assert.equal((await graph()).connections.length, original.connections.length + 1);
 });
 
-test('a complete single-route component can switch style but separate styled components cannot be joined', async () => {
+test('a new title route coexists with a solid routed component and differently styled components cannot be joined', async () => {
   const { kernel, ids, point, graph } = await setup();
   await kernel.router.dispatch('selection.set', { ids: ids.slice(0, 2) }, source);
   await kernel.router.dispatch('connection.toggleTitleSelected', undefined, source);
   const converted = await graph();
+  assert.equal(converted.connections.length, 3);
   assert.doesNotThrow(() => assertJunctionLineTypes(converted.connections));
-  const second = await kernel.router.dispatch<{ id: string }>('connection.create', { from: { nodeId: ids[2], side: 'right' }, to: { nodeId: ids[3], side: 'left' } }, source);
+  const second = await kernel.router.dispatch<{ id: string }>('connection.create', { from: { nodeId: ids[2], side: 'title' }, to: { nodeId: ids[3], side: 'title' } }, source);
   const other = await kernel.router.dispatch<{ id: string }>('connection.addJunction', { x: 1200, y: 200, connections: [{ id: second.id, revision: 1 }] }, source);
   const before = await graph();
   await assert.rejects(kernel.router.dispatch('connection.create', { from: { nodeId: other.id, kind: 'junction', side: 'right' }, to: { nodeId: point.id, kind: 'junction', side: 'left' } }, source), /虚线与实线不能共用/u);

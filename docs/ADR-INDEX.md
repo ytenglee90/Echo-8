@@ -107,7 +107,7 @@
 | [0095](ADR-0095-BATCH-GROUP-DROP.md) | Ctrl 拖拽批量加入和移出群组 | 有效；扩展原单节点成员操作 |
 | [0096](ADR-0096-MINIMAP-ENTITY-SHAPES.md) | 小地图群组轮廓与文本框边框横杆 | 有效；部分替代 0090 |
 | [0097](ADR-0097-CONNECTION-PRESENTATION-AND-TERMINAL-TANGENTS.md) | 形态转换的连接投影与水平箭头接入 | 有效；补充 0093，部分替代 0091 |
-| [0098](ADR-0098-JUNCTION-BATCH-MOVEMENT-AND-FOLLOW.md) | 中转点批量移动与相连对象平均位移跟随 | 有效；扩展 0089、0097 |
+| [0098](ADR-0098-JUNCTION-BATCH-MOVEMENT-AND-FOLLOW.md) | 中转点批量移动与相连对象平均位移跟随 | 批量移动有效；跟随由 0109 取代 |
 | [0099](ADR-0099-GROUP-CONNECTION-PREVIEW.md) | 群组透明端口与成员变更锚点预览 | 有效；补充 0091、0095、0097 |
 | [0100](ADR-0100-TITLE-SAME-SIDES-AND-MINIMAP-GROUP-FILLS.md) | 仅标题互连同侧端口与小地图群组底色 | 有效；部分替代 0093、0096 |
 | [0101](ADR-0101-CONNECTION-RECONNECT-AND-LABEL-INTERACTIONS.md) | 箭头重接、标签缩放会话与统一描边和实体已用色 | 有效；补充 0089、0091、0097、0099 |
@@ -117,4 +117,6 @@
 | [0105](ADR-0105-ADAPTIVE-JUNCTION-AND-TITLE-ORIGIN.md) | 中转点相向端口、标题起始侧与群组/点到文本框区域 | 有效；替代 0102 固定端口，扩展 0103 |
 | [0106](ADR-0106-SEMANTIC-TITLE-PAIR-SIDES.md) | 标题对齐区、中转点相向端口与正文输入箭头 | 有效；部分替代 0100、0102、0105 |
 | [0107](ADR-0107-GROUP-PORTS-AND-JUNCTION-DRAG-HANDOFF.md) | 群组固定屏幕命中区与中转点连续拖动交接 | 有效；补充 0087、0098、0099 |
+| [0108](ADR-0108-TITLE-ORIGIN-REFERENCE-AND-AUTO-SIDES.md) | 标题创建参照与对齐区外按当前左右自动选边 | 有效；修正 0105、0106 区外翻边 |
+| [0109](ADR-0109-FIXED-JUNCTIONS-AND-FLEXIBLE-ATTACHMENT.md) | 固定中转点、独立线型、内容复制边界与自适应接入 | 有效；取代 0098 跟随，补充 0104、0105、0107 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

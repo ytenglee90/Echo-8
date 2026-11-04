@@ -180,6 +180,7 @@ test('junction drag snaps to node references and its actions are configurable in
   await openGraph(page);
   await label(page, 'edge-a').click();
   await rightClickAt(page, 540, 520);
+  await expect(page.locator('.connection-junction')).toHaveAttribute('transform', 'translate(540 520)');
   const start = await pointOnScreen(page, 540, 520);
   const end = await pointOnScreen(page, 785, 465);
   await page.mouse.move(start.x, start.y);

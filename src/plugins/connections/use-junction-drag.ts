@@ -81,11 +81,14 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
     if (event.button !== 0 || session.current) return;
     event.preventDefault();
     event.stopPropagation();
-    event.currentTarget.focus({ preventScroll: true });
-    event.currentTarget.setPointerCapture(event.pointerId);
+    // Capture on the persistent layer: moving/culling/repainting a vertex must not cancel its gesture.
+    const capture = event.currentTarget.parentElement as unknown as SVGGElement;
+    capture.focus({ preventScroll: true });
+    capture.setPointerCapture(event.pointerId);
     const toggle = event.ctrlKey || event.metaKey;
     if (toggle && selected.has(point.id)) {
       void client.dispatch('selection.set', { items: [{ id: point.id, kind: 'connection-junction' }], mode: 'toggle' });
+      capture.releasePointerCapture(event.pointerId);
       return;
     }
     let current = junctions;
@@ -99,7 +102,7 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
       });
     const pendingAtBegin = new Set(origins.filter(item => optimistic.current.has(item.id)).map(item => item.id));
     const active: JunctionDrag = {
-      id: createId('junction-drag'), pointerId: event.pointerId, capture: event.currentTarget,
+      id: createId('junction-drag'), pointerId: event.pointerId, capture,
       startX: event.clientX, startY: event.clientY,
       origins, primaryId: point.id, collapseOnClick: !event.shiftKey && !toggle,
       latest: origins.map(({ id, x, y }) => ({ id, x, y })), moved: false, admitted: false,

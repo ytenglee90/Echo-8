@@ -48,6 +48,7 @@ export const canvasPlugin: PluginDefinition = {
       'selection.entities@1',
       'connections.available@1',
       'connections.targetAt@1',
+      'connections.graph@1',
       'connections.targets@1',
       'group.dropTarget@1',
       'layout.snap@1',

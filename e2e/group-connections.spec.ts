@@ -3,7 +3,7 @@ import { serializeProject } from '../src/plugins/import-export/codec.ts';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
 import type { ProjectSource } from '../src/protocols/files.ts';
 
-async function openGroups(page: Page, routedCopy = false) {
+async function openGroups(page: Page, routedCopy = false, routedTitle = false, soleGroup = false) {
   await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
   await page.goto('/'); await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, groups: {}, connections: {}, connectionJunction: {} };
@@ -18,16 +18,18 @@ async function openGroups(page: Page, routedCopy = false) {
   };
   if (routedCopy) {
     namespaces.connectionJunction.j = { id: 'j', x: 570, y: 230, revision: 1, branchSide: 'incoming' };
-    for (const id of ['a', 'b']) namespaces.connections[id] = { id, from: { nodeId: id, side: 'right' }, to: { nodeId: 'j', kind: 'junction', side: 'left' }, revision: 1, createdAt: 1 };
-    namespaces.connections.trunk = { id: 'trunk', from: { nodeId: 'j', kind: 'junction', side: 'right' }, to: { nodeId: 'c', side: 'left' }, revision: 1, createdAt: 1 };
+    for (const id of ['a', 'b']) namespaces.connections[id] = { id, from: { nodeId: id, side: routedTitle ? 'title' : 'right' }, to: { nodeId: 'j', kind: 'junction', side: 'left' }, revision: 1, createdAt: 1 };
+    namespaces.connections.trunk = { id: 'trunk', from: { nodeId: 'j', kind: 'junction', side: 'right' }, to: { nodeId: 'c', side: routedTitle ? 'title' : 'left' }, revision: 1, createdAt: 1 };
     namespaces.connections.internal = { id: 'internal', from: { nodeId: 'a', side: 'right' }, to: { nodeId: 'b', side: 'left' }, revision: 1, createdAt: 1 };
   }
+  if (soleGroup) namespaces.connections = { sole: { id: 'sole', from: { nodeId: 'j', kind: 'junction', side: 'right' },
+    to: { nodeId: 'g2', kind: 'group', side: 'left' }, titleRoute: true, revision: 1, createdAt: 1 } };
   const blob = await serializeProject({ document: { revision: 1, namespaces }, plugins: [
     { id: 'text-node', version: '0.1.0', dataVersion: 2, namespaces: ['textNode', 'textContent', 'textContentChunk'], available: true },
     { id: 'groups', version: '0.1.0', dataVersion: 2, namespaces: ['groups'], available: true },
     { id: 'connections', version: '0.1.0', dataVersion: 8, namespaces: ['connections', 'connectionJunction'], available: true },
   ] });
-  await page.keyboard.press('Control+k');
+  await page.getByRole('button', { name: '命令面板', exact: true }).click();
   const palette = page.getByRole('dialog', { name: '命令面板' });
   await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开书籍');
   await palette.getByRole('option', { name: /^打开书籍/u }).click();
@@ -49,6 +51,74 @@ async function port(page: Page, id: string, side: 'left' | 'right') {
   const box = await group.locator(`.group-connection-port.${side}`).boundingBox();
   return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
 }
+
+test('reconnecting the only dashed group edge keeps its junction line type and updates in place', async ({ page }) => {
+  await openGroups(page, true, true, true);
+  const edge = page.locator('.connection-hit-area[data-connection-id="sole"]');
+  const initial = await edge.getAttribute('d');
+  const arrow = await page.locator('[data-arrow-for="sole"]').boundingBox();
+  const target = await port(page, 'g1', 'right');
+  await page.mouse.move(arrow!.x + arrow!.width / 2, arrow!.y + arrow!.height / 2); await page.mouse.down();
+  await page.mouse.move(target.x, target.y, { steps: 10 });
+  await expect(page.locator('.connection-layer')).toHaveAttribute('data-reconnecting-id', 'sole');
+  await expect(edge).not.toHaveAttribute('d', initial!);
+  await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
+  await page.mouse.up();
+  await expect(page.locator('.connection-layer')).not.toHaveAttribute('data-reconnecting-id');
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
+  await page.keyboard.press('Control+z'); await expect(edge).toHaveAttribute('d', initial!);
+});
+
+for (const title of [false, true]) for (const kind of ['group', 'box']) test(`${kind} drags adopt the junction ${title ? 'dashed' : 'solid'} style during preview and commit in both directions`, async ({ page }) => {
+  await openGroups(page, true, title);
+  const marker = page.locator('.connection-junction');
+  for (const reversed of [false, true]) {
+    const point = await marker.locator('.connection-junction-dot').boundingBox();
+    const pointPosition = { x: point!.x + point!.width / 2, y: point!.y + point!.height / 2 };
+    let from, to;
+    if (!reversed) {
+      if (kind === 'group') from = await port(page, 'g1', 'right');
+      else {
+        const boxPort = await page.getByRole('button', { name: '从群组测试f右侧连接', exact: true }).boundingBox();
+        from = { x: boxPort!.x + boxPort!.width / 2, y: boxPort!.y + boxPort!.height / 2 };
+      }
+      to = pointPosition;
+    } else {
+      await page.mouse.move(pointPosition.x, pointPosition.y);
+      const plus = await marker.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
+      from = { x: plus!.x + plus!.width / 2, y: plus!.y + plus!.height / 2 };
+      if (kind === 'group') to = await port(page, 'g1', 'right');
+      else {
+        const box = await page.locator('.text-node-card.text-box').boundingBox();
+        to = { x: box!.x + box!.width - 4, y: box!.y + box!.height * (title ? .75 : .2) };
+      }
+    }
+    await page.mouse.move(from.x, from.y); await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 10 });
+    const draft = page.locator('.connection-path.draft');
+    if (title) await expect(draft).toHaveClass(/title-connection/u);
+    else await expect(draft).not.toHaveClass(/title-connection/u);
+    if (kind === 'group' && !reversed) {
+      const control = page.locator('.group-frame[data-group-id="g1"] .group-connection-port.right');
+      await expect(control).toHaveCSS('outline-style', 'none'); await expect(control).toHaveCSS('box-shadow', 'none');
+    }
+    await page.mouse.up(); await expect(page.locator('.connection-hit-area')).toHaveCount(5);
+    await expect(page.locator('.connection-path:not(.draft).title-connection')).toHaveCount(title ? 4 : 0);
+    await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(4);
+  }
+});
+
+test('dragging a routed group leaves its point fixed during preview, commit and undo', async ({ page }) => {
+  await openGroups(page, true);
+  const marker = page.locator('.connection-junction'), initial = await marker.getAttribute('transform');
+  const group = page.locator('.group-frame[data-group-id="g1"]'), box = await group.boundingBox();
+  await page.mouse.move(box!.x + 12, box!.y + 16); await page.mouse.down();
+  await page.mouse.move(box!.x + 112, box!.y + 116, { steps: 8 });
+  await expect(marker).toHaveAttribute('transform', initial!);
+  await page.mouse.up(); await expect(marker).toHaveAttribute('transform', initial!);
+  await page.keyboard.press('Control+z'); await expect(marker).toHaveAttribute('transform', initial!);
+});
 
 test('invisible group ports retain dragging and connect to the upper-left title port inside another group', async ({ page }) => {
   await openGroups(page);
@@ -171,7 +241,7 @@ test('Ctrl dragging selected nodes and text boxes adds or removes the whole batc
   await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
 });
 
-for (const side of ['左', '右']) test(`title ${side} port stays chosen through preview and commit, then flips on node order reversal and undo`, async ({ page }) => {
+for (const side of ['左', '右']) test(`title ${side} port stays chosen through preview and commit, then selects the current side beyond the alignment band and undo`, async ({ page }) => {
   await openGroups(page);
   const source = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试a"]') });
   const target = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试c"]') });
@@ -190,10 +260,10 @@ for (const side of ['左', '右']) test(`title ${side} port stays chosen through
   expect((await read()).slice(-2)).toEqual([side === '右' ? 980 : 760, 101]);
   const header = await source.locator('header').boundingBox();
   await drag(page, { x: header!.x + 80, y: header!.y + 21 }, { x: header!.x + 860, y: header!.y + 21 });
-  await expect.poll(async () => (await read())[6]).toBe(side === '右' ? 760 : 980);
+  await expect.poll(async () => (await read())[6]).toBe(980);
   const moved = await read();
-  expect(Math.sign(moved[2] - moved[0])).toBe(side === '右' ? -1 : 1);
-  expect(moved[6]).toBe(side === '右' ? 760 : 980); expect(Math.sign(moved[4] - moved[6])).toBe(side === '右' ? -1 : 1);
+  expect(Math.sign(moved[2] - moved[0])).toBe(1);
+  expect(moved[6]).toBe(980); expect(Math.sign(moved[4] - moved[6])).toBe(1);
   await expect(page.locator('.connection-path:not(.draft)')).not.toHaveCSS('stroke-dasharray', 'none');
   await page.keyboard.press('Control+z');
   await expect.poll(async () => (await read())[0]).toBe(side === '右' ? 300 : 80);

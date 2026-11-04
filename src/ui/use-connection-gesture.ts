@@ -3,7 +3,7 @@
 import { useEffect, useRef, type PointerEvent } from 'react';
 import { createId, type ViewClient } from '../core/contracts.ts';
 import type { CameraState, CanvasViewportSize } from '../protocols/canvas.ts';
-import { connectionTargetSide, connectionUsesTextBoxRegions, connectionGroupPortHit, connectionTitlePortHit, type ConnectionDraft, type ConnectionEndpoint, type ConnectionReconnectRequest, type ConnectionNodeGeometry } from '../protocols/connections.ts';
+import { connectionJunctionRequest, connectionTargetSide, connectionUsesTextBoxRegions, connectionGroupPortHit, connectionTitlePortHit, type ConnectionDraft, type ConnectionEndpoint, type ConnectionReconnectRequest, type ConnectionNodeGeometry, type ConnectionGraphSnapshot } from '../protocols/connections.ts';
 
 type ReconnectGesture = Pick<ConnectionReconnectRequest, 'id' | 'expectedRevision' | 'titleOrigin'> & { end?: 'from' | 'to'; startSide?: 'left' | 'right' };
 
@@ -97,6 +97,12 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
       ? pointer.x < targetNode.x + targetNode.width / 2 ? 'left' as const : 'right' as const : session.draft.titleStartSide;
     session.draft = { ...session.draft, titleRoute: title, titleStartSide, from: { nodeId: session.point.id, kind: session.point.kind,
       side: title && !session.point.kind ? 'title' : pointer.x < session.point.x + session.point.width / 2 ? 'left' : 'right' }, to: target, pointer };
+    if (target && targetNode && session.draft.from) {
+      try {
+        const graph = client.requestSync<ConnectionGraphSnapshot>('connections.graph@1');
+        session.draft = { ...session.draft, ...connectionJunctionRequest({ from: session.draft.from, to: target }, session.point, targetNode, graph.connections) };
+      } catch { /* Optional owner may be stopping. */ }
+    }
     client.emit('connection.draft.preview', session.draft);
   };
   const finish = (event?: PointerEvent<SVGElement | HTMLElement>, cancel = false) => {

@@ -71,7 +71,7 @@ test('routed group links survive file reload and version-seven compatibility but
   await kernel.router.dispatch('history.undo', undefined, source);
   assert.deepEqual(await graph(), original);
   const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, source);
-  assert.equal(project.plugins.find(plugin => plugin.id === 'connections')!.dataVersion, 9);
+  assert.equal(project.plugins.find(plugin => plugin.id === 'connections')!.dataVersion, 10);
   const reopened = new ApplicationKernel(definitions()); await reopened.start();
   const parsed = await parseProject(await serializeProject(project));
   await reopened.router.dispatch('system.document.replace', parsed, source);

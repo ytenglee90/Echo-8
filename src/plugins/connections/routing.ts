@@ -18,8 +18,9 @@ export function connectionStrokeForEndpoints(record: Pick<ConnectionRecord, 'fro
 }
 
 /** Horizontal tangent points away from a source port and into a target port. */
-export function junctionRenderPoint(point: ConnectionRenderPoint, role: 'source' | 'target'): ConnectionRenderPoint {
-  return { ...point, tangent: { x: role === 'source' ? point.side === 'left' ? -1 : 1 : point.side === 'right' ? -1 : 1, y: 0 } };
+export function junctionRenderPoint(point: ConnectionRenderPoint, role: 'source' | 'target', other?: ConnectionRenderPoint): ConnectionRenderPoint {
+  const side = other ? other.x < point.x ? 'left' : 'right' : point.side;
+  return { ...point, side, tangent: { x: role === 'source' ? side === 'left' ? -1 : 1 : side === 'right' ? -1 : 1, y: 0 } };
 }
 
 /** One projection for paint, hit testing, lasso and labels. Junction ports face the other endpoint independently on every edge. */
@@ -32,9 +33,8 @@ export function connectionGraphPoints(records: readonly ConnectionRecord[], node
     const sides = connectionHorizontalSides(record, fromNode, toNode);
     const from: ConnectionRenderPoint = connectionEndpointPoint(endpoints.from, fromNode, sides.from.side);
     const to: ConnectionRenderPoint = connectionEndpointPoint(endpoints.to, toNode, sides.to.side);
-    if (record.from.kind === 'junction') from.tangent = junctionRenderPoint(from, 'source').tangent;
-    if (record.to.kind === 'junction') to.tangent = junctionRenderPoint(to, 'target').tangent;
-    points.set(record.id, { from, to });
+    points.set(record.id, { from: record.from.kind === 'junction' ? junctionRenderPoint(from, 'source', to) : from,
+      to: record.to.kind === 'junction' ? junctionRenderPoint(to, 'target', from) : to });
   }
   return points;
 }

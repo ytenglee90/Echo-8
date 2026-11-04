@@ -27,14 +27,14 @@ test('junction batches validate every revision before one atomic move, and arrow
   assert.equal(kernel.history.getState().undoCount, history + 1);
   await kernel.transactions.undo(); assert.deepEqual(await graph(), original);
 });
-test('junction components follow mean endpoint motion in the same transaction and undo even after the owner stops', async () => {
+test('junction components stay fixed while one or all endpoints move and undo after the owner stops', async () => {
   const { kernel, a, b, graph } = await setup(); const original = await graph(), history = kernel.history.getState().undoCount;
   await kernel.router.dispatch('node.move', { id: a, x: 200, y: 100 }, 'core.test');
-  for (const point of (await graph()).junctions) { const before = original.junctions.find(item => item.id === point.id)!; assert.equal(point.x, before.x + 100); assert.equal(point.y, before.y + 50); }
+  assert.deepEqual((await graph()).junctions, original.junctions);
   assert.equal(kernel.history.getState().undoCount, history + 1);
   await kernel.transactions.undo(); assert.deepEqual(await graph(), original);
   await kernel.router.dispatch('node.moveMany', { positions: [{ id: a, x: 100, y: 40 }, { id: b, x: 1100, y: 40 }] }, 'core.test');
-  for (const point of (await graph()).junctions) { const before = original.junctions.find(item => item.id === point.id)!; assert.equal(point.x, before.x + 100); assert.equal(point.y, before.y + 40); }
+  assert.deepEqual((await graph()).junctions, original.junctions);
   await kernel.plugins.stop('connections'); await kernel.transactions.undo(); await kernel.plugins.start('connections');
   assert.deepEqual(await graph(), original);
 });

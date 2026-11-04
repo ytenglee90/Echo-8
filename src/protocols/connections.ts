@@ -61,15 +61,17 @@ export interface ConnectionMoveJunctionRequest {
 
 export type ConnectionJunctionPreview = { id: string; x: number; y: number } | { positions: Array<{ id: string; x: number; y: number }> } | { clear: true };
 
-export interface ConnectionTitleOrigin { side: 'left' | 'right'; sourceIsLeft: boolean }
+export interface ConnectionTitleOrigin { side: 'left' | 'right'; sourceIsLeft: boolean; sourceCenterX?: number; targetCenterX?: number }
 export function isConnectionTitleOrigin(value: unknown): value is ConnectionTitleOrigin {
   if (!value || typeof value !== 'object') return false;
   const origin = value as Record<string, unknown>;
-  return (origin.side === 'left' || origin.side === 'right') && typeof origin.sourceIsLeft === 'boolean';
+  return (origin.side === 'left' || origin.side === 'right') && typeof origin.sourceIsLeft === 'boolean' &&
+    ((origin.sourceCenterX === undefined && origin.targetCenterX === undefined) ||
+      (typeof origin.sourceCenterX === 'number' && Number.isFinite(origin.sourceCenterX) && typeof origin.targetCenterX === 'number' && Number.isFinite(origin.targetCenterX)));
 }
 
 export interface ConnectionRecord {
-  /** Schema v4 / dataVersion 9: selected title departure side and its original relative ordering. */
+  /** Schema v5 / dataVersion 10: selected title departure side and its original relative ordering. */
   titleOrigin?: ConnectionTitleOrigin;
   id: string;
   from: ConnectionEndpoint;
@@ -93,6 +95,21 @@ export function isTitleConnection(connection: Pick<ConnectionRecord, 'from' | 't
   return connection.titleRoute === true ||
     (connection.from.kind === undefined && connection.from.side === 'title') ||
     (connection.to.kind === undefined && connection.to.side === 'title');
+}
+
+/** A flexible box/group adopts an existing junction's line type; ordinary card ports remain explicit. */
+export function connectionJunctionRequest<T extends { from: ConnectionEndpoint; to: ConnectionEndpoint }>(
+  request: T, from: ConnectionNodeGeometry, to: ConnectionNodeGeometry, records: readonly ConnectionRecord[],
+): T & { titleRoute?: boolean } {
+  const junction = request.from.kind === 'junction' ? request.from : request.to.kind === 'junction' ? request.to : undefined;
+  const other = request.from.kind === 'junction' ? to : from;
+  if (!junction || (other.kind !== 'group' && other.presentation !== 'text-box')) return request;
+  const edge = records.find(edge => [edge.from, edge.to].some(end => end.kind === 'junction' && end.nodeId === junction.nodeId));
+  if (!edge) return request;
+  const title = isTitleConnection(edge), automatic = resolveConnectionEndpoints(from, to);
+  return { ...request, titleRoute: title,
+    from: { ...request.from, side: !request.from.kind && title ? 'title' : automatic.from.side },
+    to: { ...request.to, side: !request.to.kind && title ? 'title' : automatic.to.side } };
 }
 
 export interface ConnectionAppearanceSnapshot {
@@ -321,9 +338,10 @@ export function connectionHorizontalSides(connection: Pick<ConnectionRecord, 'fr
   const endpoints = resolveConnectionRecordEndpoints(connection, from, to);
   const centreDelta = from.x + from.width / 2 - to.x - to.width / 2;
   const manualTitle = !endpoints.from.kind && !endpoints.to.kind && endpoints.from.side === 'title' && endpoints.to.side === 'title' && isConnectionTitleOrigin(connection.titleOrigin)
-    ? Math.abs(centreDelta) <= connectionTitleAlignmentTolerance(from, to) || (centreDelta <= 0) === connection.titleOrigin.sourceIsLeft
-      ? connection.titleOrigin.side : connection.titleOrigin.side === 'left' ? 'right' : 'left'
-    : undefined;
+    && (Math.abs(centreDelta) <= connectionTitleAlignmentTolerance(from, to) ||
+      (connection.titleOrigin.sourceCenterX !== undefined && connection.titleOrigin.targetCenterX !== undefined &&
+        Math.abs(centreDelta - (connection.titleOrigin.sourceCenterX - connection.titleOrigin.targetCenterX)) <= .000001))
+    ? connection.titleOrigin.side : undefined;
   if (manualTitle) sides.from.side = manualTitle;
   if (!endpoints.from.kind && !endpoints.to.kind && endpoints.from.side === 'title' && endpoints.to.side === 'title') {
     sides.from.side = manualTitle ?? (sides.from.side === 'right' ? 'left' : 'right');

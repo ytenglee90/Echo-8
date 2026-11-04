@@ -2536,7 +2536,7 @@ test('object-level appearance migrations keep legacy records inheriting global c
     await annotationMigration.migrate({ annotations: { [legacyAnnotation.id]: legacyAnnotation } }),
     { annotations: { [legacyAnnotation.id]: legacyAnnotation } },
   );
-  assert.equal(connections.manifest.dataVersion, 9);
+  assert.equal(connections.manifest.dataVersion, 10);
   assert.equal(groups.manifest.dataVersion, 2);
   assert.equal(annotations.manifest.dataVersion, 2);
 });
@@ -2583,7 +2583,7 @@ test('global palette persists one contrast-safe connection curve color through t
 
   const source = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
   const descriptor = source.plugins.find((plugin) => plugin.id === 'connections');
-  assert.equal(descriptor?.dataVersion, 9);
+  assert.equal(descriptor?.dataVersion, 10);
   assert.deepEqual(descriptor?.namespaces.sort(), ['connectionAppearance', 'connectionJunction', 'connections']);
 
   const reopened = new ApplicationKernel([
@@ -4489,7 +4489,7 @@ test('selection deletes nodes and attached connections in one undoable transacti
   assert.equal(connectionsAfterUndo.length, 1);
 });
 
-test('title connection shortcut operation creates, converts, and disconnects selected node titles', async () => {
+test('title and body shortcuts create and disconnect independent selected-node routes', async () => {
   const harness = createHarness();
   harness.plugins.register(textNodePlugin);
   harness.plugins.register(createSelectionPlugin());
@@ -4542,10 +4542,16 @@ test('title connection shortcut operation creates, converts, and disconnects sel
     'connection.toggleTitleSelected', undefined, 'core.test',
   );
   connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
-  assert.equal(converted.converted, true);
+  assert.equal(converted.converted, undefined);
+  assert.equal(connections.length, 2);
   assert.equal(connections[0].id, ordinaryId);
-  assert.deepEqual(connections[0].from, { nodeId: right.id, side: 'title' });
-  assert.deepEqual(connections[0].to, { nodeId: left.id, side: 'title' });
+  assert.notEqual(connections[0].from.side, 'title');
+  const titleEdge = connections.find(edge => edge.id === converted.id)!;
+  assert.deepEqual(titleEdge.from, { nodeId: right.id, side: 'title' });
+  assert.deepEqual(titleEdge.to, { nodeId: left.id, side: 'title' });
+  await harness.router.dispatch('connection.toggleSelected', undefined, 'core.test');
+  connections = await harness.capabilities.request<ConnectionRecord[]>('connections.list@1');
+  assert.equal(connections.length, 1); assert.equal(connections[0].id, converted.id);
 });
 
 test('annotations follow text edits and target deletion in the same global transactions', async () => {
@@ -4845,7 +4851,7 @@ test('title-bar connections stay pinned to title endpoints through movement and 
   assert.deepEqual([resizedConnection.labelWidth, resizedConnection.labelHeight, resizedConnection.revision], [286, 96, 3]);
 
   const source = await harness.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
-  assert.equal(source.plugins.find((plugin) => plugin.id === 'connections')?.dataVersion, 9);
+  assert.equal(source.plugins.find((plugin) => plugin.id === 'connections')?.dataVersion, 10);
   const reopened = new ApplicationKernel([
     textNodePlugin,
     createSelectionPlugin(),

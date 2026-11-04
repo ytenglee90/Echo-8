@@ -31,7 +31,7 @@ test('title alignment band retains the original operation side across tiny centr
     }
     for (const dx of [-tolerance - 1, tolerance + 1]) {
       const sides = connectionHorizontalSides(record, { ...from, x: from.x + dx }, to);
-      const expected = (dx < 0) === sourceIsLeft ? side : side === 'left' ? 'right' : 'left';
+      const expected = dx < 0 ? 'left' : 'right';
       assert.equal(sides.from.side, expected); assert.equal(sides.to.side, expected);
     }
   }
@@ -74,5 +74,19 @@ test('a direct solid edge switches its arrow to the actual input when stored end
     assert.equal(stroke.arrowEnd, ax === 0 ? 'to' : 'from');
     assert.equal(points[stroke.arrowEnd!].side, 'left');
     assert.deepEqual(values(stroke.arrowPath).slice(2, 4), [points[stroke.arrowEnd!].x, points[stroke.arrowEnd!].y]);
+  }
+});
+
+test('a horizontally overlapping junction faces the actual input/output anchor rather than an object centre', () => {
+  const node: ConnectionNodeGeometry = { id: 'a', x: 200, y: 0, width: 260, height: 160 };
+  const point: ConnectionNodeGeometry = { id: 'j', x: 330, y: 500, width: 0, height: 0, kind: 'junction' };
+  for (const incoming of [false, true]) {
+    const record = incoming ? edge('e', { nodeId: 'a', side: 'right' }, { nodeId: 'j', kind: 'junction', side: 'left' })
+      : edge('e', { nodeId: 'j', kind: 'junction', side: 'right' }, { nodeId: 'a', side: 'left' });
+    const points = connectionGraphPoints([record], new Map([['a', node], ['j', point]])).get('e')!;
+    const p = incoming ? points.to : points.from, other = incoming ? points.from : points.to;
+    assert.equal(p.side, other.x < p.x ? 'left' : 'right');
+    const direction = incoming ? p.x < other.x ? -1 : 1 : p.x > other.x ? -1 : 1;
+    assert.deepEqual(p.tangent, { x: direction, y: 0 });
   }
 });

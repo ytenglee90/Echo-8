@@ -180,7 +180,7 @@ function TextNodeCanvasLayerView({
             onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: node.id })}
             onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: node.id, clear: true })}
             onDoubleClick={(event) => {
-              if (isTextBox) {
+              if (isTextBox && !event.ctrlKey && !event.metaKey) {
                 event.preventDefault();
                 event.stopPropagation();
                 setTitleEdit({ id: node.id, original: node.title, value: node.title });

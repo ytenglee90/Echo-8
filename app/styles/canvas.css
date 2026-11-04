@@ -634,7 +634,8 @@
 }
 .group-connection-port.left { left: 0; }
 .group-connection-port.right { left: 100%; }
-.group-connection-port:focus-visible { outline: 2px solid var(--canvas-selection); outline-offset: 2px; }
+.group-layer .group-connection-port:is(:focus, :focus-visible, :active, :hover) { outline: none; border: 0; box-shadow: none; background: transparent; }
+.connection-layer .connection-junction-layer:is(:focus, :focus-visible) { outline: none; box-shadow: none; }
 
 .connection-path {
   fill: none;

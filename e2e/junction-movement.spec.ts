@@ -21,7 +21,7 @@ async function openFixture(page: Page) {
     { id: 'text-node', version: '0.1.0', dataVersion: 2, namespaces: ['textNode', 'textContent', 'textContentChunk'], available: true },
     { id: 'connections', version: '0.1.0', dataVersion: 8, namespaces: ['connections', 'connectionJunction'], available: true },
   ] });
-  await page.keyboard.press('Control+k'); const palette = page.getByRole('dialog', { name: '命令面板' });
+  await page.getByRole('button', { name: '命令面板', exact: true }).click(); const palette = page.getByRole('dialog', { name: '命令面板' });
   await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开书籍'); await palette.getByRole('option', { name: /^打开书籍/u }).click();
   const notice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' }); const chooser = page.waitForEvent('filechooser');
   await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
@@ -78,7 +78,7 @@ test('junction release coordinates commit even without a final pointermove, and 
   await expect(page.getByText('中转点已变化，请重新移动', { exact: true })).toHaveCount(0);
 });
 
-for (const textBox of [false, true]) test(`moving one ${textBox ? 'text box' : 'node'} previews mean junction movement and commits with a single undo`, async ({ page }) => {
+for (const textBox of [false, true]) test(`moving one ${textBox ? 'text box' : 'node'} keeps junctions fixed during preview, commit and undo`, async ({ page }) => {
   await openFixture(page);
   const node = page.locator('.text-node-card').filter({ has: page.locator('strong[title="跟随a"]') });
   if (textBox) {
@@ -94,11 +94,56 @@ for (const textBox of [false, true]) test(`moving one ${textBox ? 'text box' : '
   const origin = await position();
   await page.mouse.move(header!.x + 30, header!.y + 10); await page.mouse.down();
   await page.mouse.move(header!.x + 230, header!.y + 110, { steps: 10 });
-  await expect.poll(async () => (await points(page))[0][0]).toBeGreaterThan(initial[0][0] + 50);
-  await expect.poll(async () => { const p = await position(), j = await points(page); return Math.abs(j[0][0] - initial[0][0] - (p[0] - origin[0]) / 2); }).toBeLessThan(0.01);
-  const target = await position(), preview = await points(page);
-  expect(preview[0][0] - initial[0][0]).toBeCloseTo((target[0] - origin[0]) / 2);
-  expect(preview[0][1] - initial[0][1]).toBeCloseTo((target[1] - origin[1]) / 2);
+  await expect.poll(async () => (await position())[0]).toBeGreaterThan(origin[0] + 100);
+  await expect.poll(() => points(page)).toEqual(initial);
+  const preview = initial;
   await page.mouse.up(); await expect.poll(() => points(page)).toEqual(preview);
   await page.keyboard.press('Control+z'); await expect.poll(() => points(page)).toEqual(initial);
+});
+
+for (const textBox of [false, true]) for (const method of ['keyboard', 'toolbar', 'alt'] as const) test(`copying connected ${textBox ? 'boxes' : 'nodes'} through ${method} leaves routed lines and points behind`, async ({ page }) => {
+  await openFixture(page);
+  const nodes = page.locator('.text-node-card');
+  const a = nodes.filter({ has: page.locator('strong[title="跟随a"]') });
+  const b = nodes.filter({ has: page.locator('strong[title="跟随b"]') });
+  await a.locator('header strong').click(); await b.locator('header strong').click({ modifiers: ['Shift'] });
+  if (textBox) {
+    await page.getByRole('button', { name: '文本框与文字节点相互转换', exact: true }).click();
+    await expect(page.locator('.text-node-card.text-box')).toHaveCount(2);
+  }
+  const initial = await points(page);
+  if (method === 'alt') {
+    const title = await a.locator(textBox ? '.text-box-title' : 'header strong').boundingBox();
+    await page.keyboard.down('Alt'); await page.mouse.move(title!.x + 30, title!.y + 10); await page.mouse.down();
+    await page.mouse.move(title!.x + 150, title!.y + 150, { steps: 8 }); await page.mouse.up(); await page.keyboard.up('Alt');
+  } else if (method === 'keyboard') {
+    await page.keyboard.press('Control+c'); await page.keyboard.press('Control+v');
+  } else {
+    await page.locator('.clipboard-actions').getByRole('button', { name: /^复制/u }).click();
+    await page.locator('.clipboard-actions').getByRole('button', { name: /^粘贴/u }).click();
+  }
+  await expect(nodes).toHaveCount(4);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(3); await expect.poll(() => points(page)).toEqual(initial);
+  await page.keyboard.press('Control+z'); await expect(nodes).toHaveCount(2);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(3); await expect.poll(() => points(page)).toEqual(initial);
+});
+
+test('a junction can leave the culled viewport and return without losing its drag capture', async ({ page }) => {
+  await openFixture(page);
+  const marker = page.locator('.connection-junction[data-junction-id="j1"]');
+  const box = await marker.locator('.connection-junction-dot').boundingBox();
+  const initial = await points(page);
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down();
+  await page.mouse.move(-400, -400, { steps: 8 });
+  await expect(marker).toHaveCount(0);
+  await page.mouse.move(box!.x + box!.width / 2 + 70, box!.y + box!.height / 2 + 50, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => (await points(page))[0]).toEqual([initial[0][0] + 70, initial[0][1] + 50]);
+  await page.keyboard.press('Control+z'); await expect.poll(() => points(page)).toEqual(initial);
+  const restored = await marker.locator('.connection-junction-dot').boundingBox();
+  await page.mouse.move(restored!.x + restored!.width / 2, restored!.y + restored!.height / 2); await page.mouse.down();
+  await page.mouse.move(-400, -400, { steps: 8 }); await expect(marker).toHaveCount(0);
+  await page.keyboard.press('Escape'); await page.mouse.up();
+  await expect.poll(() => points(page)).toEqual(initial);
+  await expect(page.locator('.connection-junction-layer')).toHaveCSS('outline-style', 'none');
 });

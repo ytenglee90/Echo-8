@@ -34,6 +34,8 @@ import type {
 } from '../../protocols/canvas.ts';
 import {
   connectionGroupPortHit,
+  connectionJunctionRequest,
+  type ConnectionGraphSnapshot,
   type ConnectionSide,
   type ConnectionEndpoint,
 } from '../../protocols/connections.ts';
@@ -1233,7 +1235,13 @@ export function CanvasSurface({
       const target = client.requestSync<ConnectionEndpoint | undefined>('connections.targetAt@1', {
         point: session.pointer, excludeId: session.from.nodeId, radius: 18 / camera.zoom,
       });
-      if (target) return { ...session, to: target, titleOrigin };
+      if (target) {
+        const graph = client.requestSync<ConnectionGraphSnapshot>('connections.graph@1');
+        const point = graph.junctions.find(point => point.id === target.nodeId);
+        const requested = source && point ? connectionJunctionRequest({ from: session.from, to: target }, source,
+          { ...point, width: 0, height: 0, kind: 'junction' }, graph.connections) : { from: session.from, to: target };
+        return { ...session, ...requested, titleOrigin };
+      }
     } catch { /* Point provider is optional. */ }
     // Groups are targeted at their side ports, so member nodes keep their own input regions.
     let best: { id: string; side: 'left' | 'right'; distance: number } | undefined;
