@@ -469,10 +469,10 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const reconnectGeometry = useMemo<DrawableConnection | undefined>(() => {
     const connection = draft.reconnectId ? connectionLookup.byId.get(draft.reconnectId) : undefined;
     if (!connection || !draftStart || !draftEnd || !draftGeometry) return undefined;
-    const from = draft.from?.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd, junctionTangents.has(draft.from!.nodeId) ? 0 : draftFromNode?.handleAngle, junctionTangents.get(draft.from!.nodeId)) : draftStart;
-    const to = draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart, junctionTangents.has(draft.to!.nodeId) ? 0 : draftToNode?.handleAngle, junctionTangents.get(draft.to!.nodeId)) : draftEnd;
+    const from = candidatePoints?.from ?? (draft.from?.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd, junctionTangents.has(draft.from!.nodeId) ? 0 : draftFromNode?.handleAngle, junctionTangents.get(draft.from!.nodeId)) : draftStart);
+    const to = candidatePoints?.to ?? (draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart, junctionTangents.has(draft.to!.nodeId) ? 0 : draftToNode?.handleAngle, junctionTangents.get(draft.to!.nodeId)) : draftEnd);
     return { connection, from, to, midpoint: connectionCurveMidpoint(from, to), curvePath: connectionCurvePath(from, to), ...draftGeometry };
-  }, [connectionLookup.byId, draft.reconnectId, draftStart, draftEnd, draftGeometry, draftFromNode?.handleAngle, draftToNode?.handleAngle, junctionTangents, draft.from, draft.to]);
+  }, [candidatePoints, connectionLookup.byId, draft.reconnectId, draftStart, draftEnd, draftGeometry, draftFromNode?.handleAngle, draftToNode?.handleAngle, junctionTangents, draft.from, draft.to]);
   const drawableGeometry = useMemo(() => reconnectGeometry
     ? [...committedGeometry.filter(item => item.connection.id !== reconnectGeometry.connection.id), reconnectGeometry]
     : committedGeometry, [committedGeometry, reconnectGeometry]);

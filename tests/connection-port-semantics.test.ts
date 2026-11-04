@@ -56,7 +56,9 @@ for (const title of [false, true]) for (const commonTo of [false, true]) test(`$
       else assert.equal(curve[1], curve[3], 'node departure is horizontal');
       const tangent = record.from.kind === 'junction' ? p.from.tangent : p.to.tangent;
       const reference = points.get(split.connections[0].id)!;
-      assert.deepEqual(tangent, split.connections[0].from.kind === 'junction' ? reference.from.tangent : reference.to.tangent, 'all incident derivatives agree');
+      const axis = (split.connections[0].from.kind === 'junction' ? reference.from.tangent : reference.to.tangent)!;
+      assert.ok(Math.abs(tangent!.x * axis.y - tangent!.y * axis.x) < 1e-9, 'incident handles share an axis even when legacy logical directions disagree');
+      assert.ok(tangent!.x * (p.to.x - p.from.x) >= 0 && tangent!.y * (p.to.y - p.from.y) >= 0, 'automatic handles never point backwards');
       const stroke = connectionStrokeForEndpoints(record, p);
       if (stroke.arrowPath) {
         arrows += 1;

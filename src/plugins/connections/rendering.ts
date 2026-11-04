@@ -275,9 +275,11 @@ function smoothRoutingSegments(from: ConnectionRenderPoint, to: ConnectionRender
   const a = from.tangent ?? { x: from.side === 'left' || from.side === 'title' ? -1 : from.side === 'right' ? 1 : direction, y: 0 };
   const b = to.tangent ?? { x: to.side === 'right' ? -1 : to.side === 'left' || to.side === 'title' ? 1 : direction, y: 0 };
   const handle = (vector: { x: number; y: number }) => {
-    const length = Math.min(420, span * .4);
+    let length = Math.min(420, span * .4);
     // Each forward x handle owns at most half the gap: steep curves stay monotone without shortening their vertical departure.
-    return dx * vector.x > .000001 ? Math.min(length, Math.abs(dx / vector.x) * .5) : length;
+    if (dx * vector.x > .000001) length = Math.min(length, Math.abs(dx / vector.x) * .5);
+    if (dy * vector.y > .000001) length = Math.min(length, Math.abs(dy / vector.y) * .5);
+    return length;
   };
   const h = handle(a), k = handle(b);
   return [{ kind: 'cubic', from, to,

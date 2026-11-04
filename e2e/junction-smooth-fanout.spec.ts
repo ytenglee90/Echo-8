@@ -4,7 +4,7 @@ import { createContentStorage } from '../src/plugins/text-node/content-storage.t
 import type { ProjectSource } from '../src/protocols/files.ts';
 
 test.use({ viewport: { width: 600, height: 960 } });
-interface FanLayout { positions: readonly (readonly [number, number])[]; junction: readonly [number, number]; pairs: readonly (readonly [string, string])[]; title: boolean; boxes?: readonly number[]; groups?: readonly number[] }
+interface FanLayout { positions: readonly (readonly [number, number])[]; junction: readonly [number, number]; pairs: readonly (readonly [string, string])[]; title: boolean; boxes?: readonly number[]; groups?: readonly number[]; unrouted?: boolean }
 const steepFan: FanLayout = { positions: [[208, 20], [208, 222], [208, 408], [208, 594]], junction: [64, 576],
   pairs: [['n3', 'j'], ['j', 'n0'], ['j', 'n1'], ['j', 'n2']], title: true };
 async function openSteepFan(page: Page, layout = steepFan) {
@@ -23,7 +23,7 @@ async function openSteepFan(page: Page, layout = steepFan) {
     namespaces.textNode[id] = { id, contentId: `body-${id}`, title: id, x: layout.positions[i][0] + 20, y: layout.positions[i][1] + 100, width: 200, height: 80, titleColor: '#242527', revision: 1, createdAt: 1, updatedAt: 1 };
     namespaces.groups[`g${i}`] = { id: `g${i}`, memberIds: [`n${i}`, id], title: `群组 ${i}`, titleStyle: { fontSize: 13, fontWeight: 650 }, revision: 1, createdAt: 1, updatedAt: 1 };
   }
-  namespaces.connectionJunction.j = { id: 'j', x: layout.junction[0], y: layout.junction[1], revision: 1, branchSide: 'outgoing' };
+  if (!layout.unrouted) namespaces.connectionJunction.j = { id: 'j', x: layout.junction[0], y: layout.junction[1], revision: 1, branchSide: 'outgoing' };
   const endpoint = (id: string, from: boolean) => ({ nodeId: id, ...(id === 'j' ? { kind: 'junction', side: from ? 'right' : 'left' } : { side: layout.title ? 'title' : from ? 'right' : 'left' }) });
   for (let i = 0; i < layout.pairs.length; i++) {
     const [from, to] = layout.pairs[i], id = i === 0 ? 'trunk' : `branch${i - 1}`;
@@ -69,6 +69,57 @@ test('the reported short-wide, tall fan-out has a continuous trunk and shared ju
   await expect.poll(() => page.locator('.connection-hit-area').evaluateAll(elements => elements.map(element => element.getAttribute('d')))).toEqual(preview);
   await page.mouse.move(10, 950); await page.screenshot({ path: info.outputPath('steep-fan-right.png') });
   await page.keyboard.press('Control+z'); await expect(page.locator('.connection-junction')).toHaveAttribute('transform', 'translate(64 576)');
+});
+
+test('split-delete-reconnect follows the complete user workflow with the junction on either side', async ({ page }, info) => {
+  test.setTimeout(60_000); await page.setViewportSize({ width: 1400, height: 1000 });
+  const cases = [
+    { common: 80, branches: 900, replacement: 80, jx: 530, outgoing: false },
+    { common: 900, branches: 80, replacement: 900, jx: 530, outgoing: true },
+    { common: 900, branches: 350, replacement: 350, jx: 1200, outgoing: false },
+    { common: 80, branches: 600, replacement: 600, jx: 150, outgoing: true },
+  ];
+  const screenPoint = (x: number, y: number) => page.locator('.connection-layer > g').evaluate((element, p) => {
+    const result = new DOMPoint(p.x, p.y).matrixTransform((element as SVGGElement).getScreenCTM()!); return { x: result.x, y: result.y };
+  }, { x, y });
+  const expectForwardCurves = async () => {
+    for (const p of await page.locator('.connection-hit-area').evaluateAll(elements => elements.map(element => element.getAttribute('d')!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number)))) {
+      const sign = p.at(-2)! >= p[0] ? 1 : -1;
+      for (let i = 2; i < p.length; i += 2) expect((p[i] - p[i - 2]) * sign, 'control handles must not turn back across the horizontal span').toBeGreaterThanOrEqual(-.002);
+    }
+  };
+  for (const [index, c] of cases.entries()) {
+    await openSteepFan(page, { positions: [[c.common, 250], [c.branches, 80], [c.branches, 440], [c.replacement, 700]], junction: [c.jx, 430],
+      pairs: c.outgoing ? [['n0', 'n1'], ['n0', 'n2']] : [['n1', 'n0'], ['n2', 'n0']], title: false, unrouted: true });
+    const first = page.locator('.connection-hit-area[data-connection-id="trunk"]'); await first.focus(); await first.press('Enter');
+    const second = page.locator('.connection-hit-area[data-connection-id="branch0"]');
+    const exposed = await second.evaluate(element => {
+      const curve = element as SVGPathElement, length = curve.getTotalLength(), matrix = curve.getScreenCTM()!;
+      for (let i = 10; i < 90; i += 3) { const p = curve.getPointAtLength(length * i / 100), screen = new DOMPoint(p.x, p.y).matrixTransform(matrix);
+        if (document.elementFromPoint(screen.x, screen.y) === curve) return { x: screen.x, y: screen.y }; }
+      throw Error('No exposed original line');
+    });
+    await page.keyboard.down('Shift'); await page.mouse.click(exposed.x, exposed.y); await page.keyboard.up('Shift');
+    await expect(page.locator('.connection-hit-area[aria-pressed="true"]')).toHaveCount(2);
+    const point = await screenPoint(c.jx, 430); await page.mouse.click(point.x, point.y, { button: 'right' });
+    const marker = page.locator('.connection-junction'); await expect(marker).toHaveCount(1); await expect(marker).toHaveAttribute('data-handle-angle', '0');
+    await expect(page.locator('.connection-hit-area')).toHaveCount(3);
+    const commonLeg = page.locator('.connection-hit-area:not([data-connection-id="trunk"]):not([data-connection-id="branch0"])');
+    await commonLeg.focus(); await commonLeg.press('Enter'); await page.keyboard.press('Delete');
+    await expect(page.locator('.connection-hit-area')).toHaveCount(2); await expect(marker).toHaveCount(1);
+    await marker.focus(); const plus = await marker.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
+    const target = await page.locator('.text-node-card').filter({ has: page.locator('strong[title="节点 4"]') }).boundingBox();
+    await page.mouse.move(plus!.x + plus!.width / 2, plus!.y + plus!.height / 2); await page.mouse.down();
+    await page.mouse.move(c.replacement < c.jx ? target!.x + target!.width : target!.x, target!.y + target!.height / 2, { steps: 10 });
+    await page.screenshot({ path: info.outputPath(`workflow-${index}-preview.png`) });
+    await expectForwardCurves(); const preview = await page.locator('.connection-path.draft').getAttribute('d'); await page.mouse.up();
+    await expect(page.locator('.connection-hit-area')).toHaveCount(3); await expectForwardCurves();
+    const replacement = page.locator('.connection-hit-area:not([data-connection-id="trunk"]):not([data-connection-id="branch0"])').locator('..').locator('.connection-path');
+    await expect(replacement).toHaveAttribute('d', preview!); await expect(marker).toHaveAttribute('data-handle-angle', '0');
+    await page.mouse.move(10, 950); await page.screenshot({ path: info.outputPath(`workflow-${index}-committed.png`) });
+    await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+    await page.keyboard.press('Control+Shift+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(3); await expectForwardCurves();
+  }
 });
 
 test('point drags switch left/right live and attach to nodes, text boxes and groups without a release jump', async ({ page }, info) => {
@@ -127,7 +178,12 @@ test('the four reported solid and dashed layouts use broad curves with a shared 
     const curves = await page.locator('.connection-hit-area').evaluateAll(elements => elements.map(element => element.getAttribute('d')!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number)));
     const vectors = curves.map(p => p[0] === layouts[i].junction[0] && p[1] === layouts[i].junction[1]
       ? [p[2] - p[0], p[3] - p[1]] : [p.at(-2)! - p.at(-4)!, p.at(-1)! - p.at(-3)!]);
-    for (const v of vectors) expect((v[0] * vectors[0][0] + v[1] * vectors[0][1]) / (Math.hypot(...v) * Math.hypot(...vectors[0]))).toBeCloseTo(1, 3);
+    for (const [index, v] of vectors.entries()) {
+      expect(Math.abs((v[0] * vectors[0][0] + v[1] * vectors[0][1]) / (Math.hypot(...v) * Math.hypot(...vectors[0])))).toBeCloseTo(1, 3);
+      const p = curves[index];
+      expect(v[0] * (p.at(-2)! - p[0])).toBeGreaterThanOrEqual(-.002);
+      expect(v[1] * (p.at(-1)! - p[1])).toBeGreaterThanOrEqual(-.002);
+    }
     if (i === 0) {
       const outgoing = curves.find(p => p[0] === 700)!;
       expect(outgoing[1]).toBe(outgoing[3]);

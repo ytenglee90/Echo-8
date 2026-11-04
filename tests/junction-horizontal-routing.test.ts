@@ -38,7 +38,10 @@ test('incoming and point-to-point links face their counterpart after reversing t
     assert.equal(incoming.to.side, x < 400 ? 'right' : 'left'); assert.equal(chain.from.side, x < 700 ? 'right' : 'left'); assert.equal(chain.to.side, x < 700 ? 'left' : 'right');
     const a = numbers(connectionCurvePath(incoming.from, incoming.to));
     assert.equal(a[1], a[3], 'ordinary node departure stays horizontal');
-    assert.deepEqual(incoming.to.tangent, chain.from.tangent, 'incoming and outgoing derivatives agree at the shared point');
+    assert.ok(Math.abs(incoming.to.tangent!.x * chain.from.tangent!.y - incoming.to.tangent!.y * chain.from.tangent!.x) < 1e-9, 'incident handles share a tangent line');
+    for (const pair of [incoming, chain]) for (const p of [pair.from, pair.to]) if (p.tangent) {
+      assert.ok(p.tangent.x * (pair.to.x - pair.from.x) >= 0 && p.tangent.y * (pair.to.y - pair.from.y) >= 0, 'a reversed layout cannot bend the handle backwards');
+    }
     const length = Math.hypot(700 - x, -1000);
     assert.deepEqual(chain.to.tangent, { x: (700 - x) / length, y: -1000 / length });
     assert.ok(!/NaN|Infinity/u.test(connectionCurvePath(chain.from, chain.to)));

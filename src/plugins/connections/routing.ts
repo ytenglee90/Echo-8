@@ -27,14 +27,19 @@ export function junctionRenderPoint(point: ConnectionRenderPoint, role: 'source'
   return { ...point, side, tangent: { x: clean(axis.x * Math.cos(radians) - axis.y * Math.sin(radians)), y: clean(axis.x * Math.sin(radians) + axis.y * Math.cos(radians)) } };
 }
 
-/** One shared forward axis per junction: incoming and outgoing derivatives must agree. */
+/** Prefer a shared forward axis; contradictory graph roles use facing halves of a common horizontal axis. */
 export function connectionGraphPoints(records: readonly ConnectionRecord[], nodes: ReadonlyMap<string, ConnectionNodeGeometry>): Map<string, ConnectionPoints> {
   const points = new Map<string, ConnectionPoints>();
-  const joints = new Map<string, { x: number; y: number; incoming: { x: number; y: number; count: number }; outgoing: { x: number; y: number; count: number } }>();
+  const joints = new Map<string, { x: number; y: number; positiveX: boolean; negativeX: boolean; positiveY: boolean; negativeY: boolean;
+    incoming: { x: number; y: number; count: number }; outgoing: { x: number; y: number; count: number } }>();
   const accumulate = (id: string, role: 'incoming' | 'outgoing', other: ConnectionRenderPoint) => {
     const node = nodes.get(id)!;
     let joint = joints.get(id);
-    if (!joint) { joint = { x: node.x, y: node.y, incoming: { x: 0, y: 0, count: 0 }, outgoing: { x: 0, y: 0, count: 0 } }; joints.set(id, joint); }
+    if (!joint) { joint = { x: node.x, y: node.y, positiveX: false, negativeX: false, positiveY: false, negativeY: false,
+      incoming: { x: 0, y: 0, count: 0 }, outgoing: { x: 0, y: 0, count: 0 } }; joints.set(id, joint); }
+    const sign = role === 'incoming' ? -1 : 1, dx = (other.x - node.x) * sign, dy = (other.y - node.y) * sign;
+    joint.positiveX ||= dx > .001; joint.negativeX ||= dx < -.001;
+    joint.positiveY ||= dy > .001; joint.negativeY ||= dy < -.001;
     const mean = joint[role]; mean.count += 1; mean.x += (other.x - mean.x) / mean.count; mean.y += (other.y - mean.y) / mean.count;
   };
   for (const record of records) {
@@ -58,8 +63,13 @@ export function connectionGraphPoints(records: readonly ConnectionRecord[], node
     }
     if (Math.hypot(x, y) < .001) { x = b.count ? b.x - joint.x : joint.x - a.x; y = b.count ? b.y - joint.y : joint.y - a.y; }
     if (Math.hypot(x, y) < .001 && a.count) { x = joint.x - a.x; y = joint.y - a.y; }
+    // A split/deleted/reconnected graph can retain opposite logical roles on the same physical side.
+    // Means alone hide those conflicts. Never point an automatic handle backwards along any incident leg.
+    if ((x > 0 && joint.negativeX) || (x < 0 && joint.positiveX)) x = 0;
+    if ((y > 0 && joint.negativeY) || (y < 0 && joint.positiveY)) y = 0;
     const length = Math.hypot(x, y);
-    axes.set(id, length > .001 ? { x: x / length, y: y / length } : { x: 1, y: 0 });
+    // No directed axis can satisfy the whole graph: retain a common tangent line, facing each real endpoint.
+    if (length > .001) axes.set(id, { x: x / length, y: y / length });
   }
   for (const record of records) {
     const pair = points.get(record.id); if (!pair) continue;

@@ -227,7 +227,7 @@ test('context gestures remain distinct queued transactions and stale multi-line 
 });
 
 
-test('junction branches keep node-facing ports and share one forward tangent through the junction', () => {
+test('contradictory junction roles keep node-facing ports and collinear handles without routing backwards', () => {
   const edges: ConnectionRecord[] = ([
     { id: 'a', from: { nodeId: 'a', side: 'title' }, to: { nodeId: 'j', kind: 'junction', side: 'left' } },
     { id: 'b', from: { nodeId: 'b', side: 'title' }, to: { nodeId: 'j', kind: 'junction', side: 'left' } },
@@ -242,7 +242,8 @@ test('junction branches keep node-facing ports and share one forward tangent thr
   const points = connectionGraphPoints(edges, nodes);
   for (const id of ['a', 'b']) {
     const incoming = points.get(id)!, outgoing = points.get('trunk')!;
-    assert.deepEqual(incoming.to.tangent, outgoing.from.tangent);
+    assert.ok(Math.abs(incoming.to.tangent!.x * outgoing.from.tangent!.y - incoming.to.tangent!.y * outgoing.from.tangent!.x) < 1e-9);
+    assert.ok(incoming.to.tangent!.x < 0, 'a right-hand incoming node must not force its handle onto the back of the point');
     assert.ok(outgoing.from.tangent!.x > 0, 'the common axis points from incoming anchors to the outgoing anchor');
     const path = connectionCurvePath(incoming.from, incoming.to).match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
     assert.ok(path[2] < path[0], 'title source leaves its actual left edge');
