@@ -19,12 +19,12 @@ test('chosen title departure side persists until horizontal ordering reverses, i
     const reversed = connectionHorizontalSides(edge, { ...from, x: 900 }, to);
     assert.equal(reversed.from.side, side === 'left' ? 'right' : 'left'); assert.equal(reversed.to.side, reversed.from.side);
     const converted = connectionHorizontalSides(edge, { ...from, presentation: 'text-box' }, to);
-    assert.equal(converted.from.side, 'right'); assert.equal(converted.to.side, 'left');
+    assert.equal(converted.from.side, side); assert.equal(converted.to.side, side);
     assert.equal(edge.titleOrigin?.side, side);
-    // Preserving the source title port does not change a box/group/point target's automatic input side.
+    // Box title targets share the chosen title side; group/point inputs retain automatic facing.
     for (const target of [{ ...to, presentation: 'text-box' as const }, { ...to, kind: 'group' as const }, { ...to, kind: 'junction' as const }]) {
       const mixed = connectionHorizontalSides({ ...edge, to: { ...edge.to, kind: 'kind' in target ? target.kind : undefined } }, from, target);
-      assert.equal(mixed.from.side, side); assert.equal(mixed.to.side, 'left');
+      assert.equal(mixed.from.side, 'kind' in target ? 'right' : side); assert.equal(mixed.to.side, 'kind' in target ? 'left' : side);
     }
   }
 });
@@ -53,4 +53,17 @@ test('title origin survives create, reconnect undo, file migration and clipboard
   const migration = createConnectionsPlugin().migrations!.find(m => m.from === 8)!;
   const unknown = { connections: { legacy: { future: { kept: true } } } };
   assert.deepEqual(await migration.migrate(unknown), unknown);
+});
+
+test('a text-box title connection stores its operation side in the existing origin field', async () => {
+  const kernel = new ApplicationKernel([textNodePlugin, createSelectionPlugin(), createConnectionsPlugin()]); await kernel.start();
+  const ids: string[] = [];
+  for (const y of [0, 500]) {
+    const { id } = await kernel.router.dispatch<{ id: string }>('node.create', { title: String(y), x: 100, y }, 'core.test');
+    ids.push(id); await kernel.router.dispatch('node.presentation.set', { id, presentation: 'text-box' }, 'core.test');
+  }
+  await kernel.router.dispatch('connection.create', { from: { nodeId: ids[0], side: 'title' }, to: { nodeId: ids[1], side: 'title' }, titleOrigin: { side: 'right', sourceIsLeft: true } }, 'core.test');
+  const graph = await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
+  assert.deepEqual(graph.connections[0].titleOrigin, { side: 'right', sourceIsLeft: true });
+  await kernel.transactions.undo(); assert.equal((await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections.length, 0);
 });

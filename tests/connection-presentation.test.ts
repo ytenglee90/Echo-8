@@ -42,14 +42,32 @@ test('a text box recognizes either title port and leaving the port restores the 
     summaries: [{ ...card, presentation: 'text-box' }] }]).geometryChanged, true);
 });
 
-test('only title-to-title cards use same sides and both switch automatically when their order reverses', () => {
+test('title-to-title content endpoints use same sides across presentations and switch when their order reverses', () => {
   const a = { id: 'a', x: 0, y: 0, width: 280, height: 160 }, b = { ...a, id: 'b', x: 700 };
   const titles = { from: { nodeId: 'a', side: 'title' as const }, to: { nodeId: 'b', side: 'title' as const } };
   assert.deepEqual(Object.values(connectionHorizontalSides(titles, a, b)).map(endpoint => endpoint.side), ['left', 'left']);
   assert.deepEqual(Object.values(connectionHorizontalSides(titles, { ...a, x: 1000 }, b)).map(endpoint => endpoint.side), ['right', 'right']);
-  assert.deepEqual(Object.values(connectionHorizontalSides(titles, { ...a, presentation: 'text-box' }, b)).map(endpoint => endpoint.side), ['right', 'left']);
+  assert.deepEqual(Object.values(connectionHorizontalSides(titles, { ...a, presentation: 'text-box' }, b)).map(endpoint => endpoint.side), ['left', 'left']);
   assert.deepEqual(Object.values(connectionHorizontalSides({ from: { nodeId: 'a', side: 'right' }, to: { nodeId: 'b', side: 'left' } }, a, b)).map(endpoint => endpoint.side), ['right', 'left']);
   assert.deepEqual(Object.values(connectionHorizontalSides({ ...titles, from: { ...titles.from, kind: 'group' } }, { ...a, kind: 'group' }, b)).map(endpoint => endpoint.side), ['right', 'left']);
+});
+
+test('semantic title pairs keep both anchors on the same side for every card/box presentation and vertical ordering', () => {
+  for (const fromPresentation of ['card', 'text-box'] as const) for (const toPresentation of ['card', 'text-box'] as const) {
+    for (const x of [-500, 80, 700]) for (const y of [-600, 600]) {
+      const from = { id: 'a', x: 80, y: 100, width: 260, height: 100, presentation: fromPresentation };
+      const to = { id: 'b', x, y, width: 260, height: 100, presentation: toPresentation };
+      const edge = { id: 'title', from: { nodeId: 'a', side: 'title' as const }, to: { nodeId: 'b', side: 'title' as const }, labelWidth: 180, labelHeight: 48, revision: 1, createdAt: 1 };
+      const original = structuredClone(edge);
+      const points = connectionGraphPoints([edge], new Map([['a', from], ['b', to]])).get('title')!;
+      const right = from.x > to.x;
+      assert.equal(points.from.side, right ? 'right' : 'left'); assert.equal(points.to.side, points.from.side);
+      assert.equal(points.from.x, from.x + (right ? from.width : 0)); assert.equal(points.to.x, to.x + (right ? to.width : 0));
+      assert.equal(points.from.y, from.y + (fromPresentation === 'text-box' ? 50 : 21));
+      assert.equal(points.to.y, to.y + (toPresentation === 'text-box' ? 50 : 21));
+      assert.deepEqual(edge, original, 'legacy data is projected without rewriting records');
+    }
+  }
 });
 
 test('same-size presentation conversions preserve line attributes, project the correct anchors and survive undo and file reload', async () => {

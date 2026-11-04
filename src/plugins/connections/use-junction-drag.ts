@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect, useRef, type PointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
 import { createId, type ViewClient } from '../../core/contracts.ts';
 import type { CameraState, CanvasSnapPreview } from '../../protocols/canvas.ts';
-import type { ConnectionJunction, ConnectionJunctionPreview } from '../../protocols/connections.ts';
+import type { ConnectionGraphSnapshot, ConnectionJunction, ConnectionJunctionPreview } from '../../protocols/connections.ts';
 import type { SmartSnapRequest, SmartSnapResult } from '../../protocols/layout.ts';
 
 interface JunctionDrag {
   id: string;
   pointerId: number;
+  capture: SVGGElement;
   startX: number;
   startY: number;
   origins: ConnectionJunction[];
@@ -23,23 +24,57 @@ interface JunctionDrag {
 export function useJunctionDrag(client: ViewClient, camera: CameraState, junctions: ConnectionJunction[], selected: ReadonlySet<string>) {
   const session = useRef<JunctionDrag | undefined>(undefined);
   const previewOwner = useRef<string | undefined>(undefined);
-  const clear = (owner: string) => {
+  const commitTail = useRef<Promise<unknown>>(Promise.resolve());
+  const ownRevisions = useRef(new Map<string, { revision: number; x: number; y: number }>());
+  const optimistic = useRef(new Map<string, { owner: string; x: number; y: number }>());
+  const mounted = useRef(true);
+  const settlement = useRef<{ owner: string; positions: ConnectionJunction[] } | undefined>(undefined);
+  const [settlementOwner, setSettlementOwner] = useState<string>();
+  const clear = useCallback((owner: string) => {
+    for (const [id, pending] of optimistic.current) if (pending.owner === owner) optimistic.current.delete(id);
     if (previewOwner.current !== owner) return;
     previewOwner.current = undefined;
     client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
     client.emit('connection.junction.preview', { clear: true } satisfies ConnectionJunctionPreview);
-  };
-  useEffect(() => () => {
-    const active = session.current;
-    const hadPreview = previewOwner.current !== undefined;
-    session.current = undefined;
-    previewOwner.current = undefined;
-    if (active || hadPreview) {
-      client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
-      client.emit('connection.junction.preview', { clear: true } satisfies ConnectionJunctionPreview);
+  }, [client]);
+  useEffect(() => {
+    const projection = new Map(junctions.map(point => [point.id, point]));
+    for (const id of ownRevisions.current.keys()) if (!projection.has(id)) ownRevisions.current.delete(id);
+    for (const id of optimistic.current.keys()) if (!projection.has(id)) optimistic.current.delete(id);
+    const pending = settlement.current;
+    if (!pending || pending.owner !== settlementOwner) return;
+    const matches = (point: ConnectionJunction | undefined, target: ConnectionJunction | undefined) =>
+      point && target ? point.revision === target.revision && point.x === target.x && point.y === target.y : point === target;
+    const projected = pending.positions.every(target => matches(projection.get(target.id), target));
+    if (!projected) {
+      let current: Map<string, ConnectionJunction>;
+      try { current = new Map(client.requestSync<ConnectionGraphSnapshot>('connections.graph@1').junctions.map(point => [point.id, point])); }
+      catch { return; }
+      // An unrelated earlier graph refresh is not an acknowledgement. Undo/deletion wins only once its owner projection is visible.
+      const changed = pending.positions.some(target => !matches(current.get(target.id), target));
+      const synchronized = pending.positions.every(target => matches(projection.get(target.id), current.get(target.id)));
+      if (!changed || !synchronized) return;
     }
-    if (!active) return;
-    void client.dispatch('interaction.end', { mode: 'dragging-node', sessionId: active.id }).catch(() => undefined);
+    clear(pending.owner); settlement.current = undefined;
+  }, [clear, client, junctions, settlementOwner]);
+  useEffect(() => {
+    mounted.current = true;
+    const optimisticCache = optimistic.current, revisionCache = ownRevisions.current;
+    return () => {
+      mounted.current = false;
+      const active = session.current;
+      const hadPreview = previewOwner.current !== undefined;
+      session.current = undefined;
+      previewOwner.current = undefined;
+      if (active?.capture.hasPointerCapture(active.pointerId)) active.capture.releasePointerCapture(active.pointerId);
+      if (active || hadPreview) {
+        client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
+        client.emit('connection.junction.preview', { clear: true } satisfies ConnectionJunctionPreview);
+      }
+      optimisticCache.clear(); revisionCache.clear(); settlement.current = undefined;
+      if (!active) return;
+      void client.dispatch('interaction.end', { mode: 'dragging-node', sessionId: active.id }).catch(() => undefined);
+    };
   }, [client]);
 
   const begin = (event: PointerEvent<SVGGElement>, point: ConnectionJunction) => {
@@ -53,10 +88,18 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
       void client.dispatch('selection.set', { items: [{ id: point.id, kind: 'connection-junction' }], mode: 'toggle' });
       return;
     }
-    const origins = selected.has(point.id) || event.shiftKey || toggle
-      ? junctions.filter(item => selected.has(item.id) || item.id === point.id) : [point];
+    let current = junctions;
+    try { current = client.requestSync<ConnectionGraphSnapshot>('connections.graph@1').junctions; } catch { /* Owner may be stopping. */ }
+    const origins = (selected.has(point.id) || event.shiftKey || toggle
+      ? current.filter(item => selected.has(item.id) || item.id === point.id) : [current.find(item => item.id === point.id) ?? point])
+      .map(item => {
+        const pending = optimistic.current.get(item.id);
+        if (pending) return { ...item, x: pending.x, y: pending.y };
+        return item.id === point.id && item.revision === point.revision ? { ...item, x: point.x, y: point.y } : item;
+      });
+    const pendingAtBegin = new Set(origins.filter(item => optimistic.current.has(item.id)).map(item => item.id));
     const active: JunctionDrag = {
-      id: createId('junction-drag'), pointerId: event.pointerId,
+      id: createId('junction-drag'), pointerId: event.pointerId, capture: event.currentTarget,
       startX: event.clientX, startY: event.clientY,
       origins, primaryId: point.id, collapseOnClick: !event.shiftKey && !toggle,
       latest: origins.map(({ id, x, y }) => ({ id, x, y })), moved: false, admitted: false,
@@ -65,9 +108,24 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
     previewOwner.current = active.id;
     void client.dispatch('interaction.begin', { mode: 'dragging-node', sessionId: active.id }).then(() => {
       active.admitted = true;
+      // Earlier node moves may have committed while admission was queued. Read their current owner geometry once.
+      const graph = client.requestSync<ConnectionGraphSnapshot>('connections.graph@1');
+      const fresh = new Map(graph.junctions.map(item => [item.id, item]));
+      const old = new Map(active.origins.map(item => [item.id, item]));
+      active.origins = active.origins.map(item => pendingAtBegin.has(item.id) ? item : fresh.get(item.id) ?? item);
+      const refreshed = new Map(active.origins.map(item => [item.id, item]));
+      active.latest = active.latest.map(target => {
+        const before = old.get(target.id)!, origin = refreshed.get(target.id)!;
+        return { id: target.id, x: origin.x + target.x - before.x, y: origin.y + target.y - before.y };
+      });
+      if (active.moved && previewOwner.current === active.id) {
+        for (const target of active.latest) if (optimistic.current.get(target.id)?.owner === active.id) optimistic.current.set(target.id, { owner: active.id, x: target.x, y: target.y });
+        client.emit('connection.junction.preview', { positions: active.latest } satisfies ConnectionJunctionPreview);
+      }
     }).catch(() => {
       if (session.current !== active) return;
       session.current = undefined;
+      if (active.admitted) void client.dispatch('interaction.end', { mode: 'dragging-node', sessionId: active.id }).catch(() => undefined);
       clear(active.id);
     });
     if (!selected.has(point.id) || event.shiftKey || toggle) void client.dispatch('selection.set', {
@@ -104,18 +162,47 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
   const finish = (event?: PointerEvent<SVGGElement>, cancel = false) => {
     const active = session.current;
     if (!active || (event && active.pointerId !== event.pointerId)) return;
-    event?.preventDefault();
-    event?.stopPropagation();
+    if (event && event.currentTarget !== active.capture) return;
+    if (cancel && event?.type === 'lostpointercapture' && active.capture.hasPointerCapture(active.pointerId)) return;
+    event?.preventDefault(); event?.stopPropagation();
+    // Pointer moves may be coalesced; the release sample owns the final coordinates.
+    if (event && !cancel) move(event);
     session.current = undefined;
+    if (active.capture.hasPointerCapture(active.pointerId)) active.capture.releasePointerCapture(active.pointerId);
     client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
-    // Queue the end before another gesture can begin. It cannot release a
-    // different owner's or newer gesture's session, even after a failed begin.
-    void client.dispatch('interaction.end', { mode: 'dragging-node', sessionId: active.id }).then(() => {
-      if (cancel || !active.admitted) return;
-      if (!active.moved) return active.collapseOnClick ? client.dispatch('selection.set', { items: [{ id: active.primaryId, kind: 'connection-junction' }], mode: 'replace' }) : undefined;
-      const revisions = new Map(active.origins.map(point => [point.id, point.revision]));
-      return client.dispatch('connection.moveJunctions', { positions: active.latest.map(point => ({ ...point, expectedRevision: revisions.get(point.id)! })) });
-    }).finally(() => clear(active.id)).catch(() => undefined);
+    if (!cancel && active.moved) for (const point of active.latest) optimistic.current.set(point.id, { owner: active.id, x: point.x, y: point.y });
+    // Queue the end immediately so a later gesture cannot overtake its release.
+    const ended = client.dispatch('interaction.end', { mode: 'dragging-node', sessionId: active.id });
+    const operation = commitTail.current.catch(() => undefined).then(async () => {
+      await ended;
+      if (cancel || !active.admitted || !mounted.current) { clear(active.id); return; }
+      if (!active.moved) {
+        clear(active.id);
+        if (active.collapseOnClick) await client.dispatch('selection.set', { items: [{ id: active.primaryId, kind: 'connection-junction' }], mode: 'replace' });
+        return;
+      }
+      const graph = client.requestSync<ConnectionGraphSnapshot>('connections.graph@1');
+      const current = new Map(graph.junctions.map(point => [point.id, point]));
+      const origins = new Map(active.origins.map(point => [point.id, point]));
+      const positions = active.latest.map(target => {
+        const origin = origins.get(target.id)!, point = current.get(target.id);
+        // Rebase only over this adapter's preceding commits. Foreign changes still fail owner revision validation.
+        const last = ownRevisions.current.get(target.id);
+        const own = point && last && point.revision === last.revision && point.x === last.x && point.y === last.y;
+        return { id: target.id, x: own ? point.x + target.x - origin.x : target.x,
+          y: own ? point.y + target.y - origin.y : target.y, expectedRevision: own ? point.revision : origin.revision };
+      });
+      await client.dispatch('connection.moveJunctions', { positions });
+      const committed = positions.flatMap(position => {
+        const old = current.get(position.id);
+        if (!old) return [];
+        const revision = position.expectedRevision + (position.x === old.x && position.y === old.y ? 0 : 1);
+        ownRevisions.current.set(position.id, { revision, x: position.x, y: position.y });
+        return [{ ...old, x: position.x, y: position.y, revision }];
+      });
+      if (mounted.current) { settlement.current = { owner: active.id, positions: committed }; setSettlementOwner(active.id); }
+    }).catch(() => clear(active.id));
+    commitTail.current = operation;
   };
   return { begin, move, finish, cancel: () => finish(undefined, true) };
 }

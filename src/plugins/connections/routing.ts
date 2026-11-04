@@ -1,7 +1,21 @@
-import { connectionEndpointPoint, connectionHorizontalSides, resolveConnectionRecordEndpoints, type ConnectionNodeGeometry, type ConnectionRecord } from '../../protocols/connections.ts';
-import type { ConnectionRenderPoint } from './rendering.ts';
+import { connectionEndpointPoint, connectionHorizontalSides, isTitleConnection, resolveConnectionRecordEndpoints, type ConnectionNodeGeometry, type ConnectionRecord } from '../../protocols/connections.ts';
+import { connectionStrokeGeometry, type ConnectionRenderPoint } from './rendering.ts';
 
 export interface ConnectionPoints { from: ConnectionRenderPoint; to: ConnectionRenderPoint }
+
+/** Solid arrows belong to actual left/input ports, independently of stored graph direction. */
+export function connectionStrokeForEndpoints(record: Pick<ConnectionRecord, 'from' | 'to' | 'titleRoute'>, points: ConnectionPoints, zoom = 1) {
+  const arrowEnd = !record.to.nodeId ? 'to' : isTitleConnection(record)
+    ? record.to.kind === 'junction' ? undefined : 'to'
+    : record.from.kind !== 'junction' && points.from.side === 'left' ? 'from'
+      : record.to.kind !== 'junction' && points.to.side === 'left' ? 'to' : undefined;
+  const reverse = (point: ConnectionRenderPoint): ConnectionRenderPoint => ({ ...point,
+    ...(point.tangent ? { tangent: { x: -point.tangent.x, y: -point.tangent.y } } : {}) });
+  const geometry = arrowEnd === 'from'
+    ? connectionStrokeGeometry(reverse(points.to), reverse(points.from), zoom)
+    : connectionStrokeGeometry(points.from, points.to, zoom, arrowEnd === 'to');
+  return { ...geometry, arrowEnd: geometry.arrowPath ? arrowEnd as 'from' | 'to' : undefined };
+}
 
 /** Horizontal tangent points away from a source port and into a target port. */
 export function junctionRenderPoint(point: ConnectionRenderPoint, role: 'source' | 'target'): ConnectionRenderPoint {

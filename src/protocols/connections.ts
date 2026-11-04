@@ -206,6 +206,20 @@ export interface ConnectionNodeGeometry {
   presentation?: 'card' | 'text-box';
 }
 
+export const CONNECTION_GROUP_PORT_SCREEN_WIDTH = 48;
+export const CONNECTION_GROUP_PORT_SCREEN_HEIGHT = 64;
+/** Shared source/target hit geometry; group anchors stay at side midpoints at every zoom. */
+export function connectionGroupPortHit(node: ConnectionNodeGeometry, pointer: { x: number; y: number }, zoom: number) {
+  const scale = Math.max(.01, zoom);
+  let result: { side: 'left' | 'right'; distance: number } | undefined;
+  for (const side of ['left', 'right'] as const) {
+    const dx = pointer.x - node.x - (side === 'right' ? node.width : 0), dy = pointer.y - node.y - node.height / 2;
+    const distance = Math.hypot(dx, dy);
+    if (Math.abs(dx) <= CONNECTION_GROUP_PORT_SCREEN_WIDTH / 2 / scale && Math.abs(dy) <= CONNECTION_GROUP_PORT_SCREEN_HEIGHT / 2 / scale && (!result || distance < result.distance)) result = { side, distance };
+  }
+  return result;
+}
+
 /** Only two ordinary text boxes use split title/body edge regions. */
 export function connectionTextBoxPair(from: ConnectionNodeGeometry | undefined, to: ConnectionNodeGeometry | undefined): boolean {
   return from?.presentation === 'text-box' && to?.presentation === 'text-box' && !from.kind && !to.kind;
@@ -296,17 +310,22 @@ export function connectionEndpointPoint(
   };
 }
 
-/** Only two actual card title bars share a side; boxes and non-title endpoints retain facing sides. */
+/** Centre alignment is stable across zoom and tolerates small layout/snap differences. */
+export function connectionTitleAlignmentTolerance(from: ConnectionNodeGeometry, to: ConnectionNodeGeometry): number {
+  return Math.max(24, Math.min(80, Math.min(from.width, to.width) * .2));
+}
+
+/** Semantic title pairs share a side across card/box presentations; group and junction endpoints keep facing sides. */
 export function connectionHorizontalSides(connection: Pick<ConnectionRecord, 'from' | 'to' | 'titleRoute' | 'titleOrigin'>, from: ConnectionNodeGeometry, to: ConnectionNodeGeometry) {
   const sides = resolveConnectionEndpoints(from, to);
   const endpoints = resolveConnectionRecordEndpoints(connection, from, to);
-  const manualTitle = !endpoints.from.kind && endpoints.from.side === 'title' && from.presentation !== 'text-box' && isConnectionTitleOrigin(connection.titleOrigin)
-    ? (from.x + from.width / 2 <= to.x + to.width / 2) === connection.titleOrigin.sourceIsLeft
+  const centreDelta = from.x + from.width / 2 - to.x - to.width / 2;
+  const manualTitle = !endpoints.from.kind && !endpoints.to.kind && endpoints.from.side === 'title' && endpoints.to.side === 'title' && isConnectionTitleOrigin(connection.titleOrigin)
+    ? Math.abs(centreDelta) <= connectionTitleAlignmentTolerance(from, to) || (centreDelta <= 0) === connection.titleOrigin.sourceIsLeft
       ? connection.titleOrigin.side : connection.titleOrigin.side === 'left' ? 'right' : 'left'
     : undefined;
   if (manualTitle) sides.from.side = manualTitle;
-  if (!endpoints.from.kind && !endpoints.to.kind && endpoints.from.side === 'title' && endpoints.to.side === 'title' &&
-    from.presentation !== 'text-box' && to.presentation !== 'text-box') {
+  if (!endpoints.from.kind && !endpoints.to.kind && endpoints.from.side === 'title' && endpoints.to.side === 'title') {
     sides.from.side = manualTitle ?? (sides.from.side === 'right' ? 'left' : 'right');
     sides.to.side = sides.from.side;
   }

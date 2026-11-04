@@ -33,7 +33,7 @@ import {
   type ConnectionJunctionPreview,
   type ConnectionNodeGeometry,
 } from '../../protocols/connections.ts';
-import { connectionGraphPoints, junctionRenderPoint } from './routing.ts';
+import { connectionGraphPoints, connectionStrokeForEndpoints, junctionRenderPoint } from './routing.ts';
 import { junctionFollowPositions } from './junction-follow.ts';
 import type { GroupMembershipPreview } from '../../protocols/groups.ts';
 import { ConnectionJunctionMarkers } from './ConnectionJunctionMarkers.tsx';
@@ -54,7 +54,6 @@ import {
   connectionCurveBounds,
   connectionCurveMidpoint,
   connectionCurvePath,
-  connectionStrokeGeometry,
   connectionOverviewMode,
   connectionRenderMode,
   connectionVisibleForOverview,
@@ -77,6 +76,7 @@ interface DrawableConnection {
   curvePath: string;
   shaftPath: string;
   arrowPath: string;
+  arrowEnd?: 'from' | 'to';
 }
 
 interface ConnectionLabelEditorState {
@@ -417,10 +417,10 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     to: draft.to ?? { nodeId: '', side: 'left' }, titleRoute: draft.titleRoute, titleOrigin: draftTitleOrigin }, draftFromNode, draftToNode) : undefined;
   const draftStart = draft.from ? endpointPoint(draft.from, nodeMap, draftSides?.from.side) : undefined;
   const draftEnd = draft.to ? endpointPoint(draft.to, nodeMap, draftSides?.to.side) : draft.pointer;
-  const draftGeometry = draftStart && draftEnd ? connectionStrokeGeometry(
-    draft.from?.kind === 'junction' ? junctionRenderPoint(draftStart, 'source') : draftStart,
-    draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target') : draftEnd,
-    camera.zoom, draft.to?.kind !== 'junction',
+  const draftGeometry = draft.from && draftStart && draftEnd ? connectionStrokeForEndpoints(
+    { from: draft.from, to: draft.to ?? { nodeId: '', side: 'left' }, titleRoute: draft.titleRoute },
+    { from: draft.from.kind === 'junction' ? junctionRenderPoint(draftStart, 'source') : draftStart,
+      to: draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target') : draftEnd }, camera.zoom,
   ) : undefined;
   const renderableConnections = drawable;
   const committedGeometry = useMemo<DrawableConnection[]>(() => renderableConnections.flatMap((connection) => {
@@ -432,9 +432,9 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         ? connectionCurveMidpoint(points.from, points.to)
         : undefined,
       curvePath: connectionCurvePath(points.from, points.to),
-      ...connectionStrokeGeometry(points.from, points.to, camera.zoom, connection.to.kind !== 'junction'),
+      ...connectionStrokeForEndpoints({ ...connection, titleRoute: titleRouteIds.has(connection.id) }, points, camera.zoom),
     }] : [];
-  }), [camera.zoom, editingConnectionId, livePoints, renderableConnections]);
+  }), [camera.zoom, editingConnectionId, livePoints, renderableConnections, titleRouteIds]);
   const reconnectGeometry = useMemo<DrawableConnection | undefined>(() => {
     const connection = draft.reconnectId ? connectionLookup.byId.get(draft.reconnectId) : undefined;
     if (!connection || !draftStart || !draftEnd || !draftGeometry) return undefined;
@@ -445,6 +445,15 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const drawableGeometry = useMemo(() => reconnectGeometry
     ? [...committedGeometry.filter(item => item.connection.id !== reconnectGeometry.connection.id), reconnectGeometry]
     : committedGeometry, [committedGeometry, reconnectGeometry]);
+  const beginArrowReconnect = (event: ReactPointerEvent<SVGPathElement>, connection: ConnectionRecord, end: 'from' | 'to' = 'to') => {
+    const fixed = end === 'from' ? connection.to : connection.from;
+    const node = nodeMap.get(fixed.nodeId);
+    if (!node) return;
+    const fixedPoint = livePoints.get(connection.id)?.[end === 'from' ? 'to' : 'from'];
+    const startSide = fixedPoint?.side === 'left' || fixedPoint?.side === 'right' ? fixedPoint.side : undefined;
+    reconnect.begin(event, node, isTitleRoute(connection), fixed.side, { startSide, id: connection.id, expectedRevision: connection.revision, end,
+      ...(end === 'to' && !fixed.kind ? { titleOrigin: connection.titleOrigin } : {}) });
+  };
   const renderedConnectionIds = useMemo(
     () => new Set(renderableConnections.map((connection) => connection.id)),
     [renderableConnections],
@@ -879,7 +888,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
           <path className="connection-arrow connection-arrow-batch" d={arrows} style={{ '--connection-line': color } as CSSProperties} aria-hidden="true" />
           </g>
         ))}
-        {batchRendered && highlightedGeometry.map(({ connection, shaftPath, arrowPath }) => (
+        {batchRendered && highlightedGeometry.map(({ connection, shaftPath, arrowPath, arrowEnd }) => (
           <g key={`highlight-${connection.id}`}>
           <path
             className={`connection-path selected ${isTitleRoute(connection) ? 'title-connection' : ''} ${connection.lineColor ||
@@ -890,12 +899,12 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
             style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
             aria-hidden="true"
           />
-          <path className={`connection-arrow selected ${connection.lineColor || previewIds.has(connection.id) ? 'custom-color' : ''}`} d={arrowPath} data-arrow-for={connection.id} tabIndex={-1}
+          {arrowPath && <path className={`connection-arrow selected ${connection.lineColor || previewIds.has(connection.id) ? 'custom-color' : ''}`} d={arrowPath} data-arrow-for={connection.id} data-arrow-end={arrowEnd} tabIndex={-1}
                 onPointerEnter={() => setHoveredId(connection.id)} onPointerLeave={() => setHoveredId(current => current === connection.id ? undefined : current)} style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
-            onPointerDown={event => { const source = nodeMap.get(connection.from.nodeId); if (source) reconnect.begin(event, source, isTitleRoute(connection), connection.from.side, { id: connection.id, expectedRevision: connection.revision, ...(source.presentation !== 'text-box' && !source.kind && connection.from.side === 'title' ? { titleOrigin: connection.titleOrigin } : {}) }); }} aria-label="拖动箭头重新连接" />
+            onPointerDown={event => beginArrowReconnect(event, connection, arrowEnd)} aria-label="拖动箭头重新连接" />}
           </g>
         ))}
-        {!batchRendered && paintOrderedGeometry.map(({ connection, curvePath, shaftPath, arrowPath }) => {
+        {!batchRendered && paintOrderedGeometry.map(({ connection, curvePath, shaftPath, arrowPath, arrowEnd }) => {
           const isSelected = selected.has(connection.id) || connection.id === draft.reconnectId;
           const hasLocalColor = Boolean(connection.lineColor ||
             previewIds.has(connection.id));
@@ -939,9 +948,9 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
                 style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
                 aria-hidden="true"
               />
-              {arrowPath && <path className={`connection-arrow ${isSelected ? 'selected' : ''} ${connection.id === hoveredId ? 'hovered' : ''} ${hasLocalColor ? 'custom-color' : ''}`} data-arrow-for={connection.id} tabIndex={-1}
+              {arrowPath && <path className={`connection-arrow ${isSelected ? 'selected' : ''} ${connection.id === hoveredId ? 'hovered' : ''} ${hasLocalColor ? 'custom-color' : ''}`} data-arrow-for={connection.id} data-arrow-end={arrowEnd} tabIndex={-1}
                 onPointerEnter={() => setHoveredId(connection.id)} onPointerLeave={() => setHoveredId(current => current === connection.id ? undefined : current)} d={arrowPath} style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
-                onPointerDown={event => { const source = nodeMap.get(connection.from.nodeId); if (source) reconnect.begin(event, source, isTitleRoute(connection), connection.from.side, { id: connection.id, expectedRevision: connection.revision, ...(source.presentation !== 'text-box' && !source.kind && connection.from.side === 'title' ? { titleOrigin: connection.titleOrigin } : {}) }); }}
+                onPointerDown={event => beginArrowReconnect(event, connection, arrowEnd)}
                 aria-label="拖动箭头重新连接" />}
             </g>
           );
@@ -951,7 +960,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
             className={`connection-path draft ${draft.titleRoute || draft.from?.side === 'title' || draft.to?.side === 'title' ? 'title-connection' : ''}`}
             d={draftGeometry.shaftPath}
           />
-          {draftGeometry.arrowPath && <path className="connection-arrow draft" d={draftGeometry.arrowPath} />}
+          {draftGeometry.arrowPath && <path className="connection-arrow draft" data-arrow-end={draftGeometry.arrowEnd} d={draftGeometry.arrowPath} />}
         </g>)}
         {paintOrderedGeometry.map(({ connection, midpoint }) => {
           const isEditing = labelEditor?.id === connection.id;

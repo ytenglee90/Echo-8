@@ -286,14 +286,14 @@ function TextNodeCanvasLayerView({
                   className="connection-edge left"
                   aria-label={`从${node.title}左侧连接`}
                   title={isTextBox ? "按目标文本框位置连接：上半区为虚线，中间及下半区为实线" : "从左侧创建连线"}
-                  onPointerDown={(event) => handleConnectionPort(event, node, 'left')}
+                  onPointerDown={(event) => handleConnectionPort(event, node, 'left', 'left')}
                 />
                 <button
                   type="button"
                   className="connection-edge right"
                   aria-label={`从${node.title}右侧连接`}
                   title={isTextBox ? "按目标文本框位置连接：上半区为虚线，中间及下半区为实线" : "从右侧创建连线"}
-                  onPointerDown={(event) => handleConnectionPort(event, node, 'right')}
+                  onPointerDown={(event) => handleConnectionPort(event, node, 'right', 'right')}
                 />
               </>
             )}

@@ -3,19 +3,19 @@ import { serializeProject } from '../src/plugins/import-export/codec.ts';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
 import type { ProjectSource } from '../src/protocols/files.ts';
 
-async function openGraph(page: Page, outputs = false, title = false, rightHandLayout = false) {
+async function openGraph(page: Page, outputs = false, title = false, rightHandLayout = false, three = false) {
   await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
   await page.goto('/');
   await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, connections: {}, connectionJunction: {} };
-  for (const [id, x, y] of [['a', 80, 80], ['b', 80, 340], ['c', 800, 210]] as const) {
+  for (const [id, x, y] of (three ? [['a', 440, 20], ['b', 440, 220], ['d', 440, 420], ['c', 440, 700], ['e', 900, 20]] as const : [['a', 80, 80], ['b', 80, 340], ['c', 800, 210]] as const)) {
     const content = createContentStorage(`body-${id}`, `正文${id}`, 1);
     namespaces.textContent[`body-${id}`] = content.content;
     for (const patch of content.chunkPatches) if (patch.op === 'set') namespaces.textContentChunk[patch.key] = patch.value;
     namespaces.textNode[id] = { id, contentId: `body-${id}`, title: `节点${id}`, x: rightHandLayout && id !== 'c' ? x + 360 : x, y, width: 280, height: 158, titleColor: '#303030', revision: 1, createdAt: 1, updatedAt: 1 };
   }
-  for (const [id, from, to] of (outputs ? [['edge-a', 'a', 'b'], ['edge-b', 'a', 'c']] : [['edge-a', 'a', 'c'], ['edge-b', 'b', 'c']])) {
-    namespaces.connections[id] = { id, from: { nodeId: from, side: title ? 'title' : 'right' }, to: { nodeId: to, side: title ? 'title' : 'left' }, label: id, labelWidth: 100, labelHeight: 40, revision: 1, createdAt: 1 };
+  for (const [id, from, to] of (three ? [['edge-a', 'a', 'c'], ['edge-b', 'b', 'c'], ['edge-d', 'd', 'c']] : outputs ? [['edge-a', 'a', 'b'], ['edge-b', 'a', 'c']] : [['edge-a', 'a', 'c'], ['edge-b', 'b', 'c']])) {
+    namespaces.connections[id] = { id, from: { nodeId: from, side: title ? 'title' : 'right' }, to: { nodeId: to, side: title ? 'title' : 'left' }, ...(three && title ? { titleOrigin: { side: 'right', sourceIsLeft: true } } : {}), label: id, labelWidth: 100, labelHeight: 40, revision: 1, createdAt: 1 };
   }
   const blob = await serializeProject({ document: { revision: 1, namespaces }, plugins: [
     { id: 'text-node', version: '0.1.0', dataVersion: 2, namespaces: ['textNode', 'textContent', 'textContentChunk'], available: true },
@@ -30,7 +30,8 @@ async function openGraph(page: Page, outputs = false, title = false, rightHandLa
   await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
   await (await chooser).setFiles({ name: '中转点测试.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
   await expect(notice).toHaveCount(0);
-  await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(three ? 3 : 2);
+  await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeHidden();
 }
 
 async function pointOnScreen(page: Page, x: number, y: number) {
@@ -48,6 +49,51 @@ async function rightClickAt(page: Page, x: number, y: number) {
 }
 
 const label = (page: Page, id: string) => page.locator(`.connection-label-foreign[data-connection-id="${id}"]`);
+
+for (const title of [false, true]) test(`three selected ${title ? 'title' : 'body'} links route by junction side and body arrows appear only at physical inputs`, async ({ page }) => {
+  await page.setViewportSize({ width: 1320, height: 1100 });
+  await openGraph(page, false, title, false, true);
+  const first = page.locator('.connection-hit-area[data-connection-id="edge-a"]');
+  await first.focus(); await first.press('Enter');
+  await addVisibleConnection(page, 'edge-b'); await addVisibleConnection(page, 'edge-d');
+  await expect(page.locator('.connection-hit-area[aria-pressed="true"]')).toHaveCount(3);
+  await rightClickAt(page, 150, 600);
+  const marker = page.locator('.connection-junction');
+  await expect(marker).toHaveCount(1); await expect(page.locator('.connection-hit-area')).toHaveCount(4);
+  const read = async (id: string) => (await page.locator(`.connection-hit-area[data-connection-id="${id}"]`).getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+  for (const id of ['edge-a', 'edge-b', 'edge-d']) {
+    const p = await read(id); expect(p[0]).toBe(440); expect(p[2]).toBeLessThan(440); expect(p[6]).toBe(150); expect(p[4]).toBeGreaterThan(150);
+    if (!title) await expect(page.locator(`[data-arrow-for="${id}"]`)).toHaveAttribute('data-arrow-end', 'from');
+  }
+  await expect(page.locator('.connection-arrow:not(.draft)')).toHaveCount(title ? 1 : 4);
+  await page.screenshot({ path: test.info().outputPath(`${title ? 'title' : 'body'}-junction-left.png`) });
+  const dot = await marker.locator('.connection-junction-dot').boundingBox();
+  await page.mouse.move(dot!.x + dot!.width / 2, dot!.y + dot!.height / 2); await page.mouse.down();
+  await expect(marker).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.move(dot!.x + dot!.width / 2 + 850, dot!.y + dot!.height / 2, { steps: 12 });
+  await expect.poll(async () => (await read('edge-a'))[6]).toBe(1000);
+  for (const id of ['edge-a', 'edge-b', 'edge-d']) {
+    const p = await read(id); expect(p[0]).toBe(720); expect(p[2]).toBeGreaterThan(720); expect(p[4]).toBeLessThan(1000);
+  }
+  await expect(page.locator('.connection-arrow:not(.draft)')).toHaveCount(title ? 1 : 0);
+  await page.mouse.up(); await page.screenshot({ path: test.info().outputPath(`${title ? 'title' : 'body'}-junction-right.png`) });
+  await page.keyboard.press('Control+z');
+  await expect.poll(async () => (await read('edge-a'))[6]).toBe(150);
+  await expect(page.locator('.connection-arrow:not(.draft)')).toHaveCount(title ? 1 : 4);
+  if (!title) {
+    const arrow = page.locator('[data-arrow-for="edge-a"]');
+    const original = await first.getAttribute('d');
+    const start = await arrow.evaluate(e => { const b = e.getBoundingClientRect(); return { x: b.x + b.width * .7, y: b.y + b.height / 2 }; });
+    const target = await pointOnScreen(page, 900, 99);
+    await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(target.x, target.y, { steps: 12 });
+    await expect(first).not.toHaveAttribute('d', original!);
+    await expect.poll(async () => (await arrow.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number).slice(2, 4)).toEqual([900, 99]);
+    await page.mouse.up(); await expect(page.locator('.connection-layer')).not.toHaveAttribute('data-reconnecting-id');
+    await expect.poll(async () => (await read('edge-a')).slice(0, 2)).toEqual([900, 99]);
+    await expect(arrow).toHaveAttribute('data-arrow-end', 'from'); await expect(page.locator('.connection-hit-area')).toHaveCount(4);
+    await page.keyboard.press('Control+z'); await expect(first).toHaveAttribute('d', original!);
+  }
+});
 
 async function addVisibleConnection(page: Page, id: string) {
   const hit = page.locator(`.connection-hit-area[data-connection-id="${id}"]`);

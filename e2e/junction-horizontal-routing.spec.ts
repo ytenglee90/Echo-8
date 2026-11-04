@@ -75,6 +75,7 @@ test('point plus sits above; outgoing drafts choose left/right and incoming draf
   await page.mouse.move(port!.x + port!.width / 2, port!.y + port!.height / 2); await page.mouse.down();
   await page.mouse.move(430, 400, { steps: 10 });
   const draft = page.locator('.connection-path.draft');
+  await expect.poll(async () => { const v = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number); return v[2] < v[0]; }).toBe(true);
   const p = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
   expect(p[2]).toBeLessThan(p[0]); expect(p[3]).toBe(p[1]);
   await page.mouse.move(700, 400, { steps: 8 });

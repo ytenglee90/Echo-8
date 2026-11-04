@@ -20,7 +20,7 @@ import type {
 } from '../../protocols/canvas.ts';
 import type { ContentSummary, NodePosition } from '../../protocols/content.ts';
 import type { GroupMembershipPreview, GroupRecord } from '../../protocols/groups.ts';
-import type { ConnectionGraphSnapshot, ConnectionNodeGeometry } from '../../protocols/connections.ts';
+import { CONNECTION_GROUP_PORT_SCREEN_WIDTH, CONNECTION_GROUP_PORT_SCREEN_HEIGHT, type ConnectionGraphSnapshot, type ConnectionNodeGeometry } from '../../protocols/connections.ts';
 import type { SmartSnapRequest, SmartSnapResult } from '../../protocols/layout.ts';
 import type {
   SelectionMode,
@@ -490,9 +490,10 @@ export function GroupLayer({ client }: { client: ViewClient }) {
                 });
               }}
             >
-              {connectionAvailable && camera.zoom >= 0.5 && (['left', 'right'] as const).map(side => <button
+              {connectionAvailable && (['left', 'right'] as const).map(side => <button
                 key={side} type="button" className={`group-connection-port ${side}`} aria-label={`从群组${side === 'left' ? '左' : '右'}侧连接`}
                 data-group-id={group.id} title="拖动连接到节点、群组或中转点"
+                style={{ width: CONNECTION_GROUP_PORT_SCREEN_WIDTH / camera.zoom, height: CONNECTION_GROUP_PORT_SCREEN_HEIGHT / camera.zoom }}
                 onPointerDown={event => connect.begin(event, { id: group.id, ...bounds, kind: 'group' }, false, side)}
                 onPointerMove={connect.move} onPointerUp={event => connect.finish(event)}
                 onPointerCancel={event => connect.finish(event, true)} onLostPointerCapture={event => connect.finish(event, true)} />)}

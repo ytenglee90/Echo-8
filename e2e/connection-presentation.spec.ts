@@ -11,7 +11,7 @@ async function openFixture(page: Page, existing = false, titleRoute = false, lab
     const content = createContentStorage(`body-${id}`, `正文${id}`, 1);
     namespaces.textContent[`body-${id}`] = content.content;
     for (const patch of content.chunkPatches) if (patch.op === 'set') namespaces.textContentChunk[patch.key] = patch.value;
-    namespaces.textNode[id] = { id, contentId: `body-${id}`, title: `演示${id}`, x, y, width: 280, height: box ? 100 : 180,
+    namespaces.textNode[id] = { id, contentId: `body-${id}`, title: `演示${id}`, x, y: labels && id === 'a' ? 600 : y, width: 280, height: box ? 100 : 180,
       presentation: box ? 'text-box' : 'card', cardSize: { width: 280, height: 180 }, textBoxSize: { width: 280, height: 180 },
       titleColor: '#ab3745', revision: 1, createdAt: 1, updatedAt: 1 };
   }
@@ -64,7 +64,7 @@ for (const side of ['左', '右']) test(`text boxes connect to the ${side} title
   const edge = page.locator('.connection-hit-area:not([data-connection-id="incoming"])');
   const id = (await edge.getAttribute('data-connection-id'))!;
   const points = await coordinates(page, id);
-  expect(points.slice(0, 2)).toEqual([360, 420]); expect(points.slice(-2)).toEqual([780, 101]);
+  expect(points.slice(0, 2)).toEqual([360, 420]); expect(points.slice(-2)).toEqual([1060, 101]);
   await expect(edge.locator('..').locator('.connection-path')).toHaveClass(/title-connection/u);
 });
 
@@ -212,11 +212,12 @@ for (const sourceUpper of [false, true]) for (const targetUpper of [false, true]
     await page.mouse.move(target!.x, target!.y + target!.height * fraction, { steps: 6 });
     if (upper) await expect(draft).toHaveClass(/title-connection/u); else await expect(draft).not.toHaveClass(/title-connection/u);
     const points = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-    expect(points.slice(0, 2)).toEqual([360, 420]); expect(points[7]).toBe(420);
+    await expect.poll(async () => { const v = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number); return v.slice(0, 2); }).toEqual([360, 420]);
+    expect(points[7]).toBe(420);
   }
   await page.mouse.up(); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
   const edge = page.locator('.connection-hit-area:not([data-connection-id="incoming"])');
-  expect((await coordinates(page, (await edge.getAttribute('data-connection-id'))!)).slice(-2)).toEqual([780, 420]);
+  expect((await coordinates(page, (await edge.getAttribute('data-connection-id'))!)).slice(-2)).toEqual([targetUpper ? 1060 : 780, 420]);
   const rendered = edge.locator('..').locator('.connection-path');
   if (targetUpper) await expect(rendered).toHaveClass(/title-connection/u); else await expect(rendered).not.toHaveClass(/title-connection/u);
 });
@@ -234,9 +235,53 @@ test('box-to-box arrow reconnection switches upper and lower target regions live
     await page.mouse.move(arrow!.x + arrow!.width / 3, arrow!.y + arrow!.height / 2); await page.mouse.down();
     await page.mouse.move(target!.x, target!.y + target!.height * (upper ? .25 : .75), { steps: 8 });
     if (upper) await expect(rendered()).toHaveClass(/title-connection/u); else await expect(rendered()).not.toHaveClass(/title-connection/u);
-    expect((await coordinates(page, id)).slice(-2)).toEqual([780, 420]);
+    expect((await coordinates(page, id)).slice(-2)).toEqual([upper ? 1060 : 780, 420]);
     await page.mouse.up(); await expect(page.locator('.connection-layer')).not.toHaveAttribute('data-reconnecting-id');
     if (upper) await expect(rendered()).toHaveClass(/title-connection/u); else await expect(rendered()).not.toHaveClass(/title-connection/u);
   }
   await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+});
+
+test('vertically stacked text-box title links use the same side in preview, after commit, movement, conversion and undo', async ({ page }) => {
+  await openFixture(page);
+  await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeHidden();
+  const source = page.locator('.text-node-card').filter({ has: page.locator('strong[title="演示b"]') });
+  const target = page.locator('.text-node-card').filter({ has: page.locator('strong[title="演示d"]') });
+  for (const [box, dx, dy] of [[source, 340, 130], [target, -360, -270]] as const) {
+    const title = await box.locator('.text-box-title').boundingBox();
+    await drag(page, { x: title!.x + 30, y: title!.y + 10 }, { x: title!.x + 30 + dx, y: title!.y + 10 + dy });
+  }
+  const sourceX = await source.evaluate(e => new DOMMatrix(getComputedStyle(e).transform).m41);
+  const targetX = await target.evaluate(e => new DOMMatrix(getComputedStyle(e).transform).m41);
+  expect(sourceX).toBe(targetX);
+  const from = await source.getByRole('button', { name: '从演示b右侧连接', exact: true }).boundingBox();
+  const to = await target.boundingBox();
+  await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height * .75); await page.mouse.down();
+  await page.mouse.move(to!.x + to!.width, to!.y + to!.height * .25, { steps: 10 });
+  const draft = page.locator('.connection-path.draft'); await expect(draft).toHaveClass(/title-connection/u);
+  await expect.poll(async () => (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number)[0]).toBe(sourceX + 280);
+  const arrowTip = (await page.locator('.connection-arrow.draft').getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+  expect(arrowTip[2]).toBe(targetX + 280);
+  await page.mouse.up(); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  const edge = page.locator('.connection-hit-area:not([data-connection-id="incoming"])');
+  const id = (await edge.getAttribute('data-connection-id'))!;
+  await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 280, targetX + 280]);
+  await page.screenshot({ path: test.info().outputPath('stacked-text-box-title-same-side.png') });
+  const nearTitle = await source.locator('.text-box-title').boundingBox();
+  await drag(page, { x: nearTitle!.x + 30, y: nearTitle!.y + 10 }, { x: nearTitle!.x + 60, y: nearTitle!.y + 10 });
+  await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 310, targetX + 280]);
+  await page.keyboard.press('Control+z');
+  await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 280, targetX + 280]);
+  const title = await source.locator('.text-box-title').boundingBox();
+  await drag(page, { x: title!.x + 30, y: title!.y + 10 }, { x: title!.x + 430, y: title!.y + 10 });
+  await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 400, targetX]);
+  await page.keyboard.press('Control+z');
+  await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 280, targetX + 280]);
+  const boxTitle = await source.locator('.text-box-title').boundingBox();
+  await page.mouse.click(boxTitle!.x + 30, boxTitle!.y + 10);
+  await page.getByRole('button', { name: '文本框与文字节点相互转换', exact: true }).click();
+  await expect(source).not.toHaveClass(/text-box/u);
+  await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 280, targetX + 280]);
+  await page.keyboard.press('Control+z'); await expect(source).toHaveClass(/text-box/u);
+  await expect.poll(async () => { const p = await coordinates(page, id); return [p[0], p[6]]; }).toEqual([sourceX + 280, targetX + 280]);
 });

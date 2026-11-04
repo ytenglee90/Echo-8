@@ -54,6 +54,30 @@ test('multiple junctions drag and nudge together, retain spacing, undo once and 
   await expect.poll(() => points(page)).toEqual(moved);
 });
 
+test('junction release coordinates commit even without a final pointermove, and immediate drags never snap back', async ({ page }) => {
+  await openFixture(page);
+  await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeHidden();
+  const marker = page.locator('.connection-junction[data-junction-id="j1"]');
+  const initial = await points(page);
+  for (let i = 0; i < 3; i += 1) {
+    const box = await marker.locator('.connection-junction-dot').boundingBox();
+    const from = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+    await marker.evaluate(element => element.addEventListener('pointerdown', event => element.setAttribute('data-test-pointer-id', String((event as PointerEvent).pointerId)), { once: true }));
+    await page.mouse.move(from.x, from.y); await page.mouse.down();
+    const pointerId = Number(await marker.getAttribute('data-test-pointer-id'));
+    await marker.dispatchEvent('pointerup', { pointerId, clientX: from.x + 70, clientY: from.y + 50, button: 0, buttons: 0 });
+    await page.mouse.up();
+    await expect.poll(async () => (await points(page))[0]).toEqual([initial[0][0] + 70 * (i + 1), initial[0][1] + 50 * (i + 1)]);
+  }
+  await page.waitForTimeout(150);
+  await expect.poll(async () => (await points(page))[0]).toEqual([610, 390]);
+  for (let i = 2; i >= 0; i -= 1) {
+    await page.keyboard.press('Control+z');
+    await expect.poll(async () => (await points(page))[0]).toEqual([initial[0][0] + 70 * i, initial[0][1] + 50 * i]);
+  }
+  await expect(page.getByText('中转点已变化，请重新移动', { exact: true })).toHaveCount(0);
+});
+
 for (const textBox of [false, true]) test(`moving one ${textBox ? 'text box' : 'node'} previews mean junction movement and commits with a single undo`, async ({ page }) => {
   await openFixture(page);
   const node = page.locator('.text-node-card').filter({ has: page.locator('strong[title="跟随a"]') });

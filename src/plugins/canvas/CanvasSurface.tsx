@@ -33,6 +33,7 @@ import type {
   LassoSignal,
 } from '../../protocols/canvas.ts';
 import {
+  connectionGroupPortHit,
   type ConnectionSide,
   type ConnectionEndpoint,
 } from '../../protocols/connections.ts';
@@ -1225,7 +1226,6 @@ export function CanvasSurface({
   };
 
   const withPointConnectionTarget = (session: ConnectionSession): ConnectionSession => {
-    if (camera.zoom < 0.5) return session;
     const source = connectionTargetNodes.get(session.from.nodeId);
     const titleOrigin = session.titleStartSide && source ? { side: session.titleStartSide,
       sourceIsLeft: source.x + source.width / 2 <= session.pointer.x } : undefined;
@@ -1235,16 +1235,12 @@ export function CanvasSurface({
       });
       if (target) return { ...session, to: target, titleOrigin };
     } catch { /* Point provider is optional. */ }
-    const slop = 18 / camera.zoom;
     // Groups are targeted at their side ports, so member nodes keep their own input regions.
     let best: { id: string; side: 'left' | 'right'; distance: number } | undefined;
     for (const target of externalConnectionTargets) {
       if (target.id === session.from.nodeId) continue;
-      for (const side of ['left', 'right'] as const) {
-        const x = target.x + (side === 'right' ? target.width : 0), y = target.y + target.height / 2;
-        const distance = Math.hypot(session.pointer.x - x, session.pointer.y - y);
-        if (distance <= slop && (!best || distance < best.distance)) best = { id: target.id, side, distance };
-      }
+      const hit = connectionGroupPortHit(target, session.pointer, camera.zoom);
+      if (hit && (!best || hit.distance < best.distance)) best = { id: target.id, ...hit };
     }
     return best ? { ...session, to: { nodeId: best.id, side: best.side, kind: 'group' },
       titleOrigin } : session;
@@ -1268,7 +1264,7 @@ export function CanvasSurface({
       setConnectionTargetId(undefined);
       client.emit('connection.draft.preview', {});
       if (session.moved && session.to && session.from.nodeId !== session.to.nodeId) {
-        void client.dispatch('connection.create', { from: session.from, to: session.to, titleOrigin: session.titleOrigin }).catch(() => undefined);
+        void client.dispatch('connection.create', { from: session.from, to: session.to, titleOrigin: session.from.side === 'title' ? session.titleOrigin : undefined }).catch(() => undefined);
       }
       void client.dispatch('interaction.end', { mode: 'connecting' }).catch(() => undefined);
       return;

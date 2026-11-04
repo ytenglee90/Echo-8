@@ -271,6 +271,36 @@ for (const upper of [true, false]) test(`group-to-text-box uses target ${upper ?
   await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(0);
 });
 
+for (const zoom of [40, 100]) test(`group source and target ports retain expanded screen hit areas at ${zoom}% zoom`, async ({ page }) => {
+  await openGroups(page);
+  await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeHidden();
+  const input = page.locator('.canvas-zoom-status input');
+  const setZoom = async (value: number) => {
+    await input.fill(String(value)); await input.press('Enter');
+    for (const world of ['.group-world', '.canvas-world']) await expect.poll(() => page.locator(world).first().evaluate(e => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(value / 100);
+  };
+  await setZoom(zoom);
+  const from = page.locator('.group-frame[data-group-id="g1"] .group-connection-port.right');
+  const to = page.locator('.group-frame[data-group-id="g2"] .group-connection-port.left');
+  await expect(from).toBeVisible(); await expect(to).toBeVisible();
+  const a = await from.boundingBox(), b = await to.boundingBox();
+  expect(a!.width).toBeCloseTo(48); expect(a!.height).toBeCloseTo(64);
+  expect(b!.width).toBeCloseTo(48); expect(b!.height).toBeCloseTo(64);
+  await drag(page, { x: a!.x + a!.width / 2 + 20, y: a!.y + a!.height / 2 + 24 }, { x: b!.x + b!.width / 2 - 20, y: b!.y + b!.height / 2 + 24 });
+  await setZoom(100);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await expect(page.locator('.connection-path:not(.draft)')).not.toHaveClass(/title-connection/u);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(0);
+  await setZoom(zoom);
+  const nodePort = await page.getByRole('button', { name: '从群组测试e右侧连接', exact: true }).boundingBox();
+  const targetPort = await to.boundingBox();
+  await drag(page, { x: nodePort!.x + nodePort!.width / 2, y: nodePort!.y + nodePort!.height / 2 },
+    { x: targetPort!.x + targetPort!.width / 2 - 20, y: targetPort!.y + targetPort!.height / 2 + 24 });
+  await setZoom(100);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(0);
+});
+
 test('Alt dragging an entire group displays its copied frame before committing, while the original stays fixed', async ({ page }) => {
   await openGroups(page);
   const group = page.locator('[data-group-id="g1"].group-frame');

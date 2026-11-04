@@ -486,7 +486,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             revision: (current?.revision ?? 0) + 1,
           };
           if (payload.titleOrigin) {
-            if (payload.from.kind || payload.from.side !== 'title' || fromNode.presentation === 'text-box') throw new Error('标题起始端口不正确');
+            if (payload.from.kind || payload.from.side !== 'title') throw new Error('标题起始端口不正确');
             // New gestures record ordering from authoritative target geometry, including point/group targets.
             connection.titleOrigin = reference ? { ...payload.titleOrigin } : { ...payload.titleOrigin,
               sourceIsLeft: fromNode.x + fromNode.width / 2 <= toNode.x + toNode.width / 2 };

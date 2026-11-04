@@ -124,7 +124,7 @@ export function updateConnectionSession(
     if (connectionTextBoxPair(source, target)) {
       const automatic = resolveConnectionEndpoints(source, target);
       return { ...session, from: { ...automatic.from, side: connectionTargetSide(target, pointer, false, source) === 'title' ? 'title' : automatic.from.side },
-        to: { ...automatic.to, side: connectionTargetSide(target, pointer, false, source) }, sourceSide, pointer, moved };
+        to: { ...automatic.to, side: connectionTargetSide(target, pointer, false, source) }, titleOrigin, sourceSide, pointer, moved };
     }
     const endpoints = sourceSide === 'title' || connectionTargetSide(target, pointer) === 'title'
       ? {
