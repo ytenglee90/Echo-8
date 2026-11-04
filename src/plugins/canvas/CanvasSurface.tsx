@@ -1,5 +1,7 @@
 'use client';
 
+import { useDragEdgePan } from '../../ui/use-drag-edge-pan.ts';
+
 import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
@@ -73,7 +75,7 @@ import { canvasNodeDetail } from '../../services/canvas-lod.ts';
 import { isSupportedDocumentFile } from '../../services/document-files.ts';
 import {
   clampCanvasZoom,
-  cameraForBounds,
+  cameraForFocus,
   clampSize,
   connectionPortPoint,
   connectionDraftPayload,
@@ -194,6 +196,8 @@ export function CanvasSurface({
   const projectOpenAvailable = useCommandAvailability(client, 'file.openProject');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 1 });
+  const edgePan = useDragEdgePan(client, camera);
+  const finishEdgePan = edgePan.finish;
   const [tool, setTool] = useState<CanvasToolMode>('select');
   const [previews, setPreviews] = useState<Record<string, NodePosition>>({});
   const [snapGuides, setSnapGuides] = useState<CanvasSnapGuide[]>([]);
@@ -530,7 +534,7 @@ export function CanvasSurface({
             ? { width: surface.clientWidth, height: surface.clientHeight, left: rect.left, top: rect.top }
             : surfaceSizeRef.current;
           surfaceSizeRef.current = viewport;
-          const next = cameraForBounds(message.payload.bounds, viewport);
+          const next = cameraForFocus(message.payload, viewport, cameraRef.current);
           client.emit('canvas.camera.preview', next);
           void client.dispatch('canvas.camera.commit', next);
         });
@@ -558,6 +562,7 @@ export function CanvasSurface({
   useEffect(() => {
     const activeDrag = drag.current;
     if (spacePanActive && activeDrag && !suspendedDragPan.current) {
+      finishEdgePan();
       suspendedDragPan.current = {
         pointerX: activeDrag.latestClientX,
         pointerY: activeDrag.latestClientY,
@@ -579,7 +584,7 @@ export function CanvasSurface({
       }
       void client.dispatch('canvas.camera.commit', suspended.latest).catch(() => undefined);
     }
-  }, [client, spacePanActive, syncGroupMembershipPreview]);
+  }, [client, spacePanActive, syncGroupMembershipPreview, finishEdgePan]);
 
   useEffect(() => {
     const current = drag.current;
@@ -868,6 +873,12 @@ export function CanvasSurface({
     };
     setDragOriginPreview(moved ? origins : []);
     if (moved) {
+      const target = surfaceRef.current;
+      if (target) edgePan.track(target, request.latestX, request.latestY, () => {
+        if (!drag.current) return;
+        moveGesture({ clientX: request.latestX, clientY: request.latestY, pointerId: request.pointerId,
+          currentTarget: target, altKey: drag.current.duplicateOnCommit === true, preventDefault: () => {}, stopPropagation: () => {} } as ReactPointerEvent<HTMLDivElement>);
+      });
       client.emit('canvas.drag.preview', {
         positions: latest,
         duplicateOrigins: request.duplicateOnCommit ? origins : [],
@@ -1157,12 +1168,14 @@ export function CanvasSurface({
         client.emit('canvas.camera.preview', suspendedDragPan.current.latest);
         return;
       }
-      const dx = (event.clientX - drag.current.pointerX) / camera.zoom;
-      const dy = (event.clientY - drag.current.pointerY) / camera.zoom;
+      const dx = (event.clientX - drag.current.pointerX) / camera.zoom + edgePan.offset().x;
+      const dy = (event.clientY - drag.current.pointerY) / camera.zoom + edgePan.offset().y;
       const wasMoved = drag.current.moved;
       drag.current.moved ||= Math.abs(dx) + Math.abs(dy) > 2;
       if (!drag.current.moved) return;
       if (!wasMoved) setDragOriginPreview(drag.current.origins);
+      const sample = { ...event, currentTarget: event.currentTarget, preventDefault: () => {}, stopPropagation: () => {} };
+      edgePan.track(event.currentTarget, event.clientX, event.clientY, () => moveGesture(sample));
       const rawLatest = drag.current.origins.map((origin) => ({
         ...origin,
         x: origin.x + dx,
@@ -1257,6 +1270,8 @@ export function CanvasSurface({
   };
 
   const finishGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (drag.current && !suspendedDragPan.current) moveGesture(event);
+    edgePan.finish();
     if (finishPendingSurfaceClick(event.pointerId)) return;
     if (connectionDraft.current) {
       const pointer = screenToWorld(event.clientX, event.clientY, camera, event.currentTarget);
@@ -1346,6 +1361,7 @@ export function CanvasSurface({
   };
 
   const cancelGesture = () => {
+    edgePan.finish(true);
     const cancelledPendingDrag = pendingDrag.current;
     if (cancelledPendingDrag) cancelledPendingDrag.cancelled = true;
     pendingDrag.current = undefined;
@@ -1640,6 +1656,7 @@ export function CanvasSurface({
       onPointerUp={finishGesture}
       onKeyDown={event => { if (event.key === 'Escape' && (drag.current || pendingDrag.current)) { event.preventDefault(); event.stopPropagation(); cancelGesture(); } }}
       onPointerCancel={cancelGesture}
+      onLostPointerCapture={() => { if (drag.current || (pendingDrag.current && !pendingDrag.current.released)) cancelGesture(); }}
       onDragEnter={(event) => {
         const carriesContent = event.dataTransfer.types.includes(ECHO8_CONTENT_DRAG_TYPE);
         const carriesFiles = (importAvailable || projectOpenAvailable) && event.dataTransfer.types.includes('Files');

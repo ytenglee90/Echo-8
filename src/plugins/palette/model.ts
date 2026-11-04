@@ -31,6 +31,7 @@ import type {
 import type { ThemeDefinition } from '../../protocols/theme.ts';
 import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { defineManifest } from '../manifest.ts';
+import { PALETTE_PRESETS } from './presets.ts';
 
 const PALETTE_NAMESPACE = 'palette';
 
@@ -43,7 +44,7 @@ export const LIGHT_THEME: ThemeDefinition = {
     panel: '#ffffff',
     panelSoft: 'rgba(255, 255, 255, 0.88)',
     ink: '#18181a',
-    muted: '#707075',
+    muted: '#686d73',
     faint: '#a7a7ac',
     border: 'rgba(24, 24, 27, 0.11)',
     borderStrong: 'rgba(24, 24, 27, 0.2)',
@@ -57,11 +58,11 @@ export const LIGHT_THEME: ThemeDefinition = {
     canvas: '#efefec',
     canvasGrid: 'rgba(24, 24, 27, 0.15)',
     nodeSurface: 'rgba(255, 255, 255, 0.97)',
-    editor: '#f1f1ef',
+    editor: '#f7f7f4',
     editorPaper: '#ffffff',
     editorChrome: '#ffffff',
-    annotation: '#ff9f0a',
-    groupBackground: '#202124',
+    annotation: '#b9812e',
+    groupBackground: '#75808d',
     control: '#f1f1ef',
     selection: '#111114',
   },
@@ -76,7 +77,7 @@ export const DARK_THEME: ThemeDefinition = {
     panel: '#1b1c1f',
     panelSoft: 'rgba(27, 28, 31, 0.9)',
     ink: '#f2f2f3',
-    muted: '#a3a3aa',
+    muted: '#bdc1c8',
     faint: '#707078',
     border: 'rgba(255, 255, 255, 0.11)',
     borderStrong: 'rgba(255, 255, 255, 0.22)',
@@ -89,12 +90,12 @@ export const DARK_THEME: ThemeDefinition = {
     status: '#151619',
     canvas: '#18191b',
     canvasGrid: 'rgba(255, 255, 255, 0.1)',
-    nodeSurface: 'rgba(250, 250, 249, 0.98)',
+    nodeSurface: '#24272d',
     editor: '#202125',
     editorPaper: '#ffffff',
-    editorChrome: '#1b1c1f',
-    annotation: '#ffb340',
-    groupBackground: '#f1f1f2',
+    editorChrome: '#25282e',
+    annotation: '#dfb977',
+    groupBackground: '#8294ab',
     control: '#26272b',
     selection: '#f5f5f6',
   },
@@ -130,6 +131,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         'palette.open',
         'palette.close',
         'palette.setPreferences',
+        'palette.applyPresetColors@1',
         'palette.resetAppearance',
         'palette.applyAppearance',
         'palette.colorPicker.open',
@@ -423,6 +425,21 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         validate: isAppearanceUpdateRequest,
         handle: appearanceUpdate,
       });
+      context.commands.register<{ id: import('../../protocols/appearance.ts').PalettePresetId }, PalettePreferences>({
+        type: 'palette.applyPresetColors@1',
+        validate: (value): value is { id: import('../../protocols/appearance.ts').PalettePresetId } => isRecord(value) && PALETTE_PRESETS.some(preset => preset.id === value.id),
+        handle: async ({ id }) => {
+          const preset = PALETTE_PRESETS.find(preset => preset.id === id)!;
+          const request = await resolveAppearanceScope(context, 'global', readPreferences());
+          const targets = (await context.capabilities.requestAll<AppearanceReadContribution>('appearance.read@1', request)).flatMap(item => item.targets);
+          const colors: Partial<Record<import('../../protocols/appearance.ts').AppearanceKind, string>> = {
+            'canvas-background': preset.canvasBackground, 'connection-line': preset.connectionColor, 'connection-junction': preset.junctionColor,
+          };
+          const requests = targets.filter(target => colors[target.kind]).map(target => ({ kind: target.kind, color: colors[target.kind]!, entities: target.entities }));
+          const outcome = await appearanceUpdates(requests);
+          return { ...outcome, result: preset.preferences };
+        },
+      });
       context.commands.register<undefined, { changed: number }>({
         type: 'palette.resetAppearance',
         handle: async () => {
@@ -526,7 +543,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
       context.events.subscribe('canvas.appearance.changed', invalidateTargets);
       context.events.subscribe('connection.appearance.changed', invalidateTargets);
       context.events.subscribe('content.format.changed', invalidateTargets);
-      context.events.subscribe('history.changed', invalidateTargets);
+      context.events.subscribe('history.changed', () => { applyTheme(); invalidateTargets(); });
       context.events.subscribe('document.replaced', invalidateTargets);
       context.capabilities.provide({ key: 'palette.state@1', invoke: readState });
       context.capabilities.provide<undefined, AppearanceTarget[]>({
@@ -749,7 +766,7 @@ function normalizePreferences(value: unknown): PalettePreferences {
   const toolbarBackground = isRecord(value) && typeof value.toolbarBackground === 'string' &&
     isHexColor(value.toolbarBackground)
     ? value.toolbarBackground.toLowerCase()
-    : themeId === 'dark' ? '#141517' : '#fafaf9';
+    : themeId === 'dark' ? '#1c1e23' : '#fafaf9';
   const annotationColor = isRecord(value) && typeof value.annotationColor === 'string' &&
     isHexColor(value.annotationColor)
     ? value.annotationColor.toLowerCase()
@@ -788,7 +805,7 @@ function isPreferencesPatch(value: unknown): value is PalettePreferencesPatch {
 
 function isAppearanceUpdateRequest(value: unknown): value is AppearanceUpdateRequest {
   return isRecord(value) &&
-    (value.kind === 'canvas-background' || value.kind === 'connection-line' ||
+    (value.kind === 'canvas-background' || value.kind === 'connection-line' || value.kind === 'connection-junction' ||
       value.kind === 'connection-label-background' || value.kind === 'connection-label-text' ||
       value.kind === 'node-title' || value.kind === 'text-color' ||
       value.kind === 'group-fill' || value.kind === 'annotation-marker') &&
@@ -845,7 +862,7 @@ function isPaletteAnchor(value: unknown): value is ColorPickerOpenRequest['ancho
 function appearanceLabel(input: AppearanceUpdateRequest, changed: number): string {
   const name = input.kind === 'canvas-background'
     ? '画布背景'
-    : input.kind === 'connection-line'
+    : input.kind === 'connection-junction' ? '中转点' : input.kind === 'connection-line'
       ? '连接曲线'
       : input.kind === 'connection-label-background'
         ? '连接文字框'

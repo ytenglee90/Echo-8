@@ -15,6 +15,8 @@ export interface SmartSnapResult {
   guides: CanvasSnapGuide[];
 }
 
+export interface SmartLayoutSettings { guides: boolean; snap: boolean }
+
 export interface SmartResizeSnapRequest {
   resized: WorldBounds;
   resizingId: string;
@@ -52,6 +54,8 @@ export interface ArrangeCycleResult {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'layout.toggleGuides@1': CommandContract<undefined, SmartLayoutSettings>;
+    'layout.toggleSnap@1': CommandContract<undefined, SmartLayoutSettings>;
     'node.arrangeSelectedCycle': CommandContract<undefined, ArrangeCycleResult>;
   }
 }

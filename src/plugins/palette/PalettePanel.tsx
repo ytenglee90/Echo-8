@@ -16,11 +16,11 @@ const EMPTY_STATE: PalettePanelState = {
   open: false,
   preferences: {
     themeId: 'light',
-    editorBackground: '#f1f1ef',
+    editorBackground: '#f7f7f4',
     editorChromeBackground: '#ffffff',
     toolbarBackground: '#fafaf9',
-    annotationColor: '#ff9f0a',
-    groupBackground: '#202124',
+    annotationColor: '#b9812e',
+    groupBackground: '#75808d',
   },
 };
 
@@ -37,6 +37,8 @@ export function PalettePanel({ client }: { client: ViewClient }) {
   );
   const [state, setState] = useState<PalettePanelState>(EMPTY_STATE);
   const [canvasTarget, setCanvasTarget] = useState<AppearanceTarget>();
+  const [junctionTarget, setJunctionTarget] = useState<AppearanceTarget>();
+  const [junctionDraft, setJunctionDraft] = useState('#888886');
   const [connectionTarget, setConnectionTarget] = useState<AppearanceTarget>();
   const [canvasDraft, setCanvasDraft] = useState('#efefec');
   const [connectionDraft, setConnectionDraft] = useState('#888886');
@@ -78,6 +80,8 @@ export function PalettePanel({ client }: { client: ViewClient }) {
         if (!current) return;
         const nextCanvasTarget = targets.find((candidate) => candidate.kind === 'canvas-background');
         const nextConnectionTarget = targets.find((candidate) => candidate.kind === 'connection-line');
+        const pointTarget = targets.find(candidate => candidate.kind === 'connection-junction');
+        setJunctionTarget(pointTarget); if (pointTarget) setJunctionDraft(pointTarget.color);
         setCanvasTarget(nextCanvasTarget);
         setConnectionTarget(nextConnectionTarget);
         if (nextCanvasTarget) setCanvasDraft(nextCanvasTarget.color);
@@ -198,14 +202,8 @@ export function PalettePanel({ client }: { client: ViewClient }) {
     clearPreviews(client);
     setApplyingPreset(preset.id);
     try {
-      if (canvasTarget && canvasTarget.color.toLowerCase() !== preset.canvasBackground) {
-        await client.dispatch('palette.applyAppearance', {
-          kind: canvasTarget.kind,
-          color: preset.canvasBackground,
-          entities: canvasTarget.entities,
-        });
-      }
-      const preferences = await client.dispatch('palette.setPreferences', preset.preferences);
+      const preferences = await client.dispatch('palette.applyPresetColors@1', { id: preset.id });
+      await client.dispatch('palette.setPreferences', preferences);
       setState((current) => ({ ...current, preferences }));
       setCanvasDraft(preset.canvasBackground);
       setEditorDraft(preferences.editorBackground);
@@ -268,7 +266,7 @@ export function PalettePanel({ client }: { client: ViewClient }) {
       <PaletteSetting title="配套主题" description="一键统一画布与界面颜色，可继续逐项微调。">
         <div className="palette-presets" role="group" aria-label="配套主题">
           {PALETTE_PRESETS.map((preset) => {
-            const active = presetMatches(preset, state.preferences, canvasTarget?.color);
+            const active = presetMatches(preset, state.preferences, canvasTarget?.color, connectionTarget?.color, junctionTarget?.color);
             return (
               <button
                 type="button"
@@ -329,6 +327,17 @@ export function PalettePanel({ client }: { client: ViewClient }) {
         ) : (
           <p className="palette-empty">连接曲线颜色功能暂不可用。</p>
         )}
+      </PaletteSetting>
+
+      <PaletteSetting title="中转点颜色" description="应用到全部中转点；对比不足时自动校正明暗度。">
+        {junctionTarget ? <ColorRow client={client} label="中转点" color={junctionDraft}
+          onPreview={color => { setJunctionDraft(color); client.emit('appearance.color.preview', { kind: 'connection-junction', color, entityIds: ['junction'] } satisfies AppearancePreview); }}
+          onCommit={color => { void client.dispatch('palette.applyAppearance', { kind: 'connection-junction', color, entities: junctionTarget.entities })
+            .then(() => { setReloadToken(value => value + 1); setError(undefined); })
+            .catch(reason => { setJunctionDraft(junctionTarget.color); setError(errorMessage(reason)); })
+            .finally(() => client.emit('appearance.color.preview', { clear: true } satisfies AppearancePreview)); }}
+          onCancel={() => { setJunctionDraft(junctionTarget.color); client.emit('appearance.color.preview', { clear: true } satisfies AppearancePreview); }} />
+          : <p className="palette-empty">中转点颜色功能暂不可用。</p>}
       </PaletteSetting>
 
       <PaletteSetting title="群组底色" description="应用到所有群组，系统自动加入透明度。">
@@ -489,8 +498,9 @@ function errorMessage(reason: unknown): string {
 function presetMatches(
   preset: PalettePreset,
   preferences: PalettePanelState['preferences'],
-  canvasColor?: string,
+  canvasColor?: string, connectionColor?: string, junctionColor?: string,
 ): boolean {
+  if (connectionColor !== preset.connectionColor || junctionColor !== preset.junctionColor) return false;
   if (!canvasColor || canvasColor.toLowerCase() !== preset.canvasBackground) return false;
   return (Object.keys(preset.preferences) as Array<keyof typeof preset.preferences>)
     .every((key) => preferences[key].toLowerCase() === preset.preferences[key].toLowerCase());

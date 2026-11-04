@@ -8,6 +8,7 @@ import type {
   SmartSnapResult,
   SmartResizeSnapRequest,
   SmartResizeSnapResult,
+  SmartLayoutSettings,
 } from '../../protocols/layout.ts';
 import type {
   SelectableEntity,
@@ -31,27 +32,50 @@ const ARRANGE_CYCLE_RESET_MS = 1_600;
 export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('smart-layout', '智能参考线与自动排列', {
+      namespaces: ['smartLayout'], namespaceDomains: { smartLayout: 'workspace' },
       requiresCapabilities: ['selection.read@1', 'selection.entities@1', 'layout.gridPlan@1'],
       providesCapabilities: ['layout.snap@1', 'layout.resizeSnap@1'],
       commands: [
+        'layout.toggleGuides@1', 'layout.toggleSnap@1',
         'node.arrangeSelectedCycle',
         'node.arrangeSelectedGrid',
         'node.arrangeSelectedGrid.horizontal',
         'node.arrangeSelectedGrid.vertical',
       ],
-      events: ['plugin.lifecycle.changed'],
-      signals: ['content.catalog.invalidated', 'groups.invalidated', 'connections.invalidated'],
+      events: ['plugin.lifecycle.changed', 'layout.settings.changed@1'],
+      signals: ['content.catalog.invalidated', 'groups.invalidated', 'connections.invalidated', 'canvas.snap.preview'],
       ui: ['smart-layout.arrange-grid'],
       actions: [
+        'smart-layout.toggle-guides-action', 'smart-layout.toggle-snap-action',
         'smart-layout.arrange-grid-action',
       ],
       shortcuts: [
+        'smart-layout.toggle-guides-shortcut', 'smart-layout.toggle-snap-shortcut',
         'smart-layout.arrange-grid-shortcut',
       ],
-      permissions: ['ui.top.contribute', 'ui.action.register', 'ui.shortcut.register'],
+      permissions: ['store.own.read', 'store.own.write', 'ui.top.contribute', 'ui.action.register', 'ui.shortcut.register'],
     }),
 
     async start(context) {
+      const settings = (): SmartLayoutSettings => ({
+        guides: context.store.readValue<boolean>('smartLayout', 'guides') !== false,
+        snap: context.store.readValue<boolean>('smartLayout', 'snap') !== false,
+      });
+      for (const [key, command, label] of [
+        ['guides', 'layout.toggleGuides@1', '智能参考线'],
+        ['snap', 'layout.toggleSnap@1', '自动吸附'],
+      ] as const) {
+        context.commands.register({ type: command, handle: () => {
+          const next = { ...settings(), [key]: !settings()[key] };
+          return { result: next, transaction: { label: `切换${label}`, history: false,
+            patches: [{ op: 'set', domain: 'workspace', namespace: 'smartLayout', key, value: next[key] }],
+            events: [{ type: 'layout.settings.changed@1', payload: next }] } };
+        } });
+        context.ui.shortcut({ id: `smart-layout.toggle-${key}-shortcut`, label: `打开或关闭${label}`, command, category: '选择与排列' });
+        context.ui.action({ id: `smart-layout.toggle-${key}-action`, label: `打开或关闭${label}`, command,
+          category: '选择与排列', keywords: ['对齐', '拖动', '吸附', '参考线', 'snap', 'guides'] });
+      }
+      context.events.subscribe('layout.settings.changed@1', () => context.signals.emit('canvas.snap.preview', { clear: true }));
       const allEntities = new SpatialHashIndex<SnapEntity>();
       const topLevelEntities = new SpatialHashIndex<SnapEntity>();
       let allEntityList: SnapEntity[] = [];
@@ -93,6 +117,8 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
         key: 'layout.snap@1',
         invoke: (input) => {
           if (!isSmartSnapRequest(input)) throw new Error('智能吸附请求不正确');
+          const state = settings();
+          if (!state.guides && !state.snap) return { offsetX: 0, offsetY: 0, guides: [] };
           const moving = new Set(input.movingIds);
           const margin = Math.max(SNAP_SEARCH_MARGIN, input.threshold * 8);
           const index = input.mode === 'group' ? topLevelEntities : allEntities;
@@ -112,7 +138,9 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
             nearestOnAxes(input.dragged, entityList, DISTANT_AXIS_REFERENCE_LIMIT),
           ).filter((entity) =>
             !moving.has(entity.id) && !(entity.contains ?? []).some((id) => moving.has(id)));
-          return snapDraggedBounds(input.dragged, references, input.threshold);
+          const result = snapDraggedBounds(input.dragged, references, input.threshold);
+          return { offsetX: state.snap ? result.offsetX : 0, offsetY: state.snap ? result.offsetY : 0,
+            guides: state.guides ? result.guides : [] };
         },
       });
 
@@ -120,6 +148,8 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
         key: 'layout.resizeSnap@1',
         invoke: (input) => {
           if (!isSmartResizeSnapRequest(input)) throw new Error('缩放智能吸附请求不正确');
+          const state = settings();
+          if (!state.guides && !state.snap) return { width: input.resized.width, height: input.resized.height, guides: [] };
           const margin = Math.max(SNAP_SEARCH_MARGIN, input.threshold * 8);
           const nearby = allEntities.query({
             x: input.resized.x - margin,
@@ -128,7 +158,9 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
             height: input.resized.height + margin * 2,
           }).filter((entity) =>
             entity.id !== input.resizingId && !(entity.contains ?? []).includes(input.resizingId));
-          return snapResizedBounds(input.resized, nearby, input.threshold);
+          const result = snapResizedBounds(input.resized, nearby, input.threshold);
+          return { width: state.snap ? result.width : input.resized.width,
+            height: state.snap ? result.height : input.resized.height, guides: state.guides ? result.guides : [] };
         },
       });
 

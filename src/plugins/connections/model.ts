@@ -87,7 +87,7 @@ interface SerializedConnections {
 export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('connections', '连线', {
-      dataVersion: 13,
+      dataVersion: 14,
       namespaces: [CONNECTION_NAMESPACE, CONNECTION_APPEARANCE_NAMESPACE, JUNCTION_NAMESPACE],
       namespaceDomains: {
         [CONNECTION_NAMESPACE]: 'document',
@@ -123,7 +123,6 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       commands: [
         'connection.create',
         'connection.reconnect',
-        'connection.rotateJunctionHandle',
         'connection.moveJunctions',
         'connection.connectSelectedEndpoints',
         'connection.addJunction',
@@ -137,7 +136,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.toggleSelected',
         'connection.toggleTitleSelected',
       ],
-      dispatches: ['selection.moveEntities', 'selection.set', 'selection.clear', 'interaction.begin', 'interaction.end', 'connection.addJunction', 'connection.moveJunction', 'connection.moveJunctions'],
+      dispatches: ['canvas.camera.commit', 'selection.moveEntities', 'selection.set', 'selection.clear', 'interaction.begin', 'interaction.end', 'connection.addJunction', 'connection.moveJunction', 'connection.moveJunctions'],
       asks: ['editor.openPanes'],
       events: [
         'entity.deleted',
@@ -243,6 +242,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       from: 11, to: 12, migrate: data => data,
     }, {
       from: 12, to: 13, migrate: data => data,
+    }, {
+      from: 13, to: 14, migrate: data => data,
     }],
 
     start(context) {
@@ -263,9 +264,11 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           CONNECTION_APPEARANCE_NAMESPACE,
           CONNECTION_APPEARANCE_KEY,
         );
-        return isConnectionAppearanceRecord(value)
+        const junction = context.store.readValue<unknown>(CONNECTION_APPEARANCE_NAMESPACE, 'junction');
+        const line = isConnectionAppearanceRecord(value)
           ? { color: value.color.toLowerCase(), revision: value.revision }
           : { revision: 0 };
+        return { ...line, ...(isConnectionAppearanceRecord(junction) ? { junctionColor: junction.color.toLowerCase(), junctionRevision: junction.revision } : {}) };
       };
       const readEffectiveConnectionColor = async () => {
         const appearance = readConnectionAppearance();
@@ -329,20 +332,6 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           const references = await selectedConnectionReferences();
           if (references.length === 0) return { result: {} };
           return { result: await context.commands.invoke('connection.addJunction', { ...payload.point, connections: references }) };
-        },
-      });
-      context.commands.register<{ id: string }, { handleAngle: number; revision: number }>({
-        type: 'connection.rotateJunctionHandle',
-        validate: (value): value is { id: string } => isRecord(value) && typeof value.id === 'string' && value.id.length > 0,
-        handle: payload => {
-          const point = readJunctions()[payload.id];
-          if (!point) throw new Error('连接中转点已不存在');
-          const handleAngle = ((point.handleAngle ?? 0) + 15) % 360;
-          const next: ConnectionJunction = { ...point, handleAngle, revision: point.revision + 1 };
-          if (handleAngle === 0) delete next.handleAngle;
-          return { result: { handleAngle, revision: next.revision }, transaction: { label: '旋转中转点曲线手柄',
-            patches: [{ op: 'set', domain: 'document', namespace: JUNCTION_NAMESPACE, key: point.id, value: next }],
-            events: [{ type: 'connection.changed', payload: { junctionIds: [point.id] } }] } };
         },
       });
       const junctionMovesPlan = (positions: import('../../protocols/connections.ts').ConnectionMoveJunctionRequest[]) => {
@@ -713,17 +702,19 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             context.capabilities.request<ContentSummary[]>('content.summaries@1'),
           ]);
           const targets = await readTargets();
-          const known = new Map<string, ConnectionNodeGeometry>([...nodes, ...targets].map(node => [node.id, node]));
+          const points = Object.values(readJunctions()).map(point => ({ ...junctionGeometry(point), kind: 'junction' as const }));
+          const known = new Map<string, ConnectionNodeGeometry>([...nodes, ...targets, ...points].map(node => [node.id, node]));
           const selected = [...new Set(selection.ids)]
             .map((id) => known.get(id))
             .filter(Boolean) as ConnectionNodeGeometry[];
-          if (selected.length !== 2) throw new Error('请选择两个文字节点');
+          if (selected.length !== 2) throw new Error('请选择两个标题，或一个标题和一个中转点');
           if (selected.every(node => node.kind === 'group')) return { result: await context.commands.invoke('connection.toggleSelected') };
 
           const selectedIds = new Set(selected.map((node) => node.id));
-          const existing = logicalConnectionPaths(Object.values(readConnections())).find(({ record }) => isTitleConnection(record) &&
-            selectedIds.has(record.from.nodeId) && selectedIds.has(record.to.nodeId))?.record;
-          if (existing?.from.side === 'title' || existing?.to.side === 'title') {
+          const records = Object.values(readConnections()), hasPoint = selected.some(node => node.kind === 'junction');
+          const candidates = hasPoint ? records : logicalConnectionPaths(records).map(item => item.record);
+          const existing = candidates.find(record => isTitleConnection(record) && selectedIds.has(record.from.nodeId) && selectedIds.has(record.to.nodeId));
+          if (existing && (hasPoint || existing.from.side === 'title' || existing.to.side === 'title')) {
             return {
               result: { removed: 1 },
               transaction: {
@@ -737,6 +728,14 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
                 events: [{ type: 'connections.deleted', payload: { ids: [existing.id] } }],
               },
             };
+          }
+
+          if (hasPoint) {
+            if (selected.filter(node => node.kind === 'junction').length !== 1 || selected.some(node => node.kind === 'group')) throw new Error('请选择一个文字节点或文本框的标题与一个中转点');
+            const requested = { from: { nodeId: selected[0].id, kind: selected[0].kind, side: selected[0].kind === 'junction' ? 'right' as const : 'title' as const },
+              to: { nodeId: selected[1].id, kind: selected[1].kind, side: selected[1].kind === 'junction' ? 'left' as const : 'title' as const } };
+            assertJunctionChanges(records, [{ ...requested, id: '__title-junction-validation__', titleRoute: true, labelWidth: 0, labelHeight: 0, revision: 1, createdAt: 0 }]);
+            return { result: await context.commands.invoke('connection.create', requested) };
           }
 
           const { from, to } = resolveConnectionRecordEndpoints({
@@ -852,6 +851,11 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
                 revision: appearance.revision,
                 expectedColor: color,
               }],
+            }, {
+              kind: 'connection-junction', label: '中转点', scopeLabel: '当前画布的全部中转点',
+              color: appearance.junctionColor ?? canvasContrastColors(await readCanvasColor(context)).line, mixed: false,
+              entities: [{ id: 'junction', revision: appearance.junctionRevision ?? 0,
+                expectedColor: appearance.junctionColor ?? canvasContrastColors(await readCanvasColor(context)).line }],
             }],
           };
         },
@@ -859,6 +863,17 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       context.capabilities.provide<AppearanceUpdateRequest, AppearanceUpdatePlan>({
         key: 'appearance.updatePlan@1',
         invoke: async (input) => {
+          if (input.kind === 'connection-junction') {
+            if (!isHexColor(input.color) || input.entities.length !== 1 || input.entities[0].id !== 'junction' ||
+              !Number.isInteger(input.entities[0].revision) || input.entities[0].revision < 0 || !isHexColor(input.entities[0].expectedColor)) throw new Error('中转点颜色请求不正确');
+            const appearance = readConnectionAppearance(), color = input.color.toLowerCase();
+            const current = appearance.junctionColor ?? canvasContrastColors(await readCanvasColor(context)).line;
+            if (input.entities[0].revision !== (appearance.junctionRevision ?? 0) || input.entities[0].expectedColor.toLowerCase() !== current) throw new Error('中转点颜色已经变化，请重新选择');
+            if (appearance.junctionColor === color) return { patches: [], changed: 0 };
+            return { changed: 1, patches: [{ op: 'set', domain: 'document', namespace: CONNECTION_APPEARANCE_NAMESPACE,
+              key: 'junction', value: { color, revision: (appearance.junctionRevision ?? 0) + 1 }, schemaOwner: 'connections' }],
+              events: [{ type: 'connection.appearance.changed', payload: { kind: input.kind, color } }] };
+          }
           if (input.kind !== 'connection-line' && input.kind !== 'connection-label-text') return { patches: [], changed: 0 };
           if (!(input.kind === 'connection-line' && input.entities.length === 1 &&
             input.entities[0].id === CONNECTION_APPEARANCE_KEY)) {
@@ -928,6 +943,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           const add = (color: string) => counts.set(color, (counts.get(color) ?? 0) + 1);
           const canvasColor = await readCanvasColor(context);
           const globalLineColor = await readEffectiveConnectionColor();
+          const points = Object.values(readJunctions());
+          if (points.length) counts.set(readConnectionAppearance().junctionColor ?? canvasContrastColors(canvasColor).line, points.length);
           for (const connection of Object.values(readConnections())) {
             add(connectionPartColor(connection, 'connection-line', globalLineColor, canvasColor));
             if (connection.label) {
@@ -941,6 +958,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         key: 'appearance.resetPlan@1',
         invoke: () => {
           const patches: AppearanceUpdatePlan['patches'] = [];
+          const storedJunction = context.store.readValue<unknown>(CONNECTION_APPEARANCE_NAMESPACE, 'junction');
+          if (storedJunction) patches.push({ op: 'delete', domain: 'document', namespace: CONNECTION_APPEARANCE_NAMESPACE, key: 'junction', schemaOwner: 'connections' });
           const changedConnections: string[] = [];
           const storedAppearance = context.store.readValue<{ color: string; revision: number }>(
             CONNECTION_APPEARANCE_NAMESPACE,
@@ -973,9 +992,9 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           }
           return {
             patches,
-            changed: changedConnections.length + (storedAppearance ? 1 : 0),
+            changed: changedConnections.length + (storedAppearance ? 1 : 0) + (storedJunction ? 1 : 0),
             events: [
-              ...(storedAppearance
+              ...(storedAppearance || storedJunction
                 ? [{ type: 'connection.appearance.changed', payload: { color: undefined } }]
                 : []),
               ...(changedConnections.length > 0
@@ -1204,9 +1223,9 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         id: 'connections.toggle-title-selected-shortcut',
         chord: 'shift+l',
         command: 'connection.toggleTitleSelected',
-        label: '标题到标题连接两个文字节点',
+        label: '标题连线（节点或中转点）',
         category: '节点与连线',
-        instruction: '先选标题为输出端，后选标题为带箭头的输入端。',
+          instruction: '选择两个标题，或一个标题与一个中转点；先选为输出，后选为输入。',
       });
       for (const [suffix, command, label] of [
         ['add', 'connection.addJunctionAtPointer', '在鼠标位置添加连接中转点'],
@@ -1225,7 +1244,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       });
       context.ui.action({
         id: 'connections.toggle-title-selected-action',
-        label: '标题到标题连接两个文字节点',
+        label: '标题连线（节点或中转点）',
         command: 'connection.toggleTitleSelected',
         category: '节点与连线',
         keywords: ['标题', '标题栏', '连线', '连接', 'title', 'connection'],

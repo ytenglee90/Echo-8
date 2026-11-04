@@ -120,8 +120,10 @@
 | [0108](ADR-0108-TITLE-ORIGIN-REFERENCE-AND-AUTO-SIDES.md) | 标题创建参照与对齐区外按当前左右自动选边 | 有效；修正 0105、0106 区外翻边 |
 | [0109](ADR-0109-FIXED-JUNCTIONS-AND-FLEXIBLE-ATTACHMENT.md) | 固定中转点、独立线型、内容复制边界与自适应接入 | 有效；取代 0098 跟随，补充 0104、0105、0107 |
 | [0110](ADR-0110-MIXED-SELECTION-MOVEMENT.md) | 中转点、节点、文本框和群组混合选区原子移动 | 有效；补充 0109 固定点规则 |
-| [0111](ADR-0111-JUNCTION-HANDLE-ROTATION.md) | 双击按 15° 循环旋转中转点手柄 | 有效；连线数据 11、剪贴板 6 |
+| [0111](ADR-0111-JUNCTION-HANDLE-ROTATION.md) | 双击按 15° 循环旋转中转点手柄 | 已由 0120 取消 |
 | [0117](ADR-0117-JUNCTION-CURVE-STEERING.md) | 拖动曲线调整方向；箭头尺寸与连接距离解耦 | 部分被 0118 替代；固定尺寸规则继续有效 |
 | [0118](ADR-0118-SINGLE-CURVE-BENDS.md) | 单条曲线独立调整；共享切线不变，关联线完全不动 | 已由 0119 取代 |
 | [0119](ADR-0119-REMOVE-CURVE-DRAG-STEERING.md) | 移除拖动曲线调向，保留自动平滑路由 | 有效；取代 0118，数据 13 兼容旧偏移数据 |
+| [0120](ADR-0120-LAYOUT-SWITCHES-AND-EDGE-PAN.md) | 智能参考线/吸附开关、边缘自动平移、删除双击旋转 | 有效；补充 0119，取消 0111 手动旋转，连线数据 14 |
+| [0121](ADR-0121-JUNCTION-COLOR-TITLE-SHORTCUT-AND-FOCUS.md) | 中转点全局颜色、配套主题、Shift+L 与全画布聚焦 | 有效；补充 0120，兼容连线数据 14 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

@@ -1,5 +1,7 @@
 'use client';
 
+import { useDragEdgePan } from '../../ui/use-drag-edge-pan.ts';
+
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
@@ -74,6 +76,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     surfaceSize,
     layerRef,
   } = useCanvasLayerEnvironment<HTMLDivElement>(client);
+  const edgePan = useDragEdgePan(client, camera);
   useSyncExternalStore(client.subscribeKeyboard, client.getKeyboardVersion, () => 0);
   const duplicateModifierActive = client.isShortcutPressed('canvas.duplicate-modifier');
   const [groups, setGroups] = useState<GroupRecord[]>([]);
@@ -253,6 +256,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.focus({ preventScroll: true });
+    const input = { ...event, currentTarget: event.currentTarget };
     const duplicateOnCommit = event.altKey || duplicateModifierActive;
     const request: PendingGroupDrag = {
       pointerId: event.pointerId,
@@ -319,6 +323,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
         moved,
         duplicateOnCommit: request.duplicateOnCommit,
       };
+      if (moved) moveDrag({ ...input, clientX: request.latestX, clientY: request.latestY });
       if (moved) client.emit('canvas.drag.preview', {
         positions: latest,
         duplicateOrigins: request.duplicateOnCommit ? origins : [],
@@ -339,10 +344,12 @@ export function GroupLayer({ client }: { client: ViewClient }) {
       pendingDrag.current.duplicateOnCommit = event.altKey || client.isShortcutPressed('canvas.duplicate-modifier');
     }
     if (!drag.current) return;
-    const dx = (event.clientX - drag.current.pointerX) / camera.zoom;
-    const dy = (event.clientY - drag.current.pointerY) / camera.zoom;
+    const dx = (event.clientX - drag.current.pointerX) / camera.zoom + edgePan.offset().x;
+    const dy = (event.clientY - drag.current.pointerY) / camera.zoom + edgePan.offset().y;
     drag.current.moved ||= Math.abs(dx) + Math.abs(dy) > 2;
     if (!drag.current.moved) return;
+    const sample = { ...event, currentTarget: event.currentTarget };
+    edgePan.track(event.currentTarget, event.clientX, event.clientY, () => moveDrag(sample));
     const rawLatest = drag.current.origins.map((origin) => ({
       ...origin,
       x: origin.x + dx,
@@ -357,6 +364,8 @@ export function GroupLayer({ client }: { client: ViewClient }) {
   };
 
   const finishDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (drag.current) moveDrag(event);
+    edgePan.finish();
     const duplicateAtRelease = event.altKey || client.isShortcutPressed('canvas.duplicate-modifier');
     if (pendingDrag.current) {
       pendingDrag.current.duplicateOnCommit = duplicateAtRelease;
@@ -388,6 +397,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
   };
 
   const cancelDrag = () => {
+    edgePan.finish(true);
     const hadInteraction = Boolean(pendingDrag.current || drag.current);
     if (pendingDrag.current) pendingDrag.current.cancelled = true;
     pendingDrag.current = undefined;
@@ -484,6 +494,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
               onPointerMove={moveDrag}
               onPointerUp={finishDrag}
               onPointerCancel={cancelDrag}
+              onLostPointerCapture={() => { if (drag.current || pendingDrag.current) cancelDrag(); }}
               onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: group.id })}
               onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: group.id, clear: true })}
               onKeyDown={(event) => {

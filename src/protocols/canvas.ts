@@ -128,4 +128,5 @@ export interface CanvasExternalLassoPointerRequest {
 
 export interface FocusRequest {
   bounds: { x: number; y: number; width: number; height: number };
+  mode?: 'fit' | 'center-if-overflow';
 }

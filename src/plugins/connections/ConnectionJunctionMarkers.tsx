@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, type PointerEvent } from 'react';
+import { type CSSProperties, type PointerEvent } from 'react';
 
 import type { ViewClient } from '../../core/contracts.ts';
 import type { CameraState } from '../../protocols/canvas.ts';
@@ -9,7 +9,8 @@ import { canvasDetailWorldScale } from '../../ui/canvas-screen-scale.ts';
 import { useJunctionDrag } from './use-junction-drag.ts';
 import { useJunctionConnect } from './use-junction-connect.ts';
 
-export function ConnectionJunctionMarkers({ client, camera, junctions, allJunctions, selected, nodes, titleJunctionIds, targetId }: {
+export function ConnectionJunctionMarkers({ client, camera, junctions, allJunctions, selected, nodes, titleJunctionIds, targetId, color }: {
+  color: string;
   client: ViewClient;
   camera: CameraState;
   junctions: ConnectionJunction[];
@@ -19,22 +20,16 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
   titleJunctionIds: ReadonlySet<string>;
   targetId?: string;
 }) {
-  const presses = useRef<string[]>([]);
   const drag = useJunctionDrag(client, camera, allJunctions, selected);
   const connect = useJunctionConnect(client, camera, nodes);
   const scale = canvasDetailWorldScale(camera.zoom);
   const finishDrag = (event: PointerEvent<SVGGElement>, cancel = false) => {
-    if (drag.finish(event, cancel) === false) presses.current = [];
+    drag.finish(event, cancel);
   };
-  return <g className="connection-junction-layer" tabIndex={-1}
-    onDoubleClick={event => {
-      event.preventDefault(); event.stopPropagation();
-      if ((event.target as Element).closest('.connection-junction-port')) return;
-      const [previous, id] = presses.current;
-      if (id && previous === id) void client.dispatch('connection.rotateJunctionHandle', { id });
-    }}
+  return <g className="connection-junction-layer" tabIndex={-1} style={{ '--connection-junction-color': color } as CSSProperties}
+    onDoubleClick={event => { event.preventDefault(); event.stopPropagation(); }}
     onKeyDown={event => {
-      if (event.key === 'Escape') { presses.current = []; connect.cancel(); drag.cancel(); event.preventDefault(); event.stopPropagation(); return; }
+      if (event.key === 'Escape') { connect.cancel(); drag.cancel(); event.preventDefault(); event.stopPropagation(); return; }
       const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
       const id = allJunctions.find(point => selected.has(point.id))?.id;
       if (!direction || !id) return;
@@ -49,16 +44,15 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
       className={`connection-junction ${selected.has(point.id) ? 'selected' : ''} ${targetId === point.id ? 'connection-target' : ''}`}
       transform={`translate(${point.x} ${point.y})`}
       data-junction-id={point.id}
-      data-handle-angle={point.handleAngle ?? 0}
       role="button"
       tabIndex={0}
       aria-label={`连接中转点 ${index + 1}`}
       aria-pressed={selected.has(point.id)}
-      onPointerDown={(event) => { if (event.button === 0) presses.current = [...presses.current.slice(-1), point.id]; drag.begin(event, point); }}
+      onPointerDown={(event) => drag.begin(event, point)}
       onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: point.id })}
       onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: point.id, clear: true })}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') { presses.current = []; connect.cancel(); drag.cancel(); event.stopPropagation(); return; }
+        if (event.key === 'Escape') { connect.cancel(); drag.cancel(); event.stopPropagation(); return; }
         const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
         if (!direction) return;
         event.preventDefault();
@@ -69,7 +63,7 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
         });
       }}
     >
-      <title>拖动圆点移动；双击调整公共方向偏好 15°；拖动上方加号拉线；Delete 删除并恢复节点连接</title>
+      <title>拖动圆点移动；拖动上方加号拉线；Delete 删除并恢复节点连接</title>
       <circle className="connection-junction-hit" r={12 / camera.zoom} />
       <rect className="connection-junction-port-bridge" x={-10 / camera.zoom} y={-28 / camera.zoom} width={20 / camera.zoom} height={20 / camera.zoom} />
       <circle className="connection-junction-ring" r={9 * scale} strokeWidth={2 * scale} />

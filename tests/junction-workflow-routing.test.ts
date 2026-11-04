@@ -45,7 +45,7 @@ test('split, delete a trunk or branch and reconnect have no stale direction thro
     const graph = () => kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
     await kernel.router.dispatch('selection.set', { ids: originalIds }, source);
     const point = await kernel.router.dispatch<{ id?: string }>('connection.addJunctionFromContext', { point: { x: jx, y: 430 } }, source);
-    const split = await graph(), vertex = split.junctions[0]; assert.equal(vertex.id, point.id); assert.equal(vertex.handleAngle, undefined);
+    const split = await graph(), vertex = split.junctions[0]; assert.equal(vertex.id, point.id);
     const removed = removeTrunk ? split.connections.find(edge => !originalIds.includes(edge.id))! : split.connections.find(edge => edge.id === originalIds[0])!;
     await kernel.router.dispatch('selection.set', { ids: [removed.id] }, source); await kernel.router.dispatch('selection.delete', undefined, source);
     assert.deepEqual((await graph()).junctions[0], vertex, 'deleting a line never writes a stale handle angle');

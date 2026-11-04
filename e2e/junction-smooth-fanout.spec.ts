@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { colorContrastRatio } from '../src/ui/canvas-contrast.ts';
 import { serializeProject } from '../src/plugins/import-export/codec.ts';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
 import type { ProjectSource } from '../src/protocols/files.ts';
@@ -103,7 +104,7 @@ test('split-delete-reconnect follows the complete user workflow with the junctio
     await page.keyboard.down('Shift'); await page.mouse.click(exposed.x, exposed.y); await page.keyboard.up('Shift');
     await expect(page.locator('.connection-hit-area[aria-pressed="true"]')).toHaveCount(2);
     const point = await screenPoint(c.jx, 430); await page.mouse.click(point.x, point.y, { button: 'right' });
-    const marker = page.locator('.connection-junction'); await expect(marker).toHaveCount(1); await expect(marker).toHaveAttribute('data-handle-angle', '0');
+    const marker = page.locator('.connection-junction'); await expect(marker).toHaveCount(1); await expect(marker).not.toHaveAttribute('data-handle-angle');
     await expect(page.locator('.connection-hit-area')).toHaveCount(3);
     const commonLeg = page.locator('.connection-hit-area:not([data-connection-id="trunk"]):not([data-connection-id="branch0"])');
     await commonLeg.focus(); await commonLeg.press('Enter'); await page.keyboard.press('Delete');
@@ -116,7 +117,7 @@ test('split-delete-reconnect follows the complete user workflow with the junctio
     await expectForwardCurves(); const preview = await page.locator('.connection-path.draft').getAttribute('d'); await page.mouse.up();
     await expect(page.locator('.connection-hit-area')).toHaveCount(3); await expectForwardCurves();
     const replacement = page.locator('.connection-hit-area:not([data-connection-id="trunk"]):not([data-connection-id="branch0"])').locator('..').locator('.connection-path');
-    await expect(replacement).toHaveAttribute('d', preview!); await expect(marker).toHaveAttribute('data-handle-angle', '0');
+    await expect(replacement).toHaveAttribute('d', preview!); await expect(marker).not.toHaveAttribute('data-handle-angle');
     await page.mouse.move(10, 950); await page.screenshot({ path: info.outputPath(`workflow-${index}-committed.png`) });
     await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
     await page.keyboard.press('Control+Shift+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(3); await expectForwardCurves();
@@ -256,7 +257,7 @@ test('selecting then dragging a junction keeps the last preview after release wi
     const box = await dot.boundingBox();
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down({ clickCount });
     await page.mouse.move(box!.x + box!.width / 2 + dx, box!.y + box!.height / 2 + dy, { steps: 8 });
-    await expect(marker).toHaveAttribute('data-handle-angle', '0');
+    await expect(marker).not.toHaveAttribute('data-handle-angle');
     const preview = await paths(); await page.mouse.up({ clickCount });
     // Observe beyond the optimistic preview, through asynchronous owner projection.
     const settled = await page.evaluate(async () => {
@@ -268,15 +269,12 @@ test('selecting then dragging a junction keeps the last preview after release wi
       return samples;
     });
     for (const sample of settled) expect(sample).toEqual(preview);
-    await expect(marker).toHaveAttribute('data-handle-angle', '0');
+    await expect(marker).not.toHaveAttribute('data-handle-angle');
     await expect.poll(paths).toEqual(preview);
   }
   const beforeRotation = await paths();
   await dot.dblclick();
-  await expect(marker).toHaveAttribute('data-handle-angle', '15');
-  await expect.poll(paths).not.toEqual(beforeRotation);
-  await page.keyboard.press('Control+z');
-  await expect(marker).toHaveAttribute('data-handle-angle', '0');
+  await expect(marker).not.toHaveAttribute('data-handle-angle');
   await expect.poll(paths).toEqual(beforeRotation);
 });
 
@@ -298,6 +296,121 @@ test('a curve near a selected junction can be selected normally without starting
   await page.mouse.click(point.x, point.y);
   await expect(edge).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(paths).toEqual(before);
+});
+
+for (const kind of ['node', 'box', 'junction', 'group', 'lasso'] as const) test(`edge panning follows a held ${kind} drag and stops on release`, async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[300, 220], [700, 220]], junction: [580, 500], pairs: [['j', 'n1']], title: false,
+    boxes: kind === 'box' ? [0] : [], groups: kind === 'group' ? [0] : [] });
+  if (kind === 'box') { const zoom = page.getByRole('textbox', { name: /画布缩放/u }); await zoom.fill('40'); await zoom.press('Enter'); }
+  const surface = page.locator('.canvas-surface'), rect = (await surface.boundingBox())!;
+  const target = kind === 'junction' ? page.locator('.connection-junction-dot') : kind === 'group' ? page.locator('.group-frame').first() : page.getByRole('article', { name: new RegExp(`${kind === 'box' ? '文本框' : '文本节点'}：节点 1$`, 'u') });
+  const start = kind === 'lasso' ? { x: rect.x + 40, y: rect.y + 80 } : await target.evaluate((element, kind) => {
+    const box = element.getBoundingClientRect(); return kind === 'group' ? { x: box.left + 10, y: box.top + 10 } : { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  }, kind);
+  const camera = () => page.locator('.group-world').evaluate(element => getComputedStyle(element).transform);
+  const original = await camera();
+  await page.mouse.move(start.x, start.y); await page.mouse.down();
+  const end = kind === 'group' ? { x: rect.x + 7, y: start.y } : kind === 'junction' ? { x: start.x, y: rect.y + 7 } : kind === 'lasso' ? { x: start.x, y: rect.y + rect.height - 7 } : { x: rect.x + rect.width - 7, y: start.y };
+  await page.mouse.move(end.x, end.y, { steps: kind === 'node' || kind === 'group' ? 1 : 12 });
+  await expect.poll(camera).not.toBe(original);
+  const first = await camera();
+  await expect.poll(camera).not.toBe(first);
+  if (kind !== 'lasso') {
+    const position = await target.boundingBox();
+    await expect.poll(async () => { const current = (await target.boundingBox())!; return Math.hypot(current.x - position!.x, current.y - position!.y); }).toBeLessThan(3);
+  } else await expect(page.locator('.selection-lasso')).toBeVisible();
+  await page.mouse.up();
+  await expect(page.locator('.selection-lasso')).toHaveCount(0);
+  const stopped = await camera();
+  // Observe multiple frames with no pointer movement after release.
+  const frames = await page.locator('.group-world').evaluate(async element => {
+    const values: string[] = []; for (let i = 0; i < 12; i++) { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); values.push(getComputedStyle(element).transform); } return values;
+  });
+  expect(frames.every(value => value === stopped)).toBe(true);
+  await expect(page.getByText(/Illegal interaction transition/u)).toHaveCount(0);
+});
+
+test('cancelling an edge drag restores its camera and objects without a continuing pan', async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[300, 220]], junction: [580, 500], pairs: [], title: false });
+  const node = page.getByRole('article', { name: /文本节点：节点 1$/u }), origin = (await node.boundingBox())!;
+  const camera = () => page.locator('.group-world').evaluate(element => getComputedStyle(element).transform);
+  const original = await camera(), surface = (await page.locator('.canvas-surface').boundingBox())!;
+  await page.mouse.move(origin.x + 60, origin.y + 70); await page.mouse.down();
+  await page.mouse.move(surface.x + 5, origin.y + 70);
+  await expect.poll(camera).not.toBe(original);
+  await page.keyboard.press('Escape'); await page.mouse.up();
+  await expect.poll(camera).toBe(original);
+  await expect.poll(async () => { const box = (await node.boundingBox())!; return Math.hypot(box.x - origin.x, box.y - origin.y); }).toBeLessThan(1);
+});
+
+test('Shift+L connects a node title or text box title to a selected junction and toggles it off', async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  for (const box of [false, true]) {
+    await openSteepFan(page, { positions: [[180, 150], [800, 400]], junction: [550, 450], pairs: [['j', 'n1']], title: true, boxes: box ? [0] : [] });
+    const node = page.getByRole('article', { name: new RegExp(`${box ? '文本框' : '文本节点'}：节点 1$`, 'u') }), dot = page.locator('.connection-junction-dot');
+    await node.click(); await page.keyboard.down('Shift'); await dot.click(); await page.keyboard.up('Shift');
+    await page.keyboard.press('Shift+l'); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+    await expect(page.locator('.connection-path.title-connection')).toHaveCount(2);
+    await page.keyboard.press('Shift+l'); await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+    await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  }
+});
+
+test('global junction color previews, commits and undoes independently; all matching themes remain readable', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1450, height: 900 });
+  await openSteepFan(page, { positions: [[250, 150], [800, 400]], junction: [580, 450], pairs: [['j', 'n1']], title: true, boxes: [0], groups: [1] });
+  await page.getByRole('button', { name: '命令面板', exact: true }).click();
+  const palette = page.getByRole('dialog', { name: '命令面板' });
+  await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开全局颜色设置'); await palette.getByRole('option', { name: /^打开全局颜色设置/u }).click();
+  const panel = page.getByRole('region', { name: '全局颜色设置' }), dot = page.locator('.connection-junction-dot');
+  const stroke = () => dot.evaluate(element => getComputedStyle(element).stroke);
+  for (const label of ['B 暗调', 'C 护眼', 'A 明调']) {
+    const preset = panel.getByRole('button', { name: new RegExp(`^${label}`, 'u') }); await preset.click(); await expect(preset).toHaveAttribute('aria-pressed', 'true');
+    for (const colors of await page.locator('.text-node-card header').evaluateAll(elements => elements.map(element => {
+      const style = getComputedStyle(element); return { ink: style.color, background: style.backgroundColor };
+    }))) expect(colorContrastRatio(colors.ink, colors.background)).toBeGreaterThanOrEqual(4.5);
+    await page.mouse.move(10, 850); await page.screenshot({ path: info.outputPath(`theme-${label[0]}.png`) });
+    await expect(page.getByText(/操作没有完成|Illegal interaction transition/u)).toHaveCount(0);
+  }
+  const original = await stroke(); await panel.getByRole('button', { name: '中转点颜色', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: '颜色选择器' });
+  await picker.getByRole('spinbutton', { name: 'R 通道数值' }).fill('36');
+  await picker.getByRole('spinbutton', { name: 'G 通道数值' }).fill('94');
+  await picker.getByRole('spinbutton', { name: 'B 通道数值' }).fill('180');
+  await expect.poll(stroke).toBe('rgb(36, 94, 180)');
+  await page.keyboard.press('Enter'); await expect(picker).toHaveCount(0);
+  await expect.poll(stroke).toBe('rgb(36, 94, 180)');
+  await panel.getByRole('button', { name: '关闭全局颜色设置', exact: true }).click();
+  await page.keyboard.press('Control+z'); await expect.poll(stroke).toBe(original);
+});
+
+for (const oversized of [false, true]) test(`focus with no selection includes every object and ${oversized ? 'centres oversized contents at the current zoom' : 'fits compact contents'}`, async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[300, 220], [oversized ? 6000 : 700, 220]], junction: [580, 500], pairs: [], title: false });
+  await page.keyboard.press('Escape'); await page.keyboard.press('Control+Shift+f');
+  const surface = (await page.locator('.canvas-surface').boundingBox())!;
+  const camera = () => page.locator('.group-world').evaluate(element => { const m = new DOMMatrix(getComputedStyle(element).transform); return { x: m.e, y: m.f, zoom: m.a }; });
+  const centre = oversized ? 3280 : 630;
+  await expect.poll(async () => { const c = await camera(); return (surface.width / 2 - c.x) / c.zoom; }).toBeCloseTo(centre, 1);
+  if (oversized) expect((await camera()).zoom).toBe(1);
+  else { await expect(page.getByRole('article')).toHaveCount(2); expect((await camera()).zoom).toBeGreaterThan(1); }
+});
+
+test('reference lines and snapping are configurable separately in the shortcut centre', async ({ page }) => {
+  await openSteepFan(page);
+  await page.getByRole('button', { name: '命令面板', exact: true }).click();
+  const palette = page.getByRole('dialog', { name: '命令面板' });
+  await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开快捷键中心');
+  await palette.getByRole('option', { name: /^打开快捷键中心/u }).click();
+  const panel = page.getByRole('region', { name: '快捷键中心' }), search = panel.getByPlaceholder('搜索操作或分类…');
+  for (const [label, chord, key] of [['智能参考线', 'Control+Shift+7', '7'], ['自动吸附', 'Control+Shift+8', '8']]) {
+    await search.fill(label);
+    const binding = panel.getByRole('textbox', { name: `修改打开或关闭${label}的快捷键` });
+    await expect(binding).toHaveValue('未设置'); await binding.focus(); await page.keyboard.press(chord);
+    await expect(binding).toHaveValue(new RegExp(`Ctrl.*Shift.*${key}`, 'u'));
+  }
 });
 
 for (const title of [false, true]) test(`moving a ${title ? 'title' : 'body'} junction close to a node keeps arrow size, line width and dash spacing unchanged`, async ({ page }) => {

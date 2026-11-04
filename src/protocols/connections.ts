@@ -23,8 +23,6 @@ export interface ConnectionEndpoint {
 
 export interface ConnectionJunction {
   id: string;
-  /** Direction preference in 15-degree steps; the route planner projects it into the smooth physical transition. */
-  handleAngle?: number;
   /** World-space centre; this is a connection-owned vertex, never text content. */
   x: number;
   y: number;
@@ -115,6 +113,8 @@ export function connectionJunctionRequest<T extends { from: ConnectionEndpoint; 
 }
 
 export interface ConnectionAppearanceSnapshot {
+  junctionColor?: string;
+  junctionRevision?: number;
   /** Undefined keeps the original automatic color derived from the canvas background. */
   color?: string;
   revision: number;
@@ -139,7 +139,6 @@ export interface ConnectionResizeLabelRequest {
 declare module './commands.ts' {
   interface ApplicationCommandMap {
     'connection.reconnect': CommandContract<ConnectionReconnectRequest, { id?: string }>;
-    'connection.rotateJunctionHandle': CommandContract<{ id: string }, { handleAngle: number; revision: number }>;
     'connection.moveJunctions': CommandContract<{ positions: ConnectionMoveJunctionRequest[] }, { moved: number }>;
     'connection.connectSelectedEndpoints': CommandContract<undefined, { id?: string }>;
     'connection.addJunction': CommandContract<ConnectionAddJunctionRequest, { id: string }>;
@@ -217,8 +216,6 @@ export interface ConnectionDraft {
 
 export interface ConnectionNodeGeometry {
   id: string;
-  /** Routing-vertex-only handle rotation. */
-  handleAngle?: number;
   x: number;
   y: number;
   width: number;

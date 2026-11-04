@@ -37,24 +37,10 @@ test('reversing historical graph roles cannot change physical routes or the shar
   assert.deepEqual(records, before);
 });
 
-test('wide, narrow, same-side, overlapping and angle-preference layouts never introduce a cusp', () => {
-  for (const jx of [0, 260, 500, 999, 1260]) for (const jy of [0, 73, 340, 900]) for (const angle of [0, 15, 90, 180, 270, 345]) {
-    const { nodes, records } = fixture(); nodes.set('j0', { ...nodes.get('j0')!, x: jx, y: jy, handleAngle: angle });
+test('wide, narrow, same-side and overlapping layouts never introduce a cusp', () => {
+  for (const jx of [0, 260, 500, 999, 1260]) for (const jy of [0, 73, 340, 900]) {
+    const { nodes, records } = fixture(); nodes.set('j0', { ...nodes.get('j0')!, x: jx, y: jy });
     for (const pair of connectionGraphPoints(records, nodes).values()) assertSmoothRoute(pair.from.route!);
-  }
-});
-
-test('a manually steered mixed fan changes all branches while keeping one shared axis and no self-intersections', () => {
-  const { nodes } = fixture(), records = [edge('a', 'j0', 'n3'), edge('b', 'j0', 'n4'), edge('c', 'j0', 'n5')];
-  const original = connectionGraphPoints(records, nodes);
-  for (const angle of [15, 30, 45, 90, 270, 330, 345]) {
-    const moved = new Map(nodes); moved.set('j0', { ...nodes.get('j0')!, handleAngle: angle });
-    const graph = connectionGraphPoints(records, moved), axes = [...graph.values()].map(pair => pair.from.tangent);
-    assert.deepEqual(axes[0], axes[1]); assert.deepEqual(axes[1], axes[2]);
-    for (const [id, pair] of graph) {
-      assert.notEqual(pair.from.route!.key, original.get(id)!.from.route!.key);
-      assertSmoothRoute(pair.from.route!); assertNoSelfIntersection(pair.from.route!);
-    }
   }
 });
 
@@ -81,18 +67,10 @@ test('pointer-only updates reuse the document plan and unchanged target projecti
   assert.notEqual(planner(records, moved, draft).draft!.points.from.route!.key, first.draft!.points.from.route!.key);
 });
 
-test('a feasible direction preference changes the transition while unsafe preferences remain smooth', () => {
-  const { nodes } = fixture(), records = [edge('branch', 'j0', 'n5')], before = connectionGraphPoints(records, nodes).get('branch')!;
-  const changed = new Map(nodes); changed.set('j0', { ...nodes.get('j0')!, handleAngle: 15 });
-  const after = connectionGraphPoints(records, changed).get('branch')!;
-  assert.notEqual(after.from.route!.key, before.from.route!.key);
-  assert.equal(after.from.x, before.from.x); assert.equal(after.from.y, before.from.y); assertSmoothRoute(after.from.route!);
-});
-
 test('coincident horizontal spans, almost touching ports and mirrored detours remain smooth without self-intersection', () => {
-  for (const x of [-300, -260, -100, -1, 0, 1, 100, 260, 300]) for (const y of [-300, -24, -1, 0, 1, 24, 300]) for (const angle of [0, 15, 90, 180, 270, 345]) {
+  for (const x of [-300, -260, -100, -1, 0, 1, 100, 260, 300]) for (const y of [-300, -24, -1, 0, 1, 24, 300]) {
     const nodes = new Map<string, ConnectionNodeGeometry>([
-      ['j0', { id: 'j0', kind: 'junction', x: 0, y: 0, width: 0, height: 0, handleAngle: angle }],
+      ['j0', { id: 'j0', kind: 'junction', x: 0, y: 0, width: 0, height: 0 }],
       ['n0', { id: 'n0', x, y: y - 73, width: 260, height: 146 }],
     ]);
     const pair = connectionGraphPoints([edge('branch', 'j0', 'n0')], nodes).get('branch')!;

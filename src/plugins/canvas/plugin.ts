@@ -248,17 +248,18 @@ export const canvasPlugin: PluginDefinition = {
       type: 'canvas.focusSelection',
       handle: async () => {
         const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
-        if (selection.ids.length === 0) return { result: false };
+        const all = selection.ids.length === 0;
         const catalogs = await context.capabilities.requestAll<SelectionCatalogContribution>(
           'selection.entities@1',
         );
         const selectedBounds = catalogs
           .flatMap((catalog) => catalog.entities)
-          .filter((entity) => selection.ids.includes(entity.id) && entity.bounds)
+          .filter((entity) => (all || selection.ids.includes(entity.id)) && entity.bounds &&
+            [entity.bounds.x, entity.bounds.y, entity.bounds.width, entity.bounds.height].every(Number.isFinite))
           .map((entity) => entity.bounds!);
         if (selectedBounds.length === 0) {
           const selected = (await context.capabilities.request<ContentSummary[]>('content.summaries@1'))
-            .filter((node) => selection.ids.includes(node.id));
+            .filter((node) => all || selection.ids.includes(node.id));
           selectedBounds.push(...selected.map((node) => ({
             x: node.x,
             y: node.y,
@@ -273,6 +274,7 @@ export const canvasPlugin: PluginDefinition = {
         const bottom = Math.max(...selectedBounds.map((bounds) => bounds.y + bounds.height));
         const request: FocusRequest = {
           bounds: { x: left, y: top, width: right - left, height: bottom - top },
+          ...(all ? { mode: 'center-if-overflow' as const } : {}),
         };
         context.signals.emit('canvas.focus.requested', request);
         return { result: true };
@@ -425,7 +427,7 @@ export const canvasPlugin: PluginDefinition = {
       label: '聚焦选中项',
       icon: 'focus',
       group: 'status',
-      tooltip: '聚焦至当前选中项（Ctrl/⌘ + Shift + F）',
+        tooltip: '聚焦选中项；未选择时聚焦整个画布（Ctrl/⌘ + Shift + F）',
       command: 'canvas.focusSelection',
       priority: 5,
     });

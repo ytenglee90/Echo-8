@@ -1,4 +1,4 @@
-import type { CameraState, LassoPreview } from '../../protocols/canvas.ts';
+import type { CameraState, LassoPreview, FocusRequest } from '../../protocols/canvas.ts';
 import {
   connectionEndpointPoint,
   connectionTargetSide,
@@ -13,8 +13,7 @@ import { endEllipsis } from '../../ui/title-ellipsis.ts';
 
 const CONNECTION_DRAG_THRESHOLD = 3;
 const CONNECTION_TARGET_SLOP = 18;
-const EDGE_PAN_ZONE_PX = 52;
-const EDGE_PAN_MAX_PX = 18;
+export { edgePanVelocity } from '../../ui/canvas-edge-pan.ts';
 
 export const MIN_ZOOM = 0.4;
 export const MAX_ZOOM = 2.4;
@@ -228,23 +227,6 @@ export function normalizeLasso(session: LassoSession): LassoPreview {
   };
 }
 
-export function edgePanVelocity(position: number, size: number): number {
-  if (size <= 0) return 0;
-  if (position < EDGE_PAN_ZONE_PX) {
-    return -EDGE_PAN_MAX_PX * Math.min(
-      1,
-      (EDGE_PAN_ZONE_PX - Math.max(0, position)) / EDGE_PAN_ZONE_PX,
-    );
-  }
-  if (position > size - EDGE_PAN_ZONE_PX) {
-    return EDGE_PAN_MAX_PX * Math.min(
-      1,
-      (Math.min(size, position) - (size - EDGE_PAN_ZONE_PX)) / EDGE_PAN_ZONE_PX,
-    );
-  }
-  return 0;
-}
-
 export function formatNodeCharacterCount(
   node: ContentSummary,
   counts: ReadonlyMap<string, NodeCharacterCount>,
@@ -272,4 +254,13 @@ export function cameraForBounds(
     x: surface.width / 2 - (bounds.x + bounds.width / 2) * zoom,
     y: surface.height / 2 - (bounds.y + bounds.height / 2) * zoom,
   };
+}
+
+export function cameraForFocus(request: FocusRequest, surface: SurfaceSize, current: CameraState): CameraState {
+  const bounds = request.bounds;
+  if (request.mode === 'center-if-overflow' && (bounds.width * current.zoom > surface.width - 120 || bounds.height * current.zoom > surface.height - 120)) {
+    return { zoom: current.zoom, x: surface.width / 2 - (bounds.x + bounds.width / 2) * current.zoom,
+      y: surface.height / 2 - (bounds.y + bounds.height / 2) * current.zoom };
+  }
+  return cameraForBounds(bounds, surface);
 }

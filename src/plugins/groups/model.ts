@@ -109,6 +109,7 @@ export function createGroupsPlugin(
         'group.membership.drop',
       ],
       dispatches: [
+        'canvas.camera.commit',
         'selection.set',
         'selection.moveEntities',
         'node.moveMany',

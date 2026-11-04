@@ -1843,8 +1843,8 @@ test('shortcut center exposes and applies the text-box presentation shortcut', a
   await binding.focus();
   await page.keyboard.press('Control+Shift+9');
   await expect(binding).toHaveValue(/Ctrl.*Shift.*9/u);
-  await search.fill('标题到标题连接两个文字节点');
-  const titleConnectionBinding = panel.getByRole('textbox', { name: '修改标题到标题连接两个文字节点的快捷键' });
+  await search.fill('标题连线（节点或中转点）');
+  const titleConnectionBinding = panel.getByRole('textbox', { name: '修改标题连线（节点或中转点）的快捷键' });
   await expect(titleConnectionBinding).toHaveValue('Shift + L');
   await expect(panel.getByRole('heading', { name: /节点与连线/u })).toBeVisible();
   await panel.getByRole('button', { name: '关闭快捷键中心', exact: true }).click();

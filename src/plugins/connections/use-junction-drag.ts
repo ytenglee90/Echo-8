@@ -1,5 +1,7 @@
 'use client';
 
+import { useDragEdgePan } from '../../ui/use-drag-edge-pan.ts';
+
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
 import { createId, type ViewClient } from '../../core/contracts.ts';
 import type { CameraState, CanvasSnapPreview, DragPreview } from '../../protocols/canvas.ts';
@@ -27,6 +29,7 @@ interface JunctionDrag {
 
 /** An owned gesture with coalesced previews and one revision-checked durable move. */
 export function useJunctionDrag(client: ViewClient, camera: CameraState, junctions: ConnectionJunction[], selected: ReadonlySet<string>) {
+  const edgePan = useDragEdgePan(client, camera);
   const session = useRef<JunctionDrag | undefined>(undefined);
   const mixedPreviewOwner = useRef<string | undefined>(undefined);
   const previewOwner = useRef<string | undefined>(undefined);
@@ -177,10 +180,12 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
     if (!active || active.pointerId !== event.pointerId) return;
     event.preventDefault();
     event.stopPropagation();
-    const dx = (event.clientX - active.startX) / camera.zoom;
-    const dy = (event.clientY - active.startY) / camera.zoom;
+    const dx = (event.clientX - active.startX) / camera.zoom + edgePan.offset().x;
+    const dy = (event.clientY - active.startY) / camera.zoom + edgePan.offset().y;
     active.moved ||= Math.hypot(event.clientX - active.startX, event.clientY - active.startY) > 3;
     if (!active.moved) return;
+    const sample = { ...event, currentTarget: event.currentTarget, preventDefault: () => {}, stopPropagation: () => {} };
+    edgePan.track(event.currentTarget, event.clientX, event.clientY, () => move(sample));
     const raw = active.origins.map(point => ({ id: point.id, x: point.x + dx, y: point.y + dy }));
     const content = active.contentOrigins.map(node => ({ ...node, x: node.x + dx, y: node.y + dy }));
     const geometry = [...raw.map(point => ({ ...point, width: 0, height: 0 })), ...content];
@@ -210,6 +215,7 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
     event?.preventDefault(); event?.stopPropagation();
     // Pointer moves may be coalesced; the release sample owns the final coordinates.
     if (event && !cancel) move(event);
+    edgePan.finish(cancel);
     session.current = undefined;
     active.failed ||= cancel;
     if (active.capture.hasPointerCapture(active.pointerId)) active.capture.releasePointerCapture(active.pointerId);
@@ -258,9 +264,6 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
       if (mounted.current) { settlement.current = { owner: active.id, positions: committed }; setSettlementOwner(active.id); }
     }).catch(() => clear(active.id));
     commitTail.current = operation;
-    // The browser can emit dblclick after a captured drag. Only stationary,
-    // completed presses may contribute to the marker's double-click action.
-    return !cancel && !active.moved;
   };
   return { begin, move, finish, cancel: () => finish(undefined, true) };
 }

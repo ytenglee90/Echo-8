@@ -587,7 +587,7 @@
   .connection-junction-hit { fill: transparent; stroke: transparent; pointer-events: all; }
   .connection-junction-dot {
     fill: var(--connection-label-background, var(--canvas-background));
-    stroke: var(--canvas-line, var(--ink));
+    stroke: var(--connection-junction-color, var(--canvas-line, var(--ink)));
     pointer-events: none;
   }
   .connection-junction-ring { fill: none; stroke: var(--canvas-selection, var(--selection)); opacity: 0; pointer-events: none; }

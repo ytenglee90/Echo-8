@@ -365,7 +365,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     const ids = new Set<string>();
     const movedTargets = liveTargets.filter(target => { const stable = stableNodeMap.get(target.id); return !stable || target.x !== stable.x || target.y !== stable.y || target.width !== stable.width || target.height !== stable.height; }).map(target => target.id);
     const moving = [...movedTargets, ...Object.keys(previews), ...Object.keys(sizePreviews), ...liveJunctions.filter(point => {
-      const stable = stableNodeMap.get(point.id); return stable?.x !== point.x || stable.y !== point.y || stable.handleAngle !== point.handleAngle;
+      const stable = stableNodeMap.get(point.id); return stable?.x !== point.x || stable.y !== point.y;
     }).map(point => point.id), ...[draft.from, draft.to, ...(draft.reconnectId ? [connectionLookup.byId.get(draft.reconnectId)?.from, connectionLookup.byId.get(draft.reconnectId)?.to] : [])]
       .filter(endpoint => endpoint?.kind === 'junction').map(endpoint => endpoint!.nodeId)];
     for (const nodeId of moving) for (const edgeId of connectionLookup.byNode.get(nodeId) ?? []) {
@@ -455,6 +455,8 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     [appearancePreview],
   );
   const labelTextPreview = appearancePreviewTarget(appearancePreview, 'connection-label-text');
+  const junctionPreviewColor = appearancePreviewTarget(appearancePreview, 'connection-junction');
+  const junctionColor = junctionPreviewColor?.color ?? connectionAppearance.junctionColor;
   const globalLinePreview = linePreview?.entityIds.includes('line')
     ? linePreview.color
     : undefined;
@@ -1079,6 +1081,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
           )}</Fragment>;
         })}
         <ConnectionJunctionMarkers client={client} camera={camera} junctions={paintedJunctions} allJunctions={junctions} selected={selected}
+          color={junctionColor ? ensureCanvasColorContrast(junctionColor, canvasColor) : canvasContrastColors(canvasColor).line}
           nodes={nodeMap} titleJunctionIds={titleJunctionIds}
           targetId={draft.to?.kind === 'junction' ? draft.to.nodeId : undefined} />
       </g>

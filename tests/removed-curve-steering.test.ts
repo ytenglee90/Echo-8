@@ -20,6 +20,8 @@ test('version twelve curve preferences reopen losslessly but no longer affect au
   project.plugins.find(p => p.id === 'connections')!.dataVersion = 12;
   const edge = project.document.namespaces.connections[line] as Record<string, unknown>;
   edge.curveBend = { from: 75 }; edge.future = { keep: true };
+  const point = Object.values(project.document.namespaces.connectionJunction)[0] as Record<string, unknown>;
+  point.handleAngle = 45;
   assert.deepEqual(await plugin.migrations!.find(m => m.from === 12)!.migrate(project.document.namespaces), project.document.namespaces);
   const restored = new ApplicationKernel(definitions()); await restored.start();
   await restored.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), source);
@@ -29,8 +31,12 @@ test('version twelve curve preferences reopen losslessly but no longer affect au
   const automatic = graph.connections.map(record => { const clean = { ...record } as typeof record & { curveBend?: unknown }; delete clean.curveBend; return clean; });
   assert.deepEqual(connectionGraphPoints(graph.connections, nodes), connectionGraphPoints(automatic, nodes));
   const saved = await restored.router.ask<ProjectSource>('system.project.source', undefined, source);
-  assert.equal(saved.plugins.find(p => p.id === 'connections')!.dataVersion, 13);
+  assert.equal(saved.plugins.find(p => p.id === 'connections')!.dataVersion, 14);
   assert.deepEqual(saved.document.namespaces.connections[line], edge);
+  assert.deepEqual(saved.document.namespaces.connectionJunction[point.id as string], point);
+  assert.ok(!plugin.manifest.commands?.includes('connection.rotateJunctionHandle'));
+  const plainNodes = new Map([...nodes].map(([id, node]) => { const plain = { ...node } as typeof node & { handleAngle?: unknown }; delete plain.handleAngle; return [id, plain]; }));
+  assert.deepEqual(connectionGraphPoints(graph.connections, nodes), connectionGraphPoints(graph.connections, plainNodes));
   assert.ok(!plugin.manifest.commands?.includes('connection.setCurveBend@1'));
   assert.ok(!plugin.manifest.signals?.includes('connection.curve.bend.preview@1'));
 });

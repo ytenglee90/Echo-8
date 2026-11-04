@@ -4,6 +4,7 @@ import type { SelectionItem } from './selection.ts';
 export type AppearanceKind =
   | 'canvas-background'
   | 'connection-line'
+  | 'connection-junction'
   | 'connection-label-background'
   | 'connection-label-text'
   | 'node-title'
@@ -127,8 +128,11 @@ export interface PalettePreferencesPatch {
   groupBackground?: string;
 }
 
+export type PalettePresetId = 'bright' | 'dark' | 'eye-care';
+
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'palette.applyPresetColors@1': CommandContract<{ id: PalettePresetId }, PalettePreferences>;
     'palette.setPreferences': CommandContract<PalettePreferencesPatch, PalettePreferences>;
     'palette.resetAppearance': CommandContract<undefined, { changed: number }>;
   }

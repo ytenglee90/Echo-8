@@ -16,10 +16,10 @@ function segments(path: string) {
 }
 const minus = (a: Point, b: Point) => ({ x: a.x - b.x, y: a.y - b.y });
 function direction(v: Point) { const length = Math.hypot(v.x, v.y); return { x: v.x / length, y: v.y / length }; }
-function fixture(jx: number, title = true, angle = 0, incoming = false) {
+function fixture(jx: number, title = true, incoming = false) {
   const nodes = new Map<string, ConnectionNodeGeometry>();
   for (let i = 0; i < 4; i++) nodes.set(`n${i}`, { id: `n${i}`, x: 208, y: [20, 222, 408, 594][i], width: 260, height: 146 });
-  nodes.set('j', { id: 'j', x: jx, y: 576, width: 0, height: 0, kind: 'junction', handleAngle: angle });
+  nodes.set('j', { id: 'j', x: jx, y: 576, width: 0, height: 0, kind: 'junction' });
   const endpoint = (id: string) => ({ nodeId: id, ...(id === 'j' ? { kind: 'junction' as const } : {}), side: title && id !== 'j' ? 'title' as const : 'left' as const });
   const pairs = [[endpoint('n3'), endpoint('j')], ...[0, 1, 2].map(i => [endpoint('j'), endpoint(`n${i}`)])];
   const records: ConnectionRecord[] = pairs.map(([from, to], i) => ({ id: String(i), from: incoming ? to : from, to: incoming ? from : to, titleRoute: title, labelWidth: 180, labelHeight: 48, revision: 1, createdAt: 1 }));
@@ -27,7 +27,7 @@ function fixture(jx: number, title = true, angle = 0, incoming = false) {
 }
 test('same-side fans share a physical transition without forcing a path through the junction', () => {
   for (const x of [64, 540]) for (const title of [true, false]) for (const incoming of [false, true]) {
-    const { nodes, records } = fixture(x, title, 0, incoming), graph = connectionGraphPoints(records, nodes);
+    const { nodes, records } = fixture(x, title, incoming), graph = connectionGraphPoints(records, nodes);
     const tangents = records.map(record => record.from.kind === 'junction' ? graph.get(record.id)!.from.tangent! : graph.get(record.id)!.to.tangent!);
     for (const tangent of tangents) { assert.equal(Math.abs(tangent.x), 1); assert.equal(Math.abs(tangent.y), 0); }
     for (const record of records) {
@@ -50,21 +50,6 @@ test('same-side fans share a physical transition without forcing a path through 
     }
   }
 });
-test('all 15-degree preferences preserve the safe transition of a same-side fan', () => {
-  for (let angle = 0; angle < 360; angle += 15) {
-    const { nodes, records } = fixture(64, true, angle), graph = connectionGraphPoints(records, nodes);
-    for (const record of records) {
-      const pair = graph.get(record.id)!, tangent = record.from.kind === 'junction' ? pair.from.tangent! : pair.to.tangent!;
-      assert.ok(Math.abs(tangent.x) > 0 && Math.abs(tangent.x) <= 1);
-      assert.ok(Math.abs(Math.hypot(tangent.x, tangent.y) - 1) < .000001);
-      const sign = record.from.kind === 'junction' ? 1 : -1;
-      assert.ok(tangent.x * sign > 0 && Math.abs(tangent.y) <= Math.abs(tangent.x) + .000001);
-      const reference = graph.get(records[0].id)!.to.tangent!;
-      assert.ok(Math.abs(tangent.x * reference.y - tangent.y * reference.x) < .000001, 'manual preferences keep every branch on the shared axis');
-    }
-  }
-});
-
 test('coincident routing endpoints have no loop, spurious arrow or non-finite hit bounds', () => {
   const point = { x: 120, y: 90, tangent: { x: 0, y: -1 } };
   assert.deepEqual(connectionStrokeGeometry(point, point), { shaftPath: 'M 120 90 C 120 90, 120 90, 120 90', arrowPath: '' });

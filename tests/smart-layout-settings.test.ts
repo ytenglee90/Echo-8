@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { ApplicationKernel } from '../src/core/kernel.ts';
+import { textNodePlugin } from '../src/plugins/text-node/plugin.ts';
+import { createSelectionPlugin } from '../src/plugins/selection/model.ts';
+import { createSmartLayoutPlugin } from '../src/plugins/smart-layout/model.ts';
+import type { SmartSnapResult, SmartResizeSnapResult } from '../src/protocols/layout.ts';
+
+test('guides and snapping are independent personal switches registered with the keyboard centre and released on hot stop', async () => {
+  const kernel = new ApplicationKernel([textNodePlugin, createSelectionPlugin(), createSmartLayoutPlugin()]); await kernel.start();
+  await kernel.router.dispatch('node.create', { x: 0, y: 0 }, 'core.test');
+  await kernel.plugins.stop('smart-layout'); await kernel.plugins.start('smart-layout');
+  const input = { dragged: { x: 5, y: 5, width: 260, height: 146 }, movingIds: ['moving'], mode: 'nodes', threshold: 18 };
+  const snap = () => kernel.capabilities.requestSync<SmartSnapResult>('layout.snap@1', input);
+  const original = snap(); assert.notEqual(original.offsetX, 0); assert.ok(original.guides.length);
+  const history = kernel.history.getState().undoCount;
+  await kernel.router.dispatch('layout.toggleGuides@1', undefined, 'core.test');
+  assert.deepEqual(snap(), { ...original, guides: [] });
+  await kernel.router.dispatch('layout.toggleSnap@1', undefined, 'core.test');
+  assert.deepEqual(snap(), { offsetX: 0, offsetY: 0, guides: [] });
+  const resize = kernel.capabilities.requestSync<SmartResizeSnapResult>('layout.resizeSnap@1', { resized: { x: 0, y: 0, width: 257, height: 143 }, resizingId: 'moving', threshold: 18 });
+  assert.deepEqual(resize, { width: 257, height: 143, guides: [] });
+  await kernel.router.dispatch('layout.toggleGuides@1', undefined, 'core.test');
+  assert.equal(snap().offsetX, 0); assert.ok(snap().guides.length);
+  assert.equal(kernel.history.getState().undoCount, history);
+  const shortcuts = await kernel.router.ask<Array<{ owner: string; label: string; command: string }>>('system.shortcuts', undefined, 'core.test');
+  for (const label of ['打开或关闭智能参考线', '打开或关闭自动吸附']) assert.ok(shortcuts.some(row => row.owner === 'smart-layout' && row.label === label));
+  await kernel.plugins.stop('smart-layout');
+  assert.ok(!(await kernel.router.ask<typeof shortcuts>('system.shortcuts', undefined, 'core.test')).some(row => row.owner === 'smart-layout'));
+  await kernel.plugins.start('smart-layout'); assert.equal(snap().offsetX, 0); assert.ok(snap().guides.length);
+});
