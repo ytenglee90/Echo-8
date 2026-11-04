@@ -277,7 +277,20 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   [liveJunctions, liveTargets, previewNodes]);
   const reconnect = useConnectionGesture(client, camera, nodeMap);
   const stablePoints = useMemo(() => connectionGraphPoints(connections, stableNodeMap), [connections, stableNodeMap]);
-  const livePoints = useMemo(() => connectionGraphPoints(connections, nodeMap), [connections, nodeMap]);
+  const routingRecords = useMemo(() => draft.from && draft.to ? [...connections.filter(edge => edge.id !== draft.reconnectId), {
+    id: draft.reconnectId ?? '__connection-draft__', from: draft.from, to: draft.to, titleRoute: draft.titleRoute,
+    titleOrigin: draft.titleOrigin, labelWidth: 0, labelHeight: 0, revision: 0, createdAt: 0,
+  }] : connections, [connections, draft.from, draft.to, draft.reconnectId, draft.titleRoute, draft.titleOrigin]);
+  const livePoints = useMemo(() => connectionGraphPoints(routingRecords, nodeMap), [routingRecords, nodeMap]);
+  const junctionTangents = useMemo(() => {
+    const result = new Map<string, { x: number; y: number }>();
+    for (const edge of routingRecords) {
+      const pair = livePoints.get(edge.id); if (!pair) continue;
+      if (edge.from.kind === 'junction' && pair.from.tangent) result.set(edge.from.nodeId, pair.from.tangent);
+      if (edge.to.kind === 'junction' && pair.to.tangent) result.set(edge.to.nodeId, pair.to.tangent);
+    }
+    return result;
+  }, [routingRecords, livePoints]);
   const connectionLookup = useMemo(() => {
     const byId = new Map<string, ConnectionRecord>();
     const byNode = new Map<string, Set<string>>();
@@ -366,7 +379,8 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     const movedTargets = liveTargets.filter(target => { const stable = stableNodeMap.get(target.id); return !stable || target.x !== stable.x || target.y !== stable.y || target.width !== stable.width || target.height !== stable.height; }).map(target => target.id);
     const moving = [...movedTargets, ...Object.keys(previews), ...Object.keys(sizePreviews), ...liveJunctions.filter(point => {
       const stable = stableNodeMap.get(point.id); return stable?.x !== point.x || stable.y !== point.y;
-    }).map(point => point.id)];
+    }).map(point => point.id), ...[draft.from, draft.to, ...(draft.reconnectId ? [connectionLookup.byId.get(draft.reconnectId)?.from, connectionLookup.byId.get(draft.reconnectId)?.to] : [])]
+      .filter(endpoint => endpoint?.kind === 'junction').map(endpoint => endpoint!.nodeId)];
     for (const nodeId of moving) for (const edgeId of connectionLookup.byNode.get(nodeId) ?? []) {
       ids.add(edgeId);
       const edge = connectionLookup.byId.get(edgeId)!;
@@ -375,7 +389,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       }
     }
     return ids;
-  }, [connectionLookup, liveJunctions, liveTargets, previews, sizePreviews, stableNodeMap]);
+  }, [connectionLookup, liveJunctions, liveTargets, previews, sizePreviews, stableNodeMap, draft.from, draft.to, draft.reconnectId]);
   const drawable = useMemo(() => {
     if (overviewMode && focusedNodeIds.size === 0 && emphasizedConnectionIds.size === 0) return [];
     const viewport = worldViewport(camera, surfaceSize, CULL_MARGIN);
@@ -415,8 +429,8 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const draftEnd = draft.to ? endpointPoint(draft.to, nodeMap, draftSides?.to.side) : draft.pointer;
   const draftGeometry = draft.from && draftStart && draftEnd ? connectionStrokeForEndpoints(
     { from: draft.from, to: draft.to ?? { nodeId: '', side: 'left' }, titleRoute: draft.titleRoute },
-    { from: draft.from.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd, draftFromNode?.handleAngle) : draftStart,
-      to: draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart, draftToNode?.handleAngle) : draftEnd }, camera.zoom,
+    { from: draft.from.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd, junctionTangents.has(draft.from!.nodeId) ? 0 : draftFromNode?.handleAngle, junctionTangents.get(draft.from!.nodeId)) : draftStart,
+      to: draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart, junctionTangents.has(draft.to!.nodeId) ? 0 : draftToNode?.handleAngle, junctionTangents.get(draft.to!.nodeId)) : draftEnd }, camera.zoom,
   ) : undefined;
   const renderableConnections = drawable;
   const committedGeometry = useMemo<DrawableConnection[]>(() => renderableConnections.flatMap((connection) => {
@@ -434,10 +448,10 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const reconnectGeometry = useMemo<DrawableConnection | undefined>(() => {
     const connection = draft.reconnectId ? connectionLookup.byId.get(draft.reconnectId) : undefined;
     if (!connection || !draftStart || !draftEnd || !draftGeometry) return undefined;
-    const from = draft.from?.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd, draftFromNode?.handleAngle) : draftStart;
-    const to = draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart, draftToNode?.handleAngle) : draftEnd;
+    const from = draft.from?.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd, junctionTangents.has(draft.from!.nodeId) ? 0 : draftFromNode?.handleAngle, junctionTangents.get(draft.from!.nodeId)) : draftStart;
+    const to = draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart, junctionTangents.has(draft.to!.nodeId) ? 0 : draftToNode?.handleAngle, junctionTangents.get(draft.to!.nodeId)) : draftEnd;
     return { connection, from, to, midpoint: connectionCurveMidpoint(from, to), curvePath: connectionCurvePath(from, to), ...draftGeometry };
-  }, [connectionLookup.byId, draft.reconnectId, draft.from?.kind, draft.to?.kind, draftStart, draftEnd, draftGeometry, draftFromNode?.handleAngle, draftToNode?.handleAngle]);
+  }, [connectionLookup.byId, draft.reconnectId, draftStart, draftEnd, draftGeometry, draftFromNode?.handleAngle, draftToNode?.handleAngle, junctionTangents, draft.from, draft.to]);
   const drawableGeometry = useMemo(() => reconnectGeometry
     ? [...committedGeometry.filter(item => item.connection.id !== reconnectGeometry.connection.id), reconnectGeometry]
     : committedGeometry, [committedGeometry, reconnectGeometry]);

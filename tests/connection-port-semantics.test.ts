@@ -52,7 +52,11 @@ for (const title of [false, true]) for (const commonTo of [false, true]) test(`$
       const nodePoint = record.from.kind === 'junction' ? p.to : p.from;
       assert.equal(nodePoint.side, pointX < 200 ? 'left' : 'right', 'old title origin cannot override the new point-relative side');
       const curve = values(connectionCurvePath(p.from, p.to));
-      assert.equal(curve[1], curve[3]); assert.equal(curve[5], curve[7]);
+      if (record.from.kind === 'junction') assert.equal(curve.at(-3), curve.at(-1), 'node arrival is horizontal');
+      else assert.equal(curve[1], curve[3], 'node departure is horizontal');
+      const tangent = record.from.kind === 'junction' ? p.from.tangent : p.to.tangent;
+      const reference = points.get(split.connections[0].id)!;
+      assert.deepEqual(tangent, split.connections[0].from.kind === 'junction' ? reference.from.tangent : reference.to.tangent, 'all incident derivatives agree');
       const stroke = connectionStrokeForEndpoints(record, p);
       if (stroke.arrowPath) {
         arrows += 1;
@@ -86,7 +90,7 @@ test('a horizontally overlapping junction faces the actual input/output anchor r
     const points = connectionGraphPoints([record], new Map([['a', node], ['j', point]])).get('e')!;
     const p = incoming ? points.to : points.from, other = incoming ? points.from : points.to;
     assert.equal(p.side, other.x < p.x ? 'left' : 'right');
-    const direction = incoming ? p.x < other.x ? -1 : 1 : p.x > other.x ? -1 : 1;
-    assert.deepEqual(p.tangent, { x: direction, y: 0 });
+    const dx = incoming ? p.x - other.x : other.x - p.x, dy = incoming ? p.y - other.y : other.y - p.y, length = Math.hypot(dx, dy);
+    assert.deepEqual(p.tangent, { x: dx / length, y: dy / length });
   }
 });

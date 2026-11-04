@@ -17,27 +17,49 @@ export function connectionStrokeForEndpoints(record: Pick<ConnectionRecord, 'fro
   return { ...geometry, arrowEnd: geometry.arrowPath ? arrowEnd as 'from' | 'to' : undefined };
 }
 
-/** Horizontal tangent points away from a source port and into a target port. */
-export function junctionRenderPoint(point: ConnectionRenderPoint, role: 'source' | 'target', other?: ConnectionRenderPoint, handleAngle = 0): ConnectionRenderPoint {
+/** Rotate the shared flow axis; unconnected drafts fall back to the facing horizontal port. */
+export function junctionRenderPoint(point: ConnectionRenderPoint, role: 'source' | 'target', other?: ConnectionRenderPoint, handleAngle = 0, flow?: { x: number; y: number }): ConnectionRenderPoint {
   const side = other ? other.x < point.x ? 'left' : 'right' : point.side;
   const sign = role === 'source' ? side === 'left' ? -1 : 1 : side === 'right' ? -1 : 1;
   const radians = handleAngle * Math.PI / 180;
   const clean = (value: number) => Math.abs(value) < 1e-10 ? 0 : value;
-  return { ...point, side, tangent: { x: clean(sign * Math.cos(radians)), y: clean(sign * Math.sin(radians)) } };
+  const axis = flow ?? { x: sign, y: 0 };
+  return { ...point, side, tangent: { x: clean(axis.x * Math.cos(radians) - axis.y * Math.sin(radians)), y: clean(axis.x * Math.sin(radians) + axis.y * Math.cos(radians)) } };
 }
 
-/** One projection for paint, hit testing, lasso and labels. Junction ports face the other endpoint independently on every edge. */
+/** One shared forward axis per junction: incoming and outgoing derivatives must agree. */
 export function connectionGraphPoints(records: readonly ConnectionRecord[], nodes: ReadonlyMap<string, ConnectionNodeGeometry>): Map<string, ConnectionPoints> {
   const points = new Map<string, ConnectionPoints>();
+  const joints = new Map<string, { x: number; y: number; incoming: { x: number; y: number; count: number }; outgoing: { x: number; y: number; count: number } }>();
+  const accumulate = (id: string, role: 'incoming' | 'outgoing', other: ConnectionRenderPoint) => {
+    const node = nodes.get(id)!;
+    let joint = joints.get(id);
+    if (!joint) { joint = { x: node.x, y: node.y, incoming: { x: 0, y: 0, count: 0 }, outgoing: { x: 0, y: 0, count: 0 } }; joints.set(id, joint); }
+    const mean = joint[role]; mean.count += 1; mean.x += (other.x - mean.x) / mean.count; mean.y += (other.y - mean.y) / mean.count;
+  };
   for (const record of records) {
     const fromNode = nodes.get(record.from.nodeId), toNode = nodes.get(record.to.nodeId);
     if (!fromNode || !toNode) continue;
-    const endpoints = resolveConnectionRecordEndpoints(record, fromNode, toNode);
-    const sides = connectionHorizontalSides(record, fromNode, toNode);
-    const from: ConnectionRenderPoint = connectionEndpointPoint(endpoints.from, fromNode, sides.from.side);
-    const to: ConnectionRenderPoint = connectionEndpointPoint(endpoints.to, toNode, sides.to.side);
-    points.set(record.id, { from: record.from.kind === 'junction' ? junctionRenderPoint(from, 'source', to, fromNode.handleAngle) : from,
-      to: record.to.kind === 'junction' ? junctionRenderPoint(to, 'target', from, toNode.handleAngle) : to });
+    const endpoints = resolveConnectionRecordEndpoints(record, fromNode, toNode), sides = connectionHorizontalSides(record, fromNode, toNode);
+    const from = connectionEndpointPoint(endpoints.from, fromNode, sides.from.side), to = connectionEndpointPoint(endpoints.to, toNode, sides.to.side);
+    points.set(record.id, { from, to });
+    if (record.from.kind === 'junction') accumulate(record.from.nodeId, 'outgoing', to);
+    if (record.to.kind === 'junction') accumulate(record.to.nodeId, 'incoming', from);
+  }
+  const axes = new Map<string, { x: number; y: number }>();
+  for (const [id, joint] of joints) {
+    const a = joint.incoming, b = joint.outgoing;
+    let x = (b.count ? b.x : joint.x) - (a.count ? a.x : joint.x), y = (b.count ? b.y : joint.y) - (a.count ? a.y : joint.y);
+    if (Math.hypot(x, y) < .001) { x = b.count ? b.x - joint.x : joint.x - a.x; y = b.count ? b.y - joint.y : joint.y - a.y; }
+    if (Math.hypot(x, y) < .001 && a.count) { x = joint.x - a.x; y = joint.y - a.y; }
+    const length = Math.hypot(x, y);
+    axes.set(id, length > .001 ? { x: x / length, y: y / length } : { x: 1, y: 0 });
+  }
+  for (const record of records) {
+    const pair = points.get(record.id); if (!pair) continue;
+    const { from, to } = pair;
+    if (record.from.kind === 'junction') pair.from = junctionRenderPoint(from, 'source', to, nodes.get(record.from.nodeId)?.handleAngle, axes.get(record.from.nodeId));
+    if (record.to.kind === 'junction') pair.to = junctionRenderPoint(to, 'target', from, nodes.get(record.to.nodeId)?.handleAngle, axes.get(record.to.nodeId));
   }
   return points;
 }

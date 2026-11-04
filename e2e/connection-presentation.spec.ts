@@ -134,8 +134,8 @@ for (const titleRoute of [false, true]) test(`${titleRoute ? 'dashed' : 'solid'}
     return { arrow: values(arrow), shaft: values(arrow.parentElement!.querySelector('.connection-path')!) };
   }));
   for (const { arrow, shaft } of geometry) {
-    expect(shaft[5]).toBe(shaft[7]); expect(arrow[0]).toBe(arrow[4]); expect(arrow[0]).toBe(shaft[6]);
-    expect((arrow[1] + arrow[5]) / 2).toBe(shaft[7]);
+    expect(shaft.at(-3)).toBe(shaft.at(-1)); expect(arrow[0]).toBe(arrow[4]); expect(arrow[0]).toBe(shaft.at(-2));
+    expect((arrow[1] + arrow[5]) / 2).toBe(shaft.at(-1));
   }
   await page.screenshot({ path: test.info().outputPath('horizontal-junction-branches.png') });
 });

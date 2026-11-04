@@ -23,7 +23,7 @@ export interface ConnectionEndpoint {
 
 export interface ConnectionJunction {
   id: string;
-  /** Clockwise handle rotation, in 15-degree steps; absent retains automatic horizontal handles. */
+  /** Clockwise offset from the automatic shared flow axis, in 15-degree steps. */
   handleAngle?: number;
   /** World-space centre; this is a connection-owned vertex, never text content. */
   x: number;

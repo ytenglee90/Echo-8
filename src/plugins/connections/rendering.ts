@@ -86,8 +86,9 @@ export function connectionStrokeGeometry(
     final.controlFrom.y === final.from.y && final.controlTo.y === final.to.y &&
     (final.controlFrom.x - final.from.x) * (final.to.x - final.from.x) > 0 &&
     (final.to.x - final.controlTo.x) * (final.to.x - final.from.x) > 0;
-  const arrowLength = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale, length * 0.45,
-    forwardRoute ? Math.abs(final.to.x - final.from.x) * 0.4 : Infinity);
+  const arrowLength = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale,
+    from.tangent || to.tangent ? Math.min(length, segments.reduce((sum, segment) => sum + approximateCubicLength(segment), 0) * .45) : length * .45,
+    forwardRoute ? Math.abs(to.x - from.x) * .4 : Infinity);
   if (arrowLength < 0.001) return full;
   // Trim on the actual Bézier, preserving both control points and a single forward stroke.
   let previous = final.to, traversed = 0, trimT = 1;
@@ -242,6 +243,7 @@ function connectionCurveSegments(
   from: ConnectionRenderPoint,
   to: ConnectionRenderPoint,
 ): CubicCurveSegment[] {
+  if (from.tangent || to.tangent) return smoothRoutingSegments(from, to);
   if (!from.tangent && !to.tangent && from.side === to.side && (from.side === 'left' || from.side === 'right')) {
     const direction = from.side === 'right' ? 1 : -1;
     const outward = Math.min(320, Math.max(CONNECTION_MIN_HANDLE_LENGTH, 96 + Math.sqrt(Math.abs(to.y - from.y)) * 4.2));
@@ -256,25 +258,47 @@ function connectionCurveSegments(
     Math.abs(to.x - from.x) * 0.62,
     Math.abs(to.y - from.y) * 0.34,
   ));
-  const span = Math.hypot(to.x - from.x, to.y - from.y);
-  const routed = Boolean(from.tangent || to.tangent);
-  let fromHandle = routed ? Math.min(bend, span * (from.tangent ? 0.35 : 0.5)) : bend;
-  let toHandle = routed ? Math.min(bend, span * (to.tangent ? 0.35 : 0.5)) : bend;
-  // Fixed horizontal ports must not overshoot merely because the vertical separation is large.
-  if (routed && (!from.tangent || from.tangent.y === 0) && (!to.tangent || to.tangent.y === 0) &&
-    Math.abs(to.x - from.x) > 0.001 && (from.tangent?.x ?? fromDirection) === relativeDirection &&
-    (to.tangent?.x ?? toDirection) === relativeDirection) {
-    const limit = Math.abs(to.x - from.x) / 2;
-    fromHandle = Math.min(fromHandle, limit);
-    toHandle = Math.min(toHandle, limit);
-  }
   return [{
     kind: 'cubic',
     from,
-    controlFrom: { x: from.x + fromHandle * (from.tangent?.x ?? fromDirection), y: from.y + fromHandle * (from.tangent?.y ?? 0) },
-    controlTo: { x: to.x - toHandle * (to.tangent?.x ?? toDirection), y: to.y - toHandle * (to.tangent?.y ?? 0) },
+    controlFrom: { x: from.x + bend * fromDirection, y: from.y },
+    controlTo: { x: to.x - bend * toDirection, y: to.y },
     to,
   }];
+}
+
+/** Three uniform cubic pieces with zero endpoint acceleration and matching first/second derivatives at internal joins. */
+function smoothRoutingSegments(from: ConnectionRenderPoint, to: ConnectionRenderPoint): CubicCurveSegment[] {
+  const dx = to.x - from.x, dy = to.y - from.y, span = Math.hypot(dx, dy), direction = dx >= 0 ? 1 : -1;
+  if (span < .000001) return [{ kind: 'cubic', from, controlFrom: from, controlTo: to, to }];
+  const a = from.tangent ?? { x: from.side === 'left' || from.side === 'title' ? -1 : from.side === 'right' ? 1 : direction, y: 0 };
+  const b = to.tangent ?? { x: to.side === 'right' ? -1 : to.side === 'left' || to.side === 'title' ? 1 : direction, y: 0 };
+  const shift = (p: ConnectionRenderPoint, vector: { x: number; y: number }, distance: number) => ({ x: p.x + vector.x * distance, y: p.y + vector.y * distance });
+  const straight = (start: ConnectionRenderPoint, end: ConnectionRenderPoint): CubicCurveSegment => ({ kind: 'cubic', from: start, to: end,
+    controlFrom: { x: (2 * start.x + end.x) / 3, y: (2 * start.y + end.y) / 3 }, controlTo: { x: (start.x + 2 * end.x) / 3, y: (start.y + 2 * end.y) / 3 } });
+  // Keep node-adjacent arrows on a real straight lead, independent of the routing vertex's direction.
+  const lead = Math.min(40, Math.abs(dx) * .25, span * .2);
+  const start = from.tangent ? from : shift(from, a, lead), end = to.tangent ? to : shift(to, b, -lead);
+  const delta = { x: end.x - start.x, y: end.y - start.y }, distance = Math.hypot(delta.x, delta.y);
+  const handle = (vector: { x: number; y: number }) => {
+    let length = Math.min(160, Math.max(8, distance * .18));
+    if (delta.x * vector.x > 0) length = Math.min(length, Math.abs(delta.x / vector.x) / 6);
+    if (delta.y * vector.y > 0) length = Math.min(length, Math.abs(delta.y / vector.y) / 6);
+    return Math.max(.000001, length);
+  };
+  const h = handle(a), k = handle(b);
+  const p1 = shift(start, a, h), p2 = shift(start, a, 2 * h), q1 = shift(end, b, -2 * k), q2 = shift(end, b, -k);
+  const u = { x: (5 * start.x + end.x) / 6 + 2 * h * a.x - .5 * k * b.x, y: (5 * start.y + end.y) / 6 + 2 * h * a.y - .5 * k * b.y };
+  const v = { x: (start.x + 5 * end.x) / 6 + .5 * h * a.x - 2 * k * b.x, y: (start.y + 5 * end.y) / 6 + .5 * h * a.y - 2 * k * b.y };
+  const m1 = { x: (2 * start.x + end.x) / 3 + 2 * h * a.x - k * b.x, y: (2 * start.y + end.y) / 3 + 2 * h * a.y - k * b.y };
+  const m2 = { x: (start.x + 2 * end.x) / 3 + h * a.x - 2 * k * b.x, y: (start.y + 2 * end.y) / 3 + h * a.y - 2 * k * b.y };
+  return [
+    ...(!from.tangent && lead > 0 ? [straight(from, start)] : []),
+    { kind: 'cubic', from: start, controlFrom: p1, controlTo: p2, to: u },
+    { kind: 'cubic', from: u, controlFrom: m1, controlTo: m2, to: v },
+    { kind: 'cubic', from: v, controlFrom: q1, controlTo: q2, to: end },
+    ...(!to.tangent && lead > 0 ? [straight(end, to)] : []),
+  ];
 }
 
 function pointOnCubicCurve(segment: CubicCurveSegment, t: number): ConnectionRenderPoint {

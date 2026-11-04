@@ -85,8 +85,10 @@ test('double clicking a junction rotates incident curves by 15 degrees, preserve
   const draft = page.locator('.connection-path.draft');
   await expect.poll(async () => {
     const p = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-    return (p[3] - p[1]) / (p[2] - p[0]);
-  }).toBeCloseTo(Math.tan(Math.PI / 12), 3);
+    const trunk = (await page.locator('.connection-hit-area[data-connection-id="trunk"]').getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+    const a = [p[2] - p[0], p[3] - p[1]], b = [trunk[2] - trunk[0], trunk[3] - trunk[1]];
+    return (a[0] * b[0] + a[1] * b[1]) / (Math.hypot(...a) * Math.hypot(...b));
+  }).toBeCloseTo(1, 3);
   await page.keyboard.press('Escape'); await page.mouse.up();
   await expect(draft).toHaveCount(0); await expect(page.locator('.connection-hit-area')).toHaveCount(4);
   expect(await mixedPositions(page)).toEqual(before);

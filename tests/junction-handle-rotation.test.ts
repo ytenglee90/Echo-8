@@ -42,9 +42,10 @@ test('handle rotation applies to both incident tangent roles while node anchors 
         ['a', { id: 'a', x: 800, y: 80, width: 280, height: 158 }]])).get('e')!;
       const routed = reverse ? point.to : point.from, node = reverse ? point.from : point.to;
       assert.equal(node.x, 800); assert.equal(node.y, 159);
-      const sign = reverse ? -1 : 1;
-      assert.ok(Math.abs(routed.tangent!.x - sign * Math.cos(angle * Math.PI / 180)) < 1e-9);
-      assert.ok(Math.abs(routed.tangent!.y - sign * Math.sin(angle * Math.PI / 180)) < 1e-9);
+      const sign = reverse ? -1 : 1, length = Math.hypot(300, -141), radians = angle * Math.PI / 180;
+      const x = sign * 300 / length, y = sign * -141 / length;
+      assert.ok(Math.abs(routed.tangent!.x - (x * Math.cos(radians) - y * Math.sin(radians))) < 1e-9);
+      assert.ok(Math.abs(routed.tangent!.y - (x * Math.sin(radians) + y * Math.cos(radians))) < 1e-9);
       assert.ok(!/NaN|Infinity/u.test(connectionCurvePath(point.from, point.to)));
     }
   }

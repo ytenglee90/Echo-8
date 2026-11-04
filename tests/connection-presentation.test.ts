@@ -19,12 +19,12 @@ test('junction branches meet left and right ports with a horizontal shaft and ar
     const geometry = connectionStrokeGeometry({ x: 0, y: 0, tangent: { x: .1, y: .995 } }, tip, zoom);
     const shaft = geometry.shaftPath.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
     const arrow = geometry.arrowPath.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-    assert.equal(shaft[5], shaft[7]); assert.equal(shaft[7], tip.y);
+    assert.equal(shaft.at(-3), shaft.at(-1)); assert.equal(shaft.at(-1), tip.y);
     assert.deepEqual(arrow.slice(2, 4), [tip.x, tip.y]);
-    assert.equal(arrow[0], arrow[4]); assert.equal(arrow[0], shaft[6]);
-    assert.equal((arrow[1] + arrow[5]) / 2, shaft[7]);
-    assert.ok((shaft[6] - shaft[4]) * (side === 'left' ? 1 : -1) > 0);
-    assert.ok((tip.x - shaft[6]) * (side === 'left' ? 1 : -1) > 0);
+    assert.equal(arrow[0], arrow[4]); assert.equal(arrow[0], shaft.at(-2));
+    assert.equal((arrow[1] + arrow[5]) / 2, shaft.at(-1));
+    assert.ok((shaft.at(-2)! - shaft.at(-4)!) * (side === 'left' ? 1 : -1) > 0);
+    assert.ok((tip.x - shaft.at(-2)!) * (side === 'left' ? 1 : -1) > 0);
   }
 });
 
