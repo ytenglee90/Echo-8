@@ -278,7 +278,7 @@ function TextNodeCanvasLayerView({
                     aria-label={`从${node.title}标题栏${titleSide === 'left' ? '左' : '右'}侧连接`}
                     title={`从标题栏${titleSide === 'left' ? '左' : '右'}侧创建连线`}
                     tabIndex={-1}
-                    onPointerDown={(event) => handleConnectionPort(event, node, 'title')}
+                    onPointerDown={(event) => handleConnectionPort(event, node, 'title', titleSide)}
                   />)}</>
                 )}
                 <button

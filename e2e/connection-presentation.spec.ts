@@ -96,7 +96,7 @@ for (const titleRoute of [false, true]) test(`${titleRoute ? 'dashed' : 'solid'}
     const from = await marker.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
     const target = await page.locator('.text-node-card').filter({ has: page.locator(`strong[title="演示${id}"]`) }).boundingBox();
     await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2); await page.mouse.down();
-    await page.mouse.move(target!.x, target!.y + target!.height / 2, { steps: 10 });
+    await page.mouse.move(target!.x, target!.y + target!.height * (titleRoute && id === 'd' ? .25 : .5), { steps: 10 });
     if (titleRoute) await expect(page.locator('.connection-path.draft')).not.toHaveCSS('stroke-dasharray', 'none');
     else await expect(page.locator('.connection-path.draft')).toHaveCSS('stroke-dasharray', 'none');
     await page.mouse.up();
@@ -112,6 +112,30 @@ for (const titleRoute of [false, true]) test(`${titleRoute ? 'dashed' : 'solid'}
     expect((arrow[1] + arrow[5]) / 2).toBe(shaft[7]);
   }
   await page.screenshot({ path: test.info().outputPath('horizontal-junction-branches.png') });
+});
+
+for (const upper of [true, false]) test(`junction-to-text-box uses target ${upper ? 'upper' : 'lower'} region and rejects the opposite component style`, async ({ page }) => {
+  await openFixture(page, false, upper);
+  const marker = page.locator('.connection-junction'); await marker.focus();
+  const plus = await marker.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
+  const target = await page.locator('.text-node-card').filter({ has: page.locator('strong[title="演示d"]') }).boundingBox();
+  await page.mouse.move(plus!.x + plus!.width / 2, plus!.y + plus!.height / 2); await page.mouse.down();
+  const draft = page.locator('.connection-path.draft');
+  for (const fraction of [.25, .75, upper ? .25 : .75]) {
+    await page.mouse.move(target!.x + target!.width, target!.y + target!.height * fraction, { steps: 8 });
+    if (fraction < .5) await expect(draft).toHaveClass(/title-connection/u); else await expect(draft).not.toHaveClass(/title-connection/u);
+  }
+  await page.mouse.up(); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  const edge = page.locator('.connection-hit-area:not([data-connection-id="incoming"])');
+  const id = (await edge.getAttribute('data-connection-id'))!;
+  expect((await coordinates(page, id)).slice(-2)).toEqual([780, 420]);
+  const arrow = await page.locator(`[data-arrow-for="${id}"]`).boundingBox();
+  await page.mouse.move(arrow!.x + arrow!.width / 3, arrow!.y + arrow!.height / 2); await page.mouse.down();
+  await page.mouse.move(target!.x, target!.y + target!.height * (upper ? .75 : .25), { steps: 8 }); await page.mouse.up();
+  await expect(page.getByText('虚线与实线不能共用同一个中转点，请分别添加中转点', { exact: true })).toBeVisible();
+  await expect(page.locator('.connection-layer')).not.toHaveAttribute('data-reconnecting-id');
+  const line = edge.locator('..').locator('.connection-path');
+  if (upper) await expect(line).toHaveClass(/title-connection/u); else await expect(line).not.toHaveClass(/title-connection/u);
 });
 
 for (const id of ['solid', 'dashed']) test(`resizing ${id} labels repeatedly, cancelling and dragging nodes leaves interaction usable`, async ({ page }) => {

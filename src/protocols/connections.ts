@@ -61,7 +61,16 @@ export interface ConnectionMoveJunctionRequest {
 
 export type ConnectionJunctionPreview = { id: string; x: number; y: number } | { positions: Array<{ id: string; x: number; y: number }> } | { clear: true };
 
+export interface ConnectionTitleOrigin { side: 'left' | 'right'; sourceIsLeft: boolean }
+export function isConnectionTitleOrigin(value: unknown): value is ConnectionTitleOrigin {
+  if (!value || typeof value !== 'object') return false;
+  const origin = value as Record<string, unknown>;
+  return (origin.side === 'left' || origin.side === 'right') && typeof origin.sourceIsLeft === 'boolean';
+}
+
 export interface ConnectionRecord {
+  /** Schema v4 / dataVersion 9: selected title departure side and its original relative ordering. */
+  titleOrigin?: ConnectionTitleOrigin;
   id: string;
   from: ConnectionEndpoint;
   to: ConnectionEndpoint;
@@ -93,7 +102,7 @@ export interface ConnectionAppearanceSnapshot {
 }
 
 /** Revision-checked endpoint replacement, v1; retains the connection identity and label. */
-export interface ConnectionReconnectRequest { id: string; from: ConnectionEndpoint; to: ConnectionEndpoint; expectedRevision: number }
+export interface ConnectionReconnectRequest { id: string; from: ConnectionEndpoint; to: ConnectionEndpoint; expectedRevision: number; titleOrigin?: ConnectionTitleOrigin }
 
 export interface ConnectionSetLabelRequest {
   id: string;
@@ -120,6 +129,7 @@ declare module './commands.ts' {
     'connection.nudgeJunction': CommandContract<{ id: string; dx: number; dy: number }, { revision: number }>;
     'connection.removeSelectedJunctions': CommandContract<undefined, { removed: number }>;
     'connection.create': CommandContract<{
+      titleOrigin?: ConnectionTitleOrigin;
       from: ConnectionEndpoint;
       to: ConnectionEndpoint;
     }, { id?: string }>;
@@ -173,6 +183,8 @@ function clampLabelDimension(value: unknown, fallback: number, minimum: number, 
 }
 
 export interface ConnectionDraft {
+  titleStartSide?: 'left' | 'right';
+  titleOrigin?: ConnectionTitleOrigin;
   /** In-place preview of an existing edge; cleared only after its replacement revision is projected. */
   reconnectId?: string;
   reconnectRevision?: number;
@@ -199,6 +211,11 @@ export function connectionTextBoxPair(from: ConnectionNodeGeometry | undefined, 
   return from?.presentation === 'text-box' && to?.presentation === 'text-box' && !from.kind && !to.kind;
 }
 
+/** Text boxes classify target height for box, group and junction sources. */
+export function connectionUsesTextBoxRegions(from: ConnectionNodeGeometry | undefined, to: ConnectionNodeGeometry | undefined): boolean {
+  return to?.presentation === 'text-box' && !to.kind && Boolean(from && (from.presentation === 'text-box' || from.kind === 'group' || from.kind === 'junction'));
+}
+
 /** Semantic drop target shared by node, group and junction gesture adapters. */
 export function connectionTitlePortHit(node: ConnectionNodeGeometry, pointer: { x: number; y: number }): boolean {
   return !node.kind && node.presentation !== 'text-box' &&
@@ -206,7 +223,7 @@ export function connectionTitlePortHit(node: ConnectionNodeGeometry, pointer: { 
     Math.min(Math.abs(pointer.x - node.x), Math.abs(pointer.x - node.x - node.width)) <= 24;
 }
 export function connectionTargetSide(node: ConnectionNodeGeometry, pointer: { x: number; y: number }, titleRoute = false, source?: ConnectionNodeGeometry): ConnectionSide {
-  if (connectionTextBoxPair(source, node)) return pointer.y < node.y + node.height / 2 ? 'title' : pointer.x < node.x + node.width / 2 ? 'left' : 'right';
+  if (connectionUsesTextBoxRegions(source, node)) return pointer.y < node.y + node.height / 2 ? 'title' : pointer.x < node.x + node.width / 2 ? 'left' : 'right';
   return titleRoute || connectionTitlePortHit(node, pointer) ? 'title' : pointer.x < node.x + node.width / 2 ? 'left' : 'right';
 }
 
@@ -252,9 +269,9 @@ export function resolveConnectionRecordEndpoints(
   const automatic = resolveConnectionEndpoints(fromNode, toNode);
   const title = isTitleConnection(connection);
   return {
-    from: connection.from.kind ? { ...automatic.from, kind: connection.from.kind, ...(connection.from.kind === 'junction' ? { side: 'right' as const } : {}) }
+    from: connection.from.kind ? { ...automatic.from, kind: connection.from.kind }
       : { ...automatic.from, side: title ? 'title' : automatic.from.side },
-    to: connection.to.kind ? { ...automatic.to, kind: connection.to.kind, ...(connection.to.kind === 'junction' ? { side: 'left' as const } : {}) }
+    to: connection.to.kind ? { ...automatic.to, kind: connection.to.kind }
       : { ...automatic.to, side: title ? 'title' : automatic.to.side },
   };
 }
@@ -273,21 +290,24 @@ export function connectionEndpointPoint(
     };
   }
   return {
-    x: node.x + (endpoint.side === 'right' ? node.width : 0),
+    x: node.x + (horizontalSide === 'right' ? node.width : 0),
     y: node.y + node.height / 2,
-    side: endpoint.side,
+    side: horizontalSide,
   };
 }
 
 /** Only two actual card title bars share a side; boxes and non-title endpoints retain facing sides. */
-export function connectionHorizontalSides(connection: Pick<ConnectionRecord, 'from' | 'to' | 'titleRoute'>, from: ConnectionNodeGeometry, to: ConnectionNodeGeometry) {
+export function connectionHorizontalSides(connection: Pick<ConnectionRecord, 'from' | 'to' | 'titleRoute' | 'titleOrigin'>, from: ConnectionNodeGeometry, to: ConnectionNodeGeometry) {
   const sides = resolveConnectionEndpoints(from, to);
   const endpoints = resolveConnectionRecordEndpoints(connection, from, to);
-  if (endpoints.from.kind === 'junction') sides.from.side = 'right';
-  if (endpoints.to.kind === 'junction') sides.to.side = 'left';
+  const manualTitle = !endpoints.from.kind && endpoints.from.side === 'title' && from.presentation !== 'text-box' && isConnectionTitleOrigin(connection.titleOrigin)
+    ? (from.x + from.width / 2 <= to.x + to.width / 2) === connection.titleOrigin.sourceIsLeft
+      ? connection.titleOrigin.side : connection.titleOrigin.side === 'left' ? 'right' : 'left'
+    : undefined;
+  if (manualTitle) sides.from.side = manualTitle;
   if (!endpoints.from.kind && !endpoints.to.kind && endpoints.from.side === 'title' && endpoints.to.side === 'title' &&
     from.presentation !== 'text-box' && to.presentation !== 'text-box') {
-    sides.from.side = sides.from.side === 'right' ? 'left' : 'right';
+    sides.from.side = manualTitle ?? (sides.from.side === 'right' ? 'left' : 'right');
     sides.to.side = sides.from.side;
   }
   return sides;

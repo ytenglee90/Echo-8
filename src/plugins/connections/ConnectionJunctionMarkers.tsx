@@ -50,13 +50,13 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
         });
       }}
     >
-      <title>拖动圆点移动；拖动旁边的加号拉出连接线；Delete 删除并恢复节点连接</title>
+      <title>拖动圆点移动；拖动上方的加号拉出连接线；Delete 删除并恢复节点连接</title>
       <circle className="connection-junction-hit" r={12 / camera.zoom} />
-      <rect className="connection-junction-port-bridge" x={8 / camera.zoom} y={-10 / camera.zoom} width={20 / camera.zoom} height={20 / camera.zoom} />
+      <rect className="connection-junction-port-bridge" x={-10 / camera.zoom} y={-28 / camera.zoom} width={20 / camera.zoom} height={20 / camera.zoom} />
       <circle className="connection-junction-ring" r={9 * scale} strokeWidth={2 * scale} />
       <circle className="connection-junction-dot" r={5 * scale} strokeWidth={1.5 * scale} />
       <g className="connection-junction-port" role="button" tabIndex={0} aria-label="从中转点拉出连接线"
-        transform={`translate(${22 / camera.zoom} 0)`}
+        transform={`translate(0 ${-22 / camera.zoom})`}
         onPointerDown={(event) => connect.begin(event, point, titleJunctionIds.has(point.id))}
         onPointerMove={connect.move} onPointerUp={(event) => connect.finish(event)}
         onPointerCancel={(event) => connect.finish(event, true)}

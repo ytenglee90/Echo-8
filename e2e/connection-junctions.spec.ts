@@ -187,7 +187,7 @@ test('title routes and their text boxes stay dashed before and after shared junc
   for (const path of await paths.all()) await expect(path).toHaveCSS('stroke-dasharray', '6px, 4px');
 });
 
-test('title dashes keep actual gaps and solid arrows, routed junctions are tangent-continuous and follow overview visibility', async ({ page }) => {
+test('title dashes keep actual gaps and solid arrows, routed junctions face each counterpart horizontally and follow overview visibility', async ({ page }) => {
   await openGraph(page, false, true, true);
   const first = page.locator('.connection-hit-area[data-connection-id="edge-a"]');
   await first.focus(); await first.press('Enter');
@@ -230,7 +230,7 @@ test('title dashes keep actual gaps and solid arrows, routed junctions are tange
     const a = { x: branch.to.x - branch.controlTo.x, y: branch.to.y - branch.controlTo.y };
     const b = { x: trunk.controlFrom.x - trunk.from.x, y: trunk.controlFrom.y - trunk.from.y };
     expect(Math.abs(a.x * b.y - a.y * b.x) / Math.hypot(a.x, a.y) / Math.hypot(b.x, b.y)).toBeLessThan(.001);
-    expect(a.x * b.x + a.y * b.y).toBeGreaterThan(0);
+    expect(a.x).toBeLessThan(0); expect(branch.controlTo.x).toBeLessThanOrEqual(branch.from.x);
   }
   await page.locator('.canvas-surface').click({ position: { x: 10, y: 650 } });
   await page.mouse.move(1, 1);

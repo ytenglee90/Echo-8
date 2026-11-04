@@ -19,6 +19,10 @@ test('only the target text-box half chooses line type, while every anchor stays 
   }
   assert.equal(connectionTargetSide(target, { x: 600, y: 220 }, false, { ...source, presentation: 'card' }), 'left');
   assert.equal(connectionTargetSide(target, { x: 600, y: 220 }, false, source), 'title');
+  for (const kind of ['group', 'junction'] as const) {
+    assert.equal(connectionTargetSide(target, { x: 880, y: 220 }, false, { ...source, kind }), 'title');
+    assert.equal(connectionTargetSide(target, { x: 880, y: 280 }, true, { ...source, kind }), 'right');
+  }
 });
 
 test('text-box pair creation and reconnection canonicalize from the target, keep one undo and preserve identity', async () => {

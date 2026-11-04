@@ -141,7 +141,7 @@ test('junction graphs survive clipboard remapping, file reload and plugin hot-st
     assert.ok((endpoint.kind === 'junction' ? pointIds : nodeIds).has(endpoint.nodeId));
   }
   const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, source);
-  assert.equal(project.plugins.find((item) => item.id === 'connections')?.dataVersion, 8);
+  assert.equal(project.plugins.find((item) => item.id === 'connections')?.dataVersion, 9);
   const reopened = new ApplicationKernel([textNodePlugin, createSelectionPlugin(), createConnectionsPlugin()]);
   await reopened.start();
   await reopened.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), source);
@@ -225,7 +225,7 @@ test('context gestures remain distinct queued transactions and stale multi-line 
 });
 
 
-test('all branches share a forward tangent at a junction, including the left-of-title layout', () => {
+test('junction branches face their own counterpart with horizontal tangents', () => {
   const edges: ConnectionRecord[] = ([
     { id: 'a', from: { nodeId: 'a', side: 'title' }, to: { nodeId: 'j', kind: 'junction', side: 'left' } },
     { id: 'b', from: { nodeId: 'b', side: 'title' }, to: { nodeId: 'j', kind: 'junction', side: 'left' } },
@@ -240,7 +240,8 @@ test('all branches share a forward tangent at a junction, including the left-of-
   const points = connectionGraphPoints(edges, nodes);
   for (const id of ['a', 'b']) {
     const incoming = points.get(id)!, outgoing = points.get('trunk')!;
-    assert.deepEqual(incoming.to.tangent, outgoing.from.tangent);
+    assert.deepEqual(incoming.to.tangent, { x: -1, y: 0 });
+    assert.deepEqual(outgoing.from.tangent, { x: 1, y: 0 });
     const path = connectionCurvePath(incoming.from, incoming.to).match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
     assert.ok(path[2] < path[0], 'title source leaves its actual left edge');
     const tail = connectionCurvePath(outgoing.from, outgoing.to).match(/-?\d+(?:\.\d+)?/gu)!.map(Number);

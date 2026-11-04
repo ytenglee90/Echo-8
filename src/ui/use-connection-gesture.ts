@@ -3,11 +3,11 @@
 import { useEffect, useRef, type PointerEvent } from 'react';
 import { createId, type ViewClient } from '../core/contracts.ts';
 import type { CameraState, CanvasViewportSize } from '../protocols/canvas.ts';
-import { connectionTargetSide, connectionTextBoxPair, connectionTitlePortHit, type ConnectionDraft, type ConnectionEndpoint, type ConnectionReconnectRequest, type ConnectionNodeGeometry } from '../protocols/connections.ts';
+import { connectionTargetSide, connectionUsesTextBoxRegions, connectionTitlePortHit, type ConnectionDraft, type ConnectionEndpoint, type ConnectionReconnectRequest, type ConnectionNodeGeometry } from '../protocols/connections.ts';
 
 interface ConnectGesture {
   token: string; pointerId: number; startX: number; startY: number; point: ConnectionNodeGeometry;
-  reconnect?: Pick<ConnectionReconnectRequest, 'id' | 'expectedRevision'>;
+  reconnect?: Pick<ConnectionReconnectRequest, 'id' | 'expectedRevision' | 'titleOrigin'>;
   draft: ConnectionDraft; moved: boolean; admitted: boolean; title: boolean;
 }
 
@@ -27,7 +27,7 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
     if (!session) return;
     void client.dispatch('interaction.end', { mode: 'connecting', sessionId: session.token }).catch(() => undefined);
   }, [client]);
-  const begin = (event: PointerEvent<SVGElement | HTMLElement>, point: ConnectionNodeGeometry, title = false, side: ConnectionEndpoint['side'] = 'right', reconnect?: Pick<ConnectionReconnectRequest, 'id' | 'expectedRevision'>) => {
+  const begin = (event: PointerEvent<SVGElement | HTMLElement>, point: ConnectionNodeGeometry, title = false, side: ConnectionEndpoint['side'] = 'right', reconnect?: Pick<ConnectionReconnectRequest, 'id' | 'expectedRevision' | 'titleOrigin'>) => {
     if (event.button !== 0 || active.current) return;
     event.preventDefault(); event.stopPropagation();
     event.currentTarget.focus({ preventScroll: true });
@@ -36,7 +36,7 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
     const session: ConnectGesture = {
       token: createId('connection-drag'), pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
       point, moved: false, admitted: false, title, reconnect,
-      draft: { reconnectId: reconnect?.id, reconnectRevision: reconnect?.expectedRevision, from: { nodeId: point.id, kind: point.kind, side }, titleRoute: title, pointer: { x: point.x + (side === 'right' ? point.width : 0), y: point.y + point.height / 2 } },
+      draft: { titleOrigin: reconnect?.titleOrigin, reconnectId: reconnect?.id, reconnectRevision: reconnect?.expectedRevision, from: { nodeId: point.id, kind: point.kind, side }, titleRoute: title, pointer: { x: point.x + (side === 'right' ? point.width : 0), y: point.y + point.height / 2 } },
     };
     active.current = session;
     previewOwner.current = session.token;
@@ -90,10 +90,10 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
         target = { nodeId: id, side: connectionTargetSide(node, pointer, session.title, session.point) };
       }
     }
-    const boxPair = target && connectionTextBoxPair(session.point, nodes.get(target.nodeId));
+    const boxPair = target && connectionUsesTextBoxRegions(session.point, nodes.get(target.nodeId));
     const title = boxPair ? target?.side === 'title' : session.title;
     session.draft = { ...session.draft, titleRoute: title, from: { nodeId: session.point.id, kind: session.point.kind,
-      side: session.point.kind === 'junction' ? 'right' : title && !session.point.kind ? 'title' : pointer.x < session.point.x + session.point.width / 2 ? 'left' : 'right' }, to: target, pointer };
+      side: title && !session.point.kind ? 'title' : pointer.x < session.point.x + session.point.width / 2 ? 'left' : 'right' }, to: target, pointer };
     client.emit('connection.draft.preview', session.draft);
   };
   const finish = (event?: PointerEvent<SVGElement | HTMLElement>, cancel = false) => {

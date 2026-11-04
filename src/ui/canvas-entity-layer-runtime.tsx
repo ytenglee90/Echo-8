@@ -37,6 +37,7 @@ export interface CanvasEntityLayerRuntime {
     event: ReactPointerEvent<HTMLButtonElement>,
     node: ContentSummary,
     side: ConnectionSide,
+    titleStartSide?: 'left' | 'right',
   ): void;
   beginNodeResize(event: ReactPointerEvent<HTMLButtonElement>, node: ContentSummary): void;
 }

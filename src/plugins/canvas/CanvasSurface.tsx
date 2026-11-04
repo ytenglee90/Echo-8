@@ -1226,11 +1226,14 @@ export function CanvasSurface({
 
   const withPointConnectionTarget = (session: ConnectionSession): ConnectionSession => {
     if (camera.zoom < 0.5) return session;
+    const source = connectionTargetNodes.get(session.from.nodeId);
+    const titleOrigin = session.titleStartSide && source ? { side: session.titleStartSide,
+      sourceIsLeft: source.x + source.width / 2 <= session.pointer.x } : undefined;
     try {
       const target = client.requestSync<ConnectionEndpoint | undefined>('connections.targetAt@1', {
         point: session.pointer, excludeId: session.from.nodeId, radius: 18 / camera.zoom,
       });
-      if (target) return { ...session, to: target };
+      if (target) return { ...session, to: target, titleOrigin };
     } catch { /* Point provider is optional. */ }
     const slop = 18 / camera.zoom;
     // Groups are targeted at their side ports, so member nodes keep their own input regions.
@@ -1243,7 +1246,8 @@ export function CanvasSurface({
         if (distance <= slop && (!best || distance < best.distance)) best = { id: target.id, side, distance };
       }
     }
-    return best ? { ...session, to: { nodeId: best.id, side: best.side, kind: 'group' } } : session;
+    return best ? { ...session, to: { nodeId: best.id, side: best.side, kind: 'group' },
+      titleOrigin } : session;
   };
 
   const finishGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1264,7 +1268,7 @@ export function CanvasSurface({
       setConnectionTargetId(undefined);
       client.emit('connection.draft.preview', {});
       if (session.moved && session.to && session.from.nodeId !== session.to.nodeId) {
-        void client.dispatch('connection.create', { from: session.from, to: session.to }).catch(() => undefined);
+        void client.dispatch('connection.create', { from: session.from, to: session.to, titleOrigin: session.titleOrigin }).catch(() => undefined);
       }
       void client.dispatch('interaction.end', { mode: 'connecting' }).catch(() => undefined);
       return;
@@ -1384,6 +1388,7 @@ export function CanvasSurface({
     event: ReactPointerEvent<HTMLButtonElement>,
     node: ContentSummary,
     side: ConnectionSide,
+    titleStartSide?: 'left' | 'right',
   ) => {
     if (event.button !== 0 || panReady) return;
     event.preventDefault();
@@ -1393,7 +1398,7 @@ export function CanvasSurface({
       ? screenToWorld(event.clientX, event.clientY, camera, surfaceRef.current)
       : connectionPortPoint(node, side, previews, resizePreviews);
     const session: ConnectionSession = {
-      from: { nodeId: node.id, side },
+      from: { nodeId: node.id, side }, titleStartSide,
       pointer,
       pointerId: event.pointerId,
       startClientX: event.clientX,

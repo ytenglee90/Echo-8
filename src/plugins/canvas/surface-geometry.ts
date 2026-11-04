@@ -55,6 +55,8 @@ export interface ConnectionSession {
   from: ConnectionEndpoint;
   /** The starting port remains stable while a hovered target changes the route style. */
   sourceSide?: ConnectionEndpoint['side'];
+  titleStartSide?: 'left' | 'right';
+  titleOrigin?: import('../../protocols/connections.ts').ConnectionTitleOrigin;
   to?: ConnectionEndpoint;
   pointer: { x: number; y: number };
   pointerId: number;
@@ -116,6 +118,8 @@ export function updateConnectionSession(
     clientY - session.startClientY,
   ) >= CONNECTION_DRAG_THRESHOLD;
   const sourceSide = session.sourceSide ?? session.from.side;
+  const titleOrigin = source && target && session.titleStartSide
+    ? { side: session.titleStartSide, sourceIsLeft: source.x + source.width / 2 <= target.x + target.width / 2 } : undefined;
   if (source && target) {
     if (connectionTextBoxPair(source, target)) {
       const automatic = resolveConnectionEndpoints(source, target);
@@ -128,7 +132,7 @@ export function updateConnectionSession(
           to: { nodeId: target.id, side: 'title' as const },
         }
       : resolveConnectionEndpoints(source, target);
-    return { ...session, ...endpoints, sourceSide, pointer, moved };
+    return { ...session, ...endpoints, titleOrigin, sourceSide, pointer, moved };
   }
   if (!source) return { ...session, to: undefined, pointer, moved };
   if (sourceSide === 'title') {
@@ -188,7 +192,7 @@ export function nodeGeometry(
 }
 
 export function connectionDraftPayload(session: ConnectionSession): ConnectionDraft {
-  return { from: session.from, to: session.to, pointer: session.pointer };
+  return { from: session.from, to: session.to, pointer: session.pointer, titleStartSide: session.titleStartSide, titleOrigin: session.titleOrigin };
 }
 
 export function connectionPortPoint(

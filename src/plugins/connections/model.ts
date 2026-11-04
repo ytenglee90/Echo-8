@@ -16,7 +16,8 @@ import {
   DEFAULT_CONNECTION_LABEL_HEIGHT,
   DEFAULT_CONNECTION_LABEL_WIDTH,
   resolveConnectionEndpoints,
-  connectionTextBoxPair,
+  connectionUsesTextBoxRegions,
+  isConnectionTitleOrigin,
   resolveConnectionRecordEndpoints,
   MAX_CONNECTION_LABEL_LENGTH,
   normalizeConnectionLabelSize,
@@ -68,12 +69,13 @@ type LocalConnectionAppearanceKind =
   | 'connection-label-text';
 
 interface CreateConnectionPayload {
+  titleOrigin?: ConnectionRecord['titleOrigin'];
   from: ConnectionEndpoint;
   to: ConnectionEndpoint;
 }
 
 interface SerializedConnections {
-  schemaVersion?: 2 | 3;
+  schemaVersion?: 2 | 3 | 4;
   junctions?: ConnectionJunction[];
   connections: ConnectionRecord[];
 }
@@ -81,7 +83,7 @@ interface SerializedConnections {
 export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('connections', '连线', {
-      dataVersion: 8,
+      dataVersion: 9,
       namespaces: [CONNECTION_NAMESPACE, CONNECTION_APPEARANCE_NAMESPACE, JUNCTION_NAMESPACE],
       namespaceDomains: {
         [CONNECTION_NAMESPACE]: 'document',
@@ -226,6 +228,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       migrate: (data) => ({ ...data, [JUNCTION_NAMESPACE]: data[JUNCTION_NAMESPACE] ?? {} }),
     }, {
       from: 7, to: 8, migrate: data => data,
+    }, {
+      from: 8, to: 9, migrate: data => data,
     }],
 
     start(context) {
@@ -481,6 +485,12 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             id, ...endpoints,
             revision: (current?.revision ?? 0) + 1,
           };
+          if (payload.titleOrigin) {
+            if (payload.from.kind || payload.from.side !== 'title' || fromNode.presentation === 'text-box') throw new Error('标题起始端口不正确');
+            // New gestures record ordering from authoritative target geometry, including point/group targets.
+            connection.titleOrigin = reference ? { ...payload.titleOrigin } : { ...payload.titleOrigin,
+              sourceIsLeft: fromNode.x + fromNode.width / 2 <= toNode.x + toNode.width / 2 };
+          } else if (current && current.from.nodeId !== payload.from.nodeId) delete connection.titleOrigin;
           if (reference) delete connection.titleRoute;
           assertJunctionChanges(Object.values(readConnections()), [connection]);
           return {
@@ -1078,6 +1088,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
                   fromNode.width,
                   fromNode.height,
                   fromNode.presentation,
+                  connection.titleOrigin?.side, connection.titleOrigin?.sourceIsLeft,
                   connection.to.nodeId,
                   connection.to.side,
                   toNode.x,
@@ -1136,7 +1147,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           return {
             owner: 'connections', version: 1,
             entityIds: [...graph.connections.map((record) => record.id), ...graph.junctions.map((point) => point.id)],
-            payload: { schemaVersion: 3, ...graph } satisfies SerializedConnections,
+            payload: { schemaVersion: 4, ...graph } satisfies SerializedConnections,
           };
         },
       });
@@ -1280,9 +1291,12 @@ function resolveRequestedConnectionEndpoints(
   fromNode: ConnectionNodeGeometry,
   toNode: ConnectionNodeGeometry,
 ): { from: ConnectionEndpoint; to: ConnectionEndpoint } {
-  if (connectionTextBoxPair(fromNode, toNode)) return payload.to.side === 'title'
-    ? { from: { nodeId: fromNode.id, side: 'title' }, to: { nodeId: toNode.id, side: 'title' } }
-    : resolveConnectionEndpoints(fromNode, toNode);
+  if (connectionUsesTextBoxRegions(fromNode, toNode)) {
+    const automatic = resolveConnectionEndpoints(fromNode, toNode);
+    const title = payload.to.side === 'title';
+    return { from: { ...automatic.from, ...(payload.from.kind ? { kind: payload.from.kind } : {}), side: !payload.from.kind && title ? 'title' : automatic.from.side },
+      to: { ...automatic.to, side: title ? 'title' : automatic.to.side } };
+  }
   if (payload.from.kind || payload.to.kind) {
     return resolveConnectionRecordEndpoints(payload, fromNode, toNode);
   }
@@ -1310,7 +1324,8 @@ function isEndpoint(value: unknown): value is ConnectionEndpoint {
 }
 
 function isCreateConnectionPayload(payload: unknown): payload is CreateConnectionPayload {
-  return isRecord(payload) && isEndpoint(payload.from) && isEndpoint(payload.to);
+  return isRecord(payload) && isEndpoint(payload.from) && isEndpoint(payload.to) &&
+    (payload.titleOrigin === undefined || isConnectionTitleOrigin(payload.titleOrigin));
 }
 
 function isConnectionSetLabelRequest(payload: unknown): payload is ConnectionSetLabelRequest {
@@ -1393,7 +1408,7 @@ function normalizeConnectionLabel(label: string): string {
 function isSerializedConnections(payload: unknown): payload is SerializedConnections {
   return (
     isRecord(payload) &&
-    (payload.schemaVersion === undefined || payload.schemaVersion === 2 || payload.schemaVersion === 3) &&
+    (payload.schemaVersion === undefined || payload.schemaVersion === 2 || payload.schemaVersion === 3 || payload.schemaVersion === 4) &&
     (payload.junctions === undefined || (Array.isArray(payload.junctions) && payload.junctions.length <= 10_000 && payload.junctions.every(isJunction))) &&
     Array.isArray(payload.connections) &&
     payload.connections.every(
@@ -1411,6 +1426,7 @@ function isSerializedConnections(payload: unknown): payload is SerializedConnect
         (connection.labelTextColor === undefined || isHexColor(connection.labelTextColor)) &&
         (connection.junctionTrunk === undefined || typeof connection.junctionTrunk === 'boolean') &&
         (connection.titleRoute === undefined || typeof connection.titleRoute === 'boolean') &&
+        (connection.titleOrigin === undefined || isConnectionTitleOrigin(connection.titleOrigin)) &&
         (connection.revision === undefined ||
           (Number.isInteger(connection.revision) && Number(connection.revision) > 0)),
     )

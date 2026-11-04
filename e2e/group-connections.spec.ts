@@ -171,30 +171,32 @@ test('Ctrl dragging selected nodes and text boxes adds or removes the whole batc
   await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
 });
 
-test('title ports on both sides follow node positions during preview, movement and undo', async ({ page }) => {
+for (const side of ['左', '右']) test(`title ${side} port stays chosen through preview and commit, then flips on node order reversal and undo`, async ({ page }) => {
   await openGroups(page);
   const source = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试a"]') });
   const target = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试c"]') });
-  const from = await source.getByRole('button', { name: '从群组测试a标题栏右侧连接', exact: true }).boundingBox();
+  const from = await source.getByRole('button', { name: `从群组测试a标题栏${side}侧连接`, exact: true }).boundingBox();
   const to = await target.getByRole('button', { name: '从群组测试c标题栏左侧连接', exact: true }).boundingBox();
   await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2); await page.mouse.down();
+  await page.mouse.move(30, 580, { steps: 8 });
+  await expect(page.locator('.connection-path.draft')).toHaveAttribute('d', side === '右' ? /^M 300 101 C /u : /^M 80 101 C /u);
   await page.mouse.move(to!.x + to!.width / 2, to!.y + to!.height / 2, { steps: 8 });
-  await expect(page.locator('.connection-path.draft')).toHaveAttribute('d', /^M 80 101 C /u);
+  await expect(page.locator('.connection-path.draft')).toHaveAttribute('d', side === '右' ? /^M 300 101 C /u : /^M 80 101 C /u);
   await page.mouse.up();
   const path = page.locator('.connection-hit-area');
   await expect(path).toHaveCount(1);
   const read = async () => (await path.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-  expect((await read()).slice(0, 2)).toEqual([80, 101]);
-  expect((await read()).slice(-2)).toEqual([760, 101]);
+  expect((await read()).slice(0, 2)).toEqual([side === '右' ? 300 : 80, 101]);
+  expect((await read()).slice(-2)).toEqual([side === '右' ? 980 : 760, 101]);
   const header = await source.locator('header').boundingBox();
   await drag(page, { x: header!.x + 80, y: header!.y + 21 }, { x: header!.x + 860, y: header!.y + 21 });
-  await expect.poll(async () => (await read())[6]).toBe(980);
+  await expect.poll(async () => (await read())[6]).toBe(side === '右' ? 760 : 980);
   const moved = await read();
-  expect(moved[2]).toBeGreaterThan(moved[0]);
-  expect(moved[6]).toBe(980); expect(moved[4]).toBeGreaterThan(moved[6]);
+  expect(Math.sign(moved[2] - moved[0])).toBe(side === '右' ? -1 : 1);
+  expect(moved[6]).toBe(side === '右' ? 760 : 980); expect(Math.sign(moved[4] - moved[6])).toBe(side === '右' ? -1 : 1);
   await expect(page.locator('.connection-path:not(.draft)')).not.toHaveCSS('stroke-dasharray', 'none');
   await page.keyboard.press('Control+z');
-  await expect.poll(async () => (await read())[0]).toBe(80);
+  await expect.poll(async () => (await read())[0]).toBe(side === '右' ? 300 : 80);
 });
 
 test('groups connect at side midpoints, can receive node/title links and update immediately after member resizing', async ({ page }) => {
@@ -250,6 +252,23 @@ test('group output can reach an ordinary node or a node title, retaining the cor
   await expect(page.locator('.connection-hit-area')).toHaveCount(1);
   await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
   await expect(page.locator('.connection-hit-area')).toHaveAttribute('d', /C/u);
+});
+
+for (const upper of [true, false]) test(`group-to-text-box uses target ${upper ? 'upper' : 'lower'} region and keeps its anchor centred`, async ({ page }) => {
+  await openGroups(page);
+  const from = await port(page, 'g1', 'right');
+  const target = await page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试f"]') }).boundingBox();
+  await page.mouse.move(from.x, from.y); await page.mouse.down();
+  await page.mouse.move(target!.x + target!.width, target!.y + target!.height * (upper ? .25 : .75), { steps: 10 });
+  const draft = page.locator('.connection-path.draft');
+  if (upper) await expect(draft).toHaveClass(/title-connection/u); else await expect(draft).not.toHaveClass(/title-connection/u);
+  const read = async (path: import('@playwright/test').Locator) => (await path.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+  await expect.poll(async () => (await read(draft))[7]).toBe(362);
+  await page.mouse.up(); await expect(page.locator('.connection-hit-area')).toHaveCount(1);
+  await expect.poll(async () => (await read(page.locator('.connection-hit-area'))).slice(-2)).toEqual([440, 362]);
+  const line = page.locator('.connection-path:not(.draft)');
+  if (upper) await expect(line).toHaveClass(/title-connection/u); else await expect(line).not.toHaveClass(/title-connection/u);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(0);
 });
 
 test('Alt dragging an entire group displays its copied frame before committing, while the original stays fixed', async ({ page }) => {

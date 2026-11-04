@@ -8,7 +8,7 @@ async function openFan(page: Page, pair = false) {
   await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
   await page.goto('/'); await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, connections: {}, connectionJunction: {} };
-  for (const [id, x, y] of [['s', 80, 600], ['n0', 880, 20], ['n1', 880, 240], ['n2', 880, 460], ['n3', 880, 680]] as const) {
+  for (const [id, x, y] of [['s', 80, 600], ['m', 80, 150], ['r', 880, 900], ['n0', 880, 20], ['n1', 880, 240], ['n2', 880, 460], ['n3', 880, 680]] as const) {
     const content = createContentStorage(`body-${id}`, `正文${id}`, 1);
     namespaces.textContent[`body-${id}`] = content.content;
     for (const patch of content.chunkPatches) if (patch.op === 'set') namespaces.textContentChunk[patch.key] = patch.value;
@@ -65,22 +65,28 @@ test('bottom and middle fan-outs use horizontal ports throughout point dragging 
   await checkFan(page, 820);
 });
 
-test('outgoing drafts always leave right, including a pointer left of the point; incoming drafts always enter left', async ({ page }) => {
+test('point plus sits above; outgoing drafts choose left/right and incoming drafts face their source', async ({ page }) => {
   await openFan(page);
   const point = page.locator('.connection-junction'); await point.focus();
   const port = await point.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
+  const centre = await point.locator('.connection-junction-dot').boundingBox();
+  expect(port!.y + port!.height).toBeLessThan(centre!.y);
+  expect(port!.x + port!.width / 2).toBeCloseTo(centre!.x + centre!.width / 2);
   await page.mouse.move(port!.x + port!.width / 2, port!.y + port!.height / 2); await page.mouse.down();
   await page.mouse.move(430, 400, { steps: 10 });
   const draft = page.locator('.connection-path.draft');
   const p = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-  expect(p[2]).toBeGreaterThan(p[0]); expect(p[3]).toBe(p[1]);
+  expect(p[2]).toBeLessThan(p[0]); expect(p[3]).toBe(p[1]);
+  await page.mouse.move(700, 400, { steps: 8 });
+  await expect.poll(async () => { const v = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number); return v[2] > v[0]; }).toBe(true);
   await page.keyboard.press('Escape'); await page.mouse.up(); await expect(draft).toHaveCount(0);
   const nodePort = await page.getByRole('button', { name: '从水平测试n3标题栏左侧连接', exact: true }).boundingBox();
   const dot = await point.locator('.connection-junction-dot').boundingBox();
   await page.mouse.move(nodePort!.x + nodePort!.width / 2, nodePort!.y + nodePort!.height / 2); await page.mouse.down();
   await page.mouse.move(dot!.x + dot!.width / 2, dot!.y + dot!.height / 2, { steps: 10 });
+  await expect.poll(async () => (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number)[6]).toBe(560);
   const input = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-  expect(input[6]).toBe(560); expect(input[4]).toBeLessThan(560); expect(input[5]).toBe(input[7]);
+  expect(input[6]).toBe(560); expect(input[4]).toBeGreaterThan(560); expect(input[5]).toBe(input[7]);
   await expect(page.locator('.connection-arrow.draft')).toHaveCount(0);
   await page.mouse.up(); await expect(page.locator('.connection-hit-area')).toHaveCount(6);
 });
@@ -109,4 +115,38 @@ test('a solid input cannot be attached to a dashed junction and rejection leaves
   await page.mouse.move(dot!.x + dot!.width / 2, dot!.y + dot!.height / 2, { steps: 10 }); await page.mouse.up();
   await expect(page.getByText('虚线与实线不能共用同一个中转点，请分别添加中转点', { exact: true })).toBeVisible();
   await expect(page.locator('.connection-hit-area')).toHaveCount(5); await expect(page.locator('.connection-junction')).toHaveCount(1);
+});
+
+test('junction branches choose facing ports even when dropped on the far-side output, then flip while moving', async ({ page }) => {
+  await openFan(page);
+  const marker = page.locator('.connection-junction');
+  for (const [id, left] of [['m', true], ['r', false]] as const) {
+    await marker.focus();
+    const plus = await marker.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
+    const target = await page.getByRole('button', { name: `从水平测试${id}标题栏右侧连接`, exact: true }).boundingBox();
+    await page.mouse.move(plus!.x + plus!.width / 2, plus!.y + plus!.height / 2); await page.mouse.down();
+    await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, { steps: 10 });
+    const draft = page.locator('.connection-path.draft');
+    await expect.poll(async () => {
+      const tip = (await page.locator('.connection-arrow.draft').getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+      return tip[2];
+    }).toBe(left ? 340 : 880);
+    const p = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+    expect(p[0]).toBe(560);
+    expect(Math.sign(p[2] - p[0])).toBe(left ? -1 : 1);
+    expect(Math.sign(p[6] - p[4])).toBe(left ? -1 : 1);
+    expect(p[3]).toBe(p[1]); expect(p[5]).toBe(p[7]);
+    await page.mouse.up();
+    await expect(page.locator('.connection-hit-area')).toHaveCount(left ? 6 : 7);
+  }
+  const before = await marker.locator('.connection-junction-dot').boundingBox();
+  await page.mouse.move(before!.x + before!.width / 2, before!.y + before!.height / 2); await page.mouse.down();
+  await expect(marker).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.move(before!.x + before!.width / 2 + 620, before!.y + before!.height / 2, { steps: 12 });
+  await expect.poll(async () => (await read(page, 'n0'))[0]).toBe(1180);
+  const reversed = await read(page, 'n0');
+  expect(reversed[2]).toBeLessThan(reversed[0]); expect(reversed[6]).toBe(1140); expect(reversed[4]).toBeGreaterThan(1140);
+  await page.mouse.up(); await page.keyboard.press('Control+z');
+  await expect.poll(async () => (await read(page, 'n0'))[0]).toBe(560);
+  await page.screenshot({ path: test.info().outputPath('adaptive-junction-ports.png') });
 });
