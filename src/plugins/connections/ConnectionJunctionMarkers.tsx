@@ -69,7 +69,7 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
         });
       }}
     >
-      <title>拖动圆点移动；选中后拖动附近曲线调整方向；双击调整方向偏好 15°；拖动上方加号拉线；Delete 删除并恢复节点连接</title>
+      <title>拖动圆点移动；选中后拖动附近某条曲线，只调整该线；双击调整公共方向偏好 15°；拖动上方加号拉线；Delete 删除并恢复节点连接</title>
       <circle className="connection-junction-hit" r={12 / camera.zoom} />
       <rect className="connection-junction-port-bridge" x={-10 / camera.zoom} y={-28 / camera.zoom} width={20 / camera.zoom} height={20 / camera.zoom} />
       <circle className="connection-junction-ring" r={9 * scale} strokeWidth={2 * scale} />

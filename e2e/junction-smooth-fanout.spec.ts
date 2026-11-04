@@ -280,21 +280,24 @@ test('selecting then dragging a junction keeps the last preview after release wi
   await expect.poll(paths).toEqual(beforeRotation);
 });
 
-for (const zoom of [100, 40]) test(`dragging a selected junction nearby curve at ${zoom}% steers every branch with stable preview, undo and cancellation`, async ({ page }, info) => {
+for (const [zoom, incoming] of [[100, false], [40, false], [100, true]] as const) test(`dragging one ${incoming ? 'incoming' : 'outgoing'} curve at ${zoom}% changes only that curve with stable preview, undo and cancellation`, async ({ page }, info) => {
   await page.setViewportSize({ width: 1300, height: 900 });
-  await openSteepFan(page, { positions: [[900, 80], [900, 400], [900, 650]], junction: [530, 450], pairs: [['j', 'n0'], ['j', 'n1'], ['j', 'n2']], title: false });
+  await openSteepFan(page, { positions: [[900, 80], [900, 400], [900, 650]], junction: [530, 450], pairs: incoming ? [['n0', 'j'], ['n1', 'j'], ['n2', 'j']] : [['j', 'n0'], ['j', 'n1'], ['j', 'n2']], title: false });
   const marker = page.locator('.connection-junction'), dot = marker.locator('.connection-junction-dot'), layer = page.locator('.connection-layer');
   await dot.click();
+  if (incoming) { const edge = page.locator('.connection-hit-area[data-connection-id="trunk"]'); await edge.focus(); await edge.press('Enter'); }
   if (zoom !== 100) {
     const input = page.getByRole('textbox', { name: /画布缩放/u }); await input.fill(String(zoom)); await input.press('Enter'); await dot.click();
   }
-  const paths = () => page.locator('.connection-hit-area').evaluateAll(elements => elements.map(e => e.getAttribute('d')));
+  const paths = () => page.locator('.connection-hit-area').evaluateAll(elements => Object.fromEntries(elements.map(e => [e.getAttribute('data-connection-id')!, e.getAttribute('d')])));
   const original = await paths(), position = await marker.getAttribute('transform');
   const nearby = () => page.locator('.connection-hit-area[data-connection-id="trunk"]').evaluate(element => {
     const curve = element as SVGPathElement, matrix = curve.getScreenCTM()!, centre = document.querySelector('.connection-junction-dot')!.getBoundingClientRect();
     const scale = Math.abs(matrix.a);
+    const first = new DOMPoint(curve.getPointAtLength(0).x, curve.getPointAtLength(0).y).matrixTransform(matrix);
+    const reverse = Math.hypot(first.x - centre.x - centre.width / 2, first.y - centre.y - centre.height / 2) > 5;
     for (let length = 20 / scale; length < 45 / scale; length += 2 / scale) {
-      const point = curve.getPointAtLength(length), screen = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+      const point = curve.getPointAtLength(reverse ? curve.getTotalLength() - length : length), screen = new DOMPoint(point.x, point.y).matrixTransform(matrix);
       if (document.elementFromPoint(screen.x, screen.y) === curve) return { x: screen.x, y: screen.y, cx: centre.x + centre.width / 2, cy: centre.y + centre.height / 2 };
     }
     throw new Error('No exposed curve near selected junction');
@@ -302,11 +305,13 @@ for (const zoom of [100, 40]) test(`dragging a selected junction nearby curve at
   const begin = await nearby();
   await page.mouse.move(begin.x, begin.y); await page.mouse.down();
   await page.mouse.move(begin.cx + 34, begin.cy + 27, { steps: 8 });
-  await expect(layer).toHaveAttribute('data-junction-handle-preview', 'j');
+  await expect(layer).toHaveAttribute('data-curve-bend-preview', 'trunk');
   const preview = await paths();
-  for (let i = 0; i < preview.length; i++) expect(preview[i]).not.toBe(original[i]);
+  expect(preview.trunk).not.toBe(original.trunk);
+  expect(preview.branch0).toBe(original.branch0); expect(preview.branch1).toBe(original.branch1);
+  await expect(marker).toHaveAttribute('data-handle-angle', '0');
   await expect(marker).toHaveAttribute('transform', position!);
-  await page.mouse.up(); await expect(layer).not.toHaveAttribute('data-junction-handle-preview');
+  await page.mouse.up(); await expect(layer).not.toHaveAttribute('data-curve-bend-preview');
   await expect.poll(paths).toEqual(preview);
   await page.screenshot({ path: info.outputPath('steered-fan.png') });
   await page.keyboard.press('Control+z'); await expect.poll(paths).toEqual(original);
@@ -315,7 +320,7 @@ for (const zoom of [100, 40]) test(`dragging a selected junction nearby curve at
   await page.mouse.move(cancel.cx + 35, cancel.cy - 28, { steps: 8 });
   await expect.poll(paths).not.toEqual(preview);
   await page.keyboard.press('Escape'); await page.mouse.up();
-  await expect(layer).not.toHaveAttribute('data-junction-handle-preview'); await expect.poll(paths).toEqual(preview);
+  await expect(layer).not.toHaveAttribute('data-curve-bend-preview'); await expect.poll(paths).toEqual(preview);
   await expect(marker).toHaveAttribute('transform', position!);
   await expect(page.getByText(/Illegal interaction transition/u)).toHaveCount(0);
 });

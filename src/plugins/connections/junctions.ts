@@ -1,4 +1,5 @@
 import { createId, isRecord, type PatchOperation } from '../../core/contracts.ts';
+import { retargetCurveBend } from './curve-bend.ts';
 import type {
   ConnectionAddJunctionRequest,
   ConnectionEndpoint,
@@ -94,12 +95,12 @@ export function splitConnectionsAtJunction(
     branchSide: commonTo ? 'incoming' : 'outgoing',
   };
   const endpoint: ConnectionEndpoint = { nodeId: junction.id, kind: 'junction', side: commonTo ? 'left' : 'right' };
-  const branches = records.map((record) => ({
+  const branches = records.map((record) => retargetCurveBend({
     ...record,
     ...(isTitleConnection(record) ? { titleRoute: true } : {}),
     ...(commonTo ? { to: endpoint } : { from: endpoint }),
     revision: record.revision + 1,
-  }));
+  }, [record]));
   const first = records[0];
   const trunk: ConnectionRecord = {
     id: createId('connection'),
@@ -113,7 +114,7 @@ export function splitConnectionsAtJunction(
     ...(records.some(isTitleConnection) ? { titleRoute: true } : {}),
     createdAt: Date.now(),
   };
-  return { junction, connections: [...branches, trunk] };
+  return { junction, connections: [...branches, retargetCurveBend(trunk, [first])] };
 }
 
 /** Compatibility view: original node-to-node relationships, with their branch IDs. */
@@ -139,7 +140,7 @@ export function logicalConnectionPaths(records: ConnectionRecord[]): Array<{ rec
         for (let cursor: Visit | undefined = visit; cursor; cursor = cursor.parent) path.push(cursor.edge);
         path.reverse();
         const branch = path.find((item) => !item.junctionTrunk) ?? first;
-        result.push({ record: { ...branch, from: first.from, to: edge.to }, path });
+        result.push({ record: retargetCurveBend({ ...branch, from: first.from, to: edge.to }, path), path });
       } else if (!seen.has(edge.to.nodeId)) {
         seen.add(edge.to.nodeId);
         for (const next of outgoing.get(edge.to.nodeId) ?? []) queue.push({ edge: next, parent: visit });
@@ -178,13 +179,13 @@ export function planConnectionGraphDeletion(
         const to = useOutgoing ? branch.to : trunk.to;
         if (sameEndpoint(from, to) || next.some((record) => isTitleConnection(record) === isTitleConnection(branch) && sameEndpoint(record.from, from) && sameEndpoint(record.to, to))) continue;
         const labelSource = branch.label || !trunk.label ? branch : trunk;
-        next.push({
+        next.push(retargetCurveBend({
           ...labelSource,
           id: index === 0 ? branch.id : createId('connection'),
           from: { ...from },
           to: { ...to },
           revision: branch.revision + 1,
-        });
+        }, [branch, trunk]));
       }
     }
   }

@@ -33,21 +33,6 @@ test('each rotation advances 15 degrees, wraps after 24 steps, never moves the p
   await kernel.plugins.stop('connections'); for (let i = 0; i < 24; i++) await kernel.transactions.undo(); await kernel.plugins.start('connections');
   assert.deepEqual((await graph()).junctions[0], original);
 });
-test('setting a dragged handle validates revisions, commits once, preserves position and survives undo after owner stop', async () => {
-  const { kernel, id, graph } = await setup(), original = (await graph()).junctions[0], history = kernel.history.getState().undoCount;
-  const request = { id, handleAngle: 30, expectedRevision: original.revision };
-  await kernel.router.dispatch('connection.setJunctionHandle@1', request, source);
-  const changed = (await graph()).junctions[0];
-  assert.deepEqual(changed, { ...original, handleAngle: 30, revision: original.revision + 1 });
-  assert.equal(kernel.history.getState().undoCount, history + 1);
-  await assert.rejects(kernel.router.dispatch('connection.setJunctionHandle@1', request, source), /已变化/u);
-  for (const handleAngle of [-15, 1, 360, NaN, Infinity]) await assert.rejects(kernel.router.dispatch('connection.setJunctionHandle@1', { ...request, handleAngle, expectedRevision: changed.revision }, source));
-  await kernel.router.dispatch('connection.setJunctionHandle@1', { ...request, expectedRevision: changed.revision }, source);
-  assert.equal(kernel.history.getState().undoCount, history + 1, 'a no-op has no extra history');
-  await kernel.plugins.stop('connections'); await kernel.transactions.undo(); await kernel.plugins.start('connections');
-  assert.deepEqual((await graph()).junctions[0], original); await kernel.transactions.redo(); assert.deepEqual((await graph()).junctions[0], changed);
-});
-
 test('direction preference stays in the safe geometric half while node anchors remain unchanged', () => {
   const edge = { id: 'e', from: { nodeId: 'j', kind: 'junction' as const, side: 'right' as const }, to: { nodeId: 'a', side: 'left' as const }, labelWidth: 180, labelHeight: 48, revision: 1, createdAt: 1 };
   for (let angle = 0; angle < 360; angle += 15) {
@@ -68,7 +53,7 @@ test('angles survive file and clipboard round trips; version ten migration prese
   const { kernel, ids, id, graph } = await setup();
   await kernel.router.dispatch('connection.rotateJunctionHandle', { id }, source); await kernel.router.dispatch('connection.rotateJunctionHandle', { id }, source);
   const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, source);
-  assert.equal(project.plugins.find(plugin => plugin.id === 'connections')?.dataVersion, 11);
+  assert.equal(project.plugins.find(plugin => plugin.id === 'connections')?.dataVersion, 12);
   const restored = new ApplicationKernel(definitions()); await restored.start();
   await restored.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), source);
   const reopened = await restored.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1'), current = await graph();

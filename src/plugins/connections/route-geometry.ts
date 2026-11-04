@@ -3,7 +3,7 @@ export interface RoutePoint { x: number; y: number }
 export interface RouteSegment {
   kind: 'cubic'; from: RoutePoint; controlFrom: RoutePoint; controlTo: RoutePoint; to: RoutePoint;
 }
-export interface RouteEnd extends RoutePoint { direction: RoutePoint; lead: number }
+export interface RouteEnd extends RoutePoint { direction: RoutePoint; lead: number; bend?: number }
 export interface RoutePlan { from: RoutePoint; to: RoutePoint; segments: readonly RouteSegment[]; key: string }
 const shift = (p: RoutePoint, v: RoutePoint, length: number): RoutePoint => ({ x: p.x + v.x * length, y: p.y + v.y * length });
 const mix = (a: RoutePoint, b: RoutePoint, t: number): RoutePoint => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
@@ -46,7 +46,8 @@ export function planSmoothRoute(from: RouteEnd, to: RouteEnd): RoutePlan {
   };
   let h = handle(from.direction), k = handle(to.direction);
   const needsCorridor = Math.abs(dy) < 24 && (dx * from.direction.x <= 0 || dx * to.direction.x <= 0);
-  const clearance = Math.max(64, Math.min(320, (Math.abs(dx) + h + k) * .3));
+  const bias = (from.bend ?? 0) + (to.bend ?? 0);
+  const clearance = Math.max(64, Math.min(320, (Math.abs(dx) + h + k) * .3)) * (1 + Math.sin(bias * Math.PI / 180) * .25);
   if (needsCorridor) {
     h = Math.max(h, 48); k = Math.max(k, 48);
     // Ordered lanes keep close, same-side ports from crossing their own approach rays.
@@ -55,11 +56,21 @@ export function planSmoothRoute(from: RouteEnd, to: RouteEnd): RoutePlan {
       else k = Math.max(k, h + clearance);
     }
   }
+  if ((from.bend || to.bend) && dx * from.direction.x > 0 && dx * to.direction.x > 0) { h *= .75; k *= .75; }
   const exit = shift(start, from.direction, h), entry = shift(end, to.direction, -k);
   const corridorY = Math.min(start.y, end.y) - clearance;
   const endpointScale = needsCorridor ? .5 : .14;
+  // Interior controls steer this edge without rotating either shared endpoint
+  // tangent. Monotone x prevents a manual bend from creating a loop or cusp.
+  const forward = Math.sign(dx), monotone = forward * from.direction.x > 0 && forward * to.direction.x > 0 && (entry.x - exit.x) * forward > .000001;
+  const steering = (fraction: number, angle: number | undefined, sign: number) => {
+    if (!angle || !monotone) return [];
+    const point = mix(exit, entry, fraction), offset = Math.max(-span * .35, Math.min(span * .35, Math.tan(angle * Math.PI / 180) * Math.abs(entry.x - exit.x) * .5));
+    return [{ x: point.x, y: point.y + offset * sign }];
+  };
   const polygon = [start, shift(start, from.direction, h * endpointScale), exit,
     ...(needsCorridor ? [{ x: exit.x, y: corridorY }, { x: entry.x, y: corridorY }] : []),
+    ...steering(1 / 3, from.bend, Math.sign(from.direction.x)), ...steering(2 / 3, to.bend, -Math.sign(to.direction.x)),
     entry, shift(end, to.direction, -k * endpointScale), end];
   return finish(from, to, [
     ...(from.lead > .000001 ? [straight(from, start)] : []), ...spline(polygon),

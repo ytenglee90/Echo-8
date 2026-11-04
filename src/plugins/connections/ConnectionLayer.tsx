@@ -28,12 +28,12 @@ import {
   type ConnectionJunction,
   type ConnectionGraphSnapshot,
   type ConnectionJunctionPreview,
-  type ConnectionJunctionHandlePreview,
+  type ConnectionCurveBendPreview,
   type ConnectionNodeGeometry,
 } from '../../protocols/connections.ts';
 import { connectionGraphPoints, connectionStrokeForEndpoints } from './routing.ts';
 import { createConnectionScenePlanner } from './connection-scene.ts';
-import { useJunctionCurveDrag } from './use-junction-curve-drag.ts';
+import { useCurveBendDrag } from './use-curve-bend-drag.ts';
 import type { GroupMembershipPreview } from '../../protocols/groups.ts';
 import { ConnectionJunctionMarkers } from './ConnectionJunctionMarkers.tsx';
 import { junctionGeometry, logicalConnectionPaths } from './junctions.ts';
@@ -143,7 +143,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const [connections, setConnections] = useState<ConnectionRecord[]>([]);
   const [junctions, setJunctions] = useState<ConnectionJunction[]>([]);
   const [junctionPreview, setJunctionPreview] = useState<Record<string, { x: number; y: number }>>({});
-  const [handlePreview, setHandlePreview] = useState<Exclude<ConnectionJunctionHandlePreview, { clear: true }>>();
+  const [curvePreview, setCurvePreview] = useState<Exclude<ConnectionCurveBendPreview, { clear: true }>>();
   const [membershipPreview, setMembershipPreview] = useState<GroupMembershipPreview>();
   useEffect(() => client.subscribeSignal<GroupMembershipPreview>('group.membership.preview', message => setMembershipPreview(message.payload)), [client]);
   const [connectionAppearance, setConnectionAppearance] = useState<ConnectionAppearanceSnapshot>({ revision: 0 });
@@ -261,8 +261,8 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     const payload = message.payload;
     setJunctionPreview('clear' in payload ? {} : Object.fromEntries(('positions' in payload ? payload.positions : [payload]).map(point => [point.id, { x: point.x, y: point.y }])));
   }), [client]);
-  useEffect(() => client.subscribeSignal<ConnectionJunctionHandlePreview>('connection.junction.handle.preview@1', message => {
-    setHandlePreview('clear' in message.payload ? undefined : message.payload);
+  useEffect(() => client.subscribeSignal<ConnectionCurveBendPreview>('connection.curve.bend.preview@1', message => {
+    setCurvePreview('clear' in message.payload ? undefined : message.payload);
   }), [client]);
 
   const stableTargets = useConnectionTargets(client, nodeById);
@@ -275,15 +275,16 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     { ...node, ...(duplicateOriginIds.has(id) ? {} : previews[id]), ...sizePreviews[id] } ])),
   [duplicateOriginIds, nodeById, previews, sizePreviews]);
   const liveTargets = useConnectionTargets(client, previewNodes, membershipPreview && !('clear' in membershipPreview) && membershipPreview.active ? membershipPreview : undefined);
-  const liveJunctions = useMemo(() => junctions.map(point => ({ ...point, ...(duplicateOriginIds.has(point.id) ? {} : previews[point.id]), ...junctionPreview[point.id],
-    ...(handlePreview?.id === point.id && handlePreview.expectedRevision === point.revision ? { handleAngle: handlePreview.handleAngle } : {}) })), [junctions, junctionPreview, previews, duplicateOriginIds, handlePreview]);
+  const liveJunctions = useMemo(() => junctions.map(point => ({ ...point, ...(duplicateOriginIds.has(point.id) ? {} : previews[point.id]), ...junctionPreview[point.id] })), [junctions, junctionPreview, previews, duplicateOriginIds]);
+  const liveConnections = useMemo(() => connections.map(edge => curvePreview?.id === edge.id && curvePreview.expectedRevision === edge.revision
+    ? { ...edge, curveBend: { ...edge.curveBend, [curvePreview.end]: curvePreview.angle } } : edge), [connections, curvePreview]);
   const nodeMap = useMemo(() => new Map<string, ConnectionNodeGeometry>([...previewNodes, ...liveTargets.map(target => [target.id, target] as const),
     ...liveJunctions.map((point): [string, ConnectionNodeGeometry] => [point.id, { ...junctionGeometry(point), kind: 'junction' }])]),
   [liveJunctions, liveTargets, previewNodes]);
   const reconnect = useConnectionGesture(client, camera, nodeMap);
   const stablePoints = useMemo(() => connectionGraphPoints(connections, stableNodeMap), [connections, stableNodeMap]);
   const scenePlanner = useMemo(() => createConnectionScenePlanner(), []);
-  const scene = useMemo(() => scenePlanner(connections, nodeMap, draft), [connections, nodeMap, draft, scenePlanner]);
+  const scene = useMemo(() => scenePlanner(liveConnections, nodeMap, draft), [liveConnections, nodeMap, draft, scenePlanner]);
   const livePoints = scene.points;
   const connectionLookup = useMemo(() => {
     const byId = new Map<string, ConnectionRecord>();
@@ -299,7 +300,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     return { byId, byNode };
   }, [connections]);
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const curveDrag = useJunctionCurveDrag(client, camera, junctions, selected);
+  const curveDrag = useCurveBendDrag(client, camera, connections, junctions, selected);
   const titleRouteIds = useMemo(() => {
     const ids = new Set(connections.filter(isTitleConnection).map((edge) => edge.id));
     for (const route of logicalConnectionPaths(connections)) if (isTitleConnection(route.record)) {
@@ -371,6 +372,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   }, [connections, stablePoints]);
   const previewAffectedIds = useMemo(() => {
     const ids = new Set<string>();
+    if (curvePreview) ids.add(curvePreview.id);
     const movedTargets = liveTargets.filter(target => { const stable = stableNodeMap.get(target.id); return !stable || target.x !== stable.x || target.y !== stable.y || target.width !== stable.width || target.height !== stable.height; }).map(target => target.id);
     const moving = [...movedTargets, ...Object.keys(previews), ...Object.keys(sizePreviews), ...liveJunctions.filter(point => {
       const stable = stableNodeMap.get(point.id); return stable?.x !== point.x || stable.y !== point.y || stable.handleAngle !== point.handleAngle;
@@ -384,7 +386,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       }
     }
     return ids;
-  }, [connectionLookup, liveJunctions, liveTargets, previews, sizePreviews, stableNodeMap, draft.from, draft.to, draft.reconnectId]);
+  }, [connectionLookup, liveJunctions, liveTargets, previews, sizePreviews, stableNodeMap, draft.from, draft.to, draft.reconnectId, curvePreview]);
   const drawable = useMemo(() => {
     if (overviewMode && focusedNodeIds.size === 0 && emphasizedConnectionIds.size === 0) return [];
     const viewport = worldViewport(camera, surfaceSize, CULL_MARGIN);
@@ -754,7 +756,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       } as CSSProperties}
       aria-label="节点连线"
       data-reconnecting-id={draft.reconnectId}
-      data-junction-handle-preview={handlePreview?.id}
+      data-curve-bend-preview={curvePreview?.id}
       data-render-mode={renderMode}
       data-detail-mode={overviewMode ? 'overview-focus' : 'full'}
       onPointerDownCapture={(event) => {

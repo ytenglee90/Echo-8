@@ -62,8 +62,15 @@ export interface ConnectionMoveJunctionRequest {
 }
 
 export type ConnectionJunctionPreview = { id: string; x: number; y: number } | { positions: Array<{ id: string; x: number; y: number }> } | { clear: true };
-export interface ConnectionSetJunctionHandleRequest { id: string; handleAngle: number; expectedRevision: number }
-export type ConnectionJunctionHandlePreview = { id: string; handleAngle: number; expectedRevision: number } | { clear: true };
+export interface ConnectionCurveBend { from?: number; to?: number }
+export function isConnectionCurveBend(value: unknown): value is ConnectionCurveBend {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const bend = value as Record<string, unknown>;
+  return Object.keys(bend).every(key => (key === 'from' || key === 'to') && typeof bend[key] === 'number' &&
+    Number.isInteger(bend[key]) && Number(bend[key]) >= -75 && Number(bend[key]) <= 75 && Number(bend[key]) % 15 === 0);
+}
+export interface ConnectionSetCurveBendRequest { id: string; end: 'from' | 'to'; angle: number; expectedRevision: number }
+export type ConnectionCurveBendPreview = ConnectionSetCurveBendRequest | { clear: true };
 
 export interface ConnectionTitleOrigin { side: 'left' | 'right'; sourceIsLeft: boolean; sourceCenterX?: number; targetCenterX?: number }
 export function isConnectionTitleOrigin(value: unknown): value is ConnectionTitleOrigin {
@@ -75,6 +82,8 @@ export function isConnectionTitleOrigin(value: unknown): value is ConnectionTitl
 }
 
 export interface ConnectionRecord {
+  /** Data version 12: per-curve interior steering; junction tangents remain shared. */
+  curveBend?: ConnectionCurveBend;
   /** Schema v5 / dataVersion 10: selected title departure side and its original relative ordering. */
   titleOrigin?: ConnectionTitleOrigin;
   id: string;
@@ -142,7 +151,7 @@ declare module './commands.ts' {
   interface ApplicationCommandMap {
     'connection.reconnect': CommandContract<ConnectionReconnectRequest, { id?: string }>;
     'connection.rotateJunctionHandle': CommandContract<{ id: string }, { handleAngle: number; revision: number }>;
-    'connection.setJunctionHandle@1': CommandContract<ConnectionSetJunctionHandleRequest, { handleAngle: number; revision: number }>;
+    'connection.setCurveBend@1': CommandContract<ConnectionSetCurveBendRequest, { angle: number; revision: number }>;
     'connection.moveJunctions': CommandContract<{ positions: ConnectionMoveJunctionRequest[] }, { moved: number }>;
     'connection.connectSelectedEndpoints': CommandContract<undefined, { id?: string }>;
     'connection.addJunction': CommandContract<ConnectionAddJunctionRequest, { id: string }>;

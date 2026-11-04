@@ -1,4 +1,5 @@
 import { createId, isRecord, type PluginContext, type PluginDefinition, type CommandOutcome } from '../../core/contracts.ts';
+import { curveBendAtEndpoints } from './curve-bend.ts';
 import type {
   AppearanceColorContribution,
   AppearanceReadContribution,
@@ -18,6 +19,7 @@ import {
   resolveConnectionEndpoints,
   connectionUsesTextBoxRegions,
   isConnectionTitleOrigin,
+  isConnectionCurveBend,
   isTitleConnection,
   connectionJunctionRequest,
   resolveConnectionRecordEndpoints,
@@ -79,7 +81,7 @@ interface CreateConnectionPayload {
 }
 
 interface SerializedConnections {
-  schemaVersion?: 2 | 3 | 4 | 5 | 6;
+  schemaVersion?: 2 | 3 | 4 | 5 | 6 | 7;
   junctions?: ConnectionJunction[];
   connections: ConnectionRecord[];
 }
@@ -87,7 +89,7 @@ interface SerializedConnections {
 export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('connections', '连线', {
-      dataVersion: 11,
+      dataVersion: 12,
       namespaces: [CONNECTION_NAMESPACE, CONNECTION_APPEARANCE_NAMESPACE, JUNCTION_NAMESPACE],
       namespaceDomains: {
         [CONNECTION_NAMESPACE]: 'document',
@@ -124,7 +126,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.create',
         'connection.reconnect',
         'connection.rotateJunctionHandle',
-        'connection.setJunctionHandle@1',
+        'connection.setCurveBend@1',
         'connection.moveJunctions',
         'connection.connectSelectedEndpoints',
         'connection.addJunction',
@@ -157,7 +159,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'canvas.pointer.preview',
         'canvas.snap.preview',
         'connection.junction.preview',
-        'connection.junction.handle.preview@1',
+        'connection.curve.bend.preview@1',
         'canvas.drag.preview',
         'canvas.node.resize.preview',
         'canvas.appearance.invalidated',
@@ -241,6 +243,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       from: 9, to: 10, migrate: data => data,
     }, {
       from: 10, to: 11, migrate: data => data,
+    }, {
+      from: 11, to: 12, migrate: data => data,
     }],
 
     start(context) {
@@ -343,20 +347,23 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             events: [{ type: 'connection.changed', payload: { junctionIds: [point.id] } }] } };
         },
       });
-      context.commands.register<import('../../protocols/connections.ts').ConnectionSetJunctionHandleRequest, { handleAngle: number; revision: number }>({
-        type: 'connection.setJunctionHandle@1',
-        validate: (value): value is import('../../protocols/connections.ts').ConnectionSetJunctionHandleRequest => isRecord(value) &&
+      context.commands.register<import('../../protocols/connections.ts').ConnectionSetCurveBendRequest, { angle: number; revision: number }>({
+        type: 'connection.setCurveBend@1',
+        validate: (value): value is import('../../protocols/connections.ts').ConnectionSetCurveBendRequest => isRecord(value) &&
           typeof value.id === 'string' && value.id.length > 0 && Number.isInteger(value.expectedRevision) && Number(value.expectedRevision) > 0 &&
-          typeof value.handleAngle === 'number' && Number.isInteger(value.handleAngle) && value.handleAngle >= 0 && value.handleAngle < 360 && value.handleAngle % 15 === 0,
+          (value.end === 'from' || value.end === 'to') && isConnectionCurveBend({ [value.end]: value.angle }),
         handle: payload => {
-          const point = readJunctions()[payload.id];
-          if (!point || point.revision !== payload.expectedRevision) throw new Error('中转点已变化，请重新调整曲线');
-          if ((point.handleAngle ?? 0) === payload.handleAngle) return { result: { handleAngle: payload.handleAngle, revision: point.revision } };
-          const next: ConnectionJunction = { ...point, handleAngle: payload.handleAngle, revision: point.revision + 1 };
-          if (!next.handleAngle) delete next.handleAngle;
-          return { result: { handleAngle: payload.handleAngle, revision: next.revision }, transaction: { label: '调整中转点曲线方向',
-            patches: [{ op: 'set', domain: 'document', namespace: JUNCTION_NAMESPACE, key: point.id, value: next }],
-            events: [{ type: 'connection.changed', payload: { junctionIds: [point.id] } }] } };
+          const edge = readConnections()[payload.id];
+          if (!edge || edge.revision !== payload.expectedRevision) throw new Error('连线已变化，请重新调整曲线');
+          if (edge[payload.end].kind !== 'junction' || !readJunctions()[edge[payload.end].nodeId]) throw new Error('该端没有中转点');
+          if ((edge.curveBend?.[payload.end] ?? 0) === payload.angle) return { result: { angle: payload.angle, revision: edge.revision } };
+          const bend = { ...(isConnectionCurveBend(edge.curveBend) ? edge.curveBend : {}), [payload.end]: payload.angle };
+          if (!payload.angle) delete bend[payload.end];
+          const next: ConnectionRecord = { ...edge, curveBend: bend, revision: edge.revision + 1 };
+          if (!Object.keys(bend).length) delete next.curveBend;
+          return { result: { angle: payload.angle, revision: next.revision }, transaction: { label: '调整单条曲线',
+            patches: [{ op: 'set', domain: 'document', namespace: CONNECTION_NAMESPACE, key: edge.id, value: next }],
+            events: [{ type: 'connection.changed', payload: { id: edge.id } }] } };
         },
       });
       const junctionMovesPlan = (positions: import('../../protocols/connections.ts').ConnectionMoveJunctionRequest[]) => {
@@ -524,6 +531,10 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             id, ...endpoints,
             revision: (current?.revision ?? 0) + 1,
           };
+          if (current) {
+            const bend = curveBendAtEndpoints([current], connection.from, connection.to);
+            if (bend) connection.curveBend = bend; else delete connection.curveBend;
+          }
           if (reference && requested.titleRoute === undefined) delete connection.titleRoute;
           if (payload.titleOrigin && isTitleConnection(connection)) {
             if (payload.from.kind || payload.from.side !== 'title') throw new Error('标题起始端口不正确');
@@ -1124,7 +1135,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           return {
             owner: 'connections', version: 1,
             entityIds: [...graph.connections.map((record) => record.id), ...graph.junctions.map((point) => point.id)],
-            payload: { schemaVersion: 6, ...graph } satisfies SerializedConnections,
+            payload: { schemaVersion: 7, ...graph } satisfies SerializedConnections,
           };
         },
       });
@@ -1387,7 +1398,7 @@ function normalizeConnectionLabel(label: string): string {
 function isSerializedConnections(payload: unknown): payload is SerializedConnections {
   return (
     isRecord(payload) &&
-    (payload.schemaVersion === undefined || payload.schemaVersion === 2 || payload.schemaVersion === 3 || payload.schemaVersion === 4 || payload.schemaVersion === 5 || payload.schemaVersion === 6) &&
+    (payload.schemaVersion === undefined || payload.schemaVersion === 2 || payload.schemaVersion === 3 || payload.schemaVersion === 4 || payload.schemaVersion === 5 || payload.schemaVersion === 6 || payload.schemaVersion === 7) &&
     (payload.junctions === undefined || (Array.isArray(payload.junctions) && payload.junctions.length <= 10_000 && payload.junctions.every(isJunction))) &&
     Array.isArray(payload.connections) &&
     payload.connections.every(
@@ -1406,6 +1417,7 @@ function isSerializedConnections(payload: unknown): payload is SerializedConnect
         (connection.junctionTrunk === undefined || typeof connection.junctionTrunk === 'boolean') &&
         (connection.titleRoute === undefined || typeof connection.titleRoute === 'boolean') &&
         (connection.titleOrigin === undefined || isConnectionTitleOrigin(connection.titleOrigin)) &&
+        (connection.curveBend === undefined || isConnectionCurveBend(connection.curveBend)) &&
         (connection.revision === undefined ||
           (Number.isInteger(connection.revision) && Number(connection.revision) > 0)),
     )
