@@ -50,6 +50,12 @@ export function connectionGraphPoints(records: readonly ConnectionRecord[], node
   for (const [id, joint] of joints) {
     const a = joint.incoming, b = joint.outgoing;
     let x = (b.count ? b.x : joint.x) - (a.count ? a.x : joint.x), y = (b.count ? b.y : joint.y) - (a.count ? a.y : joint.y);
+    if (a.count && b.count) {
+      // An axis component that overshoots both adjoining chords creates an avoidable lobe.
+      const horizontal = (joint.x - a.x) * (b.x - joint.x) < 0 ? 0 : x;
+      const vertical = (joint.y - a.y) * (b.y - joint.y) < 0 ? 0 : y;
+      if (Math.hypot(horizontal, vertical) > .001) { x = horizontal; y = vertical; }
+    }
     if (Math.hypot(x, y) < .001) { x = b.count ? b.x - joint.x : joint.x - a.x; y = b.count ? b.y - joint.y : joint.y - a.y; }
     if (Math.hypot(x, y) < .001 && a.count) { x = joint.x - a.x; y = joint.y - a.y; }
     const length = Math.hypot(x, y);

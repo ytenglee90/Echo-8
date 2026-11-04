@@ -3,7 +3,7 @@
 import { useEffect, useRef, type PointerEvent } from 'react';
 import { createId, type ViewClient } from '../core/contracts.ts';
 import type { CameraState, CanvasViewportSize } from '../protocols/canvas.ts';
-import { connectionJunctionRequest, connectionTargetSide, connectionUsesTextBoxRegions, connectionGroupPortHit, connectionTitlePortHit, type ConnectionDraft, type ConnectionEndpoint, type ConnectionReconnectRequest, type ConnectionNodeGeometry, type ConnectionGraphSnapshot } from '../protocols/connections.ts';
+import { connectionJunctionDragRequest, connectionJunctionRequest, connectionTargetSide, connectionUsesTextBoxRegions, connectionGroupPortHit, connectionTitlePortHit, type ConnectionDraft, type ConnectionEndpoint, type ConnectionReconnectRequest, type ConnectionNodeGeometry, type ConnectionGraphSnapshot } from '../protocols/connections.ts';
 
 type ReconnectGesture = Pick<ConnectionReconnectRequest, 'id' | 'expectedRevision' | 'titleOrigin'> & { end?: 'from' | 'to'; startSide?: 'left' | 'right' };
 
@@ -114,7 +114,11 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
     if (!session.reconnect || cancel || !session.moved || !session.draft.to) clear(session);
     void client.dispatch('interaction.end', { mode: 'connecting', sessionId: session.token }).then(() => {
       if (cancel || !session.admitted || !session.moved || !session.draft.to) { clear(session); return; }
-      if (!session.reconnect) return client.dispatch('connection.create', { from: session.draft.from!, to: session.draft.to });
+      if (!session.reconnect) {
+        const request = { from: session.draft.from!, to: session.draft.to };
+        const target = nodes.get(request.to.nodeId);
+        return client.dispatch('connection.create', target ? connectionJunctionDragRequest(request, session.point, target) : request);
+      }
       const from = session.reconnect.end === 'from' ? session.draft.to : session.draft.from!;
       const to = session.reconnect.end === 'from' ? session.draft.from! : session.draft.to;
       const fromNode = nodes.get(from.nodeId), toNode = nodes.get(to.nodeId);

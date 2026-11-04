@@ -21,6 +21,7 @@ import type {
 import {
   connectionEndpointPoint,
   connectionHorizontalSides,
+  connectionJunctionDragRequest,
   isTitleConnection,
   MAX_CONNECTION_LABEL_LENGTH,
   normalizeConnectionLabelSize,
@@ -277,11 +278,23 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   [liveJunctions, liveTargets, previewNodes]);
   const reconnect = useConnectionGesture(client, camera, nodeMap);
   const stablePoints = useMemo(() => connectionGraphPoints(connections, stableNodeMap), [connections, stableNodeMap]);
-  const routingRecords = useMemo(() => draft.from && draft.to ? [...connections.filter(edge => edge.id !== draft.reconnectId), {
-    id: draft.reconnectId ?? '__connection-draft__', from: draft.from, to: draft.to, titleRoute: draft.titleRoute,
-    titleOrigin: draft.titleOrigin, labelWidth: 0, labelHeight: 0, revision: 0, createdAt: 0,
-  }] : connections, [connections, draft.from, draft.to, draft.reconnectId, draft.titleRoute, draft.titleOrigin]);
-  const livePoints = useMemo(() => connectionGraphPoints(routingRecords, nodeMap), [routingRecords, nodeMap]);
+  const routingNodeMap = useMemo(() => !draft.to && draft.pointer && draft.from?.kind === 'junction'
+    ? new Map([...nodeMap, ['__connection-pointer__', { id: '__connection-pointer__', ...draft.pointer, width: 0, height: 0 }]]) : nodeMap,
+  [nodeMap, draft.from?.kind, draft.pointer, draft.to]);
+  const draftRecord = useMemo<ConnectionRecord | undefined>(() => {
+    const to = draft.to ?? (routingNodeMap.has('__connection-pointer__') ? { nodeId: '__connection-pointer__', side: 'left' as const } : undefined);
+    if (!draft.from || !to) return undefined;
+    const fromNode = routingNodeMap.get(draft.from.nodeId), toNode = routingNodeMap.get(to.nodeId);
+    if (!fromNode || !toNode) return undefined;
+    const record = { id: draft.reconnectId ?? '__connection-draft__', from: draft.from, to, titleRoute: draft.titleRoute,
+      titleOrigin: draft.titleOrigin, labelWidth: 0, labelHeight: 0, revision: 0, createdAt: 0 };
+    const candidate = draft.reconnectId ? record : connectionJunctionDragRequest(record, fromNode, toNode);
+    const duplicate = !draft.reconnectId && connections.find(edge => edge.from.nodeId === candidate.from.nodeId && edge.to.nodeId === candidate.to.nodeId &&
+      edge.from.kind === candidate.from.kind && edge.to.kind === candidate.to.kind && isTitleConnection(edge) === isTitleConnection(candidate));
+    return duplicate ? { ...candidate, id: duplicate.id } : candidate;
+  }, [connections, draft.from, draft.to, draft.reconnectId, draft.titleRoute, draft.titleOrigin, routingNodeMap]);
+  const routingRecords = useMemo(() => draftRecord ? [...connections.filter(edge => edge.id !== draftRecord.id), draftRecord] : connections, [connections, draftRecord]);
+  const livePoints = useMemo(() => connectionGraphPoints(routingRecords, routingNodeMap), [routingRecords, routingNodeMap]);
   const junctionTangents = useMemo(() => {
     const result = new Map<string, { x: number; y: number }>();
     for (const edge of routingRecords) {
@@ -427,7 +440,8 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     to: draft.to ?? { nodeId: '', side: 'left' }, titleRoute: draft.titleRoute, titleOrigin: draftTitleOrigin }, draftFromNode, draftToNode) : undefined;
   const draftStart = draft.from ? endpointPoint(draft.from, nodeMap, draftSides?.from.side) : undefined;
   const draftEnd = draft.to ? endpointPoint(draft.to, nodeMap, draftSides?.to.side) : draft.pointer;
-  const draftGeometry = draft.from && draftStart && draftEnd ? connectionStrokeForEndpoints(
+  const candidatePoints = draftRecord ? livePoints.get(draftRecord.id) : undefined;
+  const draftGeometry = draftRecord && candidatePoints ? connectionStrokeForEndpoints(draftRecord, candidatePoints, camera.zoom) : draft.from && draftStart && draftEnd ? connectionStrokeForEndpoints(
     { from: draft.from, to: draft.to ?? { nodeId: '', side: 'left' }, titleRoute: draft.titleRoute },
     { from: draft.from.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd, junctionTangents.has(draft.from!.nodeId) ? 0 : draftFromNode?.handleAngle, junctionTangents.get(draft.from!.nodeId)) : draftStart,
       to: draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart, junctionTangents.has(draft.to!.nodeId) ? 0 : draftToNode?.handleAngle, junctionTangents.get(draft.to!.nodeId)) : draftEnd }, camera.zoom,
