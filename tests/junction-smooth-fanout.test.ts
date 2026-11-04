@@ -102,3 +102,17 @@ test('left/right point drags form incoming/outgoing requests for cards, boxes, g
     assert.ok(point.tangent!.x > 0, 'the shared forward flow remains left-to-right on either drag side');
   }
 });
+
+test('the pointer half overrides target anchor and centre ordering without changing ordinary endpoint gestures', () => {
+  const j: ConnectionNodeGeometry = { id: 'j', kind: 'junction', x: 600, y: 400, width: 0, height: 0 };
+  for (const targetX of [80, 470, 900]) for (const pointerX of [599.9, 600, 600.1]) for (const kind of ['card', 'box', 'group']) {
+    const target: ConnectionNodeGeometry = { id: 'target', x: targetX, y: 200, width: 260, height: 146,
+      ...(kind === 'group' ? { kind: 'group' } : kind === 'box' ? { presentation: 'text-box' } : {}) };
+    const request = { from: { nodeId: 'j', kind: 'junction' as const, side: 'right' as const }, to: { nodeId: 'target', kind: target.kind, side: 'left' as const } };
+    const normalized = connectionJunctionDragRequest(request, j, target, { x: pointerX, y: 270 });
+    assert.equal(normalized.from.nodeId, pointerX < j.x ? 'target' : 'j');
+    assert.equal(normalized.to.nodeId, pointerX < j.x ? 'j' : 'target');
+    const ordinary = { from: { nodeId: 'a', side: 'right' as const }, to: request.to };
+    assert.equal(connectionJunctionDragRequest(ordinary, { ...j, id: 'a', kind: undefined }, target, { x: pointerX, y: 270 }), ordinary);
+  }
+});

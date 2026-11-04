@@ -137,3 +137,30 @@ test('the four reported solid and dashed layouts use broad curves with a shared 
     await page.mouse.move(10, 880); await page.screenshot({ path: info.outputPath(`fair-layout-${i + 1}.png`) });
   }
 });
+
+test('free point drags use the point centre even when all existing legs approach from the opposite side', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1000, height: 900 });
+  for (const existingSide of [-1, 1]) {
+    const x = existingSide < 0 ? 80 : 700;
+    await openSteepFan(page, { positions: [[x, 30], [x, 700]], junction: [500, 380],
+      pairs: [['n0', 'j'], ['n1', 'j']], title: false });
+    const marker = page.locator('.connection-junction'); await marker.focus();
+    const paths = () => page.locator('.connection-hit-area').evaluateAll(elements => elements.map(element => element.getAttribute('d')));
+    const original = await paths();
+    const dot = await marker.locator('.connection-junction-dot').boundingBox(), plus = await marker.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
+    await page.mouse.move(plus!.x + plus!.width / 2, plus!.y + plus!.height / 2); await page.mouse.down();
+    for (const [dx, dy] of [[180, -160], [180, 170], [-160, 170], [-180, -170], [30, 200], [-30, -220]]) {
+      await page.mouse.move(dot!.x + dot!.width / 2 + dx, dot!.y + dot!.height / 2 + dy, { steps: 8 });
+      const draft = page.locator('.connection-path.draft');
+      await expect.poll(async () => {
+        const p = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+        return p[0] === 500 && p[1] === 380 ? p[2] - p[0] : p.at(-4)! - p.at(-2)!;
+      })[dx > 0 ? 'toBeGreaterThan' : 'toBeLessThan'](0);
+      await expect(draft.locator('..').locator('.connection-arrow')).toHaveCount(dx > 0 ? 1 : 0);
+      expect(await paths()).toEqual(original);
+      if (Math.abs(dx) === 180) await page.screenshot({ path: info.outputPath(`centre-${existingSide}-${dx}-${dy}.png`) });
+    }
+    await page.keyboard.press('Escape'); await page.mouse.up();
+    await expect(page.locator('.connection-path.draft')).toHaveCount(0); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  }
+});

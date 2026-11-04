@@ -228,12 +228,12 @@ export interface ConnectionNodeGeometry {
   presentation?: 'card' | 'text-box';
 }
 
-/** A point drag toward the left creates an incoming leg, toward the right an outgoing leg. */
-export function connectionJunctionDragRequest<T extends { from: ConnectionEndpoint; to: ConnectionEndpoint }>(request: T, from: ConnectionNodeGeometry, to: ConnectionNodeGeometry): T {
+/** Compare the live pointer to the point centre; target anchors are only a fallback for non-pointer callers. */
+export function connectionJunctionDragRequest<T extends { from: ConnectionEndpoint; to: ConnectionEndpoint }>(request: T, from: ConnectionNodeGeometry, to: ConnectionNodeGeometry, pointer?: { x: number; y: number }): T {
   if (request.from.kind !== 'junction') return request;
   const sides = resolveConnectionEndpoints(from, to);
   const target = connectionEndpointPoint(request.to, to, sides.to.side);
-  return target.x < from.x ? { ...request, from: request.to, to: request.from } : request;
+  return (pointer?.x ?? target.x) < from.x ? { ...request, from: request.to, to: request.from } : request;
 }
 
 export const CONNECTION_GROUP_PORT_SCREEN_WIDTH = 48;

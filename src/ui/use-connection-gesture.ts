@@ -117,7 +117,7 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
       if (!session.reconnect) {
         const request = { from: session.draft.from!, to: session.draft.to };
         const target = nodes.get(request.to.nodeId);
-        return client.dispatch('connection.create', target ? connectionJunctionDragRequest(request, session.point, target) : request);
+        return client.dispatch('connection.create', target ? connectionJunctionDragRequest(request, session.point, target, session.draft.pointer) : request);
       }
       const from = session.reconnect.end === 'from' ? session.draft.to : session.draft.from!;
       const to = session.reconnect.end === 'from' ? session.draft.from! : session.draft.to;

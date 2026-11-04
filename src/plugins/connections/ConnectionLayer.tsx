@@ -288,12 +288,12 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     if (!fromNode || !toNode) return undefined;
     const record = { id: draft.reconnectId ?? '__connection-draft__', from: draft.from, to, titleRoute: draft.titleRoute,
       titleOrigin: draft.titleOrigin, labelWidth: 0, labelHeight: 0, revision: 0, createdAt: 0 };
-    const candidate = draft.reconnectId ? record : connectionJunctionDragRequest(record, fromNode, toNode);
+    const candidate = draft.reconnectId ? record : connectionJunctionDragRequest(record, fromNode, toNode, draft.pointer);
     const duplicate = !draft.reconnectId && connections.find(edge => edge.from.nodeId === candidate.from.nodeId && edge.to.nodeId === candidate.to.nodeId &&
       edge.from.kind === candidate.from.kind && edge.to.kind === candidate.to.kind && isTitleConnection(edge) === isTitleConnection(candidate));
     return duplicate ? { ...candidate, id: duplicate.id } : candidate;
-  }, [connections, draft.from, draft.to, draft.reconnectId, draft.titleRoute, draft.titleOrigin, routingNodeMap]);
-  const routingRecords = useMemo(() => draftRecord ? [...connections.filter(edge => edge.id !== draftRecord.id), draftRecord] : connections, [connections, draftRecord]);
+  }, [connections, draft.from, draft.to, draft.pointer, draft.reconnectId, draft.titleRoute, draft.titleOrigin, routingNodeMap]);
+  const routingRecords = useMemo(() => draftRecord && draft.to ? [...connections.filter(edge => edge.id !== draftRecord.id), draftRecord] : connections, [connections, draftRecord, draft.to]);
   const livePoints = useMemo(() => connectionGraphPoints(routingRecords, routingNodeMap), [routingRecords, routingNodeMap]);
   const junctionTangents = useMemo(() => {
     const result = new Map<string, { x: number; y: number }>();
@@ -441,11 +441,18 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const draftStart = draft.from ? endpointPoint(draft.from, nodeMap, draftSides?.from.side) : undefined;
   const draftEnd = draft.to ? endpointPoint(draft.to, nodeMap, draftSides?.to.side) : draft.pointer;
   const candidatePoints = draftRecord ? livePoints.get(draftRecord.id) : undefined;
-  const draftGeometry = draftRecord && candidatePoints ? connectionStrokeForEndpoints(draftRecord, candidatePoints, camera.zoom) : draft.from && draftStart && draftEnd ? connectionStrokeForEndpoints(
+  const freePointGeometry = !draft.reconnectId && !draft.to && draft.from?.kind === 'junction' && draftStart && draftEnd && draftRecord
+    ? (() => {
+      const incoming = draftEnd.x < draftStart.x;
+      const pointer = { ...draftEnd, side: incoming ? 'right' as const : 'left' as const };
+      const point = junctionRenderPoint(draftStart, incoming ? 'target' : 'source', pointer, draftFromNode?.handleAngle);
+      return connectionStrokeForEndpoints(draftRecord, incoming ? { from: pointer, to: point } : { from: point, to: pointer }, camera.zoom);
+    })() : undefined;
+  const draftGeometry = freePointGeometry ?? (draftRecord && candidatePoints ? connectionStrokeForEndpoints(draftRecord, candidatePoints, camera.zoom) : draft.from && draftStart && draftEnd ? connectionStrokeForEndpoints(
     { from: draft.from, to: draft.to ?? { nodeId: '', side: 'left' }, titleRoute: draft.titleRoute },
     { from: draft.from.kind === 'junction' ? junctionRenderPoint(draftStart, 'source', draftEnd, junctionTangents.has(draft.from!.nodeId) ? 0 : draftFromNode?.handleAngle, junctionTangents.get(draft.from!.nodeId)) : draftStart,
       to: draft.to?.kind === 'junction' ? junctionRenderPoint(draftEnd, 'target', draftStart, junctionTangents.has(draft.to!.nodeId) ? 0 : draftToNode?.handleAngle, junctionTangents.get(draft.to!.nodeId)) : draftEnd }, camera.zoom,
-  ) : undefined;
+  ) : undefined);
   const renderableConnections = drawable;
   const committedGeometry = useMemo<DrawableConnection[]>(() => renderableConnections.flatMap((connection) => {
     const points = livePoints.get(connection.id);
