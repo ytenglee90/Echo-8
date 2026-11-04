@@ -279,3 +279,60 @@ test('selecting then dragging a junction keeps the last preview after release wi
   await expect(marker).toHaveAttribute('data-handle-angle', '0');
   await expect.poll(paths).toEqual(beforeRotation);
 });
+
+for (const zoom of [100, 40]) test(`dragging a selected junction nearby curve at ${zoom}% steers every branch with stable preview, undo and cancellation`, async ({ page }, info) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[900, 80], [900, 400], [900, 650]], junction: [530, 450], pairs: [['j', 'n0'], ['j', 'n1'], ['j', 'n2']], title: false });
+  const marker = page.locator('.connection-junction'), dot = marker.locator('.connection-junction-dot'), layer = page.locator('.connection-layer');
+  await dot.click();
+  if (zoom !== 100) {
+    const input = page.getByRole('textbox', { name: /画布缩放/u }); await input.fill(String(zoom)); await input.press('Enter'); await dot.click();
+  }
+  const paths = () => page.locator('.connection-hit-area').evaluateAll(elements => elements.map(e => e.getAttribute('d')));
+  const original = await paths(), position = await marker.getAttribute('transform');
+  const nearby = () => page.locator('.connection-hit-area[data-connection-id="trunk"]').evaluate(element => {
+    const curve = element as SVGPathElement, matrix = curve.getScreenCTM()!, centre = document.querySelector('.connection-junction-dot')!.getBoundingClientRect();
+    const scale = Math.abs(matrix.a);
+    for (let length = 20 / scale; length < 45 / scale; length += 2 / scale) {
+      const point = curve.getPointAtLength(length), screen = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+      if (document.elementFromPoint(screen.x, screen.y) === curve) return { x: screen.x, y: screen.y, cx: centre.x + centre.width / 2, cy: centre.y + centre.height / 2 };
+    }
+    throw new Error('No exposed curve near selected junction');
+  });
+  const begin = await nearby();
+  await page.mouse.move(begin.x, begin.y); await page.mouse.down();
+  await page.mouse.move(begin.cx + 34, begin.cy + 27, { steps: 8 });
+  await expect(layer).toHaveAttribute('data-junction-handle-preview', 'j');
+  const preview = await paths();
+  for (let i = 0; i < preview.length; i++) expect(preview[i]).not.toBe(original[i]);
+  await expect(marker).toHaveAttribute('transform', position!);
+  await page.mouse.up(); await expect(layer).not.toHaveAttribute('data-junction-handle-preview');
+  await expect.poll(paths).toEqual(preview);
+  await page.screenshot({ path: info.outputPath('steered-fan.png') });
+  await page.keyboard.press('Control+z'); await expect.poll(paths).toEqual(original);
+  await page.keyboard.press('Control+Shift+z'); await expect.poll(paths).toEqual(preview);
+  const cancel = await nearby(); await page.mouse.move(cancel.x, cancel.y); await page.mouse.down();
+  await page.mouse.move(cancel.cx + 35, cancel.cy - 28, { steps: 8 });
+  await expect.poll(paths).not.toEqual(preview);
+  await page.keyboard.press('Escape'); await page.mouse.up();
+  await expect(layer).not.toHaveAttribute('data-junction-handle-preview'); await expect.poll(paths).toEqual(preview);
+  await expect(marker).toHaveAttribute('transform', position!);
+  await expect(page.getByText(/Illegal interaction transition/u)).toHaveCount(0);
+});
+
+for (const title of [false, true]) test(`moving a ${title ? 'title' : 'body'} junction close to a node keeps arrow size, line width and dash spacing unchanged`, async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[900, 300]], junction: [530, 373], pairs: [['j', 'n0']], title });
+  const dot = page.locator('.connection-junction-dot'), arrow = page.locator('.connection-arrow'), line = page.locator('.connection-path');
+  const dimensions = () => arrow.evaluate(element => { const box = element.getBoundingClientRect(); return [box.width, box.height]; });
+  const style = () => line.evaluate(element => { const s = getComputedStyle(element); return [s.strokeWidth, s.strokeDasharray]; });
+  await page.mouse.move(10, 850); const originalSize = await dimensions(), originalStyle = await style();
+  for (const dx of [270, 70]) {
+    const box = await dot.boundingBox();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down();
+    await page.mouse.move(box!.x + box!.width / 2 + dx, box!.y + box!.height / 2, { steps: 8 });
+    expect(await dimensions()).toEqual(originalSize);
+    await page.mouse.up(); await page.mouse.move(10, 850);
+    await expect.poll(dimensions).toEqual(originalSize); expect(await style()).toEqual(originalStyle);
+  }
+});

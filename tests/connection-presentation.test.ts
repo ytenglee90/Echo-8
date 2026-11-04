@@ -6,6 +6,9 @@ import { createSelectionPlugin } from '../src/plugins/selection/model.ts';
 import { createConnectionsPlugin } from '../src/plugins/connections/model.ts';
 import { connectionStrokeGeometry } from '../src/plugins/connections/rendering.ts';
 import { connectionGraphPoints } from '../src/plugins/connections/routing.ts';
+import { connectionCurvePath } from '../src/plugins/connections/rendering.ts';
+import { planSmoothRoute } from '../src/plugins/connections/route-geometry.ts';
+import { canvasDetailWorldScale } from '../src/ui/canvas-screen-scale.ts';
 import { updateConnectionSession } from '../src/plugins/canvas/surface-geometry.ts';
 import { mergeContentCatalogDeltas } from '../src/ui/runtime-hooks.ts';
 import type { ContentSummary } from '../src/protocols/content.ts';
@@ -25,6 +28,18 @@ test('junction branches meet left and right ports with a horizontal shaft and ar
     assert.equal((arrow[1] + arrow[5]) / 2, shaft.at(-1));
     assert.ok((shaft.at(-2)! - shaft.at(-4)!) * (side === 'left' ? 1 : -1) > 0);
     assert.ok((tip.x - shaft.at(-2)!) * (side === 'left' ? 1 : -1) > 0);
+  }
+});
+
+test('arrow dimensions depend only on camera zoom, never on the length of a planned terminal lead', () => {
+  for (const zoom of [.4, 1, 2.4]) for (const lead of [.01, .5, 4, 20, 32]) {
+    const route = planSmoothRoute({ x: 0, y: 0, direction: { x: 1, y: 0 }, lead: 0 }, { x: 120, y: 70, direction: { x: 1, y: 0 }, lead });
+    const from = { x: 0, y: 0, route }, to = { x: 120, y: 70, route }, original = route.key;
+    const stroke = connectionStrokeGeometry(from, to, zoom), a = stroke.arrowPath.match(/-?\d+(?:\.\d+)?/gu)!.map(Number), scale = canvasDetailWorldScale(zoom);
+    assert.ok(Math.abs(a[2] - a[0] - 14 * scale) < .001);
+    assert.ok(Math.abs(Math.abs(a[5] - a[1]) - 14 * scale) < .001);
+    assert.deepEqual(a.slice(2, 4), [120, 70]); assert.equal(route.key, original);
+    if (lead <= 14 * scale) assert.equal(stroke.shaftPath, connectionCurvePath(from, to), 'short leads must keep the exact smooth curve beneath the arrow');
   }
 });
 

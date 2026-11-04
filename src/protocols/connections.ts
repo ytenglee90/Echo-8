@@ -62,6 +62,8 @@ export interface ConnectionMoveJunctionRequest {
 }
 
 export type ConnectionJunctionPreview = { id: string; x: number; y: number } | { positions: Array<{ id: string; x: number; y: number }> } | { clear: true };
+export interface ConnectionSetJunctionHandleRequest { id: string; handleAngle: number; expectedRevision: number }
+export type ConnectionJunctionHandlePreview = { id: string; handleAngle: number; expectedRevision: number } | { clear: true };
 
 export interface ConnectionTitleOrigin { side: 'left' | 'right'; sourceIsLeft: boolean; sourceCenterX?: number; targetCenterX?: number }
 export function isConnectionTitleOrigin(value: unknown): value is ConnectionTitleOrigin {
@@ -140,6 +142,7 @@ declare module './commands.ts' {
   interface ApplicationCommandMap {
     'connection.reconnect': CommandContract<ConnectionReconnectRequest, { id?: string }>;
     'connection.rotateJunctionHandle': CommandContract<{ id: string }, { handleAngle: number; revision: number }>;
+    'connection.setJunctionHandle@1': CommandContract<ConnectionSetJunctionHandleRequest, { handleAngle: number; revision: number }>;
     'connection.moveJunctions': CommandContract<{ positions: ConnectionMoveJunctionRequest[] }, { moved: number }>;
     'connection.connectSelectedEndpoints': CommandContract<undefined, { id?: string }>;
     'connection.addJunction': CommandContract<ConnectionAddJunctionRequest, { id: string }>;

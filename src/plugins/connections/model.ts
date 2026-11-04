@@ -124,6 +124,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.create',
         'connection.reconnect',
         'connection.rotateJunctionHandle',
+        'connection.setJunctionHandle@1',
         'connection.moveJunctions',
         'connection.connectSelectedEndpoints',
         'connection.addJunction',
@@ -156,6 +157,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'canvas.pointer.preview',
         'canvas.snap.preview',
         'connection.junction.preview',
+        'connection.junction.handle.preview@1',
         'canvas.drag.preview',
         'canvas.node.resize.preview',
         'canvas.appearance.invalidated',
@@ -337,6 +339,22 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           const next: ConnectionJunction = { ...point, handleAngle, revision: point.revision + 1 };
           if (handleAngle === 0) delete next.handleAngle;
           return { result: { handleAngle, revision: next.revision }, transaction: { label: '旋转中转点曲线手柄',
+            patches: [{ op: 'set', domain: 'document', namespace: JUNCTION_NAMESPACE, key: point.id, value: next }],
+            events: [{ type: 'connection.changed', payload: { junctionIds: [point.id] } }] } };
+        },
+      });
+      context.commands.register<import('../../protocols/connections.ts').ConnectionSetJunctionHandleRequest, { handleAngle: number; revision: number }>({
+        type: 'connection.setJunctionHandle@1',
+        validate: (value): value is import('../../protocols/connections.ts').ConnectionSetJunctionHandleRequest => isRecord(value) &&
+          typeof value.id === 'string' && value.id.length > 0 && Number.isInteger(value.expectedRevision) && Number(value.expectedRevision) > 0 &&
+          typeof value.handleAngle === 'number' && Number.isInteger(value.handleAngle) && value.handleAngle >= 0 && value.handleAngle < 360 && value.handleAngle % 15 === 0,
+        handle: payload => {
+          const point = readJunctions()[payload.id];
+          if (!point || point.revision !== payload.expectedRevision) throw new Error('中转点已变化，请重新调整曲线');
+          if ((point.handleAngle ?? 0) === payload.handleAngle) return { result: { handleAngle: payload.handleAngle, revision: point.revision } };
+          const next: ConnectionJunction = { ...point, handleAngle: payload.handleAngle, revision: point.revision + 1 };
+          if (!next.handleAngle) delete next.handleAngle;
+          return { result: { handleAngle: payload.handleAngle, revision: next.revision }, transaction: { label: '调整中转点曲线方向',
             patches: [{ op: 'set', domain: 'document', namespace: JUNCTION_NAMESPACE, key: point.id, value: next }],
             events: [{ type: 'connection.changed', payload: { junctionIds: [point.id] } }] } };
         },

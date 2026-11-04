@@ -24,7 +24,8 @@ export function connectionGraphPoints(records: readonly ConnectionRecord[], node
   const points = new Map<string, ConnectionPoints>(), neighbours = new Map<string, JunctionNeighbour[]>();
   const include = (id: string, point: ConnectionRenderPoint, other: ConnectionRenderPoint, otherIsJunction: boolean) => {
     const horizontalOnly = !otherIsJunction && Math.abs(point.y - other.y) < 24 && (point.x - other.x) * (other.side === 'left' ? -1 : 1) <= 0;
-    const list = neighbours.get(id) ?? []; list.push({ point, other, angle: nodes.get(id)?.handleAngle ?? 0, horizontalOnly }); neighbours.set(id, list);
+    const manualSafe = otherIsJunction || (point.x - other.x) * (other.side === 'left' ? -1 : 1) > 0;
+    const list = neighbours.get(id) ?? []; list.push({ point, other, angle: nodes.get(id)?.handleAngle ?? 0, horizontalOnly, manualSafe }); neighbours.set(id, list);
   };
   for (const record of records) {
     const fromNode = nodes.get(record.from.nodeId), toNode = nodes.get(record.to.nodeId);

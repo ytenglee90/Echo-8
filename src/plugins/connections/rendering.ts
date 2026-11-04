@@ -80,8 +80,15 @@ export function connectionStrokeGeometry(
   if (from.route && from.route === to.route) return plannedStroke(segments, from, zoom);
   const length = approximateCubicLength(final);
   const detailWorldScale = canvasDetailWorldScale(zoom);
-  const arrowLength = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale, length * .45);
-  if (arrowLength < 0.001) return full;
+  const arrowLength = CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale;
+  const tangentX = final.to.x - final.controlTo.x, tangentY = final.to.y - final.controlTo.y;
+  const tangentLength = Math.hypot(tangentX, tangentY);
+  if (tangentLength === 0) return full;
+  const unitX = tangentX / tangentLength, unitY = tangentY / tangentLength;
+  const arrowPath = fixedArrowPath(final.to, unitX, unitY, detailWorldScale);
+  // A short shaft continues underneath the opaque arrow. Never reverse or
+  // distort the curve merely to make room for a fixed-size decoration.
+  if (length <= arrowLength) return { ...full, arrowPath };
   // Trim on the actual Bézier, preserving both control points and a single forward stroke.
   let previous = final.to, traversed = 0, trimT = 1;
   for (let step = 1; step <= 128; step += 1) {
@@ -98,26 +105,10 @@ export function connectionStrokeGeometry(
   const a = mix(final.from, final.controlFrom), b = mix(final.controlFrom, final.controlTo), c = mix(final.controlTo, final.to);
   const d = mix(a, b), e = mix(b, c), curveBase = mix(d, e);
   // The terminal derivative, rather than the trimmed chord, owns the port direction.
-  const tangentX = final.to.x - final.controlTo.x;
-  const tangentY = final.to.y - final.controlTo.y;
-  const tangentLength = Math.hypot(tangentX, tangentY);
-  if (tangentLength === 0) return full;
-  const unitX = tangentX / tangentLength;
-  const unitY = tangentY / tangentLength;
   const base = { x: final.to.x - unitX * arrowLength, y: final.to.y - unitY * arrowLength };
   const terminalHandle = Math.max(0.001, Math.hypot(curveBase.x - d.x, curveBase.y - d.y));
   const controlFrom = a;
   const controlTo = { x: base.x - unitX * terminalHandle, y: base.y - unitY * terminalHandle };
-  const arrowHalfWidth = Math.min(CONNECTION_ARROW_SCREEN_HALF_WIDTH * detailWorldScale, arrowLength / 2);
-  const perpendicular = { x: -unitY, y: unitX };
-  const firstWing = {
-    x: base.x + perpendicular.x * arrowHalfWidth,
-    y: base.y + perpendicular.y * arrowHalfWidth,
-  };
-  const secondWing = {
-    x: base.x - perpendicular.x * arrowHalfWidth,
-    y: base.y - perpendicular.y * arrowHalfWidth,
-  };
   const shaftSegments = segments.map((segment, index) => index === segments.length - 1
     ? { ...segment, controlFrom, controlTo, to: base }
     : segment);
@@ -126,22 +117,30 @@ export function connectionStrokeGeometry(
     ...shaftSegments.map((segment) =>
       `C ${formatPoint(segment.controlFrom)}, ${formatPoint(segment.controlTo)}, ${formatPoint(segment.to)}`),
   ].join(' ');
-  return { shaftPath: shaft, arrowPath: `M ${formatPoint(firstWing)} L ${formatPoint(final.to)} L ${formatPoint(secondWing)} Z` };
+  return { shaftPath: shaft, arrowPath };
 }
 
-/** Planned routes end in a real straight port lead; trim it without modifying any spline control. */
+function fixedArrowPath(tip: ConnectionRenderPoint, x: number, y: number, scale: number): string {
+  const length = CONNECTION_ARROW_SCREEN_LENGTH * scale, width = CONNECTION_ARROW_SCREEN_HALF_WIDTH * scale;
+  const base = { x: tip.x - x * length, y: tip.y - y * length };
+  return `M ${formatPoint({ x: base.x - y * width, y: base.y + x * width })} L ${formatPoint(tip)} L ${formatPoint({ x: base.x + y * width, y: base.y - x * width })} Z`;
+}
+
+/** Trim only a sufficiently long straight port lead; shorter curves remain untouched beneath the arrow. */
 function plannedStroke(segments: readonly CubicCurveSegment[], from: ConnectionRenderPoint, zoom: number) {
   const last = segments.at(-1)!, dx = last.to.x - last.from.x, dy = last.to.y - last.from.y, distance = Math.hypot(dx, dy);
-  const length = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * canvasDetailWorldScale(zoom), distance * .8);
-  if (length < .001) return { shaftPath: connectionCurvePath(from, { ...last.to, route: from.route }), arrowPath: '' };
+  const scale = canvasDetailWorldScale(zoom), length = CONNECTION_ARROW_SCREEN_LENGTH * scale;
+  const full = () => connectionCurvePath(from, { ...last.to, route: from.route });
+  if (distance < .000001) return { shaftPath: full(), arrowPath: '' };
   const x = dx / distance, y = dy / distance, base = { x: last.to.x - x * length, y: last.to.y - y * length };
-  const width = Math.min(CONNECTION_ARROW_SCREEN_HALF_WIDTH * canvasDetailWorldScale(zoom), length / 2);
+  const arrowPath = fixedArrowPath(last.to, x, y, scale);
+  if (distance <= length) return { shaftPath: full(), arrowPath };
   const trimmed = { ...last, to: base,
     controlFrom: { x: last.from.x + (base.x - last.from.x) / 3, y: last.from.y + (base.y - last.from.y) / 3 },
     controlTo: { x: last.from.x + 2 * (base.x - last.from.x) / 3, y: last.from.y + 2 * (base.y - last.from.y) / 3 } };
   const parts = [...segments.slice(0, -1), trimmed];
   return { shaftPath: [`M ${formatPoint(from)}`, ...parts.map(p => `C ${formatPoint(p.controlFrom)}, ${formatPoint(p.controlTo)}, ${formatPoint(p.to)}`)].join(' '),
-    arrowPath: `M ${formatPoint({ x: base.x - y * width, y: base.y + x * width })} L ${formatPoint(last.to)} L ${formatPoint({ x: base.x + y * width, y: base.y - x * width })} Z` };
+    arrowPath };
 }
 
 export function connectionCurveMidpoint(

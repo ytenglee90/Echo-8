@@ -44,6 +44,20 @@ test('wide, narrow, same-side, overlapping and angle-preference layouts never in
   }
 });
 
+test('a manually steered mixed fan changes all branches while keeping one shared axis and no self-intersections', () => {
+  const { nodes } = fixture(), records = [edge('a', 'j0', 'n3'), edge('b', 'j0', 'n4'), edge('c', 'j0', 'n5')];
+  const original = connectionGraphPoints(records, nodes);
+  for (const angle of [15, 30, 45, 90, 270, 330, 345]) {
+    const moved = new Map(nodes); moved.set('j0', { ...nodes.get('j0')!, handleAngle: angle });
+    const graph = connectionGraphPoints(records, moved), axes = [...graph.values()].map(pair => pair.from.tangent);
+    assert.deepEqual(axes[0], axes[1]); assert.deepEqual(axes[1], axes[2]);
+    for (const [id, pair] of graph) {
+      assert.notEqual(pair.from.route!.key, original.get(id)!.from.route!.key);
+      assertSmoothRoute(pair.from.route!); assertNoSelfIntersection(pair.from.route!);
+    }
+  }
+});
+
 test('free, hovered, duplicate and reconnect previews all use owner-planned routes', () => {
   const { nodes, records } = fixture(); const from = { nodeId: 'j0', kind: 'junction' as const, side: 'right' as const };
   const original = connectionGraphPoints(records, nodes);
