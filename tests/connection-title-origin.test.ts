@@ -55,7 +55,7 @@ test('title origin survives create, reconnect undo, file migration and clipboard
   assert.deepEqual((await graph()).connections[0].titleOrigin, savedOrigin);
   await kernel.transactions.undo(); assert.deepEqual((await graph()).connections[0], initial);
   const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
-  assert.equal(project.plugins.find(p => p.id === 'connections')?.dataVersion, 12);
+  assert.equal(project.plugins.find(p => p.id === 'connections')?.dataVersion, 13);
   const oldProject = { ...project, plugins: project.plugins.map(p => p.id === 'connections' ? { ...p, dataVersion: 9 } : p) };
   const reopened = new ApplicationKernel(definitions()); await reopened.start();
   await reopened.router.dispatch('system.document.replace', await parseProject(await serializeProject(oldProject)), 'core.test');

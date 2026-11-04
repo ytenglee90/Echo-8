@@ -53,7 +53,7 @@ test('angles survive file and clipboard round trips; version ten migration prese
   const { kernel, ids, id, graph } = await setup();
   await kernel.router.dispatch('connection.rotateJunctionHandle', { id }, source); await kernel.router.dispatch('connection.rotateJunctionHandle', { id }, source);
   const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, source);
-  assert.equal(project.plugins.find(plugin => plugin.id === 'connections')?.dataVersion, 12);
+  assert.equal(project.plugins.find(plugin => plugin.id === 'connections')?.dataVersion, 13);
   const restored = new ApplicationKernel(definitions()); await restored.start();
   await restored.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), source);
   const reopened = await restored.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1'), current = await graph();

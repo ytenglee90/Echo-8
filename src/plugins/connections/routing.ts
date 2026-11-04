@@ -1,4 +1,4 @@
-import { connectionEndpointPoint, connectionHorizontalSides, isTitleConnection, isConnectionCurveBend, resolveConnectionRecordEndpoints, type ConnectionNodeGeometry, type ConnectionRecord } from '../../protocols/connections.ts';
+import { connectionEndpointPoint, connectionHorizontalSides, isTitleConnection, resolveConnectionRecordEndpoints, type ConnectionNodeGeometry, type ConnectionRecord } from '../../protocols/connections.ts';
 import { connectionStrokeGeometry, type ConnectionRenderPoint } from './rendering.ts';
 import { planSmoothRoute } from './route-geometry.ts';
 import { planJunctionTransition, type JunctionNeighbour } from './junction-routing.ts';
@@ -40,7 +40,6 @@ export function connectionGraphPoints(records: readonly ConnectionRecord[], node
   for (const record of records) {
     const pair = points.get(record.id); if (!pair || (record.from.kind !== 'junction' && record.to.kind !== 'junction')) continue;
     const span = Math.hypot(pair.to.x - pair.from.x, pair.to.y - pair.from.y);
-    const bend = isConnectionCurveBend(record.curveBend) ? record.curveBend : undefined;
     const nodeLead = Math.min(32, Math.max(.5, Math.abs(pair.to.x - pair.from.x) * .2), Math.max(.5, span * .1));
     const end = (point: ConnectionRenderPoint, other: ConnectionRenderPoint, endpoint: ConnectionRecord['from'], source: boolean) => {
       const transition = endpoint.kind === 'junction' ? transitions.get(endpoint.nodeId) : undefined;
@@ -49,7 +48,7 @@ export function connectionGraphPoints(records: readonly ConnectionRecord[], node
         const half = other.x < point.x ? -1 : 1;
         point.side = half < 0 ? 'left' : 'right';
         point.tangent = { x: transition.axis.x * half * sign, y: transition.axis.y * half * sign };
-        return { ...point, direction: point.tangent, lead: transition.lead, bend: bend?.[source ? 'from' : 'to'] };
+        return { ...point, direction: point.tangent, lead: transition.lead };
       }
       return { ...point, direction: { x: (point.side === 'left' ? -1 : 1) * sign, y: 0 }, lead: nodeLead };
     };

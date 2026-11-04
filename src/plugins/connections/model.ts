@@ -1,5 +1,4 @@
 import { createId, isRecord, type PluginContext, type PluginDefinition, type CommandOutcome } from '../../core/contracts.ts';
-import { curveBendAtEndpoints } from './curve-bend.ts';
 import type {
   AppearanceColorContribution,
   AppearanceReadContribution,
@@ -19,7 +18,6 @@ import {
   resolveConnectionEndpoints,
   connectionUsesTextBoxRegions,
   isConnectionTitleOrigin,
-  isConnectionCurveBend,
   isTitleConnection,
   connectionJunctionRequest,
   resolveConnectionRecordEndpoints,
@@ -89,7 +87,7 @@ interface SerializedConnections {
 export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('connections', '连线', {
-      dataVersion: 12,
+      dataVersion: 13,
       namespaces: [CONNECTION_NAMESPACE, CONNECTION_APPEARANCE_NAMESPACE, JUNCTION_NAMESPACE],
       namespaceDomains: {
         [CONNECTION_NAMESPACE]: 'document',
@@ -126,7 +124,6 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.create',
         'connection.reconnect',
         'connection.rotateJunctionHandle',
-        'connection.setCurveBend@1',
         'connection.moveJunctions',
         'connection.connectSelectedEndpoints',
         'connection.addJunction',
@@ -159,7 +156,6 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'canvas.pointer.preview',
         'canvas.snap.preview',
         'connection.junction.preview',
-        'connection.curve.bend.preview@1',
         'canvas.drag.preview',
         'canvas.node.resize.preview',
         'canvas.appearance.invalidated',
@@ -245,6 +241,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       from: 10, to: 11, migrate: data => data,
     }, {
       from: 11, to: 12, migrate: data => data,
+    }, {
+      from: 12, to: 13, migrate: data => data,
     }],
 
     start(context) {
@@ -345,25 +343,6 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           return { result: { handleAngle, revision: next.revision }, transaction: { label: '旋转中转点曲线手柄',
             patches: [{ op: 'set', domain: 'document', namespace: JUNCTION_NAMESPACE, key: point.id, value: next }],
             events: [{ type: 'connection.changed', payload: { junctionIds: [point.id] } }] } };
-        },
-      });
-      context.commands.register<import('../../protocols/connections.ts').ConnectionSetCurveBendRequest, { angle: number; revision: number }>({
-        type: 'connection.setCurveBend@1',
-        validate: (value): value is import('../../protocols/connections.ts').ConnectionSetCurveBendRequest => isRecord(value) &&
-          typeof value.id === 'string' && value.id.length > 0 && Number.isInteger(value.expectedRevision) && Number(value.expectedRevision) > 0 &&
-          (value.end === 'from' || value.end === 'to') && isConnectionCurveBend({ [value.end]: value.angle }),
-        handle: payload => {
-          const edge = readConnections()[payload.id];
-          if (!edge || edge.revision !== payload.expectedRevision) throw new Error('连线已变化，请重新调整曲线');
-          if (edge[payload.end].kind !== 'junction' || !readJunctions()[edge[payload.end].nodeId]) throw new Error('该端没有中转点');
-          if ((edge.curveBend?.[payload.end] ?? 0) === payload.angle) return { result: { angle: payload.angle, revision: edge.revision } };
-          const bend = { ...(isConnectionCurveBend(edge.curveBend) ? edge.curveBend : {}), [payload.end]: payload.angle };
-          if (!payload.angle) delete bend[payload.end];
-          const next: ConnectionRecord = { ...edge, curveBend: bend, revision: edge.revision + 1 };
-          if (!Object.keys(bend).length) delete next.curveBend;
-          return { result: { angle: payload.angle, revision: next.revision }, transaction: { label: '调整单条曲线',
-            patches: [{ op: 'set', domain: 'document', namespace: CONNECTION_NAMESPACE, key: edge.id, value: next }],
-            events: [{ type: 'connection.changed', payload: { id: edge.id } }] } };
         },
       });
       const junctionMovesPlan = (positions: import('../../protocols/connections.ts').ConnectionMoveJunctionRequest[]) => {
@@ -531,10 +510,6 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             id, ...endpoints,
             revision: (current?.revision ?? 0) + 1,
           };
-          if (current) {
-            const bend = curveBendAtEndpoints([current], connection.from, connection.to);
-            if (bend) connection.curveBend = bend; else delete connection.curveBend;
-          }
           if (reference && requested.titleRoute === undefined) delete connection.titleRoute;
           if (payload.titleOrigin && isTitleConnection(connection)) {
             if (payload.from.kind || payload.from.side !== 'title') throw new Error('标题起始端口不正确');
@@ -1417,7 +1392,6 @@ function isSerializedConnections(payload: unknown): payload is SerializedConnect
         (connection.junctionTrunk === undefined || typeof connection.junctionTrunk === 'boolean') &&
         (connection.titleRoute === undefined || typeof connection.titleRoute === 'boolean') &&
         (connection.titleOrigin === undefined || isConnectionTitleOrigin(connection.titleOrigin)) &&
-        (connection.curveBend === undefined || isConnectionCurveBend(connection.curveBend)) &&
         (connection.revision === undefined ||
           (Number.isInteger(connection.revision) && Number(connection.revision) > 0)),
     )

@@ -1,6 +1,5 @@
 import { connectionJunctionDragRequest, isTitleConnection, type ConnectionDraft, type ConnectionNodeGeometry, type ConnectionRecord } from '../../protocols/connections.ts';
 import { connectionGraphPoints, type ConnectionPoints } from './routing.ts';
-import { curveBendAtEndpoints } from './curve-bend.ts';
 
 export interface ConnectionScene { points: Map<string, ConnectionPoints>; draft?: { record: ConnectionRecord; points: ConnectionPoints } }
 
@@ -17,8 +16,6 @@ export function planConnectionScene(records: readonly ConnectionRecord[], nodes:
     sourceCenterX: fromNode.x + fromNode.width / 2, targetCenterX: toNode.x + toNode.width / 2 } : draft.titleOrigin;
   const record: ConnectionRecord = { id: draft.reconnectId ?? '__connection-draft__', from: draft.from, to, titleRoute: draft.titleRoute,
     titleOrigin, labelWidth: 0, labelHeight: 0, revision: 0, createdAt: 0 };
-  const previous = draft.reconnectId ? records.find(edge => edge.id === draft.reconnectId) : undefined;
-  if (previous) record.curveBend = curveBendAtEndpoints([previous], record.from, record.to);
   const candidate = draft.reconnectId ? record : connectionJunctionDragRequest(record, fromNode, toNode, draft.pointer);
   const duplicate = !draft.reconnectId && records.find(edge => edge.from.nodeId === candidate.from.nodeId && edge.to.nodeId === candidate.to.nodeId &&
     edge.from.kind === candidate.from.kind && edge.to.kind === candidate.to.kind && isTitleConnection(edge) === isTitleConnection(candidate));

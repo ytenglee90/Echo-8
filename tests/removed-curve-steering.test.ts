@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { ApplicationKernel } from '../src/core/kernel.ts';
+import { createConnectionsPlugin } from '../src/plugins/connections/model.ts';
+import { textNodePlugin } from '../src/plugins/text-node/plugin.ts';
+import { createSelectionPlugin } from '../src/plugins/selection/model.ts';
+import { connectionGraphPoints } from '../src/plugins/connections/routing.ts';
+import { serializeProject, parseProject } from '../src/plugins/import-export/codec.ts';
+import type { ConnectionGraphSnapshot, ConnectionNodeGeometry } from '../src/protocols/connections.ts';
+import type { ProjectSource } from '../src/protocols/files.ts';
+
+test('version twelve curve preferences reopen losslessly but no longer affect automatic routes or expose steering commands', async () => {
+  const source = 'core.test', plugin = createConnectionsPlugin(), definitions = () => [textNodePlugin, createSelectionPlugin(), createConnectionsPlugin()];
+  const kernel = new ApplicationKernel(definitions()); await kernel.start();
+  const ids: string[] = [];
+  for (const x of [0, 900]) ids.push((await kernel.router.dispatch<{ id: string }>('node.create', { x, y: 80 }, source)).id);
+  const line = (await kernel.router.dispatch<{ id: string }>('connection.create', { from: { nodeId: ids[0], side: 'right' }, to: { nodeId: ids[1], side: 'left' } }, source)).id;
+  await kernel.router.dispatch('connection.addJunction', { x: 550, y: 350, connections: [{ id: line, revision: 1 }] }, source);
+  const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, source);
+  project.plugins.find(p => p.id === 'connections')!.dataVersion = 12;
+  const edge = project.document.namespaces.connections[line] as Record<string, unknown>;
+  edge.curveBend = { from: 75 }; edge.future = { keep: true };
+  assert.deepEqual(await plugin.migrations!.find(m => m.from === 12)!.migrate(project.document.namespaces), project.document.namespaces);
+  const restored = new ApplicationKernel(definitions()); await restored.start();
+  await restored.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), source);
+  const graph = await restored.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
+  const nodes = new Map<string, ConnectionNodeGeometry>(ids.map((id, i) => [id, { id, x: i * 900, y: 80, width: 260, height: 146 }]));
+  for (const point of graph.junctions) nodes.set(point.id, { ...point, kind: 'junction', width: 0, height: 0 });
+  const automatic = graph.connections.map(record => { const clean = { ...record } as typeof record & { curveBend?: unknown }; delete clean.curveBend; return clean; });
+  assert.deepEqual(connectionGraphPoints(graph.connections, nodes), connectionGraphPoints(automatic, nodes));
+  const saved = await restored.router.ask<ProjectSource>('system.project.source', undefined, source);
+  assert.equal(saved.plugins.find(p => p.id === 'connections')!.dataVersion, 13);
+  assert.deepEqual(saved.document.namespaces.connections[line], edge);
+  assert.ok(!plugin.manifest.commands?.includes('connection.setCurveBend@1'));
+  assert.ok(!plugin.manifest.signals?.includes('connection.curve.bend.preview@1'));
+});

@@ -55,7 +55,12 @@ test('all 15-degree preferences preserve the safe transition of a same-side fan'
     const { nodes, records } = fixture(64, true, angle), graph = connectionGraphPoints(records, nodes);
     for (const record of records) {
       const pair = graph.get(record.id)!, tangent = record.from.kind === 'junction' ? pair.from.tangent! : pair.to.tangent!;
-      assert.equal(Math.abs(tangent.x), 1); assert.equal(Math.abs(tangent.y), 0);
+      assert.ok(Math.abs(tangent.x) > 0 && Math.abs(tangent.x) <= 1);
+      assert.ok(Math.abs(Math.hypot(tangent.x, tangent.y) - 1) < .000001);
+      const sign = record.from.kind === 'junction' ? 1 : -1;
+      assert.ok(tangent.x * sign > 0 && Math.abs(tangent.y) <= Math.abs(tangent.x) + .000001);
+      const reference = graph.get(records[0].id)!.to.tangent!;
+      assert.ok(Math.abs(tangent.x * reference.y - tangent.y * reference.x) < .000001, 'manual preferences keep every branch on the shared axis');
     }
   }
 });
