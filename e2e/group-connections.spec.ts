@@ -109,7 +109,8 @@ for (const start of ['point', 'node', 'box', 'group']) test(`mixed selection mov
   const handle = start === 'point' ? dot : start === 'group' ? group : start === 'box' ? box.locator('.text-box-title') : node.locator('header strong');
   const rect = await handle.boundingBox();
   const from = start === 'group' ? { x: rect!.x + 12, y: rect!.y + 16 } : { x: rect!.x + rect!.width / 2, y: rect!.y + rect!.height / 2 };
-  await page.mouse.move(from.x, from.y); await page.mouse.down();
+  const clickCount = start === 'point' ? 2 : 1;
+  await page.mouse.move(from.x, from.y); await page.mouse.down({ clickCount });
   await page.mouse.move(from.x + 120, from.y + 80, { steps: 10 });
   const movedTogether = async () => {
     const current = await mixedPositions(page), dx = current.point[0] - before.point[0], dy = current.point[1] - before.point[1];
@@ -119,7 +120,18 @@ for (const start of ['point', 'node', 'box', 'group']) test(`mixed selection mov
   };
   await expect.poll(movedTogether).toBe(true);
   const preview = await mixedPositions(page);
-  await page.mouse.up(); await expect.poll(() => mixedPositions(page)).toEqual(preview);
+  const previewCurves = await page.locator('.connection-hit-area').evaluateAll(elements => Object.fromEntries(elements.map(e => [e.getAttribute('data-connection-id'), e.getAttribute('d')])));
+  await page.mouse.up({ clickCount }); await expect.poll(() => mixedPositions(page)).toEqual(preview);
+  const committedCurves = await page.evaluate(async () => {
+    const samples: Record<string, string | null>[] = [];
+    for (let i = 0; i < 24; i++) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      samples.push(Object.fromEntries([...document.querySelectorAll('.connection-hit-area')].map(e => [e.getAttribute('data-connection-id')!, e.getAttribute('d')])));
+    }
+    return samples;
+  });
+  for (const sample of committedCurves) expect(sample).toEqual(previewCurves);
+  await expect(page.locator('.connection-junction')).toHaveAttribute('data-handle-angle', '0');
   expect(preview['群组测试c']).toEqual(before['群组测试c']); expect(preview['群组测试d']).toEqual(before['群组测试d']);
   await page.keyboard.press('Control+z'); await expect.poll(() => mixedPositions(page)).toEqual(before);
   await page.keyboard.press('Control+Shift+z'); await expect.poll(() => mixedPositions(page)).toEqual(preview);

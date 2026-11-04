@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, type PointerEvent } from 'react';
 
 import type { ViewClient } from '../../core/contracts.ts';
 import type { CameraState } from '../../protocols/canvas.ts';
@@ -23,6 +23,9 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
   const drag = useJunctionDrag(client, camera, allJunctions, selected);
   const connect = useJunctionConnect(client, camera, nodes);
   const scale = canvasDetailWorldScale(camera.zoom);
+  const finishDrag = (event: PointerEvent<SVGGElement>, cancel = false) => {
+    if (drag.finish(event, cancel) === false) presses.current = [];
+  };
   return <g className="connection-junction-layer" tabIndex={-1}
     onDoubleClick={event => {
       event.preventDefault(); event.stopPropagation();
@@ -31,7 +34,7 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
       if (id && previous === id) void client.dispatch('connection.rotateJunctionHandle', { id });
     }}
     onKeyDown={event => {
-      if (event.key === 'Escape') { connect.cancel(); drag.cancel(); event.preventDefault(); event.stopPropagation(); return; }
+      if (event.key === 'Escape') { presses.current = []; connect.cancel(); drag.cancel(); event.preventDefault(); event.stopPropagation(); return; }
       const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
       const id = allJunctions.find(point => selected.has(point.id))?.id;
       if (!direction || !id) return;
@@ -39,8 +42,8 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
       const step = event.shiftKey ? 10 : 1;
       void client.dispatch('connection.nudgeJunction', { id, dx: direction[0] * step, dy: direction[1] * step });
     }}
-    onPointerMove={drag.move} onPointerUp={event => drag.finish(event)}
-    onPointerCancel={event => drag.finish(event, true)} onLostPointerCapture={event => drag.finish(event, true)}>
+    onPointerMove={drag.move} onPointerUp={event => finishDrag(event)}
+    onPointerCancel={event => finishDrag(event, true)} onLostPointerCapture={event => finishDrag(event, true)}>
     {junctions.map((point, index) => <g
       key={point.id}
       className={`connection-junction ${selected.has(point.id) ? 'selected' : ''} ${targetId === point.id ? 'connection-target' : ''}`}
@@ -55,7 +58,7 @@ export function ConnectionJunctionMarkers({ client, camera, junctions, allJuncti
       onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: point.id })}
       onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: point.id, clear: true })}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') { connect.cancel(); drag.cancel(); event.stopPropagation(); return; }
+        if (event.key === 'Escape') { presses.current = []; connect.cancel(); drag.cancel(); event.stopPropagation(); return; }
         const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
         if (!direction) return;
         event.preventDefault();

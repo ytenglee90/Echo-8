@@ -87,11 +87,14 @@ export function useConnectionGesture(client: ViewClient, camera: CameraState, no
       const distance = Math.hypot(pointer.x - node.x - node.width / 2, pointer.y - node.y - node.height / 2);
       if (distance < nearest) {
         nearest = distance;
-        target = { nodeId: id, side: connectionTargetSide(node, pointer, session.title, session.point) };
+        target = { nodeId: id, side: connectionTargetSide(node, pointer, session.title && !session.reconnect, session.point) };
       }
     }
     const boxPair = target && connectionUsesTextBoxRegions(session.point, nodes.get(target.nodeId));
-    const title = boxPair ? target?.side === 'title' : session.title || target?.side === 'title';
+    // Replacing an arrow endpoint reclassifies ordinary title/body ports from the drop,
+    // rather than pinning the old edge's semantic type for the entire gesture.
+    const title = boxPair || (session.reconnect && target && !target.kind)
+      ? target?.side === 'title' : session.title || target?.side === 'title';
     const targetNode = target ? nodes.get(target.nodeId) : undefined;
     const titleStartSide = session.reconnect?.end === 'from' && targetNode && !targetNode.kind && title
       ? pointer.x < targetNode.x + targetNode.width / 2 ? 'left' as const : 'right' as const : session.draft.titleStartSide;

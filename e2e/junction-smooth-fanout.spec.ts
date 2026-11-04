@@ -244,3 +244,38 @@ test('many-to-many paths remain smooth while each branch stays independently sel
   const remaining = await paths(); expect(remaining.trunk).toBe(original.trunk); expect(remaining.branch1).toBe(original.branch1); expect(remaining.branch2).toBe(original.branch2);
   await page.keyboard.press('Control+z'); await expect.poll(paths).toEqual(original);
 });
+
+test('selecting then dragging a junction keeps the last preview after release without rotating its preference', async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[900, 100]], junction: [530, 400], pairs: [['j', 'n0']], title: false });
+  const marker = page.locator('.connection-junction'), dot = marker.locator('.connection-junction-dot');
+  const paths = () => page.locator('.connection-hit-area').evaluateAll(elements => elements.map(element => element.getAttribute('d')));
+  await dot.click();
+  for (const [dx, dy] of [[4, 0], [0, 4], [120, 80], [-150, -90], [10, 10], [1, 6]]) {
+    const clickCount = dx === 4 ? 2 : 1;
+    const box = await dot.boundingBox();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down({ clickCount });
+    await page.mouse.move(box!.x + box!.width / 2 + dx, box!.y + box!.height / 2 + dy, { steps: 8 });
+    await expect(marker).toHaveAttribute('data-handle-angle', '0');
+    const preview = await paths(); await page.mouse.up({ clickCount });
+    // Observe beyond the optimistic preview, through asynchronous owner projection.
+    const settled = await page.evaluate(async () => {
+      const samples: string[][] = [];
+      for (let i = 0; i < 24; i++) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        samples.push([...document.querySelectorAll('.connection-hit-area')].map(e => e.getAttribute('d')!));
+      }
+      return samples;
+    });
+    for (const sample of settled) expect(sample).toEqual(preview);
+    await expect(marker).toHaveAttribute('data-handle-angle', '0');
+    await expect.poll(paths).toEqual(preview);
+  }
+  const beforeRotation = await paths();
+  await dot.dblclick();
+  await expect(marker).toHaveAttribute('data-handle-angle', '15');
+  await expect.poll(paths).not.toEqual(beforeRotation);
+  await page.keyboard.press('Control+z');
+  await expect(marker).toHaveAttribute('data-handle-angle', '0');
+  await expect.poll(paths).toEqual(beforeRotation);
+});

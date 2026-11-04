@@ -35,6 +35,25 @@ test('reconnecting an arrow retains identity and label, validates revisions and 
   assert.deepEqual((await graph()).connections, [original]); await kernel.transactions.redo(); assert.deepEqual((await graph()).connections, [changed]);
 });
 
+test('reconnecting a title edge to body ports removes its title departure preference atomically', async () => {
+  const { kernel, graph, ids, edge } = await setup();
+  await kernel.router.dispatch('connection.reconnect', { id: edge.id, expectedRevision: 2,
+    from: { nodeId: ids[0], side: 'title' }, to: { nodeId: ids[1], side: 'title' }, titleRoute: true,
+    titleOrigin: { side: 'right', sourceIsLeft: true } }, source);
+  const title = (await graph()).connections[0], history = kernel.history.getState().undoCount;
+  assert.ok(title.titleOrigin);
+  assert.equal(title.titleRoute, true);
+  await kernel.router.dispatch('connection.reconnect', { id: edge.id, expectedRevision: title.revision,
+    from: { nodeId: ids[0], side: 'right' }, to: { nodeId: ids[2], side: 'left' } }, source);
+  const body = (await graph()).connections[0];
+  assert.equal(body.from.side, 'right'); assert.equal(body.to.side, 'left'); assert.equal(body.titleOrigin, undefined);
+  assert.equal(body.titleRoute, undefined);
+  assert.equal(body.label, title.label); assert.equal(body.id, title.id);
+  assert.equal(kernel.history.getState().undoCount, history + 1);
+  await kernel.transactions.undo(); assert.deepEqual((await graph()).connections[0], title);
+  await kernel.transactions.redo(); assert.deepEqual((await graph()).connections[0], body);
+});
+
 test('reconnect rejects duplicates and invalid endpoint types without changing the graph', async () => {
   const { kernel, graph, ids, edge } = await setup();
   await kernel.router.dispatch('connection.create', { from: { nodeId: ids[0], side: 'right' }, to: { nodeId: ids[2], side: 'left' } }, source);

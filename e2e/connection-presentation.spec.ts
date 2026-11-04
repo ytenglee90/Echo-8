@@ -3,7 +3,7 @@ import { serializeProject } from '../src/plugins/import-export/codec.ts';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
 import type { ProjectSource } from '../src/protocols/files.ts';
 
-async function openFixture(page: Page, existing = false, titleRoute = false, labels = false) {
+async function openFixture(page: Page, existing = false, titleRoute = false, labels = false, dashedSource = 'b') {
   await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
   await page.goto('/'); await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, connections: {}, connectionJunction: {} };
@@ -17,7 +17,7 @@ async function openFixture(page: Page, existing = false, titleRoute = false, lab
   }
   namespaces.connectionJunction.j = { id: 'j', x: 430, y: 30, revision: 1 };
   namespaces.connections.incoming = { id: 'incoming', from: { nodeId: 'a', side: titleRoute ? 'title' : 'right' }, to: { nodeId: 'j', kind: 'junction', side: 'left' }, revision: 1, createdAt: 1 };
-  if (existing) for (const [id, source, title] of [['dashed', 'b', true], ['solid', 'a', false]] as const) namespaces.connections[id] = {
+  if (existing) for (const [id, source, title] of [['dashed', dashedSource, true], ['solid', 'a', false]] as const) namespaces.connections[id] = {
     id, ...(labels ? { label: `标签${id}`, labelBackgroundColor: '#00ff00', lineColor: '#ab3745' } : {}), from: { nodeId: source, side: title ? 'title' : 'right' }, to: { nodeId: 'c', side: title ? 'title' : 'left' }, revision: 1, createdAt: 1,
   };
   const blob = await serializeProject({ document: { revision: 1, namespaces }, plugins: [
@@ -246,6 +246,30 @@ for (const sourceUpper of [false, true]) for (const targetUpper of [false, true]
   expect((await coordinates(page, (await edge.getAttribute('data-connection-id'))!)).slice(-2)).toEqual([targetUpper ? 1060 : 780, 420]);
   const rendered = edge.locator('..').locator('.connection-path');
   if (targetUpper) await expect(rendered).toHaveClass(/title-connection/u); else await expect(rendered).not.toHaveClass(/title-connection/u);
+});
+
+for (const source of ['a', 'b']) test(`title arrow from ${source === 'a' ? 'card' : 'box'} switches to body and back to title during reconnection`, async ({ page }) => {
+  await openFixture(page, true, false, true, source);
+  // Remove the other body arrow at the same port so it cannot cover the arrow under test.
+  await path(page, 'solid').focus(); await path(page, 'solid').press('Enter'); await page.keyboard.press('Delete');
+  await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  const edge = path(page, 'dashed'), line = edge.locator('..').locator('.connection-path');
+  const card = await page.locator('.text-node-card').filter({ has: page.locator('strong[title="演示c"]') }).boundingBox();
+  const original = await edge.getAttribute('d');
+  for (const title of [false, true]) {
+    const arrow = await page.locator('[data-arrow-for="dashed"]').boundingBox();
+    await page.mouse.move(arrow!.x + arrow!.width / 3, arrow!.y + arrow!.height / 2); await page.mouse.down();
+    await page.mouse.move(card!.x, card!.y + (title ? 21 : card!.height * .75), { steps: 8 });
+    if (title) await expect(line).toHaveClass(/title-connection/u); else await expect(line).not.toHaveClass(/title-connection/u);
+    const preview = await edge.getAttribute('d');
+    await page.mouse.up(); await expect(page.locator('.connection-layer')).not.toHaveAttribute('data-reconnecting-id');
+    await expect(edge).toHaveAttribute('d', preview!);
+    if (title) await expect(line).toHaveClass(/title-connection/u); else await expect(line).not.toHaveClass(/title-connection/u);
+  }
+  await expect(page.locator('.connection-label-text').filter({ hasText: '标签dashed' })).toHaveCount(1);
+  await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+  await page.keyboard.press('Control+z'); await expect(line).not.toHaveClass(/title-connection/u);
+  await page.keyboard.press('Control+z'); await expect(edge).toHaveAttribute('d', original!); await expect(line).toHaveClass(/title-connection/u);
 });
 
 test('box-to-box arrow reconnection switches upper and lower target regions live without moving the centre anchor', async ({ page }) => {

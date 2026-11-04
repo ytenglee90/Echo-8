@@ -506,13 +506,13 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             id, ...endpoints,
             revision: (current?.revision ?? 0) + 1,
           };
+          if (reference && requested.titleRoute === undefined) delete connection.titleRoute;
           if (payload.titleOrigin && isTitleConnection(connection)) {
             if (payload.from.kind || payload.from.side !== 'title') throw new Error('标题起始端口不正确');
             // New gestures record ordering from authoritative target geometry, including point/group targets.
             connection.titleOrigin = { ...payload.titleOrigin, sourceCenterX: fromNode.x + fromNode.width / 2, targetCenterX: toNode.x + toNode.width / 2,
               sourceIsLeft: fromNode.x + fromNode.width / 2 <= toNode.x + toNode.width / 2 };
-          } else if (current && current.from.nodeId !== payload.from.nodeId) delete connection.titleOrigin;
-          if (reference && requested.titleRoute === undefined) delete connection.titleRoute;
+          } else if (!isTitleConnection(connection) || (current && current.from.nodeId !== payload.from.nodeId)) delete connection.titleOrigin;
           assertJunctionChanges(Object.values(readConnections()), [connection]);
           return {
             result: { id },
