@@ -82,6 +82,8 @@ export interface CanvasWheelZoomRequest {
 }
 
 export interface DragPreview {
+  /** Optional transient owner for mixed gesture cleanup. */
+  owner?: string;
   positions?: NodePosition[];
   /** Stable source positions shown while an Alt-drag is preparing a duplicate. */
   duplicateOrigins?: NodePosition[];

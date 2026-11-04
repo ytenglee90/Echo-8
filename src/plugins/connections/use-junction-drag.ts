@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
 import { createId, type ViewClient } from '../../core/contracts.ts';
-import type { CameraState, CanvasSnapPreview } from '../../protocols/canvas.ts';
+import type { CameraState, CanvasSnapPreview, DragPreview } from '../../protocols/canvas.ts';
 import type { ConnectionGraphSnapshot, ConnectionJunction, ConnectionJunctionPreview } from '../../protocols/connections.ts';
+import type { ContentSummary, NodePosition } from '../../protocols/content.ts';
+import type { SelectionResolution } from '../../protocols/selection.ts';
 import type { SmartSnapRequest, SmartSnapResult } from '../../protocols/layout.ts';
 
 interface JunctionDrag {
@@ -18,25 +20,36 @@ interface JunctionDrag {
   latest: Array<{ id: string; x: number; y: number }>;
   moved: boolean;
   admitted: boolean;
+  ready: Promise<unknown>; failed: boolean;
+  contentOrigins: ContentSummary[]; latestContent: NodePosition[];
+  movingIds: string[];
 }
 
 /** An owned gesture with coalesced previews and one revision-checked durable move. */
 export function useJunctionDrag(client: ViewClient, camera: CameraState, junctions: ConnectionJunction[], selected: ReadonlySet<string>) {
   const session = useRef<JunctionDrag | undefined>(undefined);
+  const mixedPreviewOwner = useRef<string | undefined>(undefined);
   const previewOwner = useRef<string | undefined>(undefined);
   const commitTail = useRef<Promise<unknown>>(Promise.resolve());
   const ownRevisions = useRef(new Map<string, { revision: number; x: number; y: number }>());
+  const contentRevisions = useRef(new Map<string, { revision: number; x: number; y: number }>());
+  const pendingContent = useRef(new Map<string, { owner: string; x: number; y: number }>());
   const optimistic = useRef(new Map<string, { owner: string; x: number; y: number }>());
   const mounted = useRef(true);
   const settlement = useRef<{ owner: string; positions: ConnectionJunction[] } | undefined>(undefined);
   const [settlementOwner, setSettlementOwner] = useState<string>();
   const clear = useCallback((owner: string) => {
+    for (const [id, pending] of pendingContent.current) if (pending.owner === owner) pendingContent.current.delete(id);
     for (const [id, pending] of optimistic.current) if (pending.owner === owner) optimistic.current.delete(id);
     if (previewOwner.current !== owner) return;
     previewOwner.current = undefined;
+    if (mixedPreviewOwner.current === owner) { mixedPreviewOwner.current = undefined; client.emit('canvas.drag.preview', { clear: true, owner } satisfies DragPreview); }
     client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
     client.emit('connection.junction.preview', { clear: true } satisfies ConnectionJunctionPreview);
   }, [client]);
+  useEffect(() => client.subscribeSignal<DragPreview>('canvas.drag.preview', message => {
+    if (message.payload.owner !== mixedPreviewOwner.current) mixedPreviewOwner.current = undefined;
+  }), [client]);
   useEffect(() => {
     const projection = new Map(junctions.map(point => [point.id, point]));
     for (const id of ownRevisions.current.keys()) if (!projection.has(id)) ownRevisions.current.delete(id);
@@ -59,7 +72,7 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
   }, [clear, client, junctions, settlementOwner]);
   useEffect(() => {
     mounted.current = true;
-    const optimisticCache = optimistic.current, revisionCache = ownRevisions.current;
+    const optimisticCache = optimistic.current, revisionCache = ownRevisions.current, contentCache = contentRevisions.current, pendingCache = pendingContent.current;
     return () => {
       mounted.current = false;
       const active = session.current;
@@ -67,11 +80,12 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
       session.current = undefined;
       previewOwner.current = undefined;
       if (active?.capture.hasPointerCapture(active.pointerId)) active.capture.releasePointerCapture(active.pointerId);
+      if (mixedPreviewOwner.current) { mixedPreviewOwner.current = undefined; client.emit('canvas.drag.preview', { clear: true } satisfies DragPreview); }
       if (active || hadPreview) {
         client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
         client.emit('connection.junction.preview', { clear: true } satisfies ConnectionJunctionPreview);
       }
-      optimisticCache.clear(); revisionCache.clear(); settlement.current = undefined;
+      optimisticCache.clear(); revisionCache.clear(); contentCache.clear(); pendingCache.clear(); settlement.current = undefined;
       if (!active) return;
       void client.dispatch('interaction.end', { mode: 'dragging-node', sessionId: active.id }).catch(() => undefined);
     };
@@ -106,10 +120,12 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
       startX: event.clientX, startY: event.clientY,
       origins, primaryId: point.id, collapseOnClick: !event.shiftKey && !toggle,
       latest: origins.map(({ id, x, y }) => ({ id, x, y })), moved: false, admitted: false,
+      ready: Promise.resolve(), failed: false, contentOrigins: [], latestContent: [],
+      movingIds: selected.has(point.id) || event.shiftKey || toggle ? [...new Set([...selected, point.id])] : [point.id],
     };
     session.current = active;
     previewOwner.current = active.id;
-    void client.dispatch('interaction.begin', { mode: 'dragging-node', sessionId: active.id }).then(() => {
+    active.ready = client.dispatch('interaction.begin', { mode: 'dragging-node', sessionId: active.id }).then(async () => {
       active.admitted = true;
       // Earlier node moves may have committed while admission was queued. Read their current owner geometry once.
       const graph = client.requestSync<ConnectionGraphSnapshot>('connections.graph@1');
@@ -121,11 +137,30 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
         const before = old.get(target.id)!, origin = refreshed.get(target.id)!;
         return { id: target.id, x: origin.x + target.x - before.x, y: origin.y + target.y - before.y };
       });
-      if (active.moved && previewOwner.current === active.id) {
+      if (active.movingIds.some(id => !fresh.has(id))) {
+        const [resolution, nodes] = await Promise.all([
+          client.request<SelectionResolution>('selection.resolve@1', { ids: active.movingIds, mode: 'replace' }),
+          client.request<ContentSummary[]>('content.summaries@1'),
+        ]);
+        const included = new Set(resolution.expandedIds);
+        const known = new Set(nodes.map(node => node.id));
+        for (const id of contentRevisions.current.keys()) if (!known.has(id)) contentRevisions.current.delete(id);
+        active.contentOrigins = nodes.filter(node => included.has(node.id)).map(node => ({ ...node, ...pendingContent.current.get(node.id) }));
+        active.movingIds = resolution.expandedIds;
+        const first = active.origins[0], latest = active.latest.find(p => p.id === first.id)!;
+        active.latestContent = active.contentOrigins.map(node => ({ id: node.id, x: node.x + latest.x - first.x, y: node.y + latest.y - first.y }));
+      }
+      if (active.moved && !active.failed) for (const node of active.latestContent) if (!pendingContent.current.has(node.id) || pendingContent.current.get(node.id)?.owner === active.id) pendingContent.current.set(node.id, { owner: active.id, x: node.x, y: node.y });
+      if (active.moved && !active.failed && previewOwner.current === active.id) {
+        if (active.contentOrigins.length) {
+          mixedPreviewOwner.current = active.id;
+          client.emit('canvas.drag.preview', { positions: active.latestContent, owner: active.id } satisfies DragPreview);
+        }
         for (const target of active.latest) if (optimistic.current.get(target.id)?.owner === active.id) optimistic.current.set(target.id, { owner: active.id, x: target.x, y: target.y });
         client.emit('connection.junction.preview', { positions: active.latest } satisfies ConnectionJunctionPreview);
       }
     }).catch(() => {
+      active.failed = true;
       if (session.current !== active) return;
       session.current = undefined;
       if (active.admitted) void client.dispatch('interaction.end', { mode: 'dragging-node', sessionId: active.id }).catch(() => undefined);
@@ -147,11 +182,13 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
     active.moved ||= Math.hypot(event.clientX - active.startX, event.clientY - active.startY) > 3;
     if (!active.moved) return;
     const raw = active.origins.map(point => ({ id: point.id, x: point.x + dx, y: point.y + dy }));
-    const left = Math.min(...raw.map(point => point.x)), top = Math.min(...raw.map(point => point.y));
+    const content = active.contentOrigins.map(node => ({ ...node, x: node.x + dx, y: node.y + dy }));
+    const geometry = [...raw.map(point => ({ ...point, width: 0, height: 0 })), ...content];
+    const left = Math.min(...geometry.map(point => point.x)), top = Math.min(...geometry.map(point => point.y));
     let snap: SmartSnapResult = { offsetX: 0, offsetY: 0, guides: [] };
     try {
       snap = client.requestSync<SmartSnapResult>('layout.snap@1', {
-        dragged: { x: left, y: top, width: Math.max(...raw.map(point => point.x)) - left, height: Math.max(...raw.map(point => point.y)) - top }, movingIds: active.origins.map(point => point.id),
+        dragged: { x: left, y: top, width: Math.max(...geometry.map(point => point.x + point.width)) - left, height: Math.max(...geometry.map(point => point.y + point.height)) - top }, movingIds: active.movingIds,
         mode: 'nodes', threshold: 18 / camera.zoom,
       } satisfies SmartSnapRequest);
     } catch { /* Stopping smart layout leaves free positioning available. */ }
@@ -159,6 +196,9 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
     client.emit('canvas.snap.preview', snap.guides.length
       ? { guides: snap.guides } satisfies CanvasSnapPreview
       : { clear: true } satisfies CanvasSnapPreview);
+    active.latestContent = content.map(node => ({ id: node.id, x: node.x + snap.offsetX, y: node.y + snap.offsetY }));
+    for (const node of active.latestContent) pendingContent.current.set(node.id, { owner: active.id, x: node.x, y: node.y });
+    if (active.contentOrigins.length) { mixedPreviewOwner.current = active.id; client.emit('canvas.drag.preview', { positions: active.latestContent, owner: active.id } satisfies DragPreview); }
     client.emit('connection.junction.preview', { positions: active.latest } satisfies ConnectionJunctionPreview);
   };
 
@@ -171,6 +211,7 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
     // Pointer moves may be coalesced; the release sample owns the final coordinates.
     if (event && !cancel) move(event);
     session.current = undefined;
+    active.failed ||= cancel;
     if (active.capture.hasPointerCapture(active.pointerId)) active.capture.releasePointerCapture(active.pointerId);
     client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
     if (!cancel && active.moved) for (const point of active.latest) optimistic.current.set(point.id, { owner: active.id, x: point.x, y: point.y });
@@ -178,7 +219,8 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
     const ended = client.dispatch('interaction.end', { mode: 'dragging-node', sessionId: active.id });
     const operation = commitTail.current.catch(() => undefined).then(async () => {
       await ended;
-      if (cancel || !active.admitted || !mounted.current) { clear(active.id); return; }
+      await active.ready;
+      if (cancel || active.failed || !active.admitted || !mounted.current) { clear(active.id); return; }
       if (!active.moved) {
         clear(active.id);
         if (active.collapseOnClick) await client.dispatch('selection.set', { items: [{ id: active.primaryId, kind: 'connection-junction' }], mode: 'replace' });
@@ -195,7 +237,17 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
         return { id: target.id, x: own ? point.x + target.x - origin.x : target.x,
           y: own ? point.y + target.y - origin.y : target.y, expectedRevision: own ? point.revision : origin.revision };
       });
-      await client.dispatch('connection.moveJunctions', { positions });
+      if (active.contentOrigins.length) {
+        const fresh = new Map((await client.request<ContentSummary[]>('content.summaries@1')).map(node => [node.id, node]));
+        const contentOrigins = new Map(active.contentOrigins.map(node => [node.id, node]));
+        const contentPositions = active.latestContent.map(target => {
+          const origin = contentOrigins.get(target.id)!, node = fresh.get(target.id), last = contentRevisions.current.get(target.id);
+          const own = node && last && node.revision === last.revision && node.x === last.x && node.y === last.y;
+          return { id: target.id, x: own ? node.x + target.x - origin.x : target.x, y: own ? node.y + target.y - origin.y : target.y };
+        });
+        await client.dispatch('selection.moveEntities', { positions: [...positions, ...contentPositions] });
+        for (const target of contentPositions) { const before = fresh.get(target.id); if (before) contentRevisions.current.set(target.id, { revision: before.revision + 1, x: target.x, y: target.y }); }
+      } else await client.dispatch('connection.moveJunctions', { positions });
       const committed = positions.flatMap(position => {
         const old = current.get(position.id);
         if (!old) return [];

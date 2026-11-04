@@ -119,4 +119,6 @@
 | [0107](ADR-0107-GROUP-PORTS-AND-JUNCTION-DRAG-HANDOFF.md) | 群组固定屏幕命中区与中转点连续拖动交接 | 有效；补充 0087、0098、0099 |
 | [0108](ADR-0108-TITLE-ORIGIN-REFERENCE-AND-AUTO-SIDES.md) | 标题创建参照与对齐区外按当前左右自动选边 | 有效；修正 0105、0106 区外翻边 |
 | [0109](ADR-0109-FIXED-JUNCTIONS-AND-FLEXIBLE-ATTACHMENT.md) | 固定中转点、独立线型、内容复制边界与自适应接入 | 有效；取代 0098 跟随，补充 0104、0105、0107 |
+| [0110](ADR-0110-MIXED-SELECTION-MOVEMENT.md) | 中转点、节点、文本框和群组混合选区原子移动 | 有效；补充 0109 固定点规则 |
+| [0111](ADR-0111-JUNCTION-HANDLE-ROTATION.md) | 双击按 15° 循环旋转中转点手柄 | 有效；连线数据 11、剪贴板 6 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

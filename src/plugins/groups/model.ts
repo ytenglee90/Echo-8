@@ -110,6 +110,7 @@ export function createGroupsPlugin(
       ],
       dispatches: [
         'selection.set',
+        'selection.moveEntities',
         'node.moveMany',
         'connection.create',
         'clipboard.duplicateSelectionAt',

@@ -40,9 +40,12 @@ import {
 import type { ContentSummary } from '../../protocols/content.ts';
 import type {
   EntityDeletePlan,
+  EntityMovePlan,
+  EntityMoveRequest,
   SelectionCatalogContribution,
   SelectionItem,
   SelectionSnapshot,
+  SelectionResolution,
 } from '../../protocols/selection.ts';
 import type { StatisticsContribution } from '../../protocols/statistics.ts';
 import { defineManifest } from '../manifest.ts';
@@ -76,7 +79,7 @@ interface CreateConnectionPayload {
 }
 
 interface SerializedConnections {
-  schemaVersion?: 2 | 3 | 4 | 5;
+  schemaVersion?: 2 | 3 | 4 | 5 | 6;
   junctions?: ConnectionJunction[];
   connections: ConnectionRecord[];
 }
@@ -84,7 +87,7 @@ interface SerializedConnections {
 export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('connections', '连线', {
-      dataVersion: 10,
+      dataVersion: 11,
       namespaces: [CONNECTION_NAMESPACE, CONNECTION_APPEARANCE_NAMESPACE, JUNCTION_NAMESPACE],
       namespaceDomains: {
         [CONNECTION_NAMESPACE]: 'document',
@@ -97,8 +100,9 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'content.catalog@2',
         'selection.read@1',
       ],
-      optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'canvas.pointer@1', 'canvas.viewport@1', 'layout.snap@1', 'connections.targets@1'],
+      optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'canvas.pointer@1', 'canvas.viewport@1', 'layout.snap@1', 'connections.targets@1', 'selection.resolve@1'],
       providesCapabilities: [
+        'entity.movePlan@1',
         'connections.detachPlan@1',
         'connections.targetAt@1',
         'connections.list@1',
@@ -119,6 +123,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       commands: [
         'connection.create',
         'connection.reconnect',
+        'connection.rotateJunctionHandle',
         'connection.moveJunctions',
         'connection.connectSelectedEndpoints',
         'connection.addJunction',
@@ -132,7 +137,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.toggleSelected',
         'connection.toggleTitleSelected',
       ],
-      dispatches: ['selection.set', 'selection.clear', 'interaction.begin', 'interaction.end', 'connection.addJunction', 'connection.moveJunction', 'connection.moveJunctions'],
+      dispatches: ['selection.moveEntities', 'selection.set', 'selection.clear', 'interaction.begin', 'interaction.end', 'connection.addJunction', 'connection.moveJunction', 'connection.moveJunctions'],
       asks: ['editor.openPanes'],
       events: [
         'entity.deleted',
@@ -232,6 +237,8 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       from: 8, to: 9, migrate: data => data,
     }, {
       from: 9, to: 10, migrate: data => data,
+    }, {
+      from: 10, to: 11, migrate: data => data,
     }],
 
     start(context) {
@@ -320,6 +327,20 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           return { result: await context.commands.invoke('connection.addJunction', { ...payload.point, connections: references }) };
         },
       });
+      context.commands.register<{ id: string }, { handleAngle: number; revision: number }>({
+        type: 'connection.rotateJunctionHandle',
+        validate: (value): value is { id: string } => isRecord(value) && typeof value.id === 'string' && value.id.length > 0,
+        handle: payload => {
+          const point = readJunctions()[payload.id];
+          if (!point) throw new Error('连接中转点已不存在');
+          const handleAngle = ((point.handleAngle ?? 0) + 15) % 360;
+          const next: ConnectionJunction = { ...point, handleAngle, revision: point.revision + 1 };
+          if (handleAngle === 0) delete next.handleAngle;
+          return { result: { handleAngle, revision: next.revision }, transaction: { label: '旋转中转点曲线手柄',
+            patches: [{ op: 'set', domain: 'document', namespace: JUNCTION_NAMESPACE, key: point.id, value: next }],
+            events: [{ type: 'connection.changed', payload: { junctionIds: [point.id] } }] } };
+        },
+      });
       const junctionMovesPlan = (positions: import('../../protocols/connections.ts').ConnectionMoveJunctionRequest[]) => {
         const points = readJunctions();
         for (const input of positions) if (!points[input.id] || points[input.id].revision !== input.expectedRevision) throw new Error('中转点已变化，请重新移动');
@@ -330,6 +351,14 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           events: changed.length ? [{ type: 'connection.changed', payload: { junctionIds: changed.map(input => input.id) } }] : [],
         };
       };
+      context.capabilities.provide<EntityMoveRequest, EntityMovePlan>({
+        key: 'entity.movePlan@1', invoke: input => {
+          const points = readJunctions();
+          const owned = input.positions.filter(position => points[position.id]);
+          if (owned.some(position => !isMoveJunctionRequest(position))) throw new Error('中转点移动缺少有效修订');
+          return { ids: owned.map(position => position.id), ...junctionMovesPlan(owned as import('../../protocols/connections.ts').ConnectionMoveJunctionRequest[]) };
+        },
+      });
       context.commands.register({
         type: 'connection.moveJunctions',
         validate: (value): value is { positions: import('../../protocols/connections.ts').ConnectionMoveJunctionRequest[] } => isRecord(value) &&
@@ -387,6 +416,14 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           if (!point) throw new Error('中转点已经不存在');
           const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
           const selected = selection.ids.includes(point.id) ? Object.values(readJunctions()).filter(item => selection.ids.includes(item.id)) : [point];
+          const resolution = await context.capabilities.request<SelectionResolution>('selection.resolve@1', { ids: selection.ids.includes(point.id) ? selection.ids : [point.id], mode: 'replace' });
+          const included = new Set(resolution.expandedIds);
+          const content = (await context.capabilities.request<ContentSummary[]>('content.summaries@1')).filter(node => included.has(node.id));
+          if (content.length) {
+            await context.commands.invoke('selection.moveEntities', { positions: [...selected.map(item => ({ id: item.id, x: item.x + payload.dx, y: item.y + payload.dy, expectedRevision: item.revision })),
+              ...content.map(node => ({ id: node.id, x: node.x + payload.dx, y: node.y + payload.dy }))] });
+            return { result: { revision: point.revision + 1 } };
+          }
           await context.commands.invoke('connection.moveJunctions', { positions: selected.map(item => ({
             id: item.id, x: item.x + payload.dx, y: item.y + payload.dy, expectedRevision: item.revision,
           })) });
@@ -1068,7 +1105,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           return {
             owner: 'connections', version: 1,
             entityIds: [...graph.connections.map((record) => record.id), ...graph.junctions.map((point) => point.id)],
-            payload: { schemaVersion: 5, ...graph } satisfies SerializedConnections,
+            payload: { schemaVersion: 6, ...graph } satisfies SerializedConnections,
           };
         },
       });
@@ -1331,7 +1368,7 @@ function normalizeConnectionLabel(label: string): string {
 function isSerializedConnections(payload: unknown): payload is SerializedConnections {
   return (
     isRecord(payload) &&
-    (payload.schemaVersion === undefined || payload.schemaVersion === 2 || payload.schemaVersion === 3 || payload.schemaVersion === 4 || payload.schemaVersion === 5) &&
+    (payload.schemaVersion === undefined || payload.schemaVersion === 2 || payload.schemaVersion === 3 || payload.schemaVersion === 4 || payload.schemaVersion === 5 || payload.schemaVersion === 6) &&
     (payload.junctions === undefined || (Array.isArray(payload.junctions) && payload.junctions.length <= 10_000 && payload.junctions.every(isJunction))) &&
     Array.isArray(payload.connections) &&
     payload.connections.every(

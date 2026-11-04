@@ -78,6 +78,7 @@ export const canvasPlugin: PluginDefinition = {
       'canvas.resetZoom',
     ],
     dispatches: [
+      'selection.moveEntities',
       'node.moveMany',
       'node.create',
       'node.resize',

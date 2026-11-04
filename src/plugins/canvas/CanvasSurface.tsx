@@ -62,6 +62,7 @@ import type {
 } from '../../protocols/layout.ts';
 import { isEcho8ProjectFile } from '../../protocols/files.ts';
 import { boundsIntersect, clientPointInWorld, worldViewport } from '../../protocols/viewport.ts';
+import { selectedJunctionOrigins, includesJunctionMoves, moveCanvasEntities } from '../../ui/mixed-canvas-move.ts';
 import { IconButton } from '../../ui/Icon.tsx';
 import { canvasContrastVariables } from '../../ui/canvas-contrast.ts';
 import { SpatialHashIndex } from '../../services/spatial-index.ts';
@@ -731,7 +732,7 @@ export function CanvasSurface({
     const movingIds = new Set(positions.map((position) => position.id));
     const movingGeometry = positions.flatMap((position) => {
       const node = nodeById.get(position.id);
-      return node ? [{ ...position, width: node.width, height: node.height }] : [];
+      return [{ ...position, width: node?.width ?? 0, height: node?.height ?? 0 }];
     });
     if (movingGeometry.length === 0) {
       client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
@@ -772,7 +773,7 @@ export function CanvasSurface({
     clientY: number,
     duplicateOnCommit = false,
   ) => {
-    const moveNormally = () => client.dispatch('node.moveMany', { positions });
+    const moveNormally = () => moveCanvasEntities(client, positions);
     const commit = async () => {
       if (duplicateOnCommit) {
         const origin = dragOriginFor(primaryId, nodes);
@@ -782,6 +783,7 @@ export function CanvasSurface({
           offset: { x: destination.x - origin.x, y: destination.y - origin.y },
         });
       }
+      if (includesJunctionMoves(positions)) return moveNormally();
       if (commitReferenceDrop(referenceSourceIds(primaryId, positions), clientX, clientY)) return;
       const surface = surfaceRef.current;
       if (!membershipActive || !surface) return moveNormally();
@@ -809,6 +811,7 @@ export function CanvasSurface({
     void commit().finally(() => {
       clearReferenceDragPreview();
       syncGroupMembershipPreview('', 0, 0, false);
+      if (!duplicateOnCommit && includesJunctionMoves(positions)) { client.emit('canvas.drag.preview', { clear: true }); return; }
       return client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined);
     });
   };
@@ -816,9 +819,7 @@ export function CanvasSurface({
   const activateNodeDrag = (request: PendingNodeDrag, ids: string[]) => {
     if (request.cancelled) return;
     const included = new Set(ids);
-    const origins = nodes
-      .filter((item) => included.has(item.id))
-      .map((item) => ({ id: item.id, x: item.x, y: item.y }));
+    const origins = [...nodes.filter(item => included.has(item.id)).map(item => ({ id: item.id, x: item.x, y: item.y })), ...selectedJunctionOrigins(client, included)];
     if (pendingDrag.current === request) pendingDrag.current = undefined;
     if (origins.length === 0) {
       setNodeDragActive(false);
@@ -888,6 +889,7 @@ export function CanvasSurface({
   const beginNodeDrag = (event: ReactPointerEvent<HTMLElement>, node: ContentSummary) => {
     if (event.button !== 0) return;
     if (panReady) return;
+    event.currentTarget.focus({ preventScroll: true });
     event.preventDefault();
     event.stopPropagation();
     const duplicateOnCommit = event.altKey || duplicateModifierActive;
@@ -1162,7 +1164,7 @@ export function CanvasSurface({
       if (!drag.current.moved) return;
       if (!wasMoved) setDragOriginPreview(drag.current.origins);
       const rawLatest = drag.current.origins.map((origin) => ({
-        id: origin.id,
+        ...origin,
         x: origin.x + dx,
         y: origin.y + dy,
       }));
@@ -1309,7 +1311,7 @@ export function CanvasSurface({
       const suspended = suspendedDragPan.current;
       suspendedDragPan.current = undefined;
       if (suspended) void client.dispatch('canvas.camera.commit', suspended.latest).catch(() => undefined);
-      client.emit('canvas.drag.preview', { clear: true });
+      if (current.duplicateOnCommit || !includesJunctionMoves(current.latest)) client.emit('canvas.drag.preview', { clear: true });
       client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
       const membershipActive = client.isShortcutPressed('canvas.group-membership-modifier');
       if (!membershipActive || !current.moved) syncGroupMembershipPreview('', 0, 0, false);
@@ -1636,6 +1638,7 @@ export function CanvasSurface({
       }}
       onPointerLeave={() => client.emit('canvas.pointer.preview', { clear: true } satisfies CanvasPointerSnapshot)}
       onPointerUp={finishGesture}
+      onKeyDown={event => { if (event.key === 'Escape' && (drag.current || pendingDrag.current)) { event.preventDefault(); event.stopPropagation(); cancelGesture(); } }}
       onPointerCancel={cancelGesture}
       onDragEnter={(event) => {
         const carriesContent = event.dataTransfer.types.includes(ECHO8_CONTENT_DRAG_TYPE);

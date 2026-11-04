@@ -141,7 +141,7 @@ test('junction graphs survive clipboard remapping, file reload and plugin hot-st
     assert.ok((endpoint.kind === 'junction' ? pointIds : nodeIds).has(endpoint.nodeId));
   }
   const project = await kernel.router.ask<ProjectSource>('system.project.source', undefined, source);
-  assert.equal(project.plugins.find((item) => item.id === 'connections')?.dataVersion, 10);
+  assert.equal(project.plugins.find((item) => item.id === 'connections')?.dataVersion, 11);
   const reopened = new ApplicationKernel([textNodePlugin, createSelectionPlugin(), createConnectionsPlugin()]);
   await reopened.start();
   await reopened.router.dispatch('system.document.replace', await parseProject(await serializeProject(project)), source);

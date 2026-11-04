@@ -18,6 +18,7 @@ export function isJunction(value: unknown): value is ConnectionJunction {
   return isRecord(value) && typeof value.id === 'string' && value.id.length > 0 &&
     Number.isFinite(value.x) && Number.isFinite(value.y) &&
     Number.isInteger(value.revision) && Number(value.revision) > 0 &&
+    (value.handleAngle === undefined || (typeof value.handleAngle === 'number' && Number.isInteger(value.handleAngle) && value.handleAngle >= 0 && value.handleAngle < 360 && value.handleAngle % 15 === 0)) &&
     (value.branchSide === undefined || value.branchSide === 'incoming' || value.branchSide === 'outgoing');
 }
 
@@ -35,7 +36,7 @@ export function isMoveJunctionRequest(value: unknown): value is ConnectionMoveJu
 }
 
 export function junctionGeometry(junction: ConnectionJunction): ConnectionNodeGeometry {
-  return { id: junction.id, x: junction.x, y: junction.y, width: 0, height: 0 };
+  return { id: junction.id, x: junction.x, y: junction.y, width: 0, height: 0, handleAngle: junction.handleAngle };
 }
 
 function sameEndpoint(left: ConnectionEndpoint, right: ConnectionEndpoint): boolean {

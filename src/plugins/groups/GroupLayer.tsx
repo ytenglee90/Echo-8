@@ -33,6 +33,7 @@ import { resolveGroupDropTarget } from './drop-target.ts';
 import { computeGroupBounds } from './layout.ts';
 import { useConnectionGesture } from '../../ui/use-connection-gesture.ts';
 import { useConnectionTargets } from '../../ui/use-connection-targets.ts';
+import { selectedJunctionOrigins, includesJunctionMoves, moveCanvasEntities } from '../../ui/mixed-canvas-move.ts';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 
 const CULL_MARGIN = 360;
@@ -85,7 +86,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
   useEffect(() => {
     let current = true;
     const refresh = () => void client.request<ConnectionGraphSnapshot>('connections.graph@1').then(graph => {
-      if (current) setJunctions(graph.junctions.map(point => ({ id: point.id, x: point.x, y: point.y, width: 0, height: 0, kind: 'junction' })));
+      if (current) setJunctions(graph.junctions.map(point => ({ ...point, width: 0, height: 0, kind: 'junction' })));
     }).catch(() => { if (current) setJunctions([]); });
     refresh();
     const unsubscribe = client.subscribeSignal('connections.invalidated', refresh);
@@ -214,7 +215,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     const positioned = new Map(positions.map((position) => [position.id, position]));
     const movingNodes = positions.flatMap((position) => {
       const node = stableNodeMap.get(position.id);
-      return node ? [{ ...node, ...position }] : [];
+      return [{ ...position, width: node?.width ?? 0, height: node?.height ?? 0 }];
     });
     if (movingNodes.length === 0 || positioned.size === 0) {
       client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
@@ -251,6 +252,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    event.currentTarget.focus({ preventScroll: true });
     const duplicateOnCommit = event.altKey || duplicateModifierActive;
     const request: PendingGroupDrag = {
       pointerId: event.pointerId,
@@ -280,9 +282,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
         return;
       }
       const expanded = new Set(resolution.expandedIds);
-      const origins = nodes
-        .filter((node) => expanded.has(node.id))
-        .map((node) => ({ id: node.id, x: node.x, y: node.y }));
+      const origins = [...nodes.filter(node => expanded.has(node.id)).map(node => ({ id: node.id, x: node.x, y: node.y })), ...selectedJunctionOrigins(client, expanded)];
       if (pendingDrag.current === request) pendingDrag.current = undefined;
       if (origins.length === 0) {
         void client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined);
@@ -299,9 +299,12 @@ export function GroupLayer({ client }: { client: ViewClient }) {
           const offset = { x: latest[0].x - origins[0].x, y: latest[0].y - origins[0].y };
           const command = request.duplicateOnCommit
             ? client.dispatch('clipboard.duplicateSelectionAt', { offset })
-            : client.dispatch('node.moveMany', { positions: latest });
+            : moveCanvasEntities(client, latest);
           void command
-            .finally(() => client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined));
+            .finally(() => {
+              if (!request.duplicateOnCommit && includesJunctionMoves(latest)) { client.emit('canvas.drag.preview', { clear: true }); return; }
+              return client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined);
+            });
         } else {
           void client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined);
         }
@@ -341,7 +344,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     drag.current.moved ||= Math.abs(dx) + Math.abs(dy) > 2;
     if (!drag.current.moved) return;
     const rawLatest = drag.current.origins.map((origin) => ({
-      id: origin.id,
+      ...origin,
       x: origin.x + dx,
       y: origin.y + dy,
     }));
@@ -364,7 +367,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     if (!current) return;
     drag.current = undefined;
     current.duplicateOnCommit = duplicateAtRelease;
-    client.emit('canvas.drag.preview', { clear: true });
+    if (current.duplicateOnCommit || !includesJunctionMoves(current.latest)) client.emit('canvas.drag.preview', { clear: true });
     client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
     if (current.moved) {
       const offset = {
@@ -373,9 +376,12 @@ export function GroupLayer({ client }: { client: ViewClient }) {
       };
       const command = current.duplicateOnCommit
         ? client.dispatch('clipboard.duplicateSelectionAt', { offset })
-        : client.dispatch('node.moveMany', { positions: current.latest });
+        : moveCanvasEntities(client, current.latest);
       void command
-        .finally(() => client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined));
+        .finally(() => {
+          if (!current.duplicateOnCommit && includesJunctionMoves(current.latest)) { client.emit('canvas.drag.preview', { clear: true }); return; }
+          return client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined);
+        });
     } else {
       void client.dispatch('interaction.end', { mode: 'dragging-node' }).catch(() => undefined);
     }
@@ -481,7 +487,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
               onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: group.id })}
               onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: group.id, clear: true })}
               onKeyDown={(event) => {
-                if (event.key === 'Escape') { connect.cancel(); return; }
+                if (event.key === 'Escape') { connect.cancel(); if (drag.current || pendingDrag.current) { cancelDrag(); event.preventDefault(); event.stopPropagation(); } return; }
                 if (event.key !== 'Enter' && event.key !== ' ') return;
                 event.preventDefault();
                 void client.dispatch('selection.set', {

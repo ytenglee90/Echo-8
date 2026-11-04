@@ -1,8 +1,10 @@
 import { isRecord, type PluginDefinition, type TransactionProposal } from '../../core/contracts.ts';
 import type { CanvasPointerSnapshot } from '../../protocols/canvas.ts';
-import type { ContentSummary } from '../../protocols/content.ts';
+import type { ContentMovePlan, ContentSummary } from '../../protocols/content.ts';
 import type {
   EntityDeletePlan,
+  EntityMoveRequest,
+  EntityMovePlan,
   SelectableEntity,
   SelectionAllPayload,
   SelectionCatalogContribution,
@@ -36,12 +38,15 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
       requiresCapabilities: ['content.summaries@1'],
       optionalCapabilities: [
         'entity.deletePlan@1',
+        'entity.movePlan@1',
+        'content.movePlan@1',
         'selection.entities@1',
         'selection.scopeAt@1',
         'canvas.pointer@1',
       ],
       providesCapabilities: ['selection.read@1', 'selection.resolve@1'],
       commands: [
+        'selection.moveEntities',
         'selection.set',
         'selection.clear',
         'selection.box',
@@ -198,6 +203,25 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         },
       });
 
+      context.commands.register<EntityMoveRequest>({
+        type: 'selection.moveEntities',
+        validate: (value): value is EntityMoveRequest => isRecord(value) && Array.isArray(value.positions) &&
+          value.positions.length > 0 && value.positions.length <= 20_000 && new Set(value.positions.map(p => p?.id)).size === value.positions.length &&
+          value.positions.every(p => isRecord(p) && typeof p.id === 'string' && Number.isFinite(p.x) && Number.isFinite(p.y) &&
+            (p.expectedRevision === undefined || (Number.isInteger(p.expectedRevision) && Number(p.expectedRevision) > 0))),
+        handle: async payload => {
+          const nodes = new Set((await context.capabilities.request<ContentSummary[]>('content.summaries@1')).map(node => node.id));
+          const content = payload.positions.filter(position => nodes.has(position.id)), other = payload.positions.filter(position => !nodes.has(position.id));
+          const plans = await context.capabilities.requestAll<EntityMovePlan>('entity.movePlan@1', { positions: other });
+          const claimed = plans.flatMap(plan => plan.ids);
+          const claimedIds = new Set(claimed);
+          if (claimedIds.size !== claimed.length || claimed.length !== other.length || other.some(position => !claimedIds.has(position.id))) throw new Error('选中的移动对象已经变化，请重新选择');
+          const contentPlan = content.length ? await context.capabilities.request<ContentMovePlan>('content.movePlan@1', { positions: content }) : undefined;
+          const patches = [...(contentPlan?.patches ?? []), ...plans.flatMap(plan => plan.patches)];
+          return { result: { moved: payload.positions.length }, transaction: patches.length ? { label: '移动画布选中项', patches,
+            events: [...(contentPlan?.events ?? []), ...plans.flatMap(plan => plan.events ?? [])] } : undefined };
+        },
+      });
       context.commands.register({
         type: 'selection.clear',
         handle: () => ({ transaction: selectionTransaction([], '清除选择') }),

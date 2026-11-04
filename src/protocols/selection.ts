@@ -85,3 +85,18 @@ export interface EntityDeletePlan {
   patches: PatchOperation[];
   events?: EventDeclaration[];
 }
+
+export interface EntityMovePosition { id: string; x: number; y: number; expectedRevision?: number }
+export interface EntityMoveRequest { positions: EntityMovePosition[] }
+/** An owner claims only its own entities and supplies standard patches for one mixed move. */
+export interface EntityMovePlan extends EntityDeletePlan { ids: string[] }
+declare module './messages.ts' {
+  interface ApplicationCapabilityMap {
+    'entity.movePlan@1': MessageContract<EntityMoveRequest, EntityMovePlan>;
+  }
+}
+declare module './commands.ts' {
+  interface ApplicationCommandMap {
+    'selection.moveEntities': CommandContract<EntityMoveRequest, { moved: number }>;
+  }
+}

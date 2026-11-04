@@ -52,6 +52,94 @@ async function port(page: Page, id: string, side: 'left' | 'right') {
   return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
 }
 
+async function mixedPositions(page: Page): Promise<Record<string, number[]>> {
+  const nodes = await page.locator('.text-node-card').evaluateAll(elements => Object.fromEntries(elements.map(element => {
+    const title = element.querySelector('strong[title]')!.getAttribute('title')!;
+    const transform = new DOMMatrix(getComputedStyle(element).transform);
+    return [title, [transform.m41, transform.m42]];
+  })));
+  const point = (await page.locator('.connection-junction').getAttribute('transform'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+  return { ...nodes, point };
+}
+
+test('double clicking a junction rotates incident curves by 15 degrees, preserves positions, previews new links and undoes', async ({ page }) => {
+  await openGroups(page, true);
+  const marker = page.locator('.connection-junction'), dot = marker.locator('.connection-junction-dot');
+  const before = await mixedPositions(page);
+  const paths = () => page.locator('.connection-hit-area').evaluateAll(elements => Object.fromEntries(elements.map(element => [element.getAttribute('data-connection-id'), element.getAttribute('d')])));
+  const original = await paths();
+  await dot.dblclick(); await expect(marker).toHaveAttribute('data-handle-angle', '15');
+  await expect.poll(async () => (await paths()).a).not.toBe(original.a);
+  const rotated = await paths();
+  expect(rotated.b).not.toBe(original.b); expect(rotated.trunk).not.toBe(original.trunk); expect(rotated.internal).toBe(original.internal);
+  expect(await mixedPositions(page)).toEqual(before);
+  await dot.dblclick(); await expect(marker).toHaveAttribute('data-handle-angle', '30');
+  await page.keyboard.press('Control+z'); await expect(marker).toHaveAttribute('data-handle-angle', '15');
+  await page.keyboard.press('Control+z'); await expect(marker).toHaveAttribute('data-handle-angle', '0');
+  await expect.poll(paths).toEqual(original);
+  await page.keyboard.press('Control+Shift+z'); await expect(marker).toHaveAttribute('data-handle-angle', '15');
+  const plus = await marker.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
+  const target = await page.getByRole('button', { name: '从群组测试c左侧连接', exact: true }).boundingBox();
+  await page.mouse.move(plus!.x + plus!.width / 2, plus!.y + plus!.height / 2); await page.mouse.down();
+  await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, { steps: 8 });
+  const draft = page.locator('.connection-path.draft');
+  await expect.poll(async () => {
+    const p = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+    return (p[3] - p[1]) / (p[2] - p[0]);
+  }).toBeCloseTo(Math.tan(Math.PI / 12), 3);
+  await page.keyboard.press('Escape'); await page.mouse.up();
+  await expect(draft).toHaveCount(0); await expect(page.locator('.connection-hit-area')).toHaveCount(4);
+  expect(await mixedPositions(page)).toEqual(before);
+});
+for (const start of ['point', 'node', 'box', 'group']) test(`mixed selection moves nodes, a box, a group and a junction together when dragging the ${start}`, async ({ page }) => {
+  await openGroups(page, true);
+  const group = page.locator('.group-frame[data-group-id="g1"]');
+  await group.click({ position: { x: 12, y: 16 } });
+  const node = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试e"]') });
+  const box = page.locator('.text-node-card').filter({ has: page.locator('strong[title="群组测试f"]') });
+  await node.locator('header strong').click({ modifiers: ['Shift'] });
+  await box.locator('.text-box-title').click({ modifiers: ['Shift'] });
+  const dot = page.locator('.connection-junction-dot'); await dot.click({ modifiers: ['Shift'] });
+  await expect(group).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
+  await expect(page.locator('.connection-junction.selected')).toHaveCount(1);
+  const before = await mixedPositions(page);
+  const handle = start === 'point' ? dot : start === 'group' ? group : start === 'box' ? box.locator('.text-box-title') : node.locator('header strong');
+  const rect = await handle.boundingBox();
+  const from = start === 'group' ? { x: rect!.x + 12, y: rect!.y + 16 } : { x: rect!.x + rect!.width / 2, y: rect!.y + rect!.height / 2 };
+  await page.mouse.move(from.x, from.y); await page.mouse.down();
+  await page.mouse.move(from.x + 120, from.y + 80, { steps: 10 });
+  const movedTogether = async () => {
+    const current = await mixedPositions(page), dx = current.point[0] - before.point[0], dy = current.point[1] - before.point[1];
+    if (Math.abs(dx) < 60) return false;
+    return ['a', 'b', 'e', 'f'].every(id => Math.abs(current[`群组测试${id}`][0] - before[`群组测试${id}`][0] - dx) < 1.5 &&
+      Math.abs(current[`群组测试${id}`][1] - before[`群组测试${id}`][1] - dy) < 1.5);
+  };
+  await expect.poll(movedTogether).toBe(true);
+  const preview = await mixedPositions(page);
+  await page.mouse.up(); await expect.poll(() => mixedPositions(page)).toEqual(preview);
+  expect(preview['群组测试c']).toEqual(before['群组测试c']); expect(preview['群组测试d']).toEqual(before['群组测试d']);
+  await page.keyboard.press('Control+z'); await expect.poll(() => mixedPositions(page)).toEqual(before);
+  await page.keyboard.press('Control+Shift+z'); await expect.poll(() => mixedPositions(page)).toEqual(preview);
+  await page.keyboard.press('Control+z'); await expect.poll(() => mixedPositions(page)).toEqual(before);
+  const restored = await handle.boundingBox();
+  const cancelFrom = start === 'group' ? { x: restored!.x + 12, y: restored!.y + 16 } : { x: restored!.x + restored!.width / 2, y: restored!.y + restored!.height / 2 };
+  await page.mouse.move(cancelFrom.x, cancelFrom.y); await page.mouse.down(); await page.mouse.move(cancelFrom.x + 70, cancelFrom.y + 60, { steps: 6 });
+  await page.keyboard.press('Escape'); await page.mouse.up(); await expect.poll(() => mixedPositions(page)).toEqual(before);
+  if (start === 'point') {
+    for (let i = 0; i < 3; i++) {
+      const current = await dot.boundingBox(), center = { x: current!.x + current!.width / 2, y: current!.y + current!.height / 2 };
+      const marker = page.locator('.connection-junction');
+      await marker.evaluate(element => element.addEventListener('pointerdown', event => element.setAttribute('data-test-pointer', String((event as PointerEvent).pointerId)), { once: true }));
+      await page.mouse.move(center.x, center.y); await page.mouse.down();
+      await marker.dispatchEvent('pointerup', { pointerId: Number(await marker.getAttribute('data-test-pointer')), clientX: center.x + 70, clientY: center.y + 50, button: 0 });
+      await page.mouse.up(); await expect.poll(movedTogether).toBe(true);
+    }
+    for (let i = 0; i < 3; i++) await page.keyboard.press('Control+z');
+    await expect.poll(() => mixedPositions(page)).toEqual(before);
+  }
+});
+
 test('reconnecting the only dashed group edge keeps its junction line type and updates in place', async ({ page }) => {
   await openGroups(page, true, true, true);
   const edge = page.locator('.connection-hit-area[data-connection-id="sole"]');
