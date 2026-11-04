@@ -93,6 +93,6 @@ test('a horizontally overlapping junction faces the actual input/output anchor r
     const p = incoming ? points.to : points.from, other = incoming ? points.from : points.to;
     assert.equal(p.side, other.x < p.x ? 'left' : 'right');
     const dx = incoming ? p.x - other.x : other.x - p.x, dy = incoming ? p.y - other.y : other.y - p.y, length = Math.hypot(dx, dy);
-    assert.deepEqual(p.tangent, { x: dx / length, y: dy / length });
+    assert.ok(Math.abs(p.tangent!.x - dx / length) < 1e-9 && Math.abs(p.tangent!.y - dy / length) < 1e-9);
   }
 });

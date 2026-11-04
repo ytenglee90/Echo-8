@@ -1,5 +1,7 @@
 import { connectionEndpointPoint, connectionHorizontalSides, isTitleConnection, resolveConnectionRecordEndpoints, type ConnectionNodeGeometry, type ConnectionRecord } from '../../protocols/connections.ts';
 import { connectionStrokeGeometry, type ConnectionRenderPoint } from './rendering.ts';
+import { planSmoothRoute } from './route-geometry.ts';
+import { planJunctionTransition, type JunctionNeighbour } from './junction-routing.ts';
 
 export interface ConnectionPoints { from: ConnectionRenderPoint; to: ConnectionRenderPoint }
 
@@ -17,30 +19,12 @@ export function connectionStrokeForEndpoints(record: Pick<ConnectionRecord, 'fro
   return { ...geometry, arrowEnd: geometry.arrowPath ? arrowEnd as 'from' | 'to' : undefined };
 }
 
-/** Rotate the shared flow axis; unconnected drafts fall back to the facing horizontal port. */
-export function junctionRenderPoint(point: ConnectionRenderPoint, role: 'source' | 'target', other?: ConnectionRenderPoint, handleAngle = 0, flow?: { x: number; y: number }): ConnectionRenderPoint {
-  const side = other ? other.x < point.x ? 'left' : 'right' : point.side;
-  const sign = role === 'source' ? side === 'left' ? -1 : 1 : side === 'right' ? -1 : 1;
-  const radians = handleAngle * Math.PI / 180;
-  const clean = (value: number) => Math.abs(value) < 1e-10 ? 0 : value;
-  const axis = flow ?? { x: sign, y: 0 };
-  return { ...point, side, tangent: { x: clean(axis.x * Math.cos(radians) - axis.y * Math.sin(radians)), y: clean(axis.x * Math.sin(radians) + axis.y * Math.cos(radians)) } };
-}
-
-/** Prefer a shared forward axis; contradictory graph roles use facing halves of a common horizontal axis. */
+/** Project all physical anchors, plan each junction once, then attach immutable route plans to its edges. */
 export function connectionGraphPoints(records: readonly ConnectionRecord[], nodes: ReadonlyMap<string, ConnectionNodeGeometry>): Map<string, ConnectionPoints> {
-  const points = new Map<string, ConnectionPoints>();
-  const joints = new Map<string, { x: number; y: number; positiveX: boolean; negativeX: boolean; positiveY: boolean; negativeY: boolean;
-    incoming: { x: number; y: number; count: number }; outgoing: { x: number; y: number; count: number } }>();
-  const accumulate = (id: string, role: 'incoming' | 'outgoing', other: ConnectionRenderPoint) => {
-    const node = nodes.get(id)!;
-    let joint = joints.get(id);
-    if (!joint) { joint = { x: node.x, y: node.y, positiveX: false, negativeX: false, positiveY: false, negativeY: false,
-      incoming: { x: 0, y: 0, count: 0 }, outgoing: { x: 0, y: 0, count: 0 } }; joints.set(id, joint); }
-    const sign = role === 'incoming' ? -1 : 1, dx = (other.x - node.x) * sign, dy = (other.y - node.y) * sign;
-    joint.positiveX ||= dx > .001; joint.negativeX ||= dx < -.001;
-    joint.positiveY ||= dy > .001; joint.negativeY ||= dy < -.001;
-    const mean = joint[role]; mean.count += 1; mean.x += (other.x - mean.x) / mean.count; mean.y += (other.y - mean.y) / mean.count;
+  const points = new Map<string, ConnectionPoints>(), neighbours = new Map<string, JunctionNeighbour[]>();
+  const include = (id: string, point: ConnectionRenderPoint, other: ConnectionRenderPoint, otherIsJunction: boolean) => {
+    const horizontalOnly = !otherIsJunction && Math.abs(point.y - other.y) < 24 && (point.x - other.x) * (other.side === 'left' ? -1 : 1) <= 0;
+    const list = neighbours.get(id) ?? []; list.push({ point, other, angle: nodes.get(id)?.handleAngle ?? 0, horizontalOnly }); neighbours.set(id, list);
   };
   for (const record of records) {
     const fromNode = nodes.get(record.from.nodeId), toNode = nodes.get(record.to.nodeId);
@@ -48,34 +32,27 @@ export function connectionGraphPoints(records: readonly ConnectionRecord[], node
     const endpoints = resolveConnectionRecordEndpoints(record, fromNode, toNode), sides = connectionHorizontalSides(record, fromNode, toNode);
     const from = connectionEndpointPoint(endpoints.from, fromNode, sides.from.side), to = connectionEndpointPoint(endpoints.to, toNode, sides.to.side);
     points.set(record.id, { from, to });
-    if (record.from.kind === 'junction') accumulate(record.from.nodeId, 'outgoing', to);
-    if (record.to.kind === 'junction') accumulate(record.to.nodeId, 'incoming', from);
+    if (record.from.kind === 'junction') include(record.from.nodeId, from, to, record.to.kind === 'junction');
+    if (record.to.kind === 'junction') include(record.to.nodeId, to, from, record.from.kind === 'junction');
   }
-  const axes = new Map<string, { x: number; y: number }>();
-  for (const [id, joint] of joints) {
-    const a = joint.incoming, b = joint.outgoing;
-    let x = (b.count ? b.x : joint.x) - (a.count ? a.x : joint.x), y = (b.count ? b.y : joint.y) - (a.count ? a.y : joint.y);
-    if (a.count && b.count) {
-      // An axis component that overshoots both adjoining chords creates an avoidable lobe.
-      const horizontal = (joint.x - a.x) * (b.x - joint.x) < 0 ? 0 : x;
-      const vertical = (joint.y - a.y) * (b.y - joint.y) < 0 ? 0 : y;
-      if (Math.hypot(horizontal, vertical) > .001) { x = horizontal; y = vertical; }
-    }
-    if (Math.hypot(x, y) < .001) { x = b.count ? b.x - joint.x : joint.x - a.x; y = b.count ? b.y - joint.y : joint.y - a.y; }
-    if (Math.hypot(x, y) < .001 && a.count) { x = joint.x - a.x; y = joint.y - a.y; }
-    // A split/deleted/reconnected graph can retain opposite logical roles on the same physical side.
-    // Means alone hide those conflicts. Never point an automatic handle backwards along any incident leg.
-    if ((x > 0 && joint.negativeX) || (x < 0 && joint.positiveX)) x = 0;
-    if ((y > 0 && joint.negativeY) || (y < 0 && joint.positiveY)) y = 0;
-    const length = Math.hypot(x, y);
-    // No directed axis can satisfy the whole graph: retain a common tangent line, facing each real endpoint.
-    if (length > .001) axes.set(id, { x: x / length, y: y / length });
-  }
+  const transitions = new Map([...neighbours].map(([id, list]) => [id, planJunctionTransition(list)]));
   for (const record of records) {
-    const pair = points.get(record.id); if (!pair) continue;
-    const { from, to } = pair;
-    if (record.from.kind === 'junction') pair.from = junctionRenderPoint(from, 'source', to, nodes.get(record.from.nodeId)?.handleAngle, axes.get(record.from.nodeId));
-    if (record.to.kind === 'junction') pair.to = junctionRenderPoint(to, 'target', from, nodes.get(record.to.nodeId)?.handleAngle, axes.get(record.to.nodeId));
+    const pair = points.get(record.id); if (!pair || (record.from.kind !== 'junction' && record.to.kind !== 'junction')) continue;
+    const span = Math.hypot(pair.to.x - pair.from.x, pair.to.y - pair.from.y);
+    const nodeLead = Math.min(32, Math.max(.5, Math.abs(pair.to.x - pair.from.x) * .2), Math.max(.5, span * .1));
+    const end = (point: ConnectionRenderPoint, other: ConnectionRenderPoint, endpoint: ConnectionRecord['from'], source: boolean) => {
+      const transition = endpoint.kind === 'junction' ? transitions.get(endpoint.nodeId) : undefined;
+      const sign = source ? 1 : -1;
+      if (transition) {
+        const half = other.x < point.x ? -1 : 1;
+        point.side = half < 0 ? 'left' : 'right';
+        point.tangent = { x: transition.axis.x * half * sign, y: transition.axis.y * half * sign };
+        return { ...point, direction: point.tangent, lead: transition.lead };
+      }
+      return { ...point, direction: { x: (point.side === 'left' ? -1 : 1) * sign, y: 0 }, lead: nodeLead };
+    };
+    const route = planSmoothRoute(end(pair.from, pair.to, record.from, true), end(pair.to, pair.from, record.to, false));
+    pair.from = { ...pair.from, route }; pair.to = { ...pair.to, route };
   }
   return points;
 }

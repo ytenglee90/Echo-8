@@ -23,7 +23,7 @@ export interface ConnectionEndpoint {
 
 export interface ConnectionJunction {
   id: string;
-  /** Clockwise offset from the automatic shared flow axis, in 15-degree steps. */
+  /** Direction preference in 15-degree steps; the route planner projects it into the smooth physical transition. */
   handleAngle?: number;
   /** World-space centre; this is a connection-owned vertex, never text content. */
   x: number;

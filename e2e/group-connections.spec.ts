@@ -62,16 +62,16 @@ async function mixedPositions(page: Page): Promise<Record<string, number[]>> {
   return { ...nodes, point };
 }
 
-test('double clicking a junction rotates incident curves by 15 degrees, preserves positions, previews new links and undoes', async ({ page }) => {
+test('double clicking a junction cycles safe direction preferences, preserves positions, previews new links and undoes', async ({ page }) => {
   await openGroups(page, true);
   const marker = page.locator('.connection-junction'), dot = marker.locator('.connection-junction-dot');
   const before = await mixedPositions(page);
   const paths = () => page.locator('.connection-hit-area').evaluateAll(elements => Object.fromEntries(elements.map(element => [element.getAttribute('data-connection-id'), element.getAttribute('d')])));
   const original = await paths();
   await dot.dblclick(); await expect(marker).toHaveAttribute('data-handle-angle', '15');
-  await expect.poll(async () => (await paths()).a).not.toBe(original.a);
+  await expect.poll(paths).toEqual(original);
   const rotated = await paths();
-  expect(rotated.b).not.toBe(original.b); expect(rotated.trunk).not.toBe(original.trunk); expect(rotated.internal).toBe(original.internal);
+  expect(rotated).toEqual(original); // Mixed upper/lower branches constrain this fan to its horizontal transition.
   expect(await mixedPositions(page)).toEqual(before);
   await dot.dblclick(); await expect(marker).toHaveAttribute('data-handle-angle', '30');
   await page.keyboard.press('Control+z'); await expect(marker).toHaveAttribute('data-handle-angle', '15');

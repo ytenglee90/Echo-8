@@ -1,12 +1,15 @@
 import type { ConnectionSide } from '../../protocols/connections.ts';
+import { orientedRoute, type RoutePlan, type RouteSegment } from './route-geometry.ts';
 import { canvasDetailWorldScale } from '../../ui/canvas-screen-scale.ts';
 
 export interface ConnectionRenderPoint {
   x: number;
   y: number;
   side?: ConnectionSide;
-  /** Shared forward tangent of a routing vertex, in world coordinates. */
+  /** Planned forward tangent at this endpoint, in world coordinates. */
   tangent?: { x: number; y: number };
+  /** Rebuildable geometry shared by paint, hit testing, labels and bounds. Never persisted. */
+  route?: RoutePlan;
 }
 
 export type ConnectionRenderMode = 'interactive-svg' | 'batched-svg';
@@ -24,13 +27,7 @@ const CONNECTION_LASSO_MAX_REGION_LENGTH = 12;
 const CONNECTION_LASSO_MIN_REGIONS = 16;
 const CONNECTION_LASSO_MAX_REGIONS = 256;
 
-interface CubicCurveSegment {
-  kind: 'cubic';
-  from: ConnectionRenderPoint;
-  controlFrom: ConnectionRenderPoint;
-  controlTo: ConnectionRenderPoint;
-  to: ConnectionRenderPoint;
-}
+type CubicCurveSegment = RouteSegment;
 
 export function connectionRenderMode(visibleConnections: number): ConnectionRenderMode {
   return visibleConnections > CONNECTION_BATCH_RENDER_THRESHOLD ? 'batched-svg' : 'interactive-svg';
@@ -80,15 +77,10 @@ export function connectionStrokeGeometry(
   const final = segments.at(-1);
   const full = { shaftPath: connectionCurvePath(from, to), arrowPath: '' };
   if (!final || !arrow) return full;
+  if (from.route && from.route === to.route) return plannedStroke(segments, from, zoom);
   const length = approximateCubicLength(final);
   const detailWorldScale = canvasDetailWorldScale(zoom);
-  const forwardRoute = Boolean(from.tangent || to.tangent) &&
-    final.controlTo.y === final.to.y &&
-    (final.controlFrom.x - final.from.x) * (final.to.x - final.from.x) >= 0 &&
-    (final.to.x - final.controlTo.x) * (final.to.x - final.from.x) > 0;
-  const arrowLength = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale,
-    from.tangent || to.tangent ? Math.min(length, segments.reduce((sum, segment) => sum + approximateCubicLength(segment), 0) * .45) : length * .45,
-    forwardRoute ? Math.abs(to.x - from.x) * .4 : Infinity);
+  const arrowLength = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * detailWorldScale, length * .45);
   if (arrowLength < 0.001) return full;
   // Trim on the actual Bézier, preserving both control points and a single forward stroke.
   let previous = final.to, traversed = 0, trimT = 1;
@@ -114,10 +106,8 @@ export function connectionStrokeGeometry(
   const unitY = tangentY / tangentLength;
   const base = { x: final.to.x - unitX * arrowLength, y: final.to.y - unitY * arrowLength };
   const terminalHandle = Math.max(0.001, Math.hypot(curveBase.x - d.x, curveBase.y - d.y));
-  const shaftHandleLimit = forwardRoute ? Math.abs(base.x - final.from.x) / 2 : Infinity;
-  const fromScale = forwardRoute && Math.abs(a.x - final.from.x) > shaftHandleLimit ? shaftHandleLimit / Math.abs(a.x - final.from.x) : 1;
-  const controlFrom = { x: final.from.x + (a.x - final.from.x) * fromScale, y: final.from.y + (a.y - final.from.y) * fromScale };
-  const controlTo = { x: base.x - unitX * Math.min(terminalHandle, shaftHandleLimit), y: base.y - unitY * terminalHandle };
+  const controlFrom = a;
+  const controlTo = { x: base.x - unitX * terminalHandle, y: base.y - unitY * terminalHandle };
   const arrowHalfWidth = Math.min(CONNECTION_ARROW_SCREEN_HALF_WIDTH * detailWorldScale, arrowLength / 2);
   const perpendicular = { x: -unitY, y: unitX };
   const firstWing = {
@@ -137,6 +127,21 @@ export function connectionStrokeGeometry(
       `C ${formatPoint(segment.controlFrom)}, ${formatPoint(segment.controlTo)}, ${formatPoint(segment.to)}`),
   ].join(' ');
   return { shaftPath: shaft, arrowPath: `M ${formatPoint(firstWing)} L ${formatPoint(final.to)} L ${formatPoint(secondWing)} Z` };
+}
+
+/** Planned routes end in a real straight port lead; trim it without modifying any spline control. */
+function plannedStroke(segments: readonly CubicCurveSegment[], from: ConnectionRenderPoint, zoom: number) {
+  const last = segments.at(-1)!, dx = last.to.x - last.from.x, dy = last.to.y - last.from.y, distance = Math.hypot(dx, dy);
+  const length = Math.min(CONNECTION_ARROW_SCREEN_LENGTH * canvasDetailWorldScale(zoom), distance * .8);
+  if (length < .001) return { shaftPath: connectionCurvePath(from, { ...last.to, route: from.route }), arrowPath: '' };
+  const x = dx / distance, y = dy / distance, base = { x: last.to.x - x * length, y: last.to.y - y * length };
+  const width = Math.min(CONNECTION_ARROW_SCREEN_HALF_WIDTH * canvasDetailWorldScale(zoom), length / 2);
+  const trimmed = { ...last, to: base,
+    controlFrom: { x: last.from.x + (base.x - last.from.x) / 3, y: last.from.y + (base.y - last.from.y) / 3 },
+    controlTo: { x: last.from.x + 2 * (base.x - last.from.x) / 3, y: last.from.y + 2 * (base.y - last.from.y) / 3 } };
+  const parts = [...segments.slice(0, -1), trimmed];
+  return { shaftPath: [`M ${formatPoint(from)}`, ...parts.map(p => `C ${formatPoint(p.controlFrom)}, ${formatPoint(p.controlTo)}, ${formatPoint(p.to)}`)].join(' '),
+    arrowPath: `M ${formatPoint({ x: base.x - y * width, y: base.y + x * width })} L ${formatPoint(last.to)} L ${formatPoint({ x: base.x + y * width, y: base.y - x * width })} Z` };
 }
 
 export function connectionCurveMidpoint(
@@ -244,8 +249,9 @@ function connectionCurveSegments(
   from: ConnectionRenderPoint,
   to: ConnectionRenderPoint,
 ): CubicCurveSegment[] {
-  if (from.tangent || to.tangent) return smoothRoutingSegments(from, to);
-  if (!from.tangent && !to.tangent && from.side === to.side && (from.side === 'left' || from.side === 'right')) {
+  if (Math.hypot(to.x - from.x, to.y - from.y) < .000001) return [{ kind: 'cubic', from, controlFrom: from, controlTo: to, to }];
+  if (from.route && from.route === to.route) return [...orientedRoute(from.route, from)];
+  if (from.side === to.side && (from.side === 'left' || from.side === 'right')) {
     const direction = from.side === 'right' ? 1 : -1;
     const outward = Math.min(320, Math.max(CONNECTION_MIN_HANDLE_LENGTH, 96 + Math.sqrt(Math.abs(to.y - from.y)) * 4.2));
     const controlX = (direction > 0 ? Math.max(from.x, to.x) : Math.min(from.x, to.x)) + direction * outward;
@@ -268,25 +274,6 @@ function connectionCurveSegments(
   }];
 }
 
-/** One fair cubic distributes the turn across the span while preserving the shared junction tangent. */
-function smoothRoutingSegments(from: ConnectionRenderPoint, to: ConnectionRenderPoint): CubicCurveSegment[] {
-  const dx = to.x - from.x, dy = to.y - from.y, span = Math.hypot(dx, dy), direction = dx >= 0 ? 1 : -1;
-  if (span < .000001) return [{ kind: 'cubic', from, controlFrom: from, controlTo: to, to }];
-  const a = from.tangent ?? { x: from.side === 'left' || from.side === 'title' ? -1 : from.side === 'right' ? 1 : direction, y: 0 };
-  const b = to.tangent ?? { x: to.side === 'right' ? -1 : to.side === 'left' || to.side === 'title' ? 1 : direction, y: 0 };
-  const handle = (vector: { x: number; y: number }) => {
-    let length = Math.min(420, span * .4);
-    // Each forward x handle owns at most half the gap: steep curves stay monotone without shortening their vertical departure.
-    if (dx * vector.x > .000001) length = Math.min(length, Math.abs(dx / vector.x) * .5);
-    if (dy * vector.y > .000001) length = Math.min(length, Math.abs(dy / vector.y) * .5);
-    return length;
-  };
-  const h = handle(a), k = handle(b);
-  return [{ kind: 'cubic', from, to,
-    controlFrom: { x: from.x + h * a.x, y: from.y + h * a.y },
-    controlTo: { x: to.x - k * b.x, y: to.y - k * b.y },
-  }];
-}
 
 function pointOnCubicCurve(segment: CubicCurveSegment, t: number): ConnectionRenderPoint {
   const inverse = 1 - t;

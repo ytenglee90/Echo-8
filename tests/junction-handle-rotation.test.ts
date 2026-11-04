@@ -33,7 +33,7 @@ test('each rotation advances 15 degrees, wraps after 24 steps, never moves the p
   await kernel.plugins.stop('connections'); for (let i = 0; i < 24; i++) await kernel.transactions.undo(); await kernel.plugins.start('connections');
   assert.deepEqual((await graph()).junctions[0], original);
 });
-test('handle rotation applies to both incident tangent roles while node anchors remain unchanged', () => {
+test('direction preference stays in the safe geometric half while node anchors remain unchanged', () => {
   const edge = { id: 'e', from: { nodeId: 'j', kind: 'junction' as const, side: 'right' as const }, to: { nodeId: 'a', side: 'left' as const }, labelWidth: 180, labelHeight: 48, revision: 1, createdAt: 1 };
   for (let angle = 0; angle < 360; angle += 15) {
     for (const reverse of [false, true]) {
@@ -42,10 +42,9 @@ test('handle rotation applies to both incident tangent roles while node anchors 
         ['a', { id: 'a', x: 800, y: 80, width: 280, height: 158 }]])).get('e')!;
       const routed = reverse ? point.to : point.from, node = reverse ? point.from : point.to;
       assert.equal(node.x, 800); assert.equal(node.y, 159);
-      const sign = reverse ? -1 : 1, length = Math.hypot(300, -141), radians = angle * Math.PI / 180;
-      const x = sign * 300 / length, y = sign * -141 / length;
-      assert.ok(Math.abs(routed.tangent!.x - (x * Math.cos(radians) - y * Math.sin(radians))) < 1e-9);
-      assert.ok(Math.abs(routed.tangent!.y - (x * Math.sin(radians) + y * Math.cos(radians))) < 1e-9);
+      const sign = reverse ? -1 : 1;
+      assert.ok(routed.tangent!.x * sign > 0 && routed.tangent!.y * sign <= 0);
+      assert.ok(routed.route && routed.route.segments.length >= 3);
       assert.ok(!/NaN|Infinity/u.test(connectionCurvePath(point.from, point.to)));
     }
   }

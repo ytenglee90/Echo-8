@@ -46,11 +46,12 @@ async function path(page: Page, id: string) { return (await page.locator(`.conne
 async function expectSmoothJoint(page: Page) {
   for (let i = 0; i < 3; i++) {
     const p = await path(page, `branch${i}`);
-    expect(p[2]).toBeCloseTo(p[0], 2); expect(p[3]).toBeLessThan(p[1]);
+    expect(p[3]).toBeCloseTo(p[1], 2);
+    expect((p[2] - p[0]) * (p.at(-2)! - p[0])).toBeGreaterThan(0);
     expect(p.at(-3)).toBe(p.at(-1));
   }
   const trunk = await path(page, 'trunk');
-  expect(trunk.at(-4)).toBeCloseTo(trunk.at(-2)!, 2); expect(trunk.at(-3)).toBeGreaterThan(trunk.at(-1)!);
+  expect(trunk.at(-3)).toBeCloseTo(trunk.at(-1)!, 2);
   expect(trunk[1]).toBe(trunk[3]);
   await expect(page.locator('.connection-arrow')).toHaveCount(3);
 }
@@ -219,4 +220,27 @@ test('free point drags use the point centre even when all existing legs approach
     await page.keyboard.press('Escape'); await page.mouse.up();
     await expect(page.locator('.connection-path.draft')).toHaveCount(0); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
   }
+});
+
+test('many-to-many paths remain smooth while each branch stays independently selectable and deletable', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[80, 100], [80, 500], [900, 100], [900, 500]], junction: [600, 400],
+    pairs: [['n0', 'j'], ['n1', 'j'], ['j', 'n2'], ['j', 'n3']], title: false });
+  const paths = () => page.locator('.connection-hit-area').evaluateAll(elements => Object.fromEntries(elements.map(element => [element.getAttribute('data-connection-id'), element.getAttribute('d')])));
+  const original = await paths();
+  for (const p of Object.values(original) as string[]) {
+    const values = p.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+    let x = values[0], y = values[1], previous: number[] | undefined;
+    for (let i = 2; i < values.length; i += 6) {
+      const tangent = [values[i] - x, values[i + 1] - y];
+      if (previous) expect((previous[0] * tangent[0] + previous[1] * tangent[1]) / (Math.hypot(...previous) * Math.hypot(...tangent))).toBeGreaterThan(.9999);
+      previous = [values[i + 4] - values[i + 2], values[i + 5] - values[i + 3]]; x = values[i + 4]; y = values[i + 5];
+    }
+  }
+  await page.screenshot({ path: info.outputPath('many-to-many.png') });
+  const branch = page.locator('.connection-hit-area[data-connection-id="branch0"]'); await branch.focus(); await branch.press('Enter');
+  await expect(page.locator('.connection-hit-area[aria-pressed="true"]')).toHaveCount(1);
+  await page.keyboard.press('Delete'); await expect(page.locator('.connection-hit-area')).toHaveCount(3); await expect(page.locator('.connection-junction')).toHaveCount(1);
+  const remaining = await paths(); expect(remaining.trunk).toBe(original.trunk); expect(remaining.branch1).toBe(original.branch1); expect(remaining.branch2).toBe(original.branch2);
+  await page.keyboard.press('Control+z'); await expect.poll(paths).toEqual(original);
 });

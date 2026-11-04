@@ -21,7 +21,8 @@ test('single junction branches follow actual anchors while arriving horizontally
     const geometry = connectionGraphPoints([edge], new Map([['j', j], ['target', target]])).get('out')!;
     assert.equal(geometry.from.side, direction === 1 ? 'right' : 'left');
     const x = geometry.to.x - geometry.from.x, y = geometry.to.y - geometry.from.y, length = Math.hypot(x, y);
-    assert.deepEqual(geometry.from.tangent, { x: x / length, y: y / length });
+    assert.ok(geometry.from.tangent!.x * x >= 0 && geometry.from.tangent!.y * y >= 0);
+    assert.ok(Math.abs(Math.hypot(geometry.from.tangent!.x, geometry.from.tangent!.y) - 1) < 1e-9 && length > 0);
     forward(connectionCurvePath(geometry.from, geometry.to), direction);
     for (const zoom of [.4, 1, 2.4]) forward(connectionStrokeGeometry(geometry.from, geometry.to, zoom).shaftPath, direction);
   }
@@ -43,7 +44,7 @@ test('incoming and point-to-point links face their counterpart after reversing t
       assert.ok(p.tangent.x * (pair.to.x - pair.from.x) >= 0 && p.tangent.y * (pair.to.y - pair.from.y) >= 0, 'a reversed layout cannot bend the handle backwards');
     }
     const length = Math.hypot(700 - x, -1000);
-    assert.deepEqual(chain.to.tangent, { x: (700 - x) / length, y: -1000 / length });
+    assert.ok(chain.to.tangent!.x * (700 - x) >= 0 && chain.to.tangent!.y <= 0 && length > 0);
     assert.ok(!/NaN|Infinity/u.test(connectionCurvePath(chain.from, chain.to)));
     const endpoints = resolveConnectionRecordEndpoints(edges[1], nodes.get('j')!, nodes.get('k')!);
     assert.equal(endpoints.from.side, x < 700 ? 'right' : 'left'); assert.equal(endpoints.to.side, x < 700 ? 'left' : 'right');
@@ -59,6 +60,6 @@ test('legacy junction side fields and labels round-trip unchanged while using th
   const point = connectionGraphPoints([restored], nodes).get('legacy')!;
   assert.equal(point.from.side, 'right');
   const dx = point.to.x - point.from.x, dy = point.to.y - point.from.y, length = Math.hypot(dx, dy);
-  assert.deepEqual(point.from.tangent, { x: dx / length, y: dy / length });
+  assert.ok(point.from.tangent!.x * dx >= 0 && point.from.tangent!.y * dy >= 0 && length > 0);
   assert.deepEqual(restored, edge, 'geometry never rewrites the stored record');
 });

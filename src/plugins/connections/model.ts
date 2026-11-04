@@ -1055,6 +1055,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
                   toNode.height,
                   toNode.presentation,
                   from.side, to.side, from.tangent?.x, from.tangent?.y, to.tangent?.x, to.tangent?.y,
+                  from.route?.key,
                 ].join(':'),
                 parts: ['line', 'label-background', 'label-text'],
                 includeInSelectAll: false,

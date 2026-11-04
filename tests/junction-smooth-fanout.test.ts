@@ -25,11 +25,11 @@ function fixture(jx: number, title = true, angle = 0, incoming = false) {
   const records: ConnectionRecord[] = pairs.map(([from, to], i) => ({ id: String(i), from: incoming ? to : from, to: incoming ? from : to, titleRoute: title, labelWidth: 180, labelHeight: 48, revision: 1, createdAt: 1 }));
   return { nodes, records };
 }
-test('the reported fan has one forward junction derivative instead of an incoming/outgoing reversal', () => {
+test('same-side fans share a physical transition without forcing a path through the junction', () => {
   for (const x of [64, 540]) for (const title of [true, false]) for (const incoming of [false, true]) {
     const { nodes, records } = fixture(x, title, 0, incoming), graph = connectionGraphPoints(records, nodes);
     const tangents = records.map(record => record.from.kind === 'junction' ? graph.get(record.id)!.from.tangent! : graph.get(record.id)!.to.tangent!);
-    for (const tangent of tangents) { assert.equal(tangent.x, 0); assert.equal(tangent.y, incoming ? 1 : -1); }
+    for (const tangent of tangents) { assert.equal(Math.abs(tangent.x), 1); assert.equal(Math.abs(tangent.y), 0); }
     for (const record of records) {
       const pair = graph.get(record.id)!, parts = segments(connectionCurvePath(pair.from, pair.to));
       for (let i = 1; i < parts.length; i++) {
@@ -37,7 +37,8 @@ test('the reported fan has one forward junction derivative instead of an incomin
         assert.ok(Math.abs(left.x - right.x) < .0003 && Math.abs(left.y - right.y) < .0003, 'joins must share the forward tangent');
       }
       const derivative = direction(record.from.kind === 'junction' ? minus(parts[0][1], parts[0][0]) : minus(parts.at(-1)![3], parts.at(-1)![2]));
-      assert.ok(Math.abs(derivative.x) < .0003 && Math.abs(derivative.y - (incoming ? 1 : -1)) < .0003, 'the rendered junction derivative preserves the shared flow');
+      const tangent = record.from.kind === 'junction' ? pair.from.tangent! : pair.to.tangent!;
+      assert.ok(Math.abs(derivative.x - tangent.x) < .0003 && Math.abs(derivative.y - tangent.y) < .0003, 'the visible route uses the planned transition');
       const bounds = connectionCurveBounds(pair.from, pair.to);
       assert.ok(Number.isFinite(bounds.width) && Number.isFinite(bounds.height));
       assert.equal(distanceToConnectionCurve(pair.from, pair.from, pair.to), 0);
@@ -49,13 +50,12 @@ test('the reported fan has one forward junction derivative instead of an incomin
     }
   }
 });
-test('manual 15-degree steps rotate the entire common axis without reintroducing a junction reversal', () => {
+test('all 15-degree preferences preserve the safe transition of a same-side fan', () => {
   for (let angle = 0; angle < 360; angle += 15) {
     const { nodes, records } = fixture(64, true, angle), graph = connectionGraphPoints(records, nodes);
-    const expected = { x: Math.sin(angle * Math.PI / 180), y: -Math.cos(angle * Math.PI / 180) };
     for (const record of records) {
       const pair = graph.get(record.id)!, tangent = record.from.kind === 'junction' ? pair.from.tangent! : pair.to.tangent!;
-      assert.ok(Math.abs(tangent.x - expected.x) < 1e-9 && Math.abs(tangent.y - expected.y) < 1e-9);
+      assert.equal(Math.abs(tangent.x), 1); assert.equal(Math.abs(tangent.y), 0);
     }
   }
 });
