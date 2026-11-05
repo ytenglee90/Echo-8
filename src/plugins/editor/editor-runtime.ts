@@ -24,6 +24,7 @@ import type {
 } from '../../protocols/formatting.ts';
 import {
   inferFormatTarget,
+  PARAGRAPH_FORMAT_FIELDS,
   resolveActiveFormat,
   resolveFormatAtOffset,
   resolveFormatBrushRange,
@@ -672,7 +673,7 @@ export function useEditorRuntime(client: ViewClient) {
               start: document.windowStart,
               length: EDITOR_READ_WINDOW,
             }))
-          : await client.dispatch('content.setRangeFormat', {
+          : await client.dispatch('content.applyFormatting', {
               nodeId: id,
               expectedRevision,
               expectedContentRevision: contentRevisions.current.get(id) ?? document.revision,
@@ -701,7 +702,9 @@ export function useEditorRuntime(client: ViewClient) {
     const document = documents.find((item) => item.id === id);
     if (!document) return;
     const selection = selectionRanges.current.get(id);
-    const target = inferFormatTarget(document, selection);
+    let target = inferFormatTarget(document, selection);
+    if (target === 'selection' && Object.keys(patch).every((key) =>
+      PARAGRAPH_FORMAT_FIELDS.some((field) => field === key))) target = 'paragraph';
     const range = target === 'document' ? undefined : resolveFormatRange(document, target, selection);
     commitResolvedFormat(id, patch, target, range);
   };

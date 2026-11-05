@@ -11,7 +11,7 @@ export function transformTextFormatMarks(marks: TextFormatMark[], edit: TextForm
   return marks.flatMap((mark) => {
     const start = transformAnchor(mark.start, edit);
     const end = transformAnchor(mark.end, edit);
-    if (start.offset >= end.offset) return [];
+    if (start.offset > end.offset || start.offset === end.offset && mark.scope !== 'paragraph') return [];
     if (start.offset === mark.start.offset && end.offset === mark.end.offset) return [mark];
     return [{ ...mark, start, end, revision: mark.revision + 1 }];
   });

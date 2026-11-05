@@ -132,7 +132,7 @@ export function createEditorPlugin(
         'content.applyDelta',
         'content.moveRange',
         'content.setDocumentFormat',
-        'content.setRangeFormat',
+        'content.applyFormatting',
         'content.resetFormat',
         'node.rename',
         'interaction.begin',

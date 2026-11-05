@@ -6982,7 +6982,7 @@ test('moving an editor text range is one undoable content transaction that carri
   assert.equal(restoredAnnotations.find((item) => item.id === annotation.id)?.target.offset, 2);
 });
 
-test('editor format scope uses selection when present and otherwise updates document defaults', () => {
+test('editor format scope uses current paragraph at the caret and resolves its active character style', () => {
   const document = {
     length: 7,
     body: '甲乙丙\n丁戊己',
@@ -7009,15 +7009,15 @@ test('editor format scope uses selection when present and otherwise updates docu
       },
     ],
   };
-  assert.equal(inferFormatTarget(document, { start: 1, end: 1 }), 'document');
+  assert.equal(inferFormatTarget(document, { start: 1, end: 1 }), 'paragraph');
   assert.equal(inferFormatTarget(document, { start: 1, end: 3 }), 'selection');
-  assert.equal(inferFormatTarget(document, { start: 0, end: 7 }), 'document');
+  assert.equal(inferFormatTarget(document, { start: 0, end: 7 }), 'selection');
   assert.deepEqual(resolveFormatRange(document, 'paragraph', { start: 1, end: 1 }), { start: 0, end: 4 });
   const effective = resolveActiveFormat(document, { start: 1, end: 1 });
-  assert.equal(effective.fontSize, DEFAULT_TEXT_DOCUMENT_FORMAT.fontSize);
-  assert.equal(effective.fontWeight, DEFAULT_TEXT_DOCUMENT_FORMAT.fontWeight);
+  assert.equal(effective.fontSize, 20);
+  assert.equal(effective.fontWeight, 700);
   assert.equal(resolveActiveFormat(document, { start: 3, end: 3 }).fontWeight, DEFAULT_TEXT_DOCUMENT_FORMAT.fontWeight);
-  assert.equal(resolveActiveFormat(document, { start: 0, end: 7 }).fontSize, DEFAULT_TEXT_DOCUMENT_FORMAT.fontSize);
+  assert.equal(resolveActiveFormat(document, { start: 0, end: 7 }).fontSize, 20);
   assert.deepEqual(resolveFormatBrushRange(document, { start: 1, end: 3 }), { start: 1, end: 3 });
   const clickedWord = resolveFormatBrushRange(document, { start: 1, end: 1 });
   assert.ok(clickedWord && clickedWord.start <= 1 && clickedWord.end > 1);
@@ -10409,4 +10409,76 @@ test('clearing all body formatting is revision checked, atomic, replayable and u
   assert.deepEqual(snapshot.marks, before.marks);
   await harness.transactions.redo();
   assert.deepEqual((await read()).marks, []);
+});
+
+test('paragraph formatting expands bounded ranges, preserves independent styles and survives replay and undo', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  await harness.plugins.start('text-node');
+  const node = await harness.router.dispatch<{ id: string }>('node.create', { body: '甲乙\n丙丁\n' }, 'core.test');
+  const read = () => harness.capabilities.request<import('../src/protocols/formatting.ts').TextFormattingSnapshot>('content.formatting@2', { nodeId: node.id });
+  const apply = async (start: number, end: number, scope: 'paragraph' | 'selection', patch: Partial<import('../src/protocols/formatting.ts').TextDocumentFormat>) => {
+    const snapshot = await read();
+    return harness.router.dispatch<import('../src/protocols/formatting.ts').TextFormattingSnapshot>('content.applyFormatting', {
+      nodeId: node.id, expectedRevision: snapshot.revision, expectedContentRevision: snapshot.contentRevision,
+      start, end, scope, patch,
+    }, 'core.test');
+  };
+  await apply(1, 1, 'paragraph', { fontSize: 24, lineHeight: 1.2 });
+  await apply(4, 4, 'paragraph', { fontSize: 36, lineHeight: 2.6 });
+  await apply(0, 1, 'selection', { fontSize: 15 });
+  const beforeSpacing = await read();
+  const after = await apply(1, 2, 'selection', { firstLineIndent: 2, paragraphSpacing: 1 });
+  assert.deepEqual(after.format, DEFAULT_TEXT_DOCUMENT_FORMAT, 'paragraph changes do not mutate defaults');
+  const last = after.marks.at(-1)!;
+  assert.equal(last.scope, 'paragraph');
+  assert.deepEqual([last.start.offset, last.end.offset], [0, 3]);
+  const editorDocument = { ...after, length: 6, body: '甲乙\n丙丁\n', windowStart: 0 };
+  assert.equal(resolveActiveFormat(editorDocument, { start: 0, end: 0 }).fontSize, 15, 'spacing must not revive an older font override');
+  assert.equal(resolveActiveFormat(editorDocument, { start: 4, end: 4 }).fontSize, 36);
+  await harness.transactions.undo();
+  assert.deepEqual((await read()).marks, beforeSpacing.marks);
+  await harness.transactions.redo();
+  assert.deepEqual((await read()).marks, after.marks);
+  await apply(6, 6, 'paragraph', { fontSize: 24, lineHeight: 1.7 });
+  const saved = await serializeProject({ document: harness.store.snapshot().document, plugins: [] });
+  const reopened = await parseProject(saved);
+  const stored = reopened.document.namespaces.textFormat[node.id] as { markIds: string[] };
+  const snapshot = await read();
+  assert.deepEqual(stored.markIds, snapshot.marks.map((mark) => mark.id));
+  for (const mark of snapshot.marks) assert.deepEqual(reopened.document.namespaces.textFormatMark[mark.id], mark);
+  const blank = snapshot.marks.at(-1)!;
+  assert.equal(blank.start.offset, 6);
+  assert.equal(blank.end.offset, 6);
+  await assert.rejects(harness.router.dispatch('content.applyFormatting', {
+    nodeId: node.id, expectedRevision: snapshot.revision - 1, expectedContentRevision: snapshot.contentRevision,
+    start: 0, end: 1, scope: 'selection', patch: { fontSize: 24 },
+  }, 'core.test'), /版本已变化/u);
+  await harness.router.dispatch('content.applyDelta', {
+    nodeId: node.id, expectedRevision: snapshot.contentRevision, start: 6, deleteCount: 0, insert: '新段',
+  }, 'core.test');
+  const typed = (await read()).marks.find((mark) => mark.id === blank.id)!;
+  assert.deepEqual([typed.start.offset, typed.end.offset], [6, 8]);
+});
+
+test('paragraph formatting finds real boundaries beyond a mounted editor window using chunk reads', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  await harness.plugins.start('text-node');
+  const body = `前段\n${'长'.repeat(140_000)}\n后段`;
+  const node = await harness.router.dispatch<{ id: string }>('node.create', { body }, 'core.test');
+  const initial = await harness.capabilities.request<import('../src/protocols/formatting.ts').TextFormattingSnapshot>('content.formatting@2', { nodeId: node.id });
+  const result = await harness.router.dispatch<import('../src/protocols/formatting.ts').TextFormattingSnapshot>('content.applyFormatting', {
+    nodeId: node.id, expectedRevision: initial.revision, expectedContentRevision: initial.contentRevision,
+    start: 70_000, end: 70_001, scope: 'selection', patch: { fontWeight: 900, firstLineIndent: 2 },
+  }, 'core.test');
+  assert.equal(result.marks.length, 2);
+  const paragraph = result.marks.find((mark) => mark.scope === 'paragraph')!;
+  assert.deepEqual([paragraph.start.offset, paragraph.end.offset], [3, 140_004]);
+  const inline = result.marks.find((mark) => mark.scope === 'selection')!;
+  assert.deepEqual([inline.start.offset, inline.end.offset], [70_000, 70_001]);
+  await assert.rejects(harness.router.dispatch('content.setRangeFormat', {
+    nodeId: node.id, expectedRevision: result.revision, expectedContentRevision: result.contentRevision,
+    start: 3, end: 3, scope: 'paragraph', patch: { fontSize: 24 },
+  }, 'core.test'), /空范围/u);
 });

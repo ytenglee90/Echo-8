@@ -96,6 +96,7 @@ import {
   type TextNodeRecord,
 } from './operations.ts';
 import { registerTextNodeCapabilities } from './capability-runtime.ts';
+import { formatRangeParts } from './paragraph-formatting.ts';
 import {
   findLinkedTitleHits,
   isReferenceTitle,
@@ -153,6 +154,7 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       'content.migrateStorage',
       'content.setDocumentFormat',
       'content.setRangeFormat',
+      'content.applyFormatting',
       'content.resetFormat',
     ],
     dispatches: ['editor.open', 'connection.create'],
@@ -1285,8 +1287,8 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
       },
     });
 
-    context.commands.register({
-      type: 'content.setRangeFormat',
+    for (const type of ['content.setRangeFormat', 'content.applyFormatting'] as const) context.commands.register({
+      type,
       validate: isSetRangeFormatRequest,
       handle: (payload) => {
         const node = context.store.readValue<TextNodeRecord>(NODE_NAMESPACE, payload.nodeId);
@@ -1300,41 +1302,50 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
         if (payload.expectedContentRevision !== content.revision) {
           throw new Error(`节点“${node.title}”正文版本已变化，请重新选择后设置格式`);
         }
-        if (payload.start < 0 || payload.end > content.length || payload.start >= payload.end) {
-          throw new Error('格式选区必须是正文内的非空范围');
-        }
-        const markIds = current.markIds ?? [];
-        if (markIds.length >= MAX_FORMAT_MARKS_PER_NODE) {
-          throw new Error(`单个节点最多保留 ${MAX_FORMAT_MARKS_PER_NODE} 个格式区间`);
+        const paragraphAware = type === 'content.applyFormatting';
+        if (payload.start < 0 || payload.end > content.length || payload.start > payload.end ||
+          (!paragraphAware || payload.scope === 'selection') && payload.start === payload.end) {
+          throw new Error('格式范围必须位于正文内，空范围只能设置段落格式');
         }
         const normalizedPatch = validateFormatPatch(payload.patch);
-        const existing = markIds
-          .map((id) => context.store.readValue<TextFormatMark>(FORMAT_MARK_NAMESPACE, id))
-          .find((mark) => mark?.scope === payload.scope && mark.start.offset === payload.start &&
-            mark.end.offset === payload.end);
-        const mark: TextFormatMark = existing ? {
-          ...existing,
-          format: { ...existing.format, ...normalizedPatch },
-          revision: existing.revision + 1,
-        } : {
-          id: createId('format-mark'),
-          nodeId: node.id,
-          scope: payload.scope,
-          start: { offset: payload.start, bias: 'after' },
-          end: { offset: payload.end, bias: 'before' },
-          format: normalizedPatch,
-          revision: 1,
-        };
+        const originalMarks = readFormatMarks(context, current);
+        let marks = [...originalMarks];
+        const changed: TextFormatMark[] = [];
+        const parts = paragraphAware
+          ? formatRangeParts(context, content, payload.start, payload.end, payload.scope, normalizedPatch)
+          : [{ start: payload.start, end: payload.end, scope: payload.scope, patch: normalizedPatch }];
+        for (const part of parts) {
+          // Only merge the newest mark. Moving an older mark to the end would
+          // also revive its unrelated properties above more recent formatting.
+          const latest = marks.at(-1);
+          const existing = latest?.scope === part.scope && latest.start.offset === part.start &&
+            latest.end.offset === part.end ? latest : undefined;
+          const mark: TextFormatMark = {
+            id: existing?.id ?? createId('format-mark'),
+            nodeId: node.id,
+            scope: part.scope,
+            // Paragraphs include boundary typing; selection marks keep the
+            // original exclusion policy. A terminal blank paragraph is a point.
+            start: { offset: part.start, bias: paragraphAware && part.scope === 'paragraph' ? 'before' : 'after' },
+            end: { offset: part.end, bias: paragraphAware && part.scope === 'paragraph' && part.end === content.length &&
+              (part.start === part.end || readContentRange(context, content, part.end - 1, 1) !== '\n') ? 'after' : 'before' },
+            format: { ...existing?.format, ...part.patch },
+            revision: (existing?.revision ?? 0) + 1,
+          };
+          marks = [...marks.filter((item) => item.id !== mark.id), mark];
+          changed.push(mark);
+        }
+        if (marks.length > MAX_FORMAT_MARKS_PER_NODE) {
+          throw new Error(`单个节点最多保留 ${MAX_FORMAT_MARKS_PER_NODE} 个格式区间`);
+        }
         const next: TextFormatRecord = {
           ...current,
           storageVersion: 2,
-          markIds: existing ? markIds : [...markIds, mark.id],
+          // Persist the same last-write order returned by the preview snapshot.
+          markIds: marks.map((mark) => mark.id),
           revision: current.revision + 1,
         };
-        const snapshot = toFormattingSnapshot(context, next, content, 0, content.length, [
-          ...readFormatMarks(context, current).filter((item) => item.id !== mark.id),
-          mark,
-        ]);
+        const snapshot = toFormattingSnapshot(context, next, content, 0, content.length, marks);
         return {
           result: snapshot,
           transaction: {
@@ -1342,7 +1353,9 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
             mergeKey: `format-range:${node.id}:${payload.scope}:${payload.start}:${payload.end}`,
             mergeWindowMs: 900,
             patches: [
-              { op: 'set', domain: 'document', namespace: FORMAT_MARK_NAMESPACE, key: mark.id, value: mark },
+              ...changed.map((mark): PatchOperation => ({
+                op: 'set', domain: 'document', namespace: FORMAT_MARK_NAMESPACE, key: mark.id, value: mark,
+              })),
               { op: 'set', domain: 'document', namespace: FORMAT_NAMESPACE, key: node.id, value: next },
             ],
             events: [{

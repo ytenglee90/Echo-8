@@ -26,6 +26,7 @@ export function FormatBar({
   nodeId,
   textRange,
   format,
+  mixedFields = [],
   brushActive,
   textAssist,
   onBrush,
@@ -37,6 +38,7 @@ export function FormatBar({
   nodeId: string;
   textRange?: NonNullable<AppearancePreview['textRange']>;
   format: TextDocumentFormat;
+  mixedFields?: Array<keyof TextDocumentFormat>;
   brushActive?: boolean;
   textAssist: TextAssistRuntime;
   onBrush?: () => void;
@@ -55,7 +57,7 @@ export function FormatBar({
       className="format-strip"
       aria-label="正文格式栏"
     >
-      <legend>有选区时修改选区；没有选区时修改默认格式</legend>
+      <legend>选中文字设置文字格式；光标设置当前段落；行距、缩进和段后空行作用于整段</legend>
       <IconButton
         icon="paintbrush"
         label={brushActive ? '取消格式刷；双击清除全部正文格式' : '格式刷：选中源文字后单击，再选中目标文字；双击清除全部正文格式'}
@@ -65,13 +67,13 @@ export function FormatBar({
         onClick={(event) => { if (event.detail < 2) onBrush?.(); }}
         onDoubleClick={onClearFormat}
       />
-      <FormatSelect icon="font-size" label="字号" value={format.fontSize} options={[...FORMAT_STEP_OPTIONS.fontSize]} onChange={(fontSize) => onChange({ fontSize })} suffix="px" />
-      <FormatSelect icon="font-weight" label="字重" value={format.fontWeight} options={[...FORMAT_STEP_OPTIONS.fontWeight]} onChange={(fontWeight) => onChange({ fontWeight })} />
-      <FormatSelect icon="line-height" label="行距" value={format.lineHeight} options={[...FORMAT_STEP_OPTIONS.lineHeight]} onChange={(lineHeight) => onChange({ lineHeight })} />
-      <FormatSelect icon="letter-spacing" label="字距" value={format.letterSpacing} options={[...FORMAT_STEP_OPTIONS.letterSpacing]} onChange={(letterSpacing) => onChange({ letterSpacing })} suffix="px" />
-      <FormatSelect icon="first-indent" label="首行缩进" value={format.firstLineIndent} options={[...FORMAT_STEP_OPTIONS.firstLineIndent]} onChange={(firstLineIndent) => onChange({ firstLineIndent })} suffix="字" />
-      <FormatSelect icon="paragraph-spacing" label="段后空行" value={format.paragraphSpacing} options={[...FORMAT_STEP_OPTIONS.paragraphSpacing]} onChange={(paragraphSpacing) => onChange({ paragraphSpacing })} suffix="行" />
-      <label className="format-control format-control-inline format-color-control" title="文字颜色">
+      <FormatSelect icon="font-size" label="字号" value={format.fontSize} mixed={mixedFields.includes('fontSize')} options={[...FORMAT_STEP_OPTIONS.fontSize]} onChange={(fontSize) => onChange({ fontSize })} suffix="px" />
+      <FormatSelect icon="font-weight" label="字重" value={format.fontWeight} mixed={mixedFields.includes('fontWeight')} options={[...FORMAT_STEP_OPTIONS.fontWeight]} onChange={(fontWeight) => onChange({ fontWeight })} />
+      <FormatSelect icon="line-height" label="行距" value={format.lineHeight} mixed={mixedFields.includes('lineHeight')} options={[...FORMAT_STEP_OPTIONS.lineHeight]} onChange={(lineHeight) => onChange({ lineHeight })} suffix="倍" />
+      <FormatSelect icon="letter-spacing" label="字距" value={format.letterSpacing} mixed={mixedFields.includes('letterSpacing')} options={[...FORMAT_STEP_OPTIONS.letterSpacing]} onChange={(letterSpacing) => onChange({ letterSpacing })} suffix="px" />
+      <FormatSelect icon="first-indent" label="首行缩进" value={format.firstLineIndent} mixed={mixedFields.includes('firstLineIndent')} options={[...FORMAT_STEP_OPTIONS.firstLineIndent]} onChange={(firstLineIndent) => onChange({ firstLineIndent })} suffix="字" />
+      <FormatSelect icon="paragraph-spacing" label="段后空行" value={format.paragraphSpacing} mixed={mixedFields.includes('paragraphSpacing')} options={[...FORMAT_STEP_OPTIONS.paragraphSpacing]} onChange={(paragraphSpacing) => onChange({ paragraphSpacing })} suffix="行" />
+      <label className="format-control format-control-inline format-color-control" title={mixedFields.includes('color') ? '文字颜色：混合，选择颜色将统一选区' : '文字颜色'}>
         <Icon name="text-color" size={15} />
         <ColorPickerTrigger
           client={client}
@@ -89,6 +91,7 @@ export function FormatBar({
           }}
           onCancel={() => client.emit('appearance.color.preview', { clear: true } satisfies AppearancePreview)}
         />
+        {mixedFields.includes('color') && <span>混合</span>}
       </label>
       {textAssist.available && (
         <span className="format-assist-actions" aria-label="文本辅助开关">
@@ -188,6 +191,7 @@ function FormatSelect({
   icon,
   label,
   value,
+  mixed = false,
   options,
   onChange,
   suffix = '',
@@ -195,14 +199,16 @@ function FormatSelect({
   icon: IconName;
   label: string;
   value: number;
+  mixed?: boolean;
   options: number[];
   onChange: (value: number) => void;
   suffix?: string;
 }) {
   return (
-    <label className="format-control format-control-inline" title={label}>
+    <label className="format-control format-control-inline" title={`${label}：${mixed ? '混合' : `${value}${suffix}`}`}>
       <Icon name={icon} size={15} />
-      <select value={value} aria-label={label} onChange={(event) => onChange(Number(event.target.value))}>
+      <select value={mixed ? 'mixed' : value} aria-label={label} onChange={(event) => onChange(Number(event.target.value))}>
+        {mixed && <option value="mixed" disabled>混合</option>}
         {!options.includes(value) && <option value={value} hidden disabled>{value}{suffix}</option>}
         {options.map((option) => <option value={option} key={option}>{option}{suffix}</option>)}
       </select>

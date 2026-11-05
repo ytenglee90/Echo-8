@@ -20,7 +20,8 @@ export function applyTextColorPreview<T extends PreviewableTextDocument>(
     return { ...document, format: { ...document.format, color: target.color } };
   }
   if (textRange.contentRevision !== document.revision ||
-    textRange.end <= textRange.start) return document;
+    textRange.end < textRange.start ||
+    textRange.end === textRange.start && textRange.scope !== 'paragraph') return document;
   const mark: TextFormatMark = {
     id: `preview:text-color:${document.id}`,
     nodeId: document.id,

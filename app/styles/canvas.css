@@ -656,13 +656,12 @@
 .connection-layer .connection-hit-area:is(:focus, :focus-visible),
 .connection-layer .connection-junction:is(:focus, :focus-visible),
 .connection-layer .connection-junction-port:is(:focus, :focus-visible) { outline: none; }
-.connection-junction-port-bridge { fill: transparent; }
+.connection-junction-port-bridge { fill: transparent; cursor: default; }
 .connection-junction-port { opacity: 0; pointer-events: none; cursor: crosshair; outline: none; }
 .connection-junction:is(:hover, :focus-within, .selected) .connection-junction-port { opacity: 1; pointer-events: all; }
 .connection-junction-port circle { fill: var(--canvas-background); stroke: var(--canvas-selection); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .connection-junction-port .connection-junction-port-hit { fill: transparent; stroke: none; }
 .connection-junction-port .connection-junction-port-dot { pointer-events: none; }
-.connection-junction-port-bridge { cursor: default; }
 .connection-overlap-hint { pointer-events: none; user-select: none; }
 .connection-overlap-hint rect { fill: var(--connection-label-background, var(--canvas-background)); stroke: var(--canvas-selection-soft); stroke-width: 1; }
 .connection-overlap-hint text { fill: var(--canvas-selection); }

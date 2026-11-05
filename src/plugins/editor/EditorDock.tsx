@@ -4,6 +4,7 @@ import {
   Fragment,
   type ReactNode,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -23,6 +24,7 @@ import type { TextDocumentFormat, TextFormatMark } from '../../protocols/formatt
 import {
   inferFormatTarget,
   resolveActiveFormat,
+  resolveMixedFormatFields,
   resolveFormatRange,
 } from './format-target.ts';
 import { applyTextColorPreview } from './appearance-preview.ts';
@@ -373,6 +375,8 @@ function EditorPane({
     titleBeforeEdit.current = document.title;
   }, [document.title, titleEditing]);
   const textAssist = useTextAssistRuntime(client);
+  const activeFormat = useMemo(() => resolveActiveFormat(document, selection), [document, selection]);
+  const mixedFields = useMemo(() => resolveMixedFormatFields(document, selection), [document, selection]);
   const formatTarget = inferFormatTarget(document, selection);
   const formatRange = formatTarget === 'document'
     ? undefined
@@ -481,7 +485,8 @@ function EditorPane({
             scope: formatTarget as 'selection' | 'paragraph',
             contentRevision: document.revision,
           } : undefined}
-          format={resolveActiveFormat(document, selection)}
+          format={activeFormat}
+          mixedFields={mixedFields}
           brushActive={formatBrushActive}
           textAssist={textAssist}
           onBrush={onFormatBrush}

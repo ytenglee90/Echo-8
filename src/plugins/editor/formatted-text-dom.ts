@@ -1,9 +1,11 @@
 import type { TextAssistDecoration } from '../../protocols/text-assist.ts';
 import {
   DEFAULT_TEXT_DOCUMENT_FORMAT,
+  PARAGRAPH_FORMAT_FIELDS,
   type TextDocumentFormat,
   type TextFormatMark,
 } from '../../protocols/formatting.ts';
+import { resolveFormatAtOffset } from './format-target.ts';
 
 /** Revisions and mark IDs do not change the pixels of the editor projection. */
 export function textProjectionKey(
@@ -36,14 +38,18 @@ export function writeFormattedText(
   for (const line of text.split('\n')) {
     const block = root.ownerDocument.createElement('div');
     const lineEnd = lineStart + line.length;
-    const applicable = marks.filter((mark) => mark.scope === 'paragraph'
-      ? mark.start.offset <= lineStart && mark.end.offset >= lineEnd
-      : mark.start.offset < lineEnd && mark.end.offset > lineStart);
+    const applicable = marks.filter((mark) => mark.start.offset < lineEnd && mark.end.offset > lineStart ||
+      !line && mark.scope === 'paragraph' && mark.start.offset <= lineStart &&
+        (mark.end.offset > lineStart || mark.start.offset === lineStart && mark.end.offset === lineStart));
     const lineDecorations = decorations.filter((decoration) =>
       decoration.start < lineEnd && decoration.end > lineStart);
-    const paragraphFormat = applicable
-      .filter((mark) => mark.scope === 'paragraph')
-      .reduce((resolved, mark) => ({ ...resolved, ...mark.format }), {} as Partial<TextDocumentFormat>);
+    const paragraphFormat = resolveFormatAtOffset(documentFormat, applicable, lineStart, false);
+    // Also project legacy selection-scoped paragraph fields onto their block.
+    for (const mark of applicable) {
+      for (const key of PARAGRAPH_FORMAT_FIELDS) {
+        if (mark.format[key] !== undefined) paragraphFormat[key] = mark.format[key];
+      }
+    }
     Object.assign(block.style, toTextStyle(paragraphFormat, true));
     if (!line) {
       block.appendChild(root.ownerDocument.createElement('br'));
@@ -65,7 +71,7 @@ export function writeFormattedText(
         const globalStart = lineStart + start;
         const resolved = applicable
           .filter((mark) => mark.start.offset <= globalStart && mark.end.offset >= lineStart + end)
-          .reduce((value, mark) => ({ ...value, ...mark.format }), {} as Partial<TextDocumentFormat>);
+          .reduce((value, mark) => ({ ...value, ...mark.format }), { ...documentFormat });
         const span = root.ownerDocument.createElement('span');
         span.textContent = line.slice(start, end);
         Object.assign(span.style, toTextStyle(resolved, false));
@@ -94,8 +100,8 @@ export function writeFormattedText(
   root.style.setProperty('--editor-line-height', String(documentFormat.lineHeight));
   root.style.setProperty('--editor-letter-spacing', `${documentFormat.letterSpacing}px`);
   root.style.setProperty('--editor-text-color', editorDocumentTextColor(documentFormat.color));
-  root.style.setProperty('--editor-first-indent', `${documentFormat.firstLineIndent}em`);
-  root.style.setProperty('--editor-paragraph-spacing', `${documentFormat.paragraphSpacing}em`);
+  root.style.setProperty('--editor-first-indent', `${documentFormat.firstLineIndent * (documentFormat.fontSize + documentFormat.letterSpacing)}px`);
+  root.style.setProperty('--editor-paragraph-spacing', `${documentFormat.paragraphSpacing * documentFormat.lineHeight}em`);
 }
 
 /** Keeps ordinary unformatted writing readable on user-selected paper colors. */
@@ -109,10 +115,14 @@ function toTextStyle(format: Partial<TextDocumentFormat>, paragraph: boolean): P
   const style: Record<string, string> = {};
   if (format.fontSize !== undefined) style.fontSize = `${format.fontSize}px`;
   if (format.fontWeight !== undefined) style.fontWeight = String(format.fontWeight);
-  if (format.lineHeight !== undefined) style.lineHeight = String(format.lineHeight);
+  if (paragraph && format.lineHeight !== undefined) style.lineHeight = String(format.lineHeight);
   if (format.letterSpacing !== undefined) style.letterSpacing = `${format.letterSpacing}px`;
-  if (format.color !== undefined) style.color = format.color;
-  if (paragraph && format.firstLineIndent !== undefined) style.textIndent = `${format.firstLineIndent}em`;
-  if (paragraph && format.paragraphSpacing !== undefined) style.marginBottom = `${format.paragraphSpacing}em`;
+  if (format.color !== undefined) style.color = editorDocumentTextColor(format.color);
+  if (paragraph && format.firstLineIndent !== undefined) {
+    style.textIndent = `${format.firstLineIndent * ((format.fontSize ?? 15) + (format.letterSpacing ?? 0))}px`;
+  }
+  if (paragraph && format.paragraphSpacing !== undefined) {
+    style.marginBottom = `${format.paragraphSpacing * (format.lineHeight ?? 1.7)}em`;
+  }
   return style as Partial<CSSStyleDeclaration>;
 }

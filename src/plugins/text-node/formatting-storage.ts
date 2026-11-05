@@ -107,7 +107,9 @@ export function toFormattingSnapshot(
   const marks = (suppliedMarks ?? readFormatMarks(context, record)).filter((mark) =>
     rangeLength === 0
       ? mark.start.offset <= rangeStart && mark.end.offset >= rangeStart
-      : mark.start.offset < rangeEnd && mark.end.offset > rangeStart);
+      : mark.start.offset < rangeEnd && mark.end.offset > rangeStart ||
+        mark.scope === 'paragraph' && mark.start.offset === mark.end.offset &&
+        mark.start.offset >= rangeStart && mark.start.offset <= rangeEnd);
   return {
     ...toFormatSnapshot(record),
     contentRevision: content.revision,

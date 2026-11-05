@@ -930,8 +930,8 @@ export function PlainTextWritingArea({
     '--editor-line-height': String(format.lineHeight),
     '--editor-letter-spacing': `${format.letterSpacing}px`,
     '--editor-text-color': editorDocumentTextColor(format.color),
-    '--editor-first-indent': `${format.firstLineIndent}em`,
-    '--editor-paragraph-spacing': `${format.paragraphSpacing}em`,
+    '--editor-first-indent': `${format.firstLineIndent * (format.fontSize + format.letterSpacing)}px`,
+    '--editor-paragraph-spacing': `${format.paragraphSpacing * format.lineHeight}em`,
   } as CSSProperties;
 
   return (

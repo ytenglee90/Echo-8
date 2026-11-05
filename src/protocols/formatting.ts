@@ -16,6 +16,7 @@ export interface TextFormatSnapshot {
 }
 
 export type TextFormatScope = 'selection' | 'paragraph';
+export const PARAGRAPH_FORMAT_FIELDS = ['lineHeight', 'firstLineIndent', 'paragraphSpacing'] as const;
 export type TextAnchorBias = 'before' | 'after';
 
 /**
@@ -67,6 +68,9 @@ export interface SetTextRangeFormatRequest {
   patch: Partial<TextDocumentFormat>;
 }
 
+/** Schema version 1: character ranges plus whole-paragraph layout, including blank paragraphs. */
+export type ApplyTextFormattingRequest = SetTextRangeFormatRequest;
+
 export interface TextFormattingRequest {
   nodeId: string;
   start?: number;
@@ -78,6 +82,7 @@ declare module './commands.ts' {
     'content.setDocumentFormat': CommandContract<SetTextDocumentFormatRequest, TextFormatSnapshot>;
     'content.resetFormat': CommandContract<ResetTextFormatRequest, TextFormattingSnapshot>;
     'content.setRangeFormat': CommandContract<SetTextRangeFormatRequest, TextFormattingSnapshot>;
+    'content.applyFormatting': CommandContract<ApplyTextFormattingRequest, TextFormattingSnapshot>;
   }
 }
 
