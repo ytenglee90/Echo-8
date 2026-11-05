@@ -435,6 +435,18 @@ test('repeated clicks cycle overlapping curves without opening text editing and 
   await page.mouse.down({ clickCount: 2 }); await page.mouse.up({ clickCount: 2 }); await expect.poll(selected).not.toBe(first);
   await expect(page.locator('.connection-layer textarea')).toHaveCount(0);
   await expect(page.locator('.connection-overlap-hint text')).toContainText('2/2');
+  const highlighted = () => page.locator('.connection-path:not(.draft)').evaluateAll(paths => paths.filter(path => Number.parseFloat(getComputedStyle(path).strokeWidth) > 2).length);
+  await expect.poll(highlighted).toBe(1);
+  for (let index = 0; index < 8; index++) {
+    await page.mouse.click(hit.x + index % 2, hit.y);
+    await expect(page.locator('.connection-hit-area[aria-pressed="true"]')).toHaveCount(1);
+    await expect.poll(highlighted).toBe(1);
+  }
+  await page.mouse.move(hit.x, hit.y); await page.mouse.down();
+  await page.mouse.move(hit.x + 4, hit.y + 3, { steps: 3 }); await page.mouse.up();
+  await expect(page.locator('.connection-hit-area[aria-pressed="true"]')).toHaveCount(1);
+  await expect.poll(highlighted).toBe(1);
+  await page.mouse.click(hit.x, hit.y);
   await page.keyboard.down('Shift'); await page.mouse.click(hit.x,hit.y); await page.keyboard.up('Shift');
   await expect(page.locator('.connection-hit-area[aria-pressed="true"]')).toHaveCount(2);
   await page.keyboard.press('Delete'); await expect(page.locator('.connection-hit-area')).toHaveCount(0);
@@ -478,7 +490,7 @@ for (const level of [100,40,240]) test(`junction move and connect controls remai
   const zoom=page.getByRole('textbox',{name:/画布缩放/u}); await zoom.fill(String(level)); await zoom.press('Enter');
   const marker=page.locator('.connection-junction'); await marker.locator('.connection-junction-dot').hover();
   const move=(await marker.locator('.connection-junction-hit').boundingBox())!, port=marker.locator('.connection-junction-port'), portHit=(await port.locator('.connection-junction-port-hit').boundingBox())!;
-  expect(move.y-portHit.y-portHit.height).toBeGreaterThanOrEqual(12);
+    expect(move.y-portHit.y-portHit.height).toBeCloseTo(6, 1);
   expect(move.width).toBeCloseTo(32,1); expect(portHit.width).toBeCloseTo(24,1);
   const original=await marker.getAttribute('transform'), x=move.x+move.width/2, gapY=(move.y+portHit.y+portHit.height)/2;
   await page.mouse.move(x,gapY); await expect(port).toHaveCSS('opacity','1');

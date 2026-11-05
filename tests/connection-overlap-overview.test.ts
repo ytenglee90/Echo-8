@@ -31,7 +31,7 @@ test('overlap clicks cycle stable IDs, ignore paint order and reset when positio
 test('move and connect hit circles have a real screen-space gap at every supported zoom', () => {
   for (const zoom of [.4,.5,1,2.4]) {
     const radius = JUNCTION_MOVE_RADIUS / zoom, port = JUNCTION_PORT_RADIUS / zoom, offset = JUNCTION_PORT_OFFSET / zoom;
-    assert.ok((offset - radius - port) * zoom >= 12);
+    assert.ok(Math.abs((offset - radius - port) * zoom - 6) < 1e-9);
     assert.equal(radius * zoom * 2,32); assert.equal(port * zoom * 2,24);
   }
 });

@@ -35,7 +35,7 @@ import { createConnectionScenePlanner } from './connection-scene.ts';
 import type { GroupMembershipPreview } from '../../protocols/groups.ts';
 import { ConnectionJunctionMarkers } from './ConnectionJunctionMarkers.tsx';
 import { overviewNetwork } from './overview-network.ts';
-import { OverlapCycle } from './overlap-cycle.ts';
+import { OVERLAP_CLICK_SLOP, OverlapCycle } from './overlap-cycle.ts';
 import { OverlapHint, type OverlapHintState } from './OverlapHint.tsx';
 import { junctionGeometry, logicalConnectionPaths } from './junctions.ts';
 import type { SelectionMode } from '../../protocols/selection.ts';
@@ -551,7 +551,10 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const movePendingConnectionSelection = useCallback((pointerId: number, clientX: number, clientY: number) => {
     const pending = pendingSelection.current ?? pendingBackground.current;
     if (!pending || pending.pointerId !== pointerId) return;
-    const moved = Math.hypot(clientX - pending.startX, clientY - pending.startY) > 3;
+    // A small tremor during overlap cycling is still one click, not a lasso
+    // selecting every coincident curve. Keep ordinary drag admission unchanged.
+    const threshold = pendingSelection.current?.cycle ? OVERLAP_CLICK_SLOP : 3;
+    const moved = Math.hypot(clientX - pending.startX, clientY - pending.startY) > threshold;
     if (moved && !pending.lassoRequested) {
       pending.moved = true;
       pending.lassoRequested = true;
