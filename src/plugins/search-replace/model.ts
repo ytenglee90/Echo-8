@@ -16,6 +16,7 @@ import type {
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import type { EditorContextSnapshot, EditorSelectionSnapshot } from '../../protocols/editor.ts';
 import { normalizeFloatingRect, type FloatingPanelRect } from '../../protocols/floating.ts';
+import { abortableDelay as waitForDelay } from '../../services/async-control.ts';
 import { isAbortError } from '../../services/abort.ts';
 import { defineManifest } from '../manifest.ts';
 import { resolveSearchNavigation } from './navigation.ts';
@@ -944,23 +945,4 @@ function sameIds(left: readonly string[], right: readonly string[]): boolean {
 
 function isFloatingRect(value: unknown): value is FloatingPanelRect {
   return isRecord(value) && ['x', 'y', 'width', 'height'].every((key) => typeof value[key] === 'number');
-}
-
-function waitForDelay(durationMs: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'));
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', abort);
-      resolve();
-    }, durationMs);
-    const abort = () => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', abort);
-      reject(new DOMException('Aborted', 'AbortError'));
-    };
-    signal.addEventListener('abort', abort, { once: true });
-  });
 }

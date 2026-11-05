@@ -597,7 +597,7 @@ test('refresh keeps book data and color preferences but closes every session-onl
   await expect(page.getByRole('region', { name: 'AI 助手' })).toBeVisible();
   await expect(page.getByRole('region', { name: '查找与替换' })).toBeVisible();
   await expect.poll(() => page.locator('.application-shell').evaluate((element) =>
-    getComputedStyle(element).getPropertyValue('--toolbar').trim())).toBe('#141517');
+    getComputedStyle(element).getPropertyValue('--toolbar').trim())).toBe('#1c1e23');
 
   await page.waitForTimeout(700);
   await page.reload();
@@ -608,7 +608,7 @@ test('refresh keeps book data and color preferences but closes every session-onl
   await expect(page.getByRole('region', { name: '查找与替换' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: '文本编辑区' })).toHaveCount(0);
   await expect.poll(() => page.locator('.application-shell').evaluate((element) =>
-    getComputedStyle(element).getPropertyValue('--toolbar').trim())).toBe('#141517');
+    getComputedStyle(element).getPropertyValue('--toolbar').trim())).toBe('#1c1e23');
 
   await library.press('Escape');
   await expect(page.locator('.connection-hit-area')).toHaveCount(1);
@@ -1951,10 +1951,12 @@ test('title-bar ports create persistent connections on facing left and right tit
   const sourceIsLeft = sourcePosition.x + sourceWidth / 2 <= targetPosition.x + targetWidth / 2;
   const coordinates = path?.match(/-?\d+(?:\.\d+)?/gu)?.map(Number) ?? [];
   expect(coordinates).toHaveLength(8);
-  expect(coordinates[0]).toBeCloseTo(sourcePosition.x + (sourceIsLeft ? 0 : sourceWidth), 4);
-  expect(coordinates[1]).toBeCloseTo(sourcePosition.y + 21, 4);
-  expect(coordinates.at(-2)).toBeCloseTo(targetPosition.x + (sourceIsLeft ? 0 : targetWidth), 4);
-  expect(coordinates.at(-1)).toBeCloseTo(targetPosition.y + 21, 4);
+  const pixelBudget = await connection.evaluate(element => .5 / (devicePixelRatio * (element as SVGPathElement).getScreenCTM()!.a) + .001);
+  const expectedAnchors = [sourcePosition.x + (sourceIsLeft ? 0 : sourceWidth), sourcePosition.y + 21,
+    targetPosition.x + (sourceIsLeft ? 0 : targetWidth), targetPosition.y + 21];
+  for (const [index, actual] of [coordinates[0], coordinates[1], coordinates.at(-2)!, coordinates.at(-1)!].entries()) {
+    expect(Math.abs(actual - expectedAnchors[index]), 'route anchors follow the pixel-aligned title ports').toBeLessThanOrEqual(pixelBudget);
+  }
   expect(coordinates[3]).toBeCloseTo(coordinates[1], 4);
   expect(coordinates[5]).toBeCloseTo(coordinates[7], 4);
   expect(renderedCoordinates.at(-4)).toBeCloseTo(coordinates.at(-2)!, 4);
@@ -2289,7 +2291,7 @@ test('default editor writing ink automatically follows dark and light paper back
   await page.keyboard.press('Escape');
   await card.getByRole('paragraph').dblclick({ position: { x: 80, y: 80 } });
   editor = page.locator('.editor-writing-area').first();
-  await expect(editor).toHaveCSS('background-color', 'rgb(240, 242, 232)');
+  await expect(editor).toHaveCSS('background-color', 'rgb(241, 243, 233)');
   await expect(editor).toHaveCSS('color', 'rgb(24, 24, 26)');
   await expect(editor).toHaveCSS('caret-color', 'rgb(24, 24, 26)');
 });
@@ -3206,7 +3208,7 @@ test('global color presets keep canvas strokes adaptive on bright, dark and eye-
         + '<path class="connection-path selected e2e-connection-selection-ink" d="M 0 0 L 8 0"></path>',
     );
   });
-  await expect(page.locator('.e2e-connection-ink')).toHaveCSS('stroke', 'rgb(102, 103, 104)');
+  await expect(page.locator('.e2e-connection-ink')).toHaveCSS('stroke', 'rgb(141, 152, 167)');
   await expect(page.locator('.e2e-connection-selection-ink')).toHaveCSS('stroke', 'rgb(255, 255, 255)');
   await page.locator('.e2e-connection-ink, .e2e-connection-selection-ink').evaluateAll((elements) =>
     elements.forEach((element) => element.remove()));

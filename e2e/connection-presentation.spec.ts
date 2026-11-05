@@ -15,7 +15,7 @@ async function openFixture(page: Page, existing = false, titleRoute = false, lab
       presentation: box ? 'text-box' : 'card', cardSize: { width: 280, height: 180 }, textBoxSize: { width: 280, height: 180 },
       titleColor: '#ab3745', revision: 1, createdAt: 1, updatedAt: 1 };
   }
-  namespaces.connectionJunction.j = { id: 'j', x: 430, y: 30, revision: 1 };
+  namespaces.connectionJunction.j = { id: 'j', x: 430, y: 100, revision: 1 };
   namespaces.connections.incoming = { id: 'incoming', from: { nodeId: 'a', side: titleRoute ? 'title' : 'right' }, to: { nodeId: 'j', kind: 'junction', side: 'left' }, revision: 1, createdAt: 1 };
   if (existing) for (const [id, source, title] of [['dashed', dashedSource, true], ['solid', 'a', false]] as const) namespaces.connections[id] = {
     id, ...(labels ? { label: `标签${id}`, labelBackgroundColor: '#00ff00', lineColor: '#ab3745' } : {}), from: { nodeId: source, side: title ? 'title' : 'right' }, to: { nodeId: 'c', side: title ? 'title' : 'left' }, revision: 1, createdAt: 1,

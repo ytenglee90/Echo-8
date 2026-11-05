@@ -62,22 +62,19 @@ async function mixedPositions(page: Page): Promise<Record<string, number[]>> {
   return { ...nodes, point };
 }
 
-test('double clicking a junction cycles safe direction preferences, preserves positions, previews new links and undoes', async ({ page }) => {
+test('double clicking a junction preserves automatic routing and positions while new links still preview', async ({ page }) => {
   await openGroups(page, true);
   const marker = page.locator('.connection-junction'), dot = marker.locator('.connection-junction-dot');
   const before = await mixedPositions(page);
   const paths = () => page.locator('.connection-hit-area').evaluateAll(elements => Object.fromEntries(elements.map(element => [element.getAttribute('data-connection-id'), element.getAttribute('d')])));
   const original = await paths();
-  await dot.dblclick(); await expect(marker).toHaveAttribute('data-handle-angle', '15');
+  await dot.dblclick();
+  await expect(marker).not.toHaveAttribute('data-handle-angle');
   await expect.poll(paths).toEqual(original);
-  const rotated = await paths();
-  expect(rotated).toEqual(original); // Mixed upper/lower branches constrain this fan to its horizontal transition.
   expect(await mixedPositions(page)).toEqual(before);
-  await dot.dblclick(); await expect(marker).toHaveAttribute('data-handle-angle', '30');
-  await page.keyboard.press('Control+z'); await expect(marker).toHaveAttribute('data-handle-angle', '15');
-  await page.keyboard.press('Control+z'); await expect(marker).toHaveAttribute('data-handle-angle', '0');
+  await dot.dblclick();
+  await expect(marker).not.toHaveAttribute('data-handle-angle');
   await expect.poll(paths).toEqual(original);
-  await page.keyboard.press('Control+Shift+z'); await expect(marker).toHaveAttribute('data-handle-angle', '15');
   const plus = await marker.getByRole('button', { name: '从中转点拉出连接线', exact: true }).boundingBox();
   const target = await page.getByRole('button', { name: '从群组测试c左侧连接', exact: true }).boundingBox();
   await page.mouse.move(plus!.x + plus!.width / 2, plus!.y + plus!.height / 2); await page.mouse.down();
@@ -94,6 +91,7 @@ test('double clicking a junction cycles safe direction preferences, preserves po
   expect(await mixedPositions(page)).toEqual(before);
 });
 for (const start of ['point', 'node', 'box', 'group']) test(`mixed selection moves nodes, a box, a group and a junction together when dragging the ${start}`, async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 1100 });
   await openGroups(page, true);
   const group = page.locator('.group-frame[data-group-id="g1"]');
   await group.click({ position: { x: 12, y: 16 } });
@@ -103,6 +101,12 @@ for (const start of ['point', 'node', 'box', 'group']) test(`mixed selection mov
   await box.locator('.text-box-title').click({ modifiers: ['Shift'] });
   const dot = page.locator('.connection-junction-dot'); await dot.click({ modifiers: ['Shift'] });
   await expect(group).toHaveAttribute('aria-pressed', 'true');
+  await expect(group).toHaveCSS('outline-style', 'none');
+  await expect(group).toHaveCSS('box-shadow', 'none');
+  expect(await group.evaluate(element => {
+    const frame = getComputedStyle(element, '::after');
+    return { top: frame.top, right: frame.right, bottom: frame.bottom, left: frame.left, width: frame.borderTopWidth };
+  })).toEqual({ top: '0px', right: '0px', bottom: '0px', left: '0px', width: '3px' });
   await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
   await expect(page.locator('.connection-junction.selected')).toHaveCount(1);
   const before = await mixedPositions(page);
@@ -131,7 +135,7 @@ for (const start of ['point', 'node', 'box', 'group']) test(`mixed selection mov
     return samples;
   });
   for (const sample of committedCurves) expect(sample).toEqual(previewCurves);
-  await expect(page.locator('.connection-junction')).toHaveAttribute('data-handle-angle', '0');
+  await expect(page.locator('.connection-junction')).not.toHaveAttribute('data-handle-angle');
   expect(preview['群组测试c']).toEqual(before['群组测试c']); expect(preview['群组测试d']).toEqual(before['群组测试d']);
   await page.keyboard.press('Control+z'); await expect.poll(() => mixedPositions(page)).toEqual(before);
   await page.keyboard.press('Control+Shift+z'); await expect.poll(() => mixedPositions(page)).toEqual(preview);

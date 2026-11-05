@@ -42,10 +42,9 @@ export class HistoryService {
         entry.forward,
         entry.inverse,
       );
-      previous.forward = compacted.forward;
-      previous.inverse = compacted.inverse;
-      previous.timestamp = entry.timestamp;
-      previous.label = entry.label;
+      this.undoStack[this.undoStack.length - 1] = {
+        ...previous, ...compacted, timestamp: entry.timestamp, label: entry.label,
+      };
     } else {
       this.undoStack.push(structuredClone(entry));
       if (this.undoStack.length > this.limit) this.undoStack.shift();
@@ -55,6 +54,19 @@ export class HistoryService {
 
   peekUndo(): HistoryEntry | undefined {
     return this.undoStack.at(-1);
+  }
+
+  /** Roll back stack changes without copying the retained text/history payloads. */
+  atomic<T>(operation: () => T): T {
+    const undo = this.undoStack.slice();
+    const redo = this.redoStack.slice();
+    try {
+      return operation();
+    } catch (error) {
+      this.undoStack = undo;
+      this.redoStack = redo;
+      throw error;
+    }
   }
 
   peekRedo(): HistoryEntry | undefined {

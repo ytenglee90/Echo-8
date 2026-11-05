@@ -1,14 +1,15 @@
+import { connectionTerminals } from './helpers/connection-path.ts';
 import { expect, test, type Page } from '@playwright/test';
 import { serializeProject } from '../src/plugins/import-export/codec.ts';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
 import type { ProjectSource } from '../src/protocols/files.ts';
 
-async function openGraph(page: Page, outputs = false, title = false, rightHandLayout = false, three = false) {
+async function openGraph(page: Page, outputs = false, title = false, rightHandLayout = false, three = false, fourth = false) {
   await page.addInitScript(() => Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined }));
   await page.goto('/');
   await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   const namespaces: ProjectSource['document']['namespaces'] = { textNode: {}, textContent: {}, textContentChunk: {}, connections: {}, connectionJunction: {} };
-  for (const [id, x, y] of (three ? [['a', 440, 20], ['b', 440, 220], ['d', 440, 420], ['c', 440, 700], ['e', 900, 20]] as const : [['a', 80, 80], ['b', 80, 340], ['c', 800, 210]] as const)) {
+  for (const [id, x, y] of (three ? [['a', 440, 20], ['b', 440, 220], ['d', 440, 420], ['c', 440, 700], ['e', 900, 20]] as const : [['a', 80, 80], ['b', 80, 340], ['c', 800, 210], ...(fourth ? [['d', 80, 600] as const] : [])] as const)) {
     const content = createContentStorage(`body-${id}`, `正文${id}`, 1);
     namespaces.textContent[`body-${id}`] = content.content;
     for (const patch of content.chunkPatches) if (patch.op === 'set') namespaces.textContentChunk[patch.key] = patch.value;
@@ -60,7 +61,7 @@ for (const title of [false, true]) test(`three selected ${title ? 'title' : 'bod
   await rightClickAt(page, 150, 600);
   const marker = page.locator('.connection-junction');
   await expect(marker).toHaveCount(1); await expect(page.locator('.connection-hit-area')).toHaveCount(4);
-  const read = async (id: string) => (await page.locator(`.connection-hit-area[data-connection-id="${id}"]`).getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+  const read = async (id: string) => connectionTerminals((await page.locator(`.connection-hit-area[data-connection-id="${id}"]`).getAttribute('d'))!);
   for (const id of ['edge-a', 'edge-b', 'edge-d']) {
     const p = await read(id); expect(p[0]).toBe(440); expect(p[2]).toBeLessThan(440); expect(p[6]).toBe(150); expect(p[4]).toBeGreaterThan(150);
     if (!title) await expect(page.locator(`[data-arrow-for="${id}"]`)).toHaveAttribute('data-arrow-end', 'from');
@@ -290,7 +291,7 @@ test('title dashes keep actual gaps and solid arrows, routed junctions face each
 });
 
 test('a node can connect into a junction and its separate port can pull out a new connection without moving the point', async ({ page }) => {
-  await openGraph(page);
+  await openGraph(page, false, false, false, false, true);
   await label(page, 'edge-a').click();
   await rightClickAt(page, 540, 520);
   const marker = page.locator('.connection-junction');
@@ -306,7 +307,7 @@ test('a node can connect into a junction and its separate port can pull out a ne
   await expect(marker).toHaveCSS('outline-style', 'none');
   const outputPort = marker.getByRole('button', { name: '从中转点拉出连接线' });
   const outBox = await outputPort.boundingBox();
-  const destination = await pointOnScreen(page, 220, 410);
+  const destination = await pointOnScreen(page, 220, 679);
   await page.mouse.move(outBox!.x + outBox!.width / 2, outBox!.y + outBox!.height / 2);
   await page.mouse.down(); await page.mouse.move(destination.x, destination.y, { steps: 8 });
   await expect(page.locator('.connection-path.draft')).toHaveCount(1);

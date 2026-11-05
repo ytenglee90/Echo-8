@@ -14,5 +14,8 @@ tsconfig.tsbuildinfo
 .vinext/
 .wrangler/
 debug.log
+.pnpm-store/
+local-data/
 artifacts/Echo-8-AI-个人配置.txt
 artifacts/*.zip
+artifacts/*.echo8

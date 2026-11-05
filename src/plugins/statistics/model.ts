@@ -7,6 +7,7 @@ import type {
   StatisticsContribution,
   StatisticsSnapshot,
 } from '../../protocols/statistics.ts';
+import { abortableDelay as cancellableDelay } from '../../services/async-control.ts';
 import { isAbortError } from '../../services/abort.ts';
 import { defineManifest } from '../manifest.ts';
 
@@ -157,20 +158,4 @@ function emptySnapshot(): StatisticsSnapshot {
     computedAt: 0,
     status: 'idle',
   };
-}
-
-function cancellableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(new DOMException('Task aborted', 'AbortError'));
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', abort);
-      resolve();
-    }, milliseconds);
-    const abort = () => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', abort);
-      reject(new DOMException('Task aborted', 'AbortError'));
-    };
-    signal.addEventListener('abort', abort, { once: true });
-  });
 }

@@ -40,7 +40,7 @@ interface CanvasLayerEnvironment<TElement extends Element> {
 /** Shared, read-only environment used by governed canvas overlay layers. */
 export function useCanvasLayerEnvironment<TElement extends Element>(
   client: ViewClient,
-  options: { trackInteractionFocus?: boolean } = {},
+  options: { trackInteractionFocus?: boolean; trackLasso?: boolean } = {},
 ): CanvasLayerEnvironment<TElement> {
   const workspaceVersion = useSyncExternalStore(client.subscribeState, client.getWorkspaceVersion, () => 0);
   const capabilityVersion = useSyncExternalStore(
@@ -185,11 +185,11 @@ export function useCanvasLayerEnvironment<TElement extends Element>(
   }, [client, options.trackInteractionFocus]);
 
   useEffect(() => {
-    if (!options.trackInteractionFocus) return;
+    if (!options.trackInteractionFocus && !options.trackLasso) return;
     return client.subscribeSignal<LassoSignal>('canvas.lasso.preview', (message) => {
       setLassoActive(!('clear' in message.payload && message.payload.clear === true));
     });
-  }, [client, options.trackInteractionFocus]);
+  }, [client, options.trackInteractionFocus, options.trackLasso]);
 
   return {
     capabilityVersion,

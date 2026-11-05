@@ -1,4 +1,5 @@
 import type { DomainSnapshot, PatchOperation, StoreDomain, StoreSnapshot } from './contracts.ts';
+import { ownValue, setOwn } from '../services/records.ts';
 import {
   assertNotAborted as throwIfAborted,
   yieldToMainThread,
@@ -37,9 +38,11 @@ export class StateStore {
   private readonly namespaceChanges = new Map<string, Array<{ revision: number; keys: string[] }>>();
   private readonly listeners = new Set<() => void>();
   private readonly writeToken: symbol;
+  private readonly observerError: (error: unknown) => void;
 
-  constructor(writeToken: symbol) {
+  constructor(writeToken: symbol, observerError: (error: unknown) => void = () => undefined) {
     this.writeToken = writeToken;
+    this.observerError = observerError;
   }
 
   subscribe(listener: () => void): () => void {
@@ -81,7 +84,7 @@ export class StateStore {
     domain: StoreDomain,
     namespace: string,
   ): TRecord {
-    return clone((this.domain(domain).namespaces[namespace] ?? {}) as TRecord);
+    return clone((ownValue(this.domain(domain).namespaces, namespace) ?? {}) as TRecord);
   }
 
   readNamespacePrefix<TRecord = Record<string, unknown>>(
@@ -89,10 +92,10 @@ export class StateStore {
     namespace: string,
     prefix: string,
   ): TRecord {
-    const source = this.domain(domain).namespaces[namespace] ?? {};
+    const source = ownValue(this.domain(domain).namespaces, namespace) ?? {};
     const selected: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(source)) {
-      if (key.startsWith(prefix)) selected[key] = clone(value);
+      if (key.startsWith(prefix)) setOwn(selected, key, clone(value));
     }
     return selected as TRecord;
   }
@@ -104,7 +107,7 @@ export class StateStore {
     endExclusive: string,
     includePrevious = false,
   ): TRecord {
-    const source = this.domain(domain).namespaces[namespace] ?? {};
+    const source = ownValue(this.domain(domain).namespaces, namespace) ?? {};
     const selected: Record<string, unknown> = {};
     let previousKey: string | undefined;
     for (const key of Object.keys(source)) {
@@ -112,9 +115,9 @@ export class StateStore {
         if (includePrevious && (!previousKey || key > previousKey)) previousKey = key;
         continue;
       }
-      if (key < endExclusive) selected[key] = clone(source[key]);
+      if (key < endExclusive) setOwn(selected, key, clone(source[key]));
     }
-    if (previousKey) selected[previousKey] = clone(source[previousKey]);
+    if (previousKey) setOwn(selected, previousKey, clone(source[previousKey]));
     return selected as TRecord;
   }
 
@@ -123,19 +126,20 @@ export class StateStore {
     namespace: string,
     key: string,
   ): TValue | undefined {
-    const value = this.domain(domain).namespaces[namespace]?.[key];
+    const records = ownValue(this.domain(domain).namespaces, namespace);
+    const value = records ? ownValue(records, key) : undefined;
     return value === undefined ? undefined : clone(value as TValue);
   }
 
   hasValue(domain: StoreDomain, namespace: string, key: string): boolean {
     return Object.prototype.hasOwnProperty.call(
-      this.domain(domain).namespaces[namespace] ?? {},
+      ownValue(this.domain(domain).namespaces, namespace) ?? {},
       key,
     );
   }
 
   countNamespace(domain: StoreDomain, namespace: string): number {
-    return Object.keys(this.domain(domain).namespaces[namespace] ?? {}).length;
+    return Object.keys(ownValue(this.domain(domain).namespaces, namespace) ?? {}).length;
   }
 
   snapshot(): StoreSnapshot {
@@ -197,9 +201,11 @@ export class StateStore {
     this.bump();
   }
 
-  replaceDocument(snapshot: DomainSnapshot, token: symbol): void {
+  replaceDocument(snapshot: DomainSnapshot, token: symbol, finalize: () => void = () => undefined): void {
     this.assertToken(token);
     validateDomainSnapshot(snapshot);
+    const previous = { document: this.document, ephemeral: this.ephemeral, derived: this.derived,
+      revisions: new Map(this.namespaceRevisions), changes: new Map(this.namespaceChanges) };
     this.document = clone(snapshot);
     this.document.revision += 1;
     this.ephemeral = emptyDomain();
@@ -213,18 +219,39 @@ export class StateStore {
     for (const [namespace] of Object.entries(this.document.namespaces)) {
       this.namespaceRevisions.set(`document:${namespace}`, 1);
     }
+    try { finalize(); } catch (error) {
+      this.document = previous.document;
+      this.ephemeral = previous.ephemeral;
+      this.derived = previous.derived;
+      this.namespaceRevisions.clear();
+      this.namespaceChanges.clear();
+      for (const [key, value] of previous.revisions) this.namespaceRevisions.set(key, value);
+      for (const [key, value] of previous.changes) this.namespaceChanges.set(key, value);
+      throw error;
+    }
     this.bump();
   }
 
-  apply(patches: PatchOperation[], token: symbol): void {
+  apply(patches: PatchOperation[], token: symbol, finalize: () => void = () => undefined): void {
     this.assertToken(token);
+    // Clone before any write. Rollback retains only affected records, never the full document.
+    const prepared = patches.map(patch => ({ ...patch, value: clone(patch.value) }));
     const touched = new Set<StoreDomain>();
     const touchedNamespaces = new Map<string, Set<string>>();
-    for (const patch of patches) {
+    const undo: Array<() => void> = [];
+    for (const patch of prepared) {
       const domain = this.domain(patch.domain);
-      const namespace = domain.namespaces[patch.namespace] ?? {};
-      domain.namespaces[patch.namespace] = namespace;
-      if (patch.op === 'set') namespace[patch.key] = clone(patch.value);
+      const existing = ownValue(domain.namespaces, patch.namespace);
+      const namespace = existing ?? {};
+      const hadKey = Object.hasOwn(namespace, patch.key);
+      const previous = ownValue(namespace, patch.key);
+      undo.push(() => {
+        if (hadKey) setOwn(namespace, patch.key, previous);
+        else delete namespace[patch.key];
+        if (!existing) delete domain.namespaces[patch.namespace];
+      });
+      setOwn(domain.namespaces, patch.namespace, namespace);
+      if (patch.op === 'set') setOwn(namespace, patch.key, patch.value);
       else delete namespace[patch.key];
       touched.add(patch.domain);
       const namespaceKey = `${patch.domain}:${patch.namespace}`;
@@ -232,14 +259,31 @@ export class StateStore {
       keys.add(patch.key);
       touchedNamespaces.set(namespaceKey, keys);
     }
-    for (const domain of touched) this.domain(domain).revision += 1;
+    for (const domain of touched) {
+      const state = this.domain(domain);
+      const revision = state.revision;
+      undo.push(() => { state.revision = revision; });
+      state.revision += 1;
+    }
     for (const [key, changedKeys] of touchedNamespaces) {
-      const revision = (this.namespaceRevisions.get(key) ?? 0) + 1;
+      const previousRevision = this.namespaceRevisions.get(key);
+      const previousChanges = this.namespaceChanges.get(key);
+      undo.push(() => {
+        if (previousRevision === undefined) this.namespaceRevisions.delete(key);
+        else this.namespaceRevisions.set(key, previousRevision);
+        if (previousChanges === undefined) this.namespaceChanges.delete(key);
+        else this.namespaceChanges.set(key, previousChanges);
+      });
+      const revision = (previousRevision ?? 0) + 1;
       this.namespaceRevisions.set(key, revision);
-      const changes = this.namespaceChanges.get(key) ?? [];
-      changes.push({ revision, keys: [...changedKeys] });
-      if (changes.length > 4096) changes.splice(0, changes.length - 4096);
+      const changes = [...(previousChanges ?? []), { revision, keys: [...changedKeys] }].slice(-4096);
       this.namespaceChanges.set(key, changes);
+    }
+    try {
+      finalize();
+    } catch (error) {
+      for (const restore of undo.reverse()) restore();
+      throw error;
     }
     if (patches.length > 0) this.bump();
   }
@@ -253,8 +297,9 @@ export class StateStore {
   ): void {
     this.assertToken(token);
     const domain = this.domain(domainName);
-    domain.namespaces[namespace] ??= {};
-    domain.namespaces[namespace][key] = clone(value);
+    const records = ownValue(domain.namespaces, namespace) ?? {};
+    setOwn(records, key, clone(value));
+    setOwn(domain.namespaces, namespace, records);
     domain.revision += 1;
     this.bump();
   }
@@ -272,7 +317,11 @@ export class StateStore {
 
   private bump(): void {
     this.version += 1;
-    for (const listener of this.listeners) listener();
+    for (const listener of this.listeners) {
+      try { listener(); } catch (error) {
+        try { this.observerError(error); } catch { /* Diagnostics cannot veto a committed state. */ }
+      }
+    }
   }
 }
 
@@ -299,10 +348,10 @@ async function cloneCapturedDomain(
   let recordsInSlice = 0;
   for (const [namespace, records] of captured.namespaces) {
     const destination: Record<string, unknown> = {};
-    result.namespaces[namespace] = destination;
+    setOwn(result.namespaces, namespace, destination);
     for (const [key, value] of records) {
       throwIfAborted(signal);
-      destination[key] = options.preserveImmutableNamespaces?.has(namespace) ? value : clone(value);
+      setOwn(destination, key, options.preserveImmutableNamespaces?.has(namespace) ? value : clone(value));
       recordsInSlice += 1;
       if (recordsInSlice >= 128 || now() - sliceStarted >= 8) {
         await yieldToMainThread();

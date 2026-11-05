@@ -127,4 +127,8 @@
 | [0120](ADR-0120-LAYOUT-SWITCHES-AND-EDGE-PAN.md) | 智能参考线/吸附开关、边缘自动平移、删除双击旋转 | 有效；补充 0119，取消 0111 手动旋转，连线数据 14 |
 | [0121](ADR-0121-JUNCTION-COLOR-TITLE-SHORTCUT-AND-FOCUS.md) | 中转点全局颜色、配套主题、Shift+L 与全画布聚焦 | 有效；补充 0120，兼容连线数据 14 |
 | [0122](ADR-0122-OVERVIEW-OVERLAP-AND-JUNCTION-CONTROLS.md) | 40% 选择关联概览、重叠循环选择、中转点命中区分离 | 有效；交互投影，文档/消息格式不变 |
+| [0125](ADR-0125-LOCAL-RECOVERY-MANAGEMENT.md) | 本机恢复副本单条/批量清理、分页目录与可选数量限制 | 有效；补充 0124，文件格式与 IndexedDB v5 兼容 |
+
+| [0126](ADR-0126-TRANSACTION-AUTHORITY-AND-CLEANUP.md) | 补丁来源授权、事务回退、特殊键兼容与重复实现清理 | 有效；内存授权收紧，文件与网络协议不变 |
+
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

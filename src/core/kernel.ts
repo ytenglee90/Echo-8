@@ -21,6 +21,13 @@ import {
   type RecoveryPreview,
 } from '../protocols/files.ts';
 import type { RuntimeSnapshot } from '../protocols/runtime.ts';
+import {
+  isRecoveryDeleteRequest,
+  isRecoveryRetentionLimit,
+  type RecoveryCatalogRequest,
+  type RecoveryDeleteRequest,
+  type RecoveryMaintenanceResult,
+} from '../protocols/recovery-management.ts';
 import type {
   PersonalPreferenceReadRequest,
   PersonalPreferenceWriteRequest,
@@ -88,7 +95,8 @@ export class ApplicationKernel {
   ) {
     this.definitions = definitions;
     this.persistenceLaunchPolicy = options.persistenceLaunchPolicy ?? 'restore-session';
-    this.store = new StateStore(this.writeToken);
+    this.store = new StateStore(this.writeToken, error =>
+      this.diagnostics.record('error', 'core.store', 'State observer failed after commit', error));
     const retiredData = createRetiredDataRegistry(definitions);
     this.transactions = new TransactionManager(this.store, this.history, this.writeToken, retiredData);
     this.router = new MessageRouter(this.transactions, this.diagnostics);
@@ -534,6 +542,22 @@ export class ApplicationKernel {
     this.router.registerQuery<undefined, RecoveryPointSummary[]>('core.persistence', {
       type: 'system.recovery.list',
       handle: () => this.persistence.listRecoveryPoints(),
+    });
+    this.router.registerQuery<RecoveryCatalogRequest | undefined, import('../protocols/recovery-management.ts').RecoveryCatalog>('core.persistence', {
+      type: 'system.recovery.catalog@1',
+      validate: (payload): payload is RecoveryCatalogRequest | undefined => payload === undefined ||
+        isRecord(payload) && (payload.before === undefined || typeof payload.before === 'string' && payload.before.length <= 200),
+      handle: (payload) => this.persistence.recoveryCatalog(payload),
+    });
+    this.router.registerCommand<RecoveryDeleteRequest, RecoveryMaintenanceResult>('core.persistence', {
+      type: 'system.recovery.delete@1',
+      validate: isRecoveryDeleteRequest,
+      handle: async (payload) => ({ result: await this.persistence.deleteRecoveryPoints(payload) }),
+    });
+    this.router.registerCommand<{ limit: number | null }, RecoveryMaintenanceResult>('core.persistence', {
+      type: 'system.recovery.setRetention@1',
+      validate: (payload): payload is { limit: number | null } => isRecord(payload) && isRecoveryRetentionLimit(payload.limit),
+      handle: async (payload) => ({ result: await this.persistence.setRecoveryRetention(payload.limit) }),
     });
     this.router.registerQuery<{ id: string }, RecoveryPreview>('core.persistence', {
       type: 'system.recovery.preview',

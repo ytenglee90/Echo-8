@@ -5,6 +5,7 @@ import {
   type PluginDocumentData,
 } from './contracts.ts';
 import type { ProjectOpenPayload, ProjectPluginDescriptor } from '../protocols/files.ts';
+import { ownValue, setOwn } from '../services/records.ts';
 
 export interface ProjectMigrationResult {
   payload: ProjectOpenPayload;
@@ -54,7 +55,7 @@ export async function migrateProjectPluginData(
       validateMigrationChain(definition.manifest.id, targetVersion, migrations);
       let staged: PluginDocumentData = {};
       for (const namespace of allowedNamespaces) {
-        staged[namespace] = structuredClone(namespaces[namespace] ?? {});
+        setOwn(staged, namespace, structuredClone(ownValue(namespaces, namespace) ?? {}));
       }
       let version = sourceVersion;
       while (version < targetVersion) {
@@ -75,7 +76,7 @@ export async function migrateProjectPluginData(
       const nextNamespaces = { ...namespaces };
       for (const namespace of allowedNamespaces) delete nextNamespaces[namespace];
       for (const [namespace, records] of Object.entries(staged)) {
-        nextNamespaces[namespace] = records;
+        setOwn(nextNamespaces, namespace, records);
       }
       namespaces = nextNamespaces;
       migratedPlugins.push(descriptor.id);

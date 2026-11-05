@@ -13,6 +13,7 @@ import {
   type FileSaveTarget,
 } from '../../protocols/files.ts';
 import { chooseNativeProjectOpen } from '../../services/native-save.ts';
+import { useInlineRename } from '../../ui/use-inline-rename.ts';
 import { Icon } from '../../ui/Icon.tsx';
 import { BrandLoadingMark, ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
@@ -27,9 +28,6 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
   const [projects, setProjects] = useState<CloudProjectSummary[]>([]);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [editingProjectId, setEditingProjectId] = useState<string>();
-  const [editingProjectName, setEditingProjectName] = useState('');
-  const cancelRename = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const listedInstallation = useRef<string | undefined>(undefined);
 
@@ -90,33 +88,10 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
     destination?: FileSaveTarget,
   ) => run('open-local', () => client.dispatch('file.openProjectFromLibrary', { file, destination }));
 
-  const startRename = (project: CloudProjectSummary) => {
-    setError('');
-    cancelRename.current = false;
-    setEditingProjectId(project.id);
-    setEditingProjectName(project.name);
-  };
-
-  const finishRename = async (project: CloudProjectSummary) => {
-    if (cancelRename.current) {
-      cancelRename.current = false;
-      return;
-    }
-    const name = editingProjectName.trim();
-    if (!name) {
-      setError('书籍名称不能为空');
-      return;
-    }
-    if (name === project.name) {
-      setEditingProjectId(undefined);
-      return;
-    }
-    const renamed = await run(`rename:${project.id}`, () => client.dispatch('cloudSync.renameProject', {
-      projectId: project.id,
-      name,
-    }));
-    if (renamed) setEditingProjectId(undefined);
-  };
+  const { editingProjectId, editingProjectName, setEditingProjectName, startRename, finishRename, cancelRename } = useInlineRename(
+    (projectId, name) => run(`rename:${projectId}`, () => client.dispatch('cloudSync.renameProject', { projectId, name })),
+    setError,
+  );
 
   const requestDelete = (project: CloudProjectSummary) => {
     setError('');
@@ -327,8 +302,7 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                                 if (event.key === 'Enter') event.currentTarget.blur();
                                 if (event.key === 'Escape') {
                                   event.preventDefault();
-                                  cancelRename.current = true;
-                                  setEditingProjectId(undefined);
+                                  cancelRename();
                                 }
                               }}
                             />

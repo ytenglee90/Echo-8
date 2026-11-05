@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { CloudProjectSummary, CloudSyncState } from '../../cloud/contracts.ts';
 import { AUTOSAVE_DISABLED_INTERVAL_MS } from '../../protocols/files.ts';
+import { useInlineRename } from '../../ui/use-inline-rename.ts';
 import { Icon, IconButton } from '../../ui/Icon.tsx';
 import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
@@ -17,9 +18,6 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
   const [projects, setProjects] = useState<CloudProjectSummary[]>([]);
   const [busy, setBusy] = useState('');
   const [localError, setLocalError] = useState('');
-  const [editingProjectId, setEditingProjectId] = useState<string>();
-  const [editingProjectName, setEditingProjectName] = useState('');
-  const cancelRename = useRef(false);
   const upgradeInstallation = state.installations.find(
     (item) => item.id === state.activeInstallationId && item.status === 'ready' && item.upgradeAvailable,
   ) ?? state.installations.find((item) => item.status === 'ready' && item.upgradeAvailable);
@@ -60,33 +58,10 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
     }
   };
 
-  const startRename = (project: CloudProjectSummary) => {
-    setLocalError('');
-    cancelRename.current = false;
-    setEditingProjectId(project.id);
-    setEditingProjectName(project.name);
-  };
-
-  const finishRename = async (project: CloudProjectSummary) => {
-    if (cancelRename.current) {
-      cancelRename.current = false;
-      return;
-    }
-    const name = editingProjectName.trim();
-    if (!name) {
-      setLocalError('书籍名称不能为空');
-      return;
-    }
-    if (name === project.name) {
-      setEditingProjectId(undefined);
-      return;
-    }
-    const renamed = await run(`rename:${project.id}`, () => client.dispatch('cloudSync.renameProject', {
-      projectId: project.id,
-      name,
-    }));
-    if (renamed) setEditingProjectId(undefined);
-  };
+  const { editingProjectId, editingProjectName, setEditingProjectName, startRename, finishRename, cancelRename } = useInlineRename(
+    (projectId, name) => run(`rename:${projectId}`, () => client.dispatch('cloudSync.renameProject', { projectId, name })),
+    setLocalError,
+  );
 
   const requestDelete = (project: CloudProjectSummary) => {
     setLocalError('');
@@ -246,8 +221,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
                             if (event.key === 'Enter') event.currentTarget.blur();
                             if (event.key === 'Escape') {
                               event.preventDefault();
-                              cancelRename.current = true;
-                              setEditingProjectId(undefined);
+                              cancelRename();
                             }
                           }}
                         />

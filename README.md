@@ -24,6 +24,8 @@
 
 ## 开发与验收
 
+环境安装、源码交接和本机资料边界统一见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
+
 ```powershell
 pnpm run dev
 pnpm run typecheck

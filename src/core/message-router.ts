@@ -60,6 +60,10 @@ export class MessageRouter {
     this.admission = checker;
   }
 
+  setPatchAuthorizer(authorize: Parameters<TransactionManager['setPatchAuthorizer']>[0]): void {
+    this.transactions.setPatchAuthorizer(authorize);
+  }
+
   registerCommand<TPayload = unknown, TResult = unknown>(
     owner: string,
     registration: CommandRegistration<TPayload, TResult>,

@@ -1,5 +1,5 @@
 import type { PluginContext, PluginDefinition, TaskHandle } from '../../core/contracts.ts';
-import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
+import { assertNotAborted, waitForPromise, yieldToMainThread } from '../../services/async-control.ts';
 import type {
   AIContextCatalogContribution,
   AIContextReadContribution,
@@ -167,11 +167,12 @@ export function createSearchIndexPlugin(): PluginDefinition {
         });
       };
 
-      const ensureReady = async () => {
+      const ensureReady = async (signal?: AbortSignal) => {
+        assertNotAborted(signal);
         if (status.state === 'ready') return;
         if (!task) scheduleRebuild(0);
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        if (task) await task.result;
+        if (task) await waitForPromise(task.result, signal);
+        assertNotAborted(signal);
         if (!isIndexReady(status)) throw new Error('检索索引尚未就绪');
       };
 
@@ -179,7 +180,7 @@ export function createSearchIndexPlugin(): PluginDefinition {
         key: 'context.search@2',
         invoke: async (input, signal) => {
           validateAIContextSearchRequest(input);
-          await ensureReady();
+          await ensureReady(signal);
           return searchBM25(context, runtimeIndex, input, signal);
         },
       });
@@ -187,7 +188,7 @@ export function createSearchIndexPlugin(): PluginDefinition {
         key: 'context.search@3',
         invoke: async (input, signal) => {
           validateAIContextSearchRequest(input);
-          await ensureReady();
+          await ensureReady(signal);
           return searchBM25(context, runtimeIndex, input, signal);
         },
       });

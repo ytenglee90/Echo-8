@@ -72,6 +72,7 @@ export class PluginManager {
     this.resources = services.resources;
     this.router = services.router;
     this.capabilities = services.capabilities;
+    this.router.setPatchAuthorizer(this.capabilities.consumePatchGrant);
     this.store = services.store;
     this.ui = services.ui;
     this.tasks = services.tasks;
@@ -156,9 +157,7 @@ export class PluginManager {
       this.setStatus(record, 'active');
       await this.router.publishEvent('plugin.lifecycle.changed', { id, status: 'active' }, 'core.plugins');
     } catch (error) {
-      await this.capabilities.suspendOwner(id);
-      this.tasks.cancelOwner(id);
-      this.workers.cancelOwner(id);
+      await this.quiesceOwner(id);
       try {
         await this.resources.releaseOwner(id);
       } catch {
@@ -179,9 +178,7 @@ export class PluginManager {
       throw new Error(`无法暂停 ${id}；仍被这些活动插件依赖：${blockers.join(', ')}`);
     }
     this.setStatus(record, 'pausing');
-    await this.capabilities.suspendOwner(id);
-    this.tasks.cancelOwner(id);
-    this.workers.cancelOwner(id);
+    await this.quiesceOwner(id);
     let pauseError: unknown;
     try {
       if (record.definition.pause) await record.definition.pause(record.context);
@@ -221,9 +218,7 @@ export class PluginManager {
       }
     }
     this.setStatus(record, 'stopping');
-    await this.capabilities.suspendOwner(id);
-    this.tasks.cancelOwner(id);
-    this.workers.cancelOwner(id);
+    await this.quiesceOwner(id);
     let stopError: unknown;
     try {
       await record.definition.stop?.(record.context);
@@ -256,9 +251,7 @@ export class PluginManager {
       throw new Error(`无法卸载 ${id}；仍被这些活动插件依赖：${blockers.join(', ')}`);
     }
     this.setStatus(record, 'uninstalling');
-    await this.capabilities.suspendOwner(id);
-    this.tasks.cancelOwner(id);
-    this.workers.cancelOwner(id);
+    await this.quiesceOwner(id);
     try {
       await this.resources.releaseOwner(id);
       await record.definition.uninstall?.(record.context);
@@ -271,6 +264,13 @@ export class PluginManager {
       this.setStatus(record, 'faulted', record.error);
       throw error;
     }
+  }
+
+  private async quiesceOwner(id: string): Promise<void> {
+    const settled = this.capabilities.suspendOwner(id);
+    this.tasks.cancelOwner(id);
+    this.workers.cancelOwner(id);
+    await settled;
   }
 
   isAdmitted = (id: string): boolean => {
@@ -756,6 +756,7 @@ export class PluginManager {
 
 function validateManifest(manifest: PluginManifest): void {
   if (!/^[a-z0-9-]+$/.test(manifest.id)) throw new Error(`Invalid plugin id: ${manifest.id}`);
+  if (manifest.id.startsWith('core')) throw new Error(`Reserved kernel identity: ${manifest.id}`);
   if (!manifest.name.trim()) throw new Error(`Plugin ${manifest.id} has no name`);
   if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error(`Invalid plugin version: ${manifest.version}`);
   if (manifest.apiVersion !== '1') throw new Error(`Unsupported plugin API: ${manifest.apiVersion}`);

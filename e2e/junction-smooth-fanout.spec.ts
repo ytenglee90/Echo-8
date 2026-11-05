@@ -94,7 +94,7 @@ test('split-delete-reconnect follows the complete user workflow with the junctio
     }
   };
   for (const [index, c] of cases.entries()) {
-    await openSteepFan(page, { positions: [[c.common, 250], [c.branches, 80], [c.branches, 440], [c.replacement, 700]], junction: [c.jx, 430],
+    await openSteepFan(page, { positions: [[c.common, 230], [c.branches, 80], [c.branches, 440], [c.replacement, 700]], junction: [c.jx, 430],
       pairs: c.outgoing ? [['n0', 'n1'], ['n0', 'n2']] : [['n1', 'n0'], ['n2', 'n0']], title: false, unrouted: true });
     const first = page.locator('.connection-hit-area[data-connection-id="trunk"]'); await first.focus(); await first.press('Enter');
     const second = page.locator('.connection-hit-area[data-connection-id="branch0"]');
@@ -117,6 +117,7 @@ test('split-delete-reconnect follows the complete user workflow with the junctio
     await page.mouse.move(plus!.x + plus!.width / 2, plus!.y + plus!.height / 2); await page.mouse.down();
     await page.mouse.move(c.replacement < c.jx ? target!.x + target!.width : target!.x, target!.y + target!.height / 2, { steps: 10 });
     await page.screenshot({ path: info.outputPath(`workflow-${index}-preview.png`) });
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await expectForwardCurves(); const preview = await page.locator('.connection-path.draft').getAttribute('d'); await page.mouse.up();
     await expect(page.locator('.connection-hit-area')).toHaveCount(3); await expectForwardCurves();
     const replacement = page.locator('.connection-hit-area:not([data-connection-id="trunk"]):not([data-connection-id="branch0"])').locator('..').locator('.connection-path');
@@ -151,6 +152,7 @@ test('point drags switch left/right live and attach to nodes, text boxes and gro
     const y = box!.y + box!.height / 2;
     await page.mouse.move(x, y, { steps: 8 });
     if (i % 2 === 0) await expect.poll(outwardX).toBeLessThan(0); else await expect.poll(outwardX).toBeGreaterThan(0);
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     const preview = await draft.getAttribute('d');
     if (i === 0) await page.screenshot({ path: info.outputPath('left-input-preview.png') });
     await page.mouse.up(); await expect(draft).toHaveCount(0); await expect(page.locator('.connection-hit-area')).toHaveCount(4);

@@ -3,7 +3,7 @@
 import { useEffect, useRef, type RefObject } from 'react';
 
 /** Owns one element-local non-passive wheel listener with deterministic cleanup. */
-export function useNonPassiveWheel<T extends HTMLElement>(
+export function useNonPassiveWheel<T extends HTMLElement | SVGElement>(
   target: RefObject<T | null>,
   listener: (event: WheelEvent) => void,
 ): void {
@@ -14,7 +14,7 @@ export function useNonPassiveWheel<T extends HTMLElement>(
   useEffect(() => {
     const element = target.current;
     if (!element) return;
-    const handle = (event: WheelEvent) => listenerRef.current(event);
+    const handle = (event: Event) => listenerRef.current(event as WheelEvent);
     element.addEventListener('wheel', handle, { passive: false });
     return () => element.removeEventListener('wheel', handle);
   }, [target]);

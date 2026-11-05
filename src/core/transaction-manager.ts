@@ -21,6 +21,7 @@ export class TransactionManager {
   private resolveNamespaceOwner: NamespaceOwnerResolver = () => undefined;
   private canWrite: WriteAuthorizer = (owner) => owner.startsWith('core');
   private active = false;
+  private authorizePatch: (patch: PatchOperation, owner: string) => boolean = () => false;
 
   constructor(
     store: StateStore,
@@ -50,12 +51,23 @@ export class TransactionManager {
     this.canWrite = authorizer;
   }
 
+  setPatchAuthorizer(authorizer: (patch: PatchOperation, owner: string) => boolean): void {
+    this.authorizePatch = authorizer;
+  }
+
   async commit(
     proposal: TransactionProposal,
     envelope: MessageEnvelope,
     proposalOwner: string,
   ): Promise<string> {
     if (this.active) throw new Error('Nested durable transactions are not allowed');
+    for (const patch of proposal.patches) {
+      const schemaOwner = patch.schemaOwner ?? proposalOwner;
+      if (schemaOwner !== proposalOwner && !proposalOwner.startsWith('core.') &&
+        !this.authorizePatch(patch, schemaOwner)) {
+        throw new Error(`Unverified cross-plugin patch plan: ${proposalOwner} cannot write ${schemaOwner}`);
+      }
+    }
     const forward = normalizePatches(proposal.patches);
     if (forward.length === 0) return createId('transaction-empty');
     const domains = new Set(forward.map((patch) => patch.domain));
@@ -86,10 +98,15 @@ export class TransactionManager {
     let committed: TransactionCommitRecord | undefined;
     this.active = true;
     try {
-      this.store.apply(forward, this.writeToken);
       const timestamp = Date.now();
-      if (proposal.history !== false && domains.has('document')) {
-        this.history.record({
+      committed = {
+        id, label: proposal.label, timestamp, forward, inverse,
+        sourceMessageId: envelope.id,
+        historyAction: proposal.history === false ? 'none' : 'record',
+        mergeKey: proposal.mergeKey, mergeWindowMs: proposal.mergeWindowMs,
+      };
+      this.store.apply(forward, this.writeToken, () => this.history.atomic(() => {
+        if (proposal.history !== false && domains.has('document')) this.history.record({
           id,
           label: proposal.label,
           timestamp,
@@ -98,19 +115,8 @@ export class TransactionManager {
           mergeKey: proposal.mergeKey,
           mergeWindowMs: proposal.mergeWindowMs,
         });
-      }
-      committed = {
-        id,
-        label: proposal.label,
-        timestamp,
-        forward,
-        inverse,
-        sourceMessageId: envelope.id,
-        historyAction: proposal.history === false ? 'none' : 'record',
-        mergeKey: proposal.mergeKey,
-        mergeWindowMs: proposal.mergeWindowMs,
-      };
-      this.persist(committed);
+        this.persist(committed!);
+      }));
     } finally {
       this.active = false;
     }
@@ -132,7 +138,6 @@ export class TransactionManager {
     const entry = this.history.peekUndo();
     if (!entry) return false;
     const record = this.applyHistory(entry, 'undo', entry.inverse);
-    this.history.markUndone();
     await this.publishEvent('history.changed', this.history.getState(), 'core.history', causationId);
     await this.publishEvent('transaction.committed', { id: record.id, label: record.label, record, documentRevision: this.store.getDomainRevision('document') }, 'core.history', causationId);
     return true;
@@ -142,7 +147,6 @@ export class TransactionManager {
     const entry = this.history.peekRedo();
     if (!entry) return false;
     const record = this.applyHistory(entry, 'redo', entry.forward);
-    this.history.markRedone();
     await this.publishEvent('history.changed', this.history.getState(), 'core.history', causationId);
     await this.publishEvent('transaction.committed', { id: record.id, label: record.label, record, documentRevision: this.store.getDomainRevision('document') }, 'core.history', causationId);
     return true;
@@ -161,9 +165,9 @@ export class TransactionManager {
     const id = createId('document-open');
     this.active = true;
     try {
-      this.store.replaceDocument(cleanDocument, this.writeToken);
-      this.history.import(cleanHistory);
-      this.persist({
+      this.store.replaceDocument(cleanDocument, this.writeToken, () => this.history.atomic(() => {
+        this.history.import(cleanHistory);
+        this.persist({
         id,
         label: '打开书籍',
         timestamp: Date.now(),
@@ -171,7 +175,8 @@ export class TransactionManager {
         inverse: [],
         sourceMessageId: envelope.id,
         historyAction: 'none',
-      });
+        });
+      }));
     } finally {
       this.active = false;
     }
@@ -185,7 +190,6 @@ export class TransactionManager {
     if (this.active) throw new Error('History operation collided with an active transaction');
     this.active = true;
     try {
-      this.store.apply(patches, this.writeToken);
       const record: TransactionCommitRecord = {
         id: createId(`history-${action}`),
         label: `${action === 'undo' ? '撤销' : '重做'}：${entry.label}`,
@@ -195,7 +199,11 @@ export class TransactionManager {
         sourceMessageId: entry.id,
         historyAction: action,
       };
-      this.persist(record);
+      this.store.apply(patches, this.writeToken, () => this.history.atomic(() => {
+        if (action === 'undo') this.history.markUndone();
+        else this.history.markRedone();
+        this.persist(record);
+      }));
       return record;
     } finally {
       this.active = false;

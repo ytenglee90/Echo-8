@@ -80,7 +80,9 @@ test('local storage cleanup preserves recovery records, pending drafts and short
   await command(page,'书籍与恢复设置');
   await page.getByRole('button',{name:'创建手动恢复点',exact:true}).click();
   const rows=page.locator('.recovery-row');await expect(rows).toHaveCount(1);
-  await page.getByText('浏览器本地数据占用与清理',{exact:true}).click();
+  const cleanup=page.getByRole('region',{name:'浏览器本地数据占用与清理',exact:true});
+  await expect(cleanup.getByRole('button',{name:'清理无引用缓存',exact:true})).toBeVisible();
+  await expect(cleanup.getByRole('button',{name:'清理已备份的多余恢复副本',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'清理无引用缓存',exact:true}).click();
   await expect(page.getByText(/已清理.*条无引用/u)).toBeVisible();
   await expect(rows).toHaveCount(1);

@@ -7,7 +7,7 @@ import type {
   AIChatToolCall,
 } from '../../protocols/ai.ts';
 import type { AIProviderPreferences, AIProviderProfile } from './types.ts';
-import { assertNotAborted } from '../../services/async-control.ts';
+import { abortableDelay, assertNotAborted } from '../../services/async-control.ts';
 import { EmbeddedReasoningStream } from './reasoning-stream.ts';
 
 const MAX_AI_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -236,16 +236,6 @@ async function describeProviderHttpError(response: Response): Promise<string> {
     if (compact && !/[<>]/u.test(compact)) detail = compact;
   }
   return detail ? `${prefix}：${detail.slice(0, 500)}` : prefix;
-}
-
-function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer);
-      reject(new DOMException('Aborted', 'AbortError'));
-    }, { once: true });
-  });
 }
 
 export function parseCompletion(payload: unknown): Omit<AIGenerateResult, 'provider' | 'model'> {

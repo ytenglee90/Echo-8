@@ -32,6 +32,8 @@ const eslintConfig = defineConfig([
     'build/**',
     'dist/**',
     'artifacts/**',
+    'local-data/**',
+    '.pnpm-store/**',
     'test-results/**',
     'next-env.d.ts',
     'tsconfig.tsbuildinfo',

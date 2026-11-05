@@ -6,8 +6,6 @@ import type {
   FileArtifact,
   FileOperationStatus,
   FileRuntimeState,
-  RecoveryPointSummary,
-  RecoveryPreview,
 } from '../../protocols/files.ts';
 import {
   AUTOSAVE_DISABLED_INTERVAL_MS,
@@ -24,6 +22,7 @@ import { Icon, IconButton } from '../../ui/Icon.tsx';
 import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import type { LocalStorageUsage } from '../../protocols/local-storage.ts';
 import type {} from '../../protocols/local-storage.ts';
+import { RecoveryManager } from './RecoveryManager.tsx';
 import {
   chooseNativeTextExport,
   chooseNativeTextExportDirectory,
@@ -41,9 +40,6 @@ export function FilePanel({ client }: { client: ViewClient }) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<FileOperationStatus>();
   const [persistence, setPersistence] = useState<PersistenceSnapshot>();
-  const [recoveryPoints, setRecoveryPoints] = useState<RecoveryPointSummary[]>([]);
-  const [confirmRestore, setConfirmRestore] = useState<string>();
-  const [recoveryPreview, setRecoveryPreview] = useState<RecoveryPreview>();
   const [settingsError, setSettingsError] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
   const [savedDocumentRevision, setSavedDocumentRevision] = useState<number>();
@@ -67,12 +63,10 @@ export function FilePanel({ client }: { client: ViewClient }) {
     };
     void Promise.all([
       client.ask<PersistenceSnapshot>('system.persistence'),
-      client.ask<RecoveryPointSummary[]>('system.recovery.list'),
       client.ask<LocalStorageUsage>('system.storage.usage'),
-    ]).then(([nextPersistence, nextRecovery,nextStorage]) => {
+    ]).then(([nextPersistence,nextStorage]) => {
       if (!current) return;
       setPersistence(nextPersistence);
-      setRecoveryPoints(nextRecovery);
       setStorageUsage(nextStorage);
     });
     return () => {
@@ -107,8 +101,6 @@ export function FilePanel({ client }: { client: ViewClient }) {
 
   useEffect(
     () => client.subscribeSignal('file.recovery.changed', () => {
-      setConfirmRestore(undefined);
-      setRecoveryPreview(undefined);
       setReloadToken((value) => value + 1);
     }),
     [client],
@@ -255,6 +247,22 @@ export function FilePanel({ client }: { client: ViewClient }) {
         <p className="file-note">当前节点先导出标题段，再导出正文段；全画布先选择保存文件夹，每个节点生成一份以标题命名的 TXT。</p>
       </div>
 
+      <section className="file-section local-storage-section" aria-label="浏览器本地数据占用与清理">
+        <div className="file-section-title">
+          <strong>浏览器本地数据占用与清理</strong>
+        </div>
+        <p className="file-note">分类大小为数据估算；下方安全清理会保留未保存草稿、待上传修改、个人设置和唯一恢复副本。需要删除历史版本时，请使用恢复副本管理。</p>
+        {storageUsage?.originUsedBytes!==undefined&&<p>本站浏览器占用约 {formatStorageBytes(storageUsage.originUsedBytes)}{storageUsage.originQuotaBytes?` / 可用额度 ${formatStorageBytes(storageUsage.originQuotaBytes)}`:''}</p>}
+        <dl>{storageUsage?.categories.map(category=><div key={category.id}><dt>{category.label}</dt><dd>{formatStorageBytes(category.bytes)} · {category.records} 条</dd></div>)}</dl>
+        <div className="local-storage-actions">{[false,true].map(backed=><button key={String(backed)} type="button" disabled={cleanupBusy} onClick={()=>{
+          setCleanupBusy(true);setCleanupMessage('');
+          void client.dispatch('system.storage.cleanup',{includeBackedUpRecovery:backed}).then(result=>{
+            setStorageUsage(result.usage);setCleanupMessage(`已清理 ${result.removedRecords} 条无引用或已备份的多余数据`);setReloadToken(value=>value+1);
+          }).catch(error=>setSettingsError(error instanceof Error?error.message:String(error))).finally(()=>setCleanupBusy(false));
+        }}>{backed?'清理已备份的多余恢复副本':'清理无引用缓存'}</button>)}</div>
+        {cleanupMessage&&<p role="status">{cleanupMessage}</p>}
+      </section>
+
       <div className="file-section">
         <div className="file-section-title">
           <strong>保存与恢复</strong>
@@ -270,22 +278,9 @@ export function FilePanel({ client }: { client: ViewClient }) {
                 fileState?.cloudProjectActive === true,
               )}</span>
         </div>
-        <details className="local-storage-details">
-          <summary>浏览器本地数据占用与清理</summary>
-          <p className="file-note">分类大小为数据估算；未保存草稿、待上传修改、个人设置和唯一恢复副本始终保留。</p>
-          {storageUsage?.originUsedBytes!==undefined&&<p>本站浏览器占用约 {formatStorageBytes(storageUsage.originUsedBytes)}{storageUsage.originQuotaBytes?` / 可用额度 ${formatStorageBytes(storageUsage.originQuotaBytes)}`:''}</p>}
-          <dl>{storageUsage?.categories.map(category=><div key={category.id}><dt>{category.label}</dt><dd>{formatStorageBytes(category.bytes)} · {category.records} 条</dd></div>)}</dl>
-          <div className="local-storage-actions">{[false,true].map(backed=><button key={String(backed)} type="button" disabled={cleanupBusy} onClick={()=>{
-            setCleanupBusy(true);setCleanupMessage('');
-            void client.dispatch('system.storage.cleanup',{includeBackedUpRecovery:backed}).then(result=>{
-              setStorageUsage(result.usage);setCleanupMessage(`已清理 ${result.removedRecords} 条无引用或已备份的多余数据`);setReloadToken(value=>value+1);
-            }).catch(error=>setSettingsError(error instanceof Error?error.message:String(error))).finally(()=>setCleanupBusy(false));
-          }}>{backed?'清理已备份的多余恢复副本':'清理无引用缓存'}</button>)}</div>
-          {cleanupMessage&&<p role="status">{cleanupMessage}</p>}
-        </details>
         <div className="persistence-detail">
           <span>待合并日志 {persistence?.journalEntries ?? 0} 条</span>
-          <span>恢复点 {persistence?.recoveryPoints ?? recoveryPoints.length} 个</span>
+          <span>恢复点 {persistence?.recoveryPoints ?? 0} 个</span>
           <span>{persistence?.checkpointAt ? `完整检查点 ${formatTime(persistence.checkpointAt)}` : '尚无完整检查点'}</span>
         </div>
         <label className="autosave-interval-control">
@@ -321,46 +316,8 @@ export function FilePanel({ client }: { client: ViewClient }) {
                 : '当前尚未选择书籍保存位置：后台只更新本机浏览器恢复副本（IndexedDB），不会生成 .echo8 文件、不会写入任何文件夹；要长期保留，请点击“保存书籍”。'
         }</p>
         {settingsError && <p className="autosave-settings-error" role="alert">{settingsError}</p>}
-        <IconButton icon="snapshot" label="创建手动恢复点" className="icon-button recovery-create" disabled={busy} onClick={() => void client.dispatch('file.createRecoveryPoint')} />
-        <div className="recovery-list">
-          {recoveryPoints.map((point) => (
-            <div className="recovery-row" key={point.id}>
-              <div>
-                <strong>{point.label}</strong>
-                <span>{formatTime(point.createdAt)} · {point.recordCount} 条记录</span>
-              </div>
-              <IconButton
-                icon={confirmRestore === point.id ? 'check' : 'restore'}
-                label={confirmRestore === point.id ? '确认恢复' : '预览并恢复'}
-                className={confirmRestore === point.id ? 'primary-icon-button' : 'icon-button'}
-                disabled={busy}
-                onClick={() => {
-                  if (confirmRestore !== point.id) {
-                    setConfirmRestore(point.id);
-                    setRecoveryPreview(undefined);
-                    void client.ask<RecoveryPreview>('system.recovery.preview', { id: point.id })
-                      .then(setRecoveryPreview)
-                      .catch(() => setConfirmRestore(undefined));
-                    return;
-                  }
-                  setConfirmRestore(undefined);
-                  void client.dispatch('file.restoreRecovery', { id: point.id });
-                }}
-              />
-              {confirmRestore === point.id && recoveryPreview?.id === point.id && (
-                <div className="recovery-preview" role="status">
-                  <strong>恢复前预览</strong>
-                  <span>文档修订 {recoveryPreview.currentDocumentRevision} → {recoveryPreview.targetDocumentRevision}</span>
-                  <span>记录 {recoveryPreview.currentRecordCount} → {recoveryPreview.targetRecordCount}</span>
-                  <span>命名空间 {recoveryPreview.currentNamespaceCount} → {recoveryPreview.targetNamespaceCount}</span>
-                  <span>目标历史：撤销 {recoveryPreview.targetUndoEntries} / 重做 {recoveryPreview.targetRedoEntries}</span>
-                  <small>确认后仍会先自动创建“恢复操作前”保险点。</small>
-                </div>
-              )}
-            </div>
-          ))}
-          {recoveryPoints.length === 0 && <p className="file-empty">还没有手动恢复点。自动保存仍在后台记录事务日志。</p>}
-        </div>
+        <IconButton icon="snapshot" label="创建手动恢复点" className="icon-button recovery-create" disabled={busy || cleanupBusy} onClick={() => void client.dispatch('file.createRecoveryPoint')} />
+        <RecoveryManager client={client} refreshToken={reloadToken} disabled={busy || cleanupBusy || persistence?.state === 'memory-only'} onChanged={() => setReloadToken((value) => value + 1)} />
       </div>
 
       {status && (

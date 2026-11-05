@@ -135,6 +135,8 @@ export function createImportExportPlugin(
         'system.storage.cleanup',
         'system.persistence.confirmBackup',
         'system.recovery.restore',
+        'system.recovery.delete@1',
+        'system.recovery.setRetention@1',
         'file.commitImportedDocuments',
         'cloudSync.syncNow',
         'cloudSync.open',
@@ -145,6 +147,7 @@ export function createImportExportPlugin(
       asks: [
         'system.project.source', 'system.document.revision', 'system.persistence',
         'system.recovery.list', 'system.recovery.preview', 'cloudSync.state',
+        'system.recovery.catalog@1',
         'system.storage.usage',
       ],
       signals: [

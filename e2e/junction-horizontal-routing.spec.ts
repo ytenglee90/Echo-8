@@ -1,3 +1,4 @@
+import { connectionTerminals } from './helpers/connection-path.ts';
 import { expect, test, type Page } from '@playwright/test';
 import { serializeProject } from '../src/plugins/import-export/codec.ts';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
@@ -38,7 +39,7 @@ async function openFan(page: Page, pair = false) {
 }
 
 const edgePath = (page: Page, id: string) => page.locator(`.connection-hit-area[data-connection-id="${id}"]`);
-const read = async (page: Page, id: string) => (await edgePath(page, id).getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+const read = async (page: Page, id: string) => connectionTerminals((await edgePath(page, id).getAttribute('d'))!);
 async function checkFan(page: Page, y: number) {
   const incoming = await read(page, 'incoming');
   expect(incoming[6]).toBe(560); expect(incoming[7]).toBe(y);
@@ -75,18 +76,19 @@ test('point plus sits above; outgoing drafts choose left/right and incoming draf
   await page.mouse.move(port!.x + port!.width / 2, port!.y + port!.height / 2); await page.mouse.down();
   await page.mouse.move(430, 400, { steps: 10 });
   const draft = page.locator('.connection-path.draft');
-  await expect.poll(async () => { const v = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number); return v[2] < v[0]; }).toBe(true);
-  const p = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-  expect(p[2]).toBeLessThan(p[0]); expect(p[3]).toBe(p[1]);
+  await expect.poll(async () => { const v = connectionTerminals((await draft.getAttribute('d'))!); return v[0] === 560 && v[1] === 820 ? v[2] < v[0] : v[4] < v[6]; }).toBe(true);
+  const p = connectionTerminals((await draft.getAttribute('d'))!);
+  const jointAtStart = p[0] === 560 && p[1] === 820;
+  expect(jointAtStart ? p[2] - p[0] : p[4] - p[6]).toBeLessThan(0);
   await page.mouse.move(700, 400, { steps: 8 });
-  await expect.poll(async () => { const v = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number); return v[2] > v[0]; }).toBe(true);
+  await expect.poll(async () => { const v = connectionTerminals((await draft.getAttribute('d'))!); return v[0] === 560 && v[1] === 820 ? v[2] > v[0] : v[4] > v[6]; }).toBe(true);
   await page.keyboard.press('Escape'); await page.mouse.up(); await expect(draft).toHaveCount(0);
   const nodePort = await page.getByRole('button', { name: '从水平测试n3标题栏左侧连接', exact: true }).boundingBox();
   const dot = await point.locator('.connection-junction-dot').boundingBox();
   await page.mouse.move(nodePort!.x + nodePort!.width / 2, nodePort!.y + nodePort!.height / 2); await page.mouse.down();
   await page.mouse.move(dot!.x + dot!.width / 2, dot!.y + dot!.height / 2, { steps: 10 });
-  await expect.poll(async () => (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number)[6]).toBe(560);
-  const input = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
+  await expect.poll(async () => connectionTerminals((await draft.getAttribute('d'))!)[6]).toBe(560);
+  const input = connectionTerminals((await draft.getAttribute('d'))!);
   expect(input[6]).toBe(560); expect(input[4]).toBeGreaterThan(560); expect(input[5]).toBe(input[7]);
   await expect(page.locator('.connection-arrow.draft')).toHaveCount(0);
   await page.mouse.up(); await expect(page.locator('.connection-hit-area')).toHaveCount(6);
@@ -128,15 +130,16 @@ test('junction branches choose facing ports even when dropped on the far-side ou
     await page.mouse.move(plus!.x + plus!.width / 2, plus!.y + plus!.height / 2); await page.mouse.down();
     await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, { steps: 10 });
     const draft = page.locator('.connection-path.draft');
-    await expect.poll(async () => {
-      const tip = (await page.locator('.connection-arrow.draft').getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-      return tip[2];
-    }).toBe(left ? 340 : 880);
-    const p = (await draft.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number);
-    expect(p[0]).toBe(560);
-    expect(Math.sign(p[2] - p[0])).toBe(left ? -1 : 1);
-    expect(Math.sign(p[6] - p[4])).toBe(left ? -1 : 1);
-    expect(p[3]).toBe(p[1]); expect(p[5]).toBe(p[7]);
+    const terminal = async () => connectionTerminals((await draft.getAttribute('d'))!);
+    await expect.poll(async () => { const p = await terminal(); const arrow = draft.locator('..').locator('.connection-arrow.draft');
+      if (await arrow.count()) return (await arrow.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number)[2];
+      return p[0] === 560 && p[1] === 820 ? p[6] : p[0]; }).toBe(left ? 340 : 880);
+    const p = await terminal(), jointAtStart = p[0] === 560 && p[1] === 820;
+    const jointDirection = jointAtStart ? p[2] - p[0] : p[4] - p[6];
+    const nodeDirection = jointAtStart ? p[4] - p[6] : p[2] - p[0];
+    expect(Math.sign(jointDirection)).toBe(left ? -1 : 1);
+    expect(Math.sign(nodeDirection)).toBe(left ? 1 : -1);
+    expect(jointAtStart ? p[5] : p[3]).toBe(jointAtStart ? p[7] : p[1]);
     await page.mouse.up();
     await expect(page.locator('.connection-hit-area')).toHaveCount(left ? 6 : 7);
   }

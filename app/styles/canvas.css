@@ -303,7 +303,7 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: visible;
-  min-height: 158px;
+  min-height: 120px;
   border: var(--canvas-node-border-width) solid var(--border);
   border-radius: var(--canvas-node-radius);
   background: var(--node-surface);
@@ -612,7 +612,7 @@
 .group-frame {
   position: absolute;
   box-sizing: border-box;
-  border: 1px dashed var(--canvas-line, rgba(24, 24, 27, 0.62));
+  border: 0;
   border-radius: 20px;
   background: color-mix(in srgb, var(--group-background) 16%, transparent);
   pointer-events: auto;
@@ -620,12 +620,22 @@
   cursor: move;
 }
 
-.group-frame.selected {
-  border: 3px solid var(--canvas-selection, var(--selection));
-  background: color-mix(in srgb, var(--group-background) 24%, transparent);
-  box-shadow: 0 0 0 2px var(--canvas-selection-soft, color-mix(in srgb, var(--selection) 20%, transparent));
+.group-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px dashed var(--canvas-line, rgba(24, 24, 27, 0.62));
+  border-radius: inherit;
+  pointer-events: none;
 }
-.group-frame:focus-visible { outline: 2px solid var(--canvas-selection, var(--selection)); outline-offset: 3px; }
+.group-frame.selected {
+  background: color-mix(in srgb, var(--group-background) 24%, transparent);
+  outline: none;
+  box-shadow: none;
+}
+.group-frame.selected::after { border: 3px solid var(--canvas-selection, var(--selection)); }
+.group-frame:not(.selected):focus-visible { outline: 2px solid var(--canvas-selection, var(--selection)); outline-offset: 3px; }
 .group-connection-port {
   position: absolute; top: 50%; transform: translate(-50%, -50%);
   width: 18px; height: 18px; padding: 0; border-radius: 4px;

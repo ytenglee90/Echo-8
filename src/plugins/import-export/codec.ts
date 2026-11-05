@@ -12,6 +12,7 @@ import {
   type FileWritableTarget,
 } from '../../protocols/files.ts';
 import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
+import { ownValue, setOwn } from '../../services/records.ts';
 
 const FRAGMENT_SIZE = 64 * 1024;
 const MAX_LINE_SIZE = 1024 * 1024;
@@ -362,11 +363,12 @@ function assignEntry(
     return;
   }
   if (!namespace || !key) throw new Error('画布记录缺少命名空间或键');
-  namespaces[namespace] ??= {};
-  if (Object.prototype.hasOwnProperty.call(namespaces[namespace], key)) {
+  const records = ownValue(namespaces, namespace) ?? {};
+  if (Object.hasOwn(records, key)) {
     throw new Error(`画布记录重复：${namespace}.${key}`);
   }
-  namespaces[namespace][key] = value;
+  setOwn(records, key, value);
+  setOwn(namespaces, namespace, records);
 }
 
 function parseLine(line: string): unknown {

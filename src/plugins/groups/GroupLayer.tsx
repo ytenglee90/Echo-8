@@ -23,19 +23,19 @@ import type {
 import type { ContentSummary, NodePosition } from '../../protocols/content.ts';
 import type { GroupMembershipPreview, GroupRecord } from '../../protocols/groups.ts';
 import { CONNECTION_GROUP_PORT_SCREEN_WIDTH, CONNECTION_GROUP_PORT_SCREEN_HEIGHT, type ConnectionGraphSnapshot, type ConnectionNodeGeometry } from '../../protocols/connections.ts';
-import type { SmartSnapRequest, SmartSnapResult } from '../../protocols/layout.ts';
 import type {
   SelectionMode,
   SelectionResolution,
 } from '../../protocols/selection.ts';
 import { boundsIntersect, clientPointInWorld, worldViewport } from '../../protocols/viewport.ts';
+import { useNonPassiveWheel } from '../../ui/use-non-passive-wheel.ts';
 import { useCanvasLayerEnvironment } from '../../ui/use-canvas-layer-environment.ts';
 import { canvasContrastVariables } from '../../ui/canvas-contrast.ts';
 import { resolveGroupDropTarget } from './drop-target.ts';
 import { computeGroupBounds } from './layout.ts';
 import { useConnectionGesture } from '../../ui/use-connection-gesture.ts';
 import { useConnectionTargets } from '../../ui/use-connection-targets.ts';
-import { selectedJunctionOrigins, includesJunctionMoves, moveCanvasEntities } from '../../ui/mixed-canvas-move.ts';
+import { selectedJunctionOrigins, includesJunctionMoves, moveCanvasEntities, snapCanvasPositions } from '../../ui/mixed-canvas-move.ts';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 
 const CULL_MARGIN = 360;
@@ -225,27 +225,12 @@ export function GroupLayer({ client }: { client: ViewClient }) {
       return positions;
     }
     const dragged = computeGroupBounds(movingNodes);
-    let snap: SmartSnapResult;
-    try {
-      snap = client.requestSync<SmartSnapResult>('layout.snap@1', {
-        dragged,
-        movingIds: [groupId, ...positions.map((position) => position.id)],
-        mode: 'group',
-        threshold: SNAP_THRESHOLD_PX / Math.max(camera.zoom, 0.28),
-      } satisfies SmartSnapRequest);
-    } catch {
-      client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
-      return positions;
-    }
-    client.emit('canvas.snap.preview', snap.guides.length > 0
-      ? { guides: snap.guides } satisfies CanvasSnapPreview
-      : { clear: true } satisfies CanvasSnapPreview);
-    if (snap.offsetX === 0 && snap.offsetY === 0) return positions;
-    return positions.map((position) => ({
-      ...position,
-      x: position.x + snap.offsetX,
-      y: position.y + snap.offsetY,
-    }));
+    return snapCanvasPositions(client, positions, {
+      dragged,
+      movingIds: [groupId, ...positions.map((position) => position.id)],
+      mode: 'group',
+      threshold: SNAP_THRESHOLD_PX / Math.max(camera.zoom, 0.28),
+    });
   };
 
   const beginDrag = (
@@ -418,21 +403,15 @@ export function GroupLayer({ client }: { client: ViewClient }) {
     } satisfies CanvasPointerSnapshot);
   };
 
-  useEffect(() => {
-    const layer = layerRef.current;
-    if (!layer) return;
-    const forwardWheelZoom = (event: WheelEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      client.emit('canvas.wheel.requested', {
-        clientX: event.clientX,
-        clientY: event.clientY,
-        deltaY: event.deltaY,
-      } satisfies CanvasWheelZoomRequest);
-    };
-    layer.addEventListener('wheel', forwardWheelZoom, { passive: false });
-    return () => layer.removeEventListener('wheel', forwardWheelZoom);
-  }, [client, layerRef]);
+  useNonPassiveWheel(layerRef, (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    client.emit('canvas.wheel.requested', {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      deltaY: event.deltaY,
+    } satisfies CanvasWheelZoomRequest);
+  });
 
   return (
     <div

@@ -1,4 +1,4 @@
-import type { CapabilityProvider } from './contracts.ts';
+import { isRecord, type CapabilityProvider, type PatchOperation } from './contracts.ts';
 import { assertNotAborted } from '../services/async-control.ts';
 
 interface RegisteredProvider extends CapabilityProvider {
@@ -12,6 +12,34 @@ export class CapabilityRegistry {
   private readonly inFlight = new Map<string, Set<Promise<unknown>>>();
   private readonly controllers = new Map<string, Set<AbortController>>();
   private version = 0;
+  private readonly patchGrants = new WeakMap<object, { owner: string; signature: string; generation: number }>();
+  private readonly ownerGenerations = new Map<string, number>();
+
+  isAuthorizedPatch = (patch: PatchOperation, owner: string): boolean => {
+    const grant = this.patchGrants.get(patch);
+    return grant?.owner === owner && !this.suspendedOwners.has(owner) &&
+      grant.generation === (this.ownerGenerations.get(owner) ?? 0) && grant.signature === JSON.stringify(patch);
+  };
+
+  consumePatchGrant = (patch: PatchOperation, owner: string): boolean => {
+    if (!this.isAuthorizedPatch(patch, owner)) return false;
+    this.patchGrants.delete(patch);
+    return true;
+  };
+
+  private authorizePlan(result: unknown, owner: string): unknown {
+    if (!isRecord(result) || !Array.isArray(result.patches)) return result;
+    for (const patch of result.patches as PatchOperation[]) {
+      if (!isRecord(patch)) throw new Error('Invalid capability patch plan');
+      const schemaOwner = patch.schemaOwner ?? owner;
+      if (schemaOwner !== owner && !this.isAuthorizedPatch(patch, schemaOwner)) {
+        throw new Error(`Capability provider ${owner} cannot authorize patches for ${schemaOwner}`);
+      }
+      patch.schemaOwner = schemaOwner;
+      this.patchGrants.set(patch, { owner: schemaOwner, signature: JSON.stringify(patch), generation: this.ownerGenerations.get(schemaOwner) ?? 0 });
+    }
+    return result;
+  }
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -60,7 +88,7 @@ export class CapabilityRegistry {
     if (result instanceof Promise || (result && typeof (result as PromiseLike<unknown>).then === 'function')) {
       throw new Error(`Capability ${key} is asynchronous and cannot run in an interaction frame`);
     }
-    return result as TResult;
+    return this.authorizePlan(result, provider.owner) as TResult;
   }
 
   async requestAll<TResult>(key: string, input?: unknown, signal?: AbortSignal): Promise<TResult[]> {
@@ -83,6 +111,7 @@ export class CapabilityRegistry {
   async suspendOwner(owner: string): Promise<void> {
     const changed = !this.suspendedOwners.has(owner);
     this.suspendedOwners.add(owner);
+    if (changed) this.ownerGenerations.set(owner, (this.ownerGenerations.get(owner) ?? 0) + 1);
     if (changed) this.bump();
     for (const controller of this.controllers.get(owner) ?? []) {
       controller.abort(new DOMException(`Capability provider ${owner} is stopping`, 'AbortError'));
@@ -121,7 +150,7 @@ export class CapabilityRegistry {
     } catch (error) {
       operation = Promise.reject(error);
     }
-    const tracked = operation.finally(() => {
+    const tracked = operation.then(result => this.authorizePlan(result, provider.owner)).finally(() => {
       signal?.removeEventListener('abort', relayAbort);
       controllers.delete(controller);
       if (controllers.size === 0) this.controllers.delete(provider.owner);

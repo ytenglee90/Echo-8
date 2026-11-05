@@ -42,6 +42,7 @@ import type { SelectionMode } from '../../protocols/selection.ts';
 import { boundsIntersect, worldViewport } from '../../protocols/viewport.ts';
 import { useConnectionGesture } from '../../ui/use-connection-gesture.ts';
 import { useConnectionTargets } from '../../ui/use-connection-targets.ts';
+import { useNonPassiveWheel } from '../../ui/use-non-passive-wheel.ts';
 import { useCanvasLayerEnvironment } from '../../ui/use-canvas-layer-environment.ts';
 import { Icon } from '../../ui/Icon.tsx';
 import {
@@ -139,7 +140,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     canvasColor,
     surfaceSize,
     layerRef,
-  } = useCanvasLayerEnvironment<SVGSVGElement>(client);
+  } = useCanvasLayerEnvironment<SVGSVGElement>(client, { trackLasso: true });
   const [connections, setConnections] = useState<ConnectionRecord[]>([]);
   const [junctions, setJunctions] = useState<ConnectionJunction[]>([]);
   const [junctionPreview, setJunctionPreview] = useState<Record<string, { x: number; y: number }>>({});
@@ -244,21 +245,15 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     [client],
   );
 
-  useEffect(() => {
-    const layer = layerRef.current;
-    if (!layer) return;
-    const forwardWheelZoom = (event: WheelEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      client.emit('canvas.wheel.requested', {
-        clientX: event.clientX,
-        clientY: event.clientY,
-        deltaY: event.deltaY,
-      } satisfies CanvasWheelZoomRequest);
-    };
-    layer.addEventListener('wheel', forwardWheelZoom, { passive: false });
-    return () => layer.removeEventListener('wheel', forwardWheelZoom);
-  }, [client, layerRef]);
+  useNonPassiveWheel(layerRef, (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    client.emit('canvas.wheel.requested', {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      deltaY: event.deltaY,
+    } satisfies CanvasWheelZoomRequest);
+  });
 
   useEffect(() => client.subscribeSignal<ConnectionJunctionPreview>('connection.junction.preview', (message) => {
     const payload = message.payload;

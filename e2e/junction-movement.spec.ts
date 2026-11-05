@@ -28,12 +28,12 @@ async function openFixture(page: Page) {
   await (await chooser).setFiles({ name: '中转点移动.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
   await expect(notice).toHaveCount(0); await expect(page.locator('.connection-junction')).toHaveCount(2);
 }
-async function points(page: Page) { return page.locator('.connection-junction').evaluateAll(elements => elements.map(element => element.getAttribute('transform')!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number))); }
+async function points(page: Page) { return page.locator('.connection-junction').evaluateAll(elements => elements.sort((a, b) => a.getAttribute('data-junction-id')!.localeCompare(b.getAttribute('data-junction-id')!)).map(element => element.getAttribute('transform')!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number))); }
 
 test('multiple junctions drag and nudge together, retain spacing, undo once and cancel with Escape', async ({ page }) => {
   await openFixture(page);
-  const markers = page.locator('.connection-junction'), dots = page.locator('.connection-junction-dot');
-  await dots.nth(0).click(); await dots.nth(1).click({ modifiers: ['Shift'] });
+  const markers = page.locator('.connection-junction[data-junction-id="j1"]'), dots = page.locator('.connection-junction[data-junction-id="j1"] .connection-junction-dot');
+  await dots.click(); await page.locator('.connection-junction[data-junction-id="j2"] .connection-junction-dot').click({ modifiers: ['Shift'] });
   await expect(page.locator('.connection-junction.selected')).toHaveCount(2);
   const initial = await points(page), box = await dots.nth(0).boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down();
@@ -136,9 +136,15 @@ test('a junction can leave the culled viewport and return without losing its dra
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down();
   await page.mouse.move(-400, -400, { steps: 8 });
   await expect(marker).toHaveCount(0);
-  await page.mouse.move(box!.x + box!.width / 2 + 70, box!.y + box!.height / 2 + 50, { steps: 8 });
+  const release = { x: box!.x + box!.width / 2 + 70, y: box!.y + box!.height / 2 + 50 };
+  await page.mouse.move(release.x, release.y, { steps: 8 });
+  await expect(marker).toBeVisible();
+  const preview = await marker.getAttribute('transform');
+  const returned = await marker.locator('.connection-junction-dot').boundingBox();
+  // Edge panning changes world coordinates; capture must still keep the point under the pointer (within snap distance).
+  expect(Math.hypot(returned!.x + returned!.width / 2 - release.x, returned!.y + returned!.height / 2 - release.y)).toBeLessThan(19);
   await page.mouse.up();
-  await expect.poll(async () => (await points(page))[0]).toEqual([initial[0][0] + 70, initial[0][1] + 50]);
+  await expect(marker).toHaveAttribute('transform', preview!);
   await page.keyboard.press('Control+z'); await expect.poll(() => points(page)).toEqual(initial);
   const restored = await marker.locator('.connection-junction-dot').boundingBox();
   await page.mouse.move(restored!.x + restored!.width / 2, restored!.y + restored!.height / 2); await page.mouse.down();

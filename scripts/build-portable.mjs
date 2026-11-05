@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
+import { createHash } from 'node:crypto';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const stageRoot = resolve(projectRoot, '.portable-stage');
@@ -40,6 +41,9 @@ if (remainingAsset) throw new Error(`Portable HTML still references an external 
 await mkdir(outputRoot, { recursive: true });
 await writeFile(outputFile, html, 'utf8');
 await writeFile(rulesOutputFile, rulesText, 'utf8');
+await writeFile(resolve(outputRoot, 'SHA256SUMS.txt'), [
+  [outputFile, html], [rulesOutputFile, rulesText],
+].map(([path, text]) => `${createHash('sha256').update(text).digest('hex')}  ${relative(outputRoot, path)}`).join('\n') + '\n', 'utf8');
 await rm(stageRoot, { recursive: true, force: true });
 
 const bytes = Buffer.byteLength(html);

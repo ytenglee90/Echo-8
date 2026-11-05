@@ -32,6 +32,14 @@ async function compileTimeCommandContracts(): Promise<void> {
   });
   persistence.autosaveIntervalMs.toFixed();
 
+  const recovery = await client.dispatch('system.recovery.delete@1', { ids: ['recovery:1'] });
+  recovery.removedPoints.toFixed();
+  await client.dispatch('system.recovery.setRetention@1', { limit: null });
+  // @ts-expect-error clearing by timestamp cannot also accept a selected batch
+  await client.dispatch('system.recovery.delete@1', { ids: ['id'], through: 1 });
+  // @ts-expect-error the retention limit is a number or null
+  await client.dispatch('system.recovery.setRetention@1', { limit: '8' });
+
   const saved = await client.dispatch('aiProvider.profile.save', {
     label: '本机模型',
     platform: 'compatible',

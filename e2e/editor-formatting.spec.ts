@@ -42,7 +42,9 @@ async function openEditor(page: import('@playwright/test').Page) {
 
 const paragraphMetrics = (editor: Locator, index: number) => editor.locator(':scope > div').nth(index).evaluate((element) => {
   const style = getComputedStyle(element);
-  return { fontSize: style.fontSize, lineHeight: style.lineHeight, indent: style.textIndent, after: style.marginBottom };
+  // Engines quantize layout differently; compare CSS pixel values to two decimal places.
+  const pixels = (value: string) => `${Number.parseFloat(Number.parseFloat(value).toFixed(2))}px`;
+  return { fontSize: pixels(style.fontSize), lineHeight: pixels(style.lineHeight), indent: pixels(style.textIndent), after: pixels(style.marginBottom) };
 });
 
 test('paragraph formats are independent, caret parameters follow navigation and mixed selections can be unified', async ({ page }) => {

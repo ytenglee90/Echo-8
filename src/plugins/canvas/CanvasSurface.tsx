@@ -59,12 +59,10 @@ import type { SelectionMode, SelectionResolution, SelectionSnapshot } from '../.
 import type {
   SmartResizeSnapRequest,
   SmartResizeSnapResult,
-  SmartSnapRequest,
-  SmartSnapResult,
 } from '../../protocols/layout.ts';
 import { isEcho8ProjectFile } from '../../protocols/files.ts';
 import { boundsIntersect, clientPointInWorld, worldViewport } from '../../protocols/viewport.ts';
-import { selectedJunctionOrigins, includesJunctionMoves, moveCanvasEntities } from '../../ui/mixed-canvas-move.ts';
+import { selectedJunctionOrigins, includesJunctionMoves, moveCanvasEntities, snapCanvasPositions } from '../../ui/mixed-canvas-move.ts';
 import { IconButton } from '../../ui/Icon.tsx';
 import { canvasContrastVariables } from '../../ui/canvas-contrast.ts';
 import { SpatialHashIndex } from '../../services/spatial-index.ts';
@@ -747,27 +745,12 @@ export function CanvasSurface({
     const top = Math.min(...movingGeometry.map((node) => node.y));
     const right = Math.max(...movingGeometry.map((node) => node.x + node.width));
     const bottom = Math.max(...movingGeometry.map((node) => node.y + node.height));
-    let snap: SmartSnapResult;
-    try {
-      snap = client.requestSync<SmartSnapResult>('layout.snap@1', {
-        dragged: { x: left, y: top, width: right - left, height: bottom - top },
-        movingIds: [...movingIds],
-        mode: 'nodes',
-        threshold: SNAP_THRESHOLD_PX / Math.max(camera.zoom, 0.28),
-      } satisfies SmartSnapRequest);
-    } catch {
-      client.emit('canvas.snap.preview', { clear: true } satisfies CanvasSnapPreview);
-      return positions;
-    }
-    client.emit('canvas.snap.preview', snap.guides.length > 0
-      ? { guides: snap.guides } satisfies CanvasSnapPreview
-      : { clear: true } satisfies CanvasSnapPreview);
-    if (snap.offsetX === 0 && snap.offsetY === 0) return positions;
-    return positions.map((position) => ({
-      ...position,
-      x: position.x + snap.offsetX,
-      y: position.y + snap.offsetY,
-    }));
+    return snapCanvasPositions(client, positions, {
+      dragged: { x: left, y: top, width: right - left, height: bottom - top },
+      movingIds: [...movingIds],
+      mode: 'nodes',
+      threshold: SNAP_THRESHOLD_PX / Math.max(camera.zoom, 0.28),
+    });
   };
 
   const commitNodeDrag = (

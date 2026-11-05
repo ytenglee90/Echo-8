@@ -12,6 +12,13 @@ import { CheckpointPerformanceMonitor } from './checkpoint-performance.ts';
 import type { PersonalTextAssetRecord } from '../protocols/personal-assets.ts';
 import type { LocalStorageUsage, LocalCleanupResult } from '../protocols/local-storage.ts';
 import {
+  isRecoveryRetentionLimit,
+  type RecoveryCatalog,
+  type RecoveryCatalogRequest,
+  type RecoveryDeleteRequest,
+  type RecoveryMaintenanceResult,
+} from '../protocols/recovery-management.ts';
+import {
   CONTENT_CHUNK_NAMESPACE,
   CONTENT_CHUNK_REFERENCE,
   externalizeContentChunks,
@@ -75,6 +82,7 @@ const PERSONAL_PREFERENCE_PREFIX = 'preference:';
 const PERSONAL_ASSET_PREFIX = 'asset:';
 const MAX_PERSONAL_TEXT_ASSET_LENGTH = 16 * 1024 * 1024;
 const RECOVERY_LIMIT = 8;
+const RECOVERY_RETENTION_META_KEY = 'recovery-retention-limit-v1';
 const CHECKPOINT_MAIN_THREAD_WARNING_MS = 50;
 
 export class PersistenceService {
@@ -89,6 +97,7 @@ export class PersistenceService {
   private checkpointTimer?: ReturnType<typeof setTimeout>;
   private checkpointTask?: TaskHandle<void>;
   private ioTail: Promise<void> = Promise.resolve();
+  private recoveryRetentionLimit: number | null = null;
   private pendingRecords: TransactionCommitRecord[] = [];
   private projectPlugins: ProjectPluginDescriptor[] = [];
   private readonly memoryPreferences = new Map<string, unknown>();
@@ -166,6 +175,8 @@ export class PersistenceService {
     }
     const storedInterval = await readValue<number>(this.database, 'meta', AUTOSAVE_INTERVAL_META_KEY);
     if (isAutosaveInterval(storedInterval)) this.autosaveIntervalMs = storedInterval;
+    const storedRetention = await readValue<unknown>(this.database, 'meta', RECOVERY_RETENTION_META_KEY);
+    this.recoveryRetentionLimit = isRecoveryRetentionLimit(storedRetention) ? storedRetention : null;
     if (policy === 'fresh-session') {
       await clearPreviousSession(this.database);
       this.persistedContentChunkIds.clear();
@@ -343,9 +354,9 @@ export class PersistenceService {
           prepared.checkpoint,
           this.persistedContentChunkIds,
         );
-        await pruneRecovery(this.database!, RECOVERY_LIMIT);
+        await pruneRecovery(this.database!, RECOVERY_LIMIT, this.recoveryRetentionLimit);
         await collectContentChunkGarbage(this.database!, this.persistedContentChunkIds);
-        return (await readAll<RecoveryPointRecord>(this.database!, 'recovery')).length;
+        return countRecoveryRecords(this.database!);
       });
       this.setStatus({ ...this.status, recoveryPoints });
     }
@@ -358,6 +369,57 @@ export class PersistenceService {
     return (await readAll<RecoveryPointRecord>(this.database, 'recovery'))
       .map((record) => record.summary)
       .sort((left, right) => right.createdAt - left.createdAt);
+  }
+
+  async recoveryCatalog(request: RecoveryCatalogRequest = {}): Promise<RecoveryCatalog> {
+    await this.ioTail;
+    const listedAt = Date.now();
+    if (!this.database) return { points: [], totalCount: 0, listedAt, retentionLimit: null };
+    const page = await readRecoveryCatalog(this.database, request.before);
+    return { ...page, listedAt, retentionLimit: this.recoveryRetentionLimit };
+  }
+
+  async deleteRecoveryPoints(request: RecoveryDeleteRequest): Promise<RecoveryMaintenanceResult> {
+    if (!this.database) throw new Error('当前浏览器不支持本地恢复副本管理');
+    // Persist the current document and undo history before releasing any old copy.
+    await this.checkpoint();
+    const database = this.database;
+    const removedPoints = await this.queueIO(async () => {
+      const removed = await removeRecoveryRecords(database, request);
+      await collectContentChunkGarbage(database, this.persistedContentChunkIds);
+      return removed;
+    });
+    return this.recoveryMaintenanceResult(removedPoints);
+  }
+
+  async setRecoveryRetention(limit: number | null): Promise<RecoveryMaintenanceResult> {
+    if (!this.database) throw new Error('当前浏览器不支持本地恢复副本管理');
+    await this.checkpoint();
+    const database = this.database;
+    const removedPoints = await this.queueIO(async () => {
+      const summaries = await readRecoverySummaries(database);
+      const expired = limit === null ? [] : summaries.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id)).slice(limit);
+      // The preference and immediate deletion either commit together or both remain unchanged.
+      await new Promise<void>((resolve, reject) => {
+        const tx = database.transaction(['meta', 'recovery'], 'readwrite');
+        tx.objectStore('meta').put(limit, RECOVERY_RETENTION_META_KEY);
+        for (const summary of expired) tx.objectStore('recovery').delete(summary.id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+      this.recoveryRetentionLimit = limit;
+      await collectContentChunkGarbage(database, this.persistedContentChunkIds);
+      return expired.length;
+    });
+    return this.recoveryMaintenanceResult(removedPoints);
+  }
+
+  private async recoveryMaintenanceResult(removedPoints: number): Promise<RecoveryMaintenanceResult> {
+    const usage = await this.localStorageUsage();
+    const remainingPoints = usage.categories.find((category) => category.id === 'recovery')?.records ?? 0;
+    this.setStatus({ ...this.status, recoveryPoints: remainingPoints });
+    return { removedPoints, remainingPoints, usage };
   }
 
   async localStorageUsage(): Promise<LocalStorageUsage> {
@@ -523,10 +585,11 @@ export class PersistenceService {
       const externalized = prepared.checkpoint;
       validateExternalizedCheckpoint(externalized);
       report(0.55);
-      await this.queueIO(async () => {
+      const recoveryPoints = await this.queueIO(async () => {
         await writeCheckpoint(database, externalized, this.persistedContentChunkIds);
-          await pruneRecovery(database, RECOVERY_LIMIT);
+        await pruneRecovery(database, RECOVERY_LIMIT, this.recoveryRetentionLimit);
         await collectContentChunkGarbage(database, this.persistedContentChunkIds);
+        return countRecoveryRecords(database);
       });
       performanceSnapshot = monitor.finish(performanceNow() - prepareStarted, usedWorker);
       report(1);
@@ -536,6 +599,7 @@ export class PersistenceService {
         lastSavedAt: persisted.savedAt,
         checkpointAt: persisted.savedAt,
         journalEntries: 0,
+        recoveryPoints,
         checkpointPerformance: performanceSnapshot,
         error: undefined,
       });
@@ -1096,7 +1160,13 @@ async function collectContentChunkGarbage(
   });
 }
 
-async function pruneRecovery(database: IDBDatabase, limit: number): Promise<void> {
+async function pruneRecovery(database: IDBDatabase, limit: number, retentionLimit: number | null): Promise<number> {
+  if (retentionLimit !== null) {
+    const summaries = await readRecoverySummaries(database);
+    const ids = summaries.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id))
+      .slice(retentionLimit).map((summary) => summary.id);
+    return ids.length ? removeRecoveryRecords(database, { ids }) : 0;
+  }
   const records = (await readAll<RecoveryPointRecord>(database, 'recovery'))
     .sort((left, right) => right.summary.createdAt - left.summary.createdAt);
   // Unique drafts and manually named recovery points are never aged out by
@@ -1107,7 +1177,7 @@ async function pruneRecovery(database: IDBDatabase, limit: number): Promise<void
     const eligible=index>=limit&&record.backedUp&&seen.has(key);
     seen.add(key);return eligible;
   });
-  if (expired.length === 0) return;
+  if (expired.length === 0) return 0;
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction('recovery', 'readwrite');
     const recovery = transaction.objectStore('recovery');
@@ -1115,6 +1185,91 @@ async function pruneRecovery(database: IDBDatabase, limit: number): Promise<void
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error ?? new Error('Recovery cleanup aborted'));
+  });
+  return expired.length;
+}
+
+function countRecoveryRecords(database: IDBDatabase): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('recovery', 'readonly');
+    const count = tx.objectStore('recovery').count();
+    tx.oncomplete = () => resolve(count.result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+/** Iterate one stored copy at a time; never hydrate or accumulate historical正文. */
+function readRecoverySummaries(database: IDBDatabase): Promise<RecoveryPointSummary[]> {
+  return new Promise((resolve, reject) => {
+    const summaries: RecoveryPointSummary[] = [];
+    const tx = database.transaction('recovery', 'readonly');
+    const request = tx.objectStore('recovery').openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      summaries.push((cursor.value as RecoveryPointRecord).summary);
+      cursor.continue();
+    };
+    tx.oncomplete = () => resolve(summaries);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+function readRecoveryCatalog(database: IDBDatabase, before?: string): Promise<Pick<RecoveryCatalog, 'points' | 'nextCursor' | 'totalCount'>> {
+  return new Promise((resolve, reject) => {
+    const points: RecoveryCatalog['points'] = [];
+    let nextCursor: string | undefined;
+    let totalCount = 0;
+    const tx = database.transaction('recovery', 'readonly');
+    const store = tx.objectStore('recovery');
+    const count = store.count();
+    count.onsuccess = () => { totalCount = count.result; };
+    const request = store.openCursor(before ? IDBKeyRange.upperBound(before, true) : null, 'prev');
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      if (points.length === 30) { nextCursor = points.at(-1)!.id; return; }
+      const record = cursor.value as RecoveryPointRecord;
+      points.push({ ...record.summary, storedBytes: new TextEncoder().encode(JSON.stringify(record)).length });
+      cursor.continue();
+    };
+    tx.oncomplete = () => resolve({ points, nextCursor, totalCount });
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+function removeRecoveryRecords(database: IDBDatabase, selection: RecoveryDeleteRequest): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let removed = 0;
+    const tx = database.transaction('recovery', 'readwrite');
+    const store = tx.objectStore('recovery');
+    if (selection.ids !== undefined) {
+      for (const id of new Set(selection.ids)) {
+        const request = store.getKey(id);
+        request.onsuccess = () => {
+          if (request.result === undefined) return;
+          store.delete(id);
+          removed++;
+        };
+      }
+    } else {
+      const request = store.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        if ((cursor.value as RecoveryPointRecord).summary.createdAt <= selection.through) {
+          cursor.delete();
+          removed++;
+        }
+        cursor.continue();
+      };
+    }
+    tx.oncomplete = () => resolve(removed);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
   });
 }
 

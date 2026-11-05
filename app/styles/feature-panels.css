@@ -372,6 +372,19 @@
 .recovery-row .primary-button { min-height: 27px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
 .recovery-row .recovery-preview { flex: 1 0 100%; gap: 3px; padding: 7px; border-radius: 7px; background: color-mix(in srgb, var(--selection) 5%, var(--panel)); }
 .recovery-preview small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.recovery-manager { margin-top: 12px; }
+.recovery-manager h3 { margin: 0; color: var(--ink); font-size: 12px; }
+.recovery-manager h3 > span { color: var(--muted); font-weight: 400; }
+.recovery-manager .recovery-select { display: flex; flex: 1; align-items: flex-start; gap: 7px; min-width: 0; cursor: pointer; }
+.recovery-manager .recovery-select > span { display: grid; min-width: 0; gap: 3px; }
+.recovery-manager .recovery-select input { margin: 2px 0 0; accent-color: var(--ink); }
+.recovery-manager .recovery-select small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.recovery-manager .recovery-row-actions { display: flex; flex-shrink: 0; gap: 4px; }
+.recovery-management-actions { margin-top: 9px; }
+.recovery-delete-confirmation { margin-top: 9px; padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--control-surface); color: var(--ink); font-size: 12px; }
+.recovery-delete-confirmation p { color: var(--muted); line-height: 1.5; }
+.recovery-manager .recovery-danger { color: var(--danger); }
+.recovery-manager button:disabled { cursor: not-allowed; opacity: 0.42; }
 .file-empty { margin: 0; padding: 9px; border: 1px dashed var(--border); border-radius: 9px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .file-status { display: grid; gap: 6px; margin-top: 13px; padding: 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--control-surface); }
 .file-status > div { justify-content: space-between; gap: 8px; }
@@ -855,9 +868,9 @@
   .cloud-sync-summary.phase-connecting > i,
   .cloud-sync-summary.phase-syncing > i { animation: none; }
 }
-.local-storage-details { margin: 10px 0; font-size: 12px; color: var(--muted); }
-.local-storage-details summary { cursor: pointer; color: var(--ink); }
-.local-storage-details dl > div { display: flex; justify-content: space-between; gap: 12px; margin: 6px 0; }
-.local-storage-details dd { margin: 0; white-space: nowrap; }
+.local-storage-section { font-size: 12px; color: var(--muted); }
+.local-storage-section .file-section-title { color: var(--ink); }
+.local-storage-section dl > div { display: flex; justify-content: space-between; gap: 12px; margin: 6px 0; }
+.local-storage-section dd { margin: 0; white-space: nowrap; }
 .local-storage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .local-storage-actions button { padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--control-surface); color: var(--ink); cursor: pointer; }

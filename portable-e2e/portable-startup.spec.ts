@@ -4,6 +4,26 @@ import { expect, test } from '@playwright/test';
 
 const artifactUrl = pathToFileURL(resolve(process.cwd(), 'artifacts', 'Echo-8.html')).href;
 
+test('portable recovery management clears historical copies and preserves the current book', async ({ page }) => {
+  const failures: string[] = [];
+  page.on('pageerror', (error) => failures.push(error.message));
+  await page.goto(artifactUrl, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+  await page.getByRole('button', { name: '新建文本', exact: true }).click();
+  await page.getByRole('button', { name: '命令面板', exact: true }).click();
+  const panel = page.getByRole('dialog', { name: '命令面板' });
+  await panel.getByRole('textbox', { name: '搜索命令' }).fill('书籍与恢复设置');
+  await panel.getByRole('option', { name: /^书籍与恢复设置/u }).click();
+  await page.getByRole('button', { name: '创建手动恢复点', exact: true }).click();
+  const manager = page.getByRole('region', { name: '恢复副本管理', exact: true });
+  await expect(manager.locator('.recovery-row')).toHaveCount(1);
+  await manager.getByRole('button', { name: '清空恢复副本', exact: true }).click();
+  await manager.getByRole('button', { name: '确认删除', exact: true }).click();
+  await expect(manager.locator('.recovery-row')).toHaveCount(0);
+  await expect(page.locator('.text-node-card')).toHaveCount(3);
+  expect(failures).toEqual([]);
+});
+
 test('the generated single HTML starts from the library and edits without external assets', async ({
   page,
   browserName,
