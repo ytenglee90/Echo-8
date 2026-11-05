@@ -473,7 +473,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
               onPointerMove={moveDrag}
               onPointerUp={finishDrag}
               onPointerCancel={cancelDrag}
-              onLostPointerCapture={() => { if (drag.current || pendingDrag.current) cancelDrag(); }}
+              onLostPointerCapture={() => { if (drag.current || (pendingDrag.current && !pendingDrag.current.released)) cancelDrag(); }}
               onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: group.id })}
               onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: group.id, clear: true })}
               onKeyDown={(event) => {
