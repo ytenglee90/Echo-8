@@ -12,10 +12,8 @@ import {
   type ProjectSource,
 } from '../../protocols/files.ts';
 import {
-  CLOUD_CONTENT_CHUNK_NAMESPACE,
   CLOUD_STORAGE_USAGE_WORKER_VERSION,
   type CloudBootstrap,
-  type CloudCheckpoint,
   type CloudControlStatus,
   type CloudDataAccess,
   type CloudOperation,
@@ -25,10 +23,16 @@ import {
   type CloudSyncState,
 } from '../../cloud/contracts.ts';
 import { defineManifest } from '../manifest.ts';
+import { BookTransport } from './book-transport.ts';
+import { saveLegacyBook, hydrateRemoteDocument } from './legacy-transport.ts';
+import type { ShortcutOverride } from '../../core/contracts.ts';
+import type {} from '../../protocols/shortcut-sync.ts';
+import { planShortcutSync, shortcutFingerprint, type ShortcutAccountState, type RemoteShortcuts } from './shortcut-sync.ts';
+import { addPendingBookChange, type PendingBookChange } from './pending-book.ts';
+export { externalizeCloudCommit, hydrateRemoteDocument } from './legacy-transport.ts';
 
 const LOCAL_STATE_KEY = 'cloud-session';
 const QUEUE_ASSET_KEY = 'cloud-pending-commits';
-const CHUNK_REFERENCE = '__echo8ContentChunkRef';
 const CHECKPOINT_INTERVAL_MS = 30_000;
 const LEASE_RENEW_MS = 45_000;
 
@@ -43,6 +47,7 @@ interface LocalCloudState {
 
 interface TransactionCommittedPayload {
   record?: TransactionCommitRecord;
+  documentRevision?: number;
 }
 
 export function createCloudSyncPlugin(
@@ -53,7 +58,7 @@ export function createCloudSyncPlugin(
   let state: CloudSyncState = emptyState();
   let projects: CloudProjectSummary[] = [];
   let local: LocalCloudState = { deviceId: '', headRevision: 0 };
-  let pending: TransactionCommitRecord[] = [];
+  let pending: PendingBookChange[] = [];
   let pendingDeletion: CloudProjectDeleteConfirmation | undefined;
   let deletingProjectId: string | undefined;
   let access: CloudDataAccess | undefined;
@@ -61,12 +66,13 @@ export function createCloudSyncPlugin(
   let cancelRenewalTimer: (() => void) | undefined;
   let stopped = false;
   let syncTail: Promise<void> = Promise.resolve();
+  let stopRuntime = () => {};
 
   return {
     manifest: defineManifest('cloud-sync', 'Cloudflare 云同步', {
       category: 'provider',
       commands: [
-        'cloudSync.open', 'cloudSync.close', 'cloudSync.refresh', 'cloudSync.install', 'cloudSync.upgrade',
+        'cloudSync.open', 'cloudSync.close', 'cloudSync.refresh', 'cloudSync.install', 'cloudSync.upgrade', 'cloudSync.syncShortcuts', 'cloudSync.resolveShortcuts',
         'cloudSync.listProjects', 'cloudSync.openProject', 'cloudSync.createProject',
         'cloudSync.renameProject', 'cloudSync.requestDeleteProject',
         'cloudSync.cancelDeleteProject', 'cloudSync.confirmDeleteProject',
@@ -76,13 +82,15 @@ export function createCloudSyncPlugin(
       ],
       dispatches: [
         'system.preferences.set', 'system.personalAssets.set', 'system.document.replace',
-        'system.document.new', 'system.persistence.checkpoint', 'bookLibrary.show',
+        'system.document.new', 'system.persistence.checkpoint', 'bookLibrary.show', 'shortcuts.applyAccountSettings',
+        'cloudSync.syncShortcuts',
+        'system.persistence.confirmBackup',
       ],
-      events: ['transaction.committed'],
+      events: ['transaction.committed', 'document.replaced', 'shortcuts.changed'],
       queries: ['cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation'],
       asks: [
-        'system.preferences.get', 'system.personalAssets.get', 'system.project.source',
-        'system.persistence', 'cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation',
+        'system.preferences.get', 'system.personalAssets.get', 'system.project.source', 'system.project.catalog', 'system.document.revision',
+        'system.persistence', 'cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation', 'shortcuts.state',
       ],
       signals: [
         'cloudSync.updated', 'cloudSync.deleteConfirmation.changed',
@@ -140,6 +148,13 @@ export function createCloudSyncPlugin(
       const getAccess = async (force = false): Promise<CloudDataAccess> => {
         if (!local.installationId) throw new Error('尚未选择云存储安装');
         if (!force && access && access.expiresAt > Date.now() + 60_000) return access;
+        const installation=state.installations.find(item=>item.id===local.installationId);
+        if(installation?.upgradeAvailable&&installation.latestWorkerVersion>=5&&installation.workerVersion<5){
+          try {
+            const upgraded=await controlRequest<{installation:import('../../cloud/contracts.ts').CloudInstallationSummary}>('/api/cloud/upgrade',jsonInit({installationId:installation.id}));
+            update({installations:state.installations.map(item=>item.id===installation.id?upgraded.installation:item),upgradeAvailable:false});
+          } catch(error) { context.diagnostics.warn('云存储升级暂未完成，原数据仍保留',error); }
+        }
         access = await controlRequest<CloudDataAccess>('/api/cloud/token', jsonInit({
           installationId: local.installationId,
         }));
@@ -179,8 +194,9 @@ export function createCloudSyncPlugin(
           return;
         }
         try {
-          const result = await dataRequest<{ storage: CloudStorageUsage }>('/v1/storage', { method: 'GET' });
-          update({ storageUsage: result.storage, storageUsageError: undefined });
+          if(state.storageUsage&&Date.now()-state.storageUsage.measuredAt<60_000)return;
+          const result = await dataRequest<{ storage: CloudStorageUsage; maintenance?:CloudSyncState['maintenance'] }>('/v1/storage', { method: 'GET' });
+          update({ storageUsage: result.storage, storageUsageError: undefined, maintenance:result.maintenance });
         } catch (error) {
           context.diagnostics.warn('个人云存储容量读取失败', error);
           update({ storageUsage: undefined, storageUsageError: '容量暂不可用' });
@@ -192,92 +208,145 @@ export function createCloudSyncPlugin(
         await call('system.preferences.set', { key: LOCAL_STATE_KEY, value: local });
         const asset: PersonalTextAssetRecord = {
           schemaVersion: 1,
-          text: JSON.stringify(pending),
+          text: JSON.stringify(hasBookStorage() ? {formatVersion:2,dirty:pending.length>0,projectId:local.projectId,
+            documentRevision:(await context.queries.ask<{revision:number}>('system.document.revision')).revision} : pending),
           fileName: 'cloud-pending-commits.json',
           updatedAt: Date.now(),
         };
         await call('system.personalAssets.set', { key: QUEUE_ASSET_KEY, asset });
       };
 
-      const captureCheckpoint = async (): Promise<{ checkpoint: CloudCheckpoint; chunks: Array<{ id: string; value: unknown }> }> => {
-        const source = await context.queries.ask<ProjectSource>('system.project.source');
-        const document = structuredClone(source.document);
-        const records = document.namespaces[CLOUD_CONTENT_CHUNK_NAMESPACE] ?? {};
-        const chunks = Object.entries(records).map(([id, value]) => ({ id, value }));
-        document.namespaces[CLOUD_CONTENT_CHUNK_NAMESPACE] = {};
-        return {
-          checkpoint: {
-            formatVersion: 1,
-            savedAt: Date.now(),
-            document,
-            plugins: source.plugins,
-            contentChunkIds: chunks.map((chunk) => chunk.id),
-          },
-          chunks,
-        };
-      };
-
-      const runSync = async (
-        forceCheckpoint = false,
-        parent?: MessageEnvelope,
-        includePending = true,
-      ) => {
-        if (!local.projectId || !leaseId || !['ready', 'syncing', 'offline'].includes(state.phase)) return;
-        if (deletingProjectId === local.projectId) return;
-        const commits = includePending ? pending.slice(0, 200).map(externalizeCloudCommit) : [];
-        const shouldCheckpoint = includePending && (forceCheckpoint || !local.checkpointAt ||
-          Date.now() - local.checkpointAt >= CHECKPOINT_INTERVAL_MS);
-        const captured = shouldCheckpoint ? await captureCheckpoint() : undefined;
-        const commitChunks = commits.flatMap((item) => item.chunks);
-        const chunks = dedupeChunks([...(captured?.chunks ?? []), ...commitChunks]);
-        if (includePending) update({ phase: 'syncing', error: undefined });
+      const books = new BookTransport(dataRequest);
+      let syncQueued = false;
+      let retryAt = 0;
+      let failures = 0;
+      let cancelRetry: (() => void) | undefined;
+      let activeInvocation: MessageEnvelope | undefined;
+      let recoveryAvailable = true;
+      let accountSettings: ShortcutAccountState | undefined;
+      let applyingShortcuts = false;
+      let cancelShortcutSync: (() => void) | undefined;
+      let shortcutSyncing = false;
+      stopRuntime=()=>{cancelRetry?.();cancelShortcutSync?.();books.clear();};
+      const hasBookStorage = () => state.installations.some(item => item.id === local.installationId && item.workerVersion >= 5);
+      context.commands.register({
+        type:'cloudSync.resolveShortcuts',
+        validate:(payload):payload is {choice:'local'|'account'}=>isRecord(payload)&&(payload.choice==='local'||payload.choice==='account'),
+        handle:async payload=>{
+          if(!state.user||!hasBookStorage())throw new Error('请先连接账号');
+          const remote=await dataRequest<RemoteShortcuts>('/v2/shortcuts');
+          if(payload.choice==='account'){
+            applyingShortcuts=true;
+            try{await context.commands.invoke('shortcuts.applyAccountSettings',{overrides:remote.overrides});}
+            finally{applyingShortcuts=false;}
+            accountSettings={userId:state.user.id,revision:remote.revision,baseline:JSON.stringify([]),dirty:false};
+          }else{
+            const current=await context.queries.ask<{overrides:ShortcutOverride[]}>('shortcuts.state');
+            const saved=await dataRequest<{revision:number}>('/v2/shortcuts',jsonInit({expectedRevision:remote.revision,overrides:current.overrides},'PUT'));
+            accountSettings={userId:state.user.id,revision:saved.revision,baseline:shortcutFingerprint(current.overrides),dirty:false};
+          }
+          if(payload.choice==='account')accountSettings!.baseline=shortcutFingerprint(remote.overrides);
+          await context.commands.invoke('system.preferences.set',{key:'account-shortcuts@1',value:accountSettings});
+          update({shortcutsSyncedAt:Date.now(),shortcutsError:undefined});
+          return {result:{synced:true}};
+        },
+      });
+      context.commands.register({
+        type:'cloudSync.syncShortcuts',
+        handle:async()=>{
+          if(shortcutSyncing||!state.user||!hasBookStorage())return {result:{synced:false}};
+          shortcutSyncing=true;
+          try{
+            const localSettings=await context.queries.ask<{overrides:ShortcutOverride[]}>('shortcuts.state');
+            accountSettings??=await context.queries.ask<ShortcutAccountState|undefined>('system.preferences.get',{key:'account-shortcuts@1'});
+            const remote=await dataRequest<RemoteShortcuts>('/v2/shortcuts');
+            const decision=planShortcutSync(state.user.id,localSettings.overrides,remote,accountSettings);
+            if(decision.action==='conflict'){
+              update({shortcutsError:'另一台设备也修改了快捷键，本机配置已保留。请选择使用本机或账号快捷键。'});
+              accountSettings=decision.state;
+              await context.commands.invoke('system.preferences.set',{key:'account-shortcuts@1',value:accountSettings});
+              return {result:{synced:false}};
+            }
+            if(decision.action==='download'){
+              applyingShortcuts=true;
+              try{await context.commands.invoke('shortcuts.applyAccountSettings',{overrides:remote.overrides});}
+              finally{applyingShortcuts=false;}
+            }else if(decision.action==='upload'){
+              const result=await dataRequest<{revision:number}>('/v2/shortcuts',jsonInit({expectedRevision:remote.revision,overrides:localSettings.overrides},'PUT'));
+              decision.state.revision=result.revision;
+            }
+            accountSettings={...decision.state,dirty:false};
+            await context.commands.invoke('system.preferences.set',{key:'account-shortcuts@1',value:accountSettings});
+            update({shortcutsSyncedAt:Date.now(),shortcutsError:undefined});
+            return {result:{synced:true}};
+          }catch(error){update({shortcutsError:errorMessage(error)});return {result:{synced:false}};}
+          finally{shortcutSyncing=false;}
+        },
+      });
+      context.events.subscribe('shortcuts.changed',()=>{
+        if(applyingShortcuts||!state.user||!hasBookStorage())return;
+        if(accountSettings)accountSettings={...accountSettings,dirty:true};
+        cancelShortcutSync?.();cancelShortcutSync=context.resources.timeout(()=>{
+          cancelShortcutSync=undefined;context.commands.dispatch('cloudSync.syncShortcuts').catch(()=>undefined);
+        },1_000);
+      });
+      const runSync = async (forceCheckpoint = false, parent?: MessageEnvelope, includePending = true) => {
+        if (!local.projectId || !leaseId || !['ready','syncing','offline'].includes(state.phase) || deletingProjectId === local.projectId) return;
+        if (!forceCheckpoint && Date.now() < retryAt) return;
+        if (!includePending || (!pending.length && !forceCheckpoint)) {
+          try {
+            const response = await dataRequest<{lease:{id:string;expiresAt:number}}>('/v1/projects/'+encodeURIComponent(local.projectId)+'/lease',jsonInit({deviceId:local.deviceId}));
+            leaseId=response.lease.id;update({leaseExpiresAt:response.lease.expiresAt});
+          } catch (error) { if(isHttpStatus(error,409)||isHttpStatus(error,423)){leaseId=undefined;update({phase:'read-only',error:'编辑权已转移，本地修改仍保留'});} }
+          return;
+        }
+        const projectId=local.projectId, currentLease=leaseId;
+        const captured=[...pending];
+        update({phase:'syncing',error:undefined,retryAt:undefined});
         try {
-          for (const batch of chunkBatches(chunks)) {
-            await dataRequest(`/v1/projects/${encodeURIComponent(local.projectId)}/chunks`, jsonInit({
-              deviceId: local.deviceId,
-              leaseId,
-              chunks: batch,
-            }));
-          }
-          const result = await dataRequest<{
-            accepted: number;
-            headRevision: number;
-            checkpointRevision: number;
-            lease: { expiresAt: number };
-            storage?: CloudStorageUsage;
-          }>(`/v1/projects/${encodeURIComponent(local.projectId)}/sync`, jsonInit({
-            deviceId: local.deviceId,
-            leaseId,
-            baseRevision: local.headRevision,
-            commits: commits.map((item) => item.commit),
-            checkpoint: captured?.checkpoint,
-            chunks: [],
-          }));
-          if (includePending) pending.splice(0, result.accepted);
-          local.headRevision = result.headRevision;
-          if (captured) local.checkpointAt = Date.now();
-          update({
-            phase: 'ready',
-            headRevision: result.headRevision,
-            pendingCommits: pending.length,
-            lastSyncedAt: includePending ? Date.now() : state.lastSyncedAt,
-            leaseExpiresAt: result.lease.expiresAt,
-            storageUsage: result.storage ?? state.storageUsage,
-            storageUsageError: result.storage ? undefined : state.storageUsageError,
-            error: undefined,
-          });
-          await persistLocal(parent);
-          if (includePending && pending.length) {
-            context.resources.timeout(() => void enqueueSync(false), 0);
-          }
-        } catch (error) {
-          if (isHttpStatus(error, 409)) {
-            update({ phase: 'conflict', pendingCommits: pending.length, error: '云端版本已变化；本机修改仍保留在恢复队列中' });
-          } else if (isHttpStatus(error, 423)) {
-            leaseId = undefined;
-            update({ phase: 'read-only', error: '编辑权已经转移到另一台设备' });
+          let accepted:number;
+          let acknowledgedIds:string[]|undefined;
+          let savedRevision:number|undefined;
+          if(hasBookStorage()) {
+            const result=await books.save({projectId,baseRevision:local.headRevision,deviceId:local.deviceId,leaseId:currentLease,commits:captured,
+              source:()=>context.queries.ask<ProjectSource>('system.project.source'),catalog:()=>context.queries.ask<ProjectSource['plugins']>('system.project.catalog')});
+            if(stopped||local.projectId!==projectId)return;
+            accepted=captured.length;local.headRevision=result.revision;local.checkpointAt=Date.now();
+            acknowledgedIds=result.acceptedIds;
+            savedRevision=result.documentRevision;
+            update({lastUploadBytes:result.uploadedBytes,storageUsage:result.storage??state.storageUsage});
           } else {
-            update({ phase: 'offline', pendingCommits: pending.length, error: errorMessage(error) });
+            const result=await saveLegacyBook({request:dataRequest,source:()=>context.queries.ask<ProjectSource>('system.project.source'),projectId,deviceId:local.deviceId,leaseId:currentLease,baseRevision:local.headRevision,commits:captured,
+              forceCheckpoint:forceCheckpoint||!local.checkpointAt||Date.now()-local.checkpointAt>=CHECKPOINT_INTERVAL_MS});
+            if(stopped||local.projectId!==projectId)return;
+            accepted=result.accepted;local.headRevision=result.headRevision;if(result.captured)local.checkpointAt=Date.now();
+            update({leaseExpiresAt:result.lease.expiresAt,storageUsage:result.storage??state.storageUsage});
+          }
+          const acknowledged=new Set(acknowledgedIds??captured.slice(0,accepted).map(item=>item.id));
+          pending=pending.filter(item=>!acknowledged.has(item.id));
+          failures=0;retryAt=0;cancelRetry?.();cancelRetry=undefined;
+          update({phase:'ready',headRevision:local.headRevision,pendingCommits:pending.length,lastSyncedAt:Date.now(),error:undefined,errorKind:undefined,retryAt:undefined});
+          // A foreground save may join a background save. Use the active formal
+          // invocation for preference writes instead of queueing behind itself.
+          const invocation=activeInvocation??parent;
+          if(invocation)await persistLocal(invocation);
+          else void persistLocal().catch(error=>context.diagnostics.warn('云保存状态待重新同步',error));
+          if(savedRevision!==undefined){
+            const call=invocation?context.commands.invoke:context.commands.dispatch;
+            if(invocation)await call('system.persistence.confirmBackup',{documentRevision:savedRevision}).catch(()=>undefined);
+            else void call('system.persistence.confirmBackup',{documentRevision:savedRevision}).catch(()=>undefined);
+          }
+        } catch(error) {
+          if(stopped||local.projectId!==projectId)return;
+          const status=error instanceof CloudHttpError?error.status:0;
+          const kind=status===409?'conflict':status===423?'lease':status===401||status===403?'authorization':status===426?'upgrade':status===507?'capacity':status===429?'rate-limit':status>=500?'service':'network';
+          if(kind==='conflict')update({phase:'conflict',error:'云端版本已变化，本机修改仍保留在恢复副本中',errorKind:kind});
+          else if(kind==='lease'){leaseId=undefined;update({phase:'read-only',error:'编辑权已经转移，本地修改仍保留',errorKind:kind});}
+          else {
+            failures++;const delay=kind==='capacity'||kind==='authorization'||kind==='upgrade'?5*60_000:Math.min(5*60_000,Math.max(2_000,2**Math.min(failures,8)*1_000));
+            retryAt=Date.now()+Math.max(delay,error instanceof CloudHttpError?error.retryAfterMs:0);
+            update({phase:'offline',pendingCommits:pending.length,error:errorMessage(error),errorKind:kind,retryAt});
+            cancelRetry?.();cancelRetry=context.resources.timeout(()=>{cancelRetry=undefined;if(!stopped&&pending.length)void enqueueSync(false);},retryAt-Date.now());
           }
         }
       };
@@ -286,17 +355,20 @@ export function createCloudSyncPlugin(
         parent?: MessageEnvelope,
         includePending = true,
       ) => {
-        syncTail = syncTail.then(
-          () => runSync(forceCheckpoint, parent, includePending),
-          () => runSync(forceCheckpoint, parent, includePending),
-        );
+        if(syncQueued)return syncTail;
+        syncQueued=true;
+        syncTail=syncTail.catch(()=>undefined).then(async()=>{
+          try { await runSync(forceCheckpoint,parent,includePending); } finally { syncQueued=false; }
+        });
         return syncTail;
       };
       const disconnectProject = async (parent?: MessageEnvelope) => {
         const projectId = local.projectId;
         const currentLeaseId = leaseId;
         if (projectId && currentLeaseId) {
-          await enqueueSync(true, parent);
+          activeInvocation=parent;
+          try { await enqueueSync(true, parent); if(pending.length&&state.phase==='ready')await enqueueSync(true,parent); }
+          finally { activeInvocation=undefined; }
           if (pending.length > 0 || !['ready', 'read-only'].includes(state.phase)) {
             throw new Error(state.error || '当前书籍尚未安全同步，请稍后重试');
           }
@@ -310,6 +382,7 @@ export function createCloudSyncPlugin(
           }
         }
         leaseId = undefined;
+        books.clear();
         local = {
           ...local,
           projectId: undefined,
@@ -359,6 +432,7 @@ export function createCloudSyncPlugin(
         parent: MessageEnvelope,
       ) => {
         await getAccess();
+        context.commands.defer('cloudSync.syncShortcuts');
         const listed = await dataRequest<{ projects: CloudProjectSummary[] }>('/v1/projects');
         projects = listed.projects;
         let project = projectId ? projects.find((item) => item.id === projectId) : undefined;
@@ -392,11 +466,14 @@ export function createCloudSyncPlugin(
             error: '另一台设备正在编辑；你可以只读查看或明确接管',
           });
         }
-        const bootstrap = await completeBootstrap(
-          await dataRequest<CloudBootstrap>(`/v1/projects/${encodeURIComponent(project.id)}/bootstrap`),
-          dataRequest,
+        const bootstrap = (hasBookStorage() ? await books.bootstrap(project.id) : undefined) ?? await completeBootstrap(
+          await dataRequest<CloudBootstrap>(`/v1/projects/${encodeURIComponent(project.id)}/bootstrap`), dataRequest,
         );
         const sameUnsyncedLocal = previousProjectId === project.id && pending.length > 0;
+        if(sameUnsyncedLocal&&!recoveryAvailable){
+          update({phase:'conflict',activeProjectId:project.id,activeProjectName:project.name,error:'本机有未上传草稿，请先从本地恢复副本恢复；云端书籍未被覆盖'});
+          return;
+        }
         if (sameUnsyncedLocal && bootstrap.project.headRevision === local.headRevision && leaseOwned) {
           update({
             phase: 'ready', activeProjectId: project.id, activeProjectName: project.name,
@@ -491,6 +568,7 @@ export function createCloudSyncPlugin(
           const listed = await dataRequest<{ projects: CloudProjectSummary[] }>('/v1/projects');
           projects = listed.projects;
           update({ activeInstallationId: installation.id, error: undefined });
+          context.commands.defer('cloudSync.syncShortcuts');
           await refreshStorageUsage();
           await persistLocal(envelope);
           return { result: structuredClone(projects) };
@@ -707,7 +785,8 @@ export function createCloudSyncPlugin(
       context.commands.register({
         type: 'cloudSync.syncNow',
         handle: async (_payload, envelope) => {
-          await enqueueSync(true, envelope);
+          activeInvocation=envelope;
+          try { await enqueueSync(true, envelope); if(pending.length&&state.phase==='ready')await enqueueSync(true,envelope); } finally { activeInvocation=undefined; }
           return { result: structuredClone(state) };
         },
       });
@@ -747,7 +826,10 @@ export function createCloudSyncPlugin(
         const record = envelope.payload.record;
         if (!record || !record.forward.some((patch) => patch.domain === 'document')) return;
         if (!local.projectId || !leaseId || state.phase === 'read-only' || state.phase === 'conflict') return;
-        if (!pending.some((item) => item.id === record.id)) pending.push(structuredClone(record));
+        if (!pending.some((item) => item.id === record.id)) {
+          if(hasBookStorage())pending=addPendingBookChange(pending,record,envelope.payload.documentRevision);
+          else pending.push(structuredClone(record));
+        }
         update({
           pendingCommits: pending.length,
           phase: state.phase === 'offline' ? 'offline' : state.phase === 'syncing' ? 'syncing' : 'ready',
@@ -756,6 +838,13 @@ export function createCloudSyncPlugin(
           () => void persistLocal().catch((error) => context.diagnostics.error('云同步队列保存失败', error)),
           0,
         );
+      });
+      context.events.subscribe<{origin?:string}>('document.replaced',message=>{
+        if(message.payload.origin==='cloud'||!local.projectId||!leaseId)return;
+        books.clear();recoveryAvailable=true;
+        pending=[{id:`restored-${crypto.randomUUID()}`,label:'恢复本机书籍',timestamp:Date.now(),forward:[],inverse:[],sourceMessageId:'local-recovery',historyAction:'none'}];
+        update({pendingCommits:pending.length});
+        void persistLocal().catch(error=>context.diagnostics.warn('恢复后的云保存标记暂未写入',error));
       });
       context.signals.subscribe<{ documentRevision: number }>(
         'system.persistence.automaticSave.requested',
@@ -801,6 +890,15 @@ export function createCloudSyncPlugin(
         'system.personalAssets.get', { key: QUEUE_ASSET_KEY },
       );
       pending = parsePendingQueue(queueAsset?.text);
+      if(queueAsset?.text&&pending.length){
+        try {
+          const marker=JSON.parse(queueAsset.text) as {formatVersion?:number;projectId?:string;documentRevision?:number};
+          if(marker.formatVersion===2){
+            const current=await context.queries.ask<{revision:number}>('system.document.revision');
+            recoveryAvailable=marker.projectId===local.projectId&&current.revision>=(marker.documentRevision??0);
+          }
+        } catch { recoveryAvailable=false; }
+      }
       const persistence = await context.queries.ask<PersistenceSnapshot>('system.persistence');
       update({
         pendingCommits: pending.length,
@@ -826,6 +924,7 @@ export function createCloudSyncPlugin(
 
     stop() {
       stopped = true;
+      stopRuntime();
       cancelRenewalTimer?.();
       cancelRenewalTimer = undefined;
       leaseId = undefined;
@@ -902,80 +1001,11 @@ function parsePendingQueue(value: string | undefined): TransactionCommitRecord[]
   if (!value) return [];
   try {
     const parsed = JSON.parse(value) as unknown;
+    if(isRecord(parsed)&&parsed.formatVersion===2&&parsed.dirty===true)return [{id:'resume-local-book',label:'本机未上传修改',timestamp:Date.now(),forward:[],inverse:[],sourceMessageId:'local-recovery',historyAction:'none'}];
     return Array.isArray(parsed) ? parsed.filter(isCommitRecord).slice(-2400) : [];
   } catch {
     return [];
   }
-}
-
-export function externalizeCloudCommit(commit: TransactionCommitRecord): {
-  commit: TransactionCommitRecord;
-  chunks: Array<{ id: string; value: unknown }>;
-} {
-  const chunks: Array<{ id: string; value: unknown }> = [];
-  const externalize = (patches: TransactionCommitRecord['forward']) => patches.map((patch) => {
-    if (patch.op !== 'set' || patch.domain !== 'document' || patch.namespace !== CLOUD_CONTENT_CHUNK_NAMESPACE) return patch;
-    chunks.push({ id: patch.key, value: patch.value });
-    return { ...patch, value: { [CHUNK_REFERENCE]: patch.key } };
-  });
-  return {
-    commit: { ...structuredClone(commit), forward: externalize(commit.forward), inverse: externalize(commit.inverse) },
-    chunks,
-  };
-}
-
-export function hydrateRemoteDocument(bootstrap: CloudBootstrap): CloudCheckpoint['document'] {
-  const document = structuredClone(bootstrap.checkpoint?.document ?? { revision: 0, namespaces: {} });
-  const chunks = new Map(bootstrap.chunks.map((chunk) => [chunk.id, chunk.value]));
-  document.namespaces[CLOUD_CONTENT_CHUNK_NAMESPACE] = Object.fromEntries(chunks);
-  for (const operation of bootstrap.operations) applyOperation(document, operation, chunks);
-  return document;
-}
-
-function applyOperation(
-  document: CloudCheckpoint['document'],
-  operation: CloudOperation,
-  chunks: Map<string, unknown>,
-) {
-  let changed = false;
-  for (const patch of operation.commit.forward) {
-    if (patch.domain !== 'document') continue;
-    const namespace = document.namespaces[patch.namespace] ?? {};
-    document.namespaces[patch.namespace] = namespace;
-    if (patch.op === 'delete') delete namespace[patch.key];
-    else namespace[patch.key] = hydrateChunkReference(patch.value, chunks);
-    changed = true;
-  }
-  if (changed) document.revision += 1;
-}
-
-function hydrateChunkReference(value: unknown, chunks: Map<string, unknown>): unknown {
-  if (!isRecord(value) || typeof value[CHUNK_REFERENCE] !== 'string') return value;
-  const id = value[CHUNK_REFERENCE];
-  if (!chunks.has(id)) throw new Error(`云端正文分块缺失：${id}`);
-  return structuredClone(chunks.get(id));
-}
-
-function dedupeChunks(chunks: Array<{ id: string; value: unknown }>) {
-  return [...new Map(chunks.map((chunk) => [chunk.id, chunk])).values()];
-}
-
-function chunkBatches(chunks: Array<{ id: string; value: unknown }>): Array<Array<{ id: string; value: unknown }>> {
-  const batches: Array<Array<{ id: string; value: unknown }>> = [];
-  let current: Array<{ id: string; value: unknown }> = [];
-  let bytes = 0;
-  for (const chunk of chunks) {
-    const size = new TextEncoder().encode(JSON.stringify(chunk)).byteLength;
-    if (current.length && (current.length >= 32 || bytes + size > 8 * 1024 * 1024)) {
-      batches.push(current);
-      current = [];
-      bytes = 0;
-    }
-    current.push(chunk);
-    bytes += size;
-  }
-  if (current.length) batches.push(current);
-  return batches;
 }
 
 async function completeBootstrap(
@@ -1015,7 +1045,9 @@ async function requestJson<T>(
   try { body = await response.json(); } catch { body = undefined; }
   if (!response.ok) {
     const message = isRecord(body) && typeof body.error === 'string' ? body.error : `HTTP ${response.status}`;
-    throw new CloudHttpError(response.status, message, body);
+    const retry = response.headers.get('retry-after');
+    const wait = retry ? (/^\d+$/u.test(retry) ? Number(retry) * 1_000 : Math.max(0, Date.parse(retry) - Date.now())) : 0;
+    throw new CloudHttpError(response.status, message, body, Number.isFinite(wait) ? wait : 0);
   }
   return body as T;
 }
@@ -1023,11 +1055,13 @@ async function requestJson<T>(
 class CloudHttpError extends Error {
   readonly status: number;
   readonly detail?: unknown;
+  readonly retryAfterMs: number;
 
-  constructor(status: number, message: string, detail?: unknown) {
+  constructor(status: number, message: string, detail?: unknown, retryAfterMs = 0) {
     super(message);
     this.status = status;
     this.detail = detail;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 

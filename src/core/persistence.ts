@@ -10,6 +10,7 @@ import { TaskScheduler } from './task-scheduler.ts';
 import { WorkerService, WorkerUnavailableError } from './worker-service.ts';
 import { CheckpointPerformanceMonitor } from './checkpoint-performance.ts';
 import type { PersonalTextAssetRecord } from '../protocols/personal-assets.ts';
+import type { LocalStorageUsage, LocalCleanupResult } from '../protocols/local-storage.ts';
 import {
   CONTENT_CHUNK_NAMESPACE,
   CONTENT_CHUNK_REFERENCE,
@@ -49,6 +50,7 @@ export interface PersistedApplication {
 interface RecoveryPointRecord {
   summary: RecoveryPointSummary;
   snapshot: StoredPersistedApplication;
+  backedUp?: boolean;
 }
 
 export type PersistenceStatus = PersistenceSnapshot;
@@ -358,6 +360,56 @@ export class PersistenceService {
       .sort((left, right) => right.createdAt - left.createdAt);
   }
 
+  async localStorageUsage(): Promise<LocalStorageUsage> {
+    await this.ioTail;
+    const labels: Record<string,string> = { snapshots:'当前本地书籍与撤销历史',journal:'未合并编辑记录',recovery:'恢复副本',contentChunks:'书籍正文及恢复引用',personalAssets:'个人资源与待上传标记',meta:'个人设置与文件授权' };
+    const categories: LocalStorageUsage['categories'] = [];
+    if(this.database)for(const [id,label] of Object.entries(labels)){
+      const summary=await measureStore(this.database,id);
+      categories.push({id,label,...summary});
+    }
+    let estimate: StorageEstimate|undefined;
+    try{estimate=await globalThis.navigator?.storage?.estimate();}catch{/* Estimates are best effort. */}
+    return {measuredAt:Date.now(),categories,originUsedBytes:estimate?.usage,originQuotaBytes:estimate?.quota,
+      lastCleanupAt:this.database?await readValue<number>(this.database,'meta','last-safe-cleanup'):undefined};
+  }
+
+  async confirmBackup(documentRevision:number):Promise<{confirmed:boolean}>{
+    if(documentRevision!==this.store.getDomainRevision('document')||!this.database)return {confirmed:false};
+    const latest=await readValue<StoredPersistedApplication>(this.database,'snapshots','latest');
+    if(!latest)return {confirmed:false};
+    const fingerprint=storedDocumentFingerprint(latest);
+    await this.queueIO(async()=>{
+      const records=await readAll<RecoveryPointRecord>(this.database!,'recovery');
+      for(const record of records)if((isChunkExternalized(latest)?latest.application:latest).store.document.revision===documentRevision&&storedDocumentFingerprint(record.snapshot)===fingerprint){
+        await writeValue(this.database!,'recovery',record.summary.id,{...record,backedUp:true});
+      }
+      await writeValue(this.database!,'meta','last-confirmed-backup',{documentRevision,confirmedAt:Date.now()});
+    });
+    return {confirmed:true};
+  }
+
+  async cleanupLocalStorage(includeBackedUpRecovery=false):Promise<LocalCleanupResult>{
+    // Flush only the journal: cleanup must not replace the user's recovery point.
+    await this.flushJournal(false);
+    let removedRecords=0;
+    if(this.database)await this.queueIO(async()=>{
+      const records=(await readAll<RecoveryPointRecord>(this.database!,'recovery')).sort((a,b)=>b.summary.createdAt-a.summary.createdAt);
+      const seen=new Set<string>();
+      for(const record of records){
+        const key=storedDocumentFingerprint(record.snapshot);
+        if(includeBackedUpRecovery&&record.backedUp&&seen.has(key)){
+          await deleteValue(this.database!,'recovery',record.summary.id);removedRecords++;
+        }else seen.add(key);
+      }
+      const before=this.persistedContentChunkIds.size;
+      await collectContentChunkGarbage(this.database!,this.persistedContentChunkIds);
+      removedRecords+=before-this.persistedContentChunkIds.size;
+      await writeValue(this.database!,'meta','last-safe-cleanup',Date.now());
+    });
+    return {removedRecords,usage:await this.localStorageUsage()};
+  }
+
   async readRecoveryPoint(id: string): Promise<PersistedApplication> {
     if (!this.database) throw new Error('当前浏览器不支持本地恢复点');
     await this.ioTail;
@@ -473,6 +525,7 @@ export class PersistenceService {
       report(0.55);
       await this.queueIO(async () => {
         await writeCheckpoint(database, externalized, this.persistedContentChunkIds);
+          await pruneRecovery(database, RECOVERY_LIMIT);
         await collectContentChunkGarbage(database, this.persistedContentChunkIds);
       });
       performanceSnapshot = monitor.finish(performanceNow() - prepareStarted, usedWorker);
@@ -1007,9 +1060,10 @@ async function collectContentChunkGarbage(
   database: IDBDatabase,
   persistedChunkIds: Set<string>,
 ): Promise<void> {
-  const [latest, recovery] = await Promise.all([
+  const [latest, recovery, journal] = await Promise.all([
     readValue<StoredPersistedApplication>(database, 'snapshots', 'latest'),
     readAll<RecoveryPointRecord>(database, 'recovery'),
+    readAll<TransactionCommitRecord>(database,'journal'),
   ]);
   const retained = new Set<string>();
   if (latest && isChunkExternalized(latest)) {
@@ -1018,6 +1072,14 @@ async function collectContentChunkGarbage(
   for (const record of recovery) {
     if (!isChunkExternalized(record.snapshot)) continue;
     for (const id of record.snapshot.contentChunkIds) retained.add(id);
+  }
+  for(const record of journal)for(const patch of [...record.forward,...record.inverse]){
+    if(patch.namespace!==CONTENT_CHUNK_NAMESPACE||patch.op!=='set')continue;
+    retained.add(patch.key);
+    if(patch.value&&typeof patch.value==='object'&&CONTENT_CHUNK_REFERENCE in patch.value){
+      const reference=(patch.value as Record<string,unknown>)[CONTENT_CHUNK_REFERENCE];
+      if(typeof reference==='string')retained.add(reference);
+    }
   }
   const expired = [...persistedChunkIds].filter((id) => !retained.has(id));
   if (expired.length === 0) return;
@@ -1037,7 +1099,14 @@ async function collectContentChunkGarbage(
 async function pruneRecovery(database: IDBDatabase, limit: number): Promise<void> {
   const records = (await readAll<RecoveryPointRecord>(database, 'recovery'))
     .sort((left, right) => right.summary.createdAt - left.summary.createdAt);
-  const expired = records.slice(limit);
+  // Unique drafts and manually named recovery points are never aged out by
+  // count alone. Only already-backed-up, exact duplicate documents qualify.
+  const seen=new Set<string>();
+  const expired = records.filter((record,index)=>{
+    const key=storedDocumentFingerprint(record.snapshot);
+    const eligible=index>=limit&&record.backedUp&&seen.has(key);
+    seen.add(key);return eligible;
+  });
   if (expired.length === 0) return;
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction('recovery', 'readwrite');
@@ -1046,5 +1115,26 @@ async function pruneRecovery(database: IDBDatabase, limit: number): Promise<void
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error ?? new Error('Recovery cleanup aborted'));
+  });
+}
+
+function storedDocumentFingerprint(value:StoredPersistedApplication):string{
+  return JSON.stringify([(isChunkExternalized(value)?value.application:value).store.document,
+    isChunkExternalized(value)?[...value.activeContentChunkIds].sort():[]]);
+}
+
+function deleteValue(database:IDBDatabase,store:string,key:IDBValidKey):Promise<void>{
+  return new Promise((resolve,reject)=>{const tx=database.transaction(store,'readwrite');tx.objectStore(store).delete(key);
+    tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});
+}
+
+function measureStore(database:IDBDatabase,name:string):Promise<{bytes:number;records:number}>{
+  return new Promise((resolve,reject)=>{
+    let bytes=0,records=0;
+    const tx=database.transaction(name,'readonly'),request=tx.objectStore(name).openCursor();
+    request.onsuccess=()=>{const cursor=request.result;if(!cursor)return;records++;
+      try{bytes+=new TextEncoder().encode(JSON.stringify(cursor.value)??'').length;}catch{/* Native file handles are opaque. */}
+      cursor.continue();};
+    tx.oncomplete=()=>resolve({bytes,records});tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
   });
 }

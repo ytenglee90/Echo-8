@@ -1,5 +1,8 @@
 import dataWorkerSource from '../../../cloud/data-worker/worker.js?raw';
 import dataSchema from '../../../cloud/data-worker/schema.sql?raw';
+import bookFormatSource from '../../../cloud/data-worker/book-format.js?raw';
+import bookServiceSource from '../../../cloud/data-worker/book-service.js?raw';
+import maintenanceSource from '../../../cloud/data-worker/maintenance.js?raw';
 import {
   CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES,
   CLOUD_DATA_WORKER_VERSION,
@@ -62,6 +65,9 @@ export async function provisionInstallation(input: ProvisionInput): Promise<Stor
   const form = new FormData();
   form.set('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }), 'metadata.json');
   form.set('worker.js', new Blob([dataWorkerSource], { type: 'application/javascript+module' }), 'worker.js');
+  for (const [name, source] of [['book-format.js', bookFormatSource], ['book-service.js', bookServiceSource], ['maintenance.js', maintenanceSource]]) {
+    form.set(name, new Blob([source], { type: 'application/javascript+module' }), name);
+  }
   await cloudflareApi(accessToken, `${accountPath}/workers/scripts/${encodeURIComponent(installation.workerName)}`, {
     method: 'PUT',
     body: form,
@@ -69,6 +75,9 @@ export async function provisionInstallation(input: ProvisionInput): Promise<Stor
   await cloudflareApi(accessToken, `${accountPath}/workers/scripts/${encodeURIComponent(installation.workerName)}/subdomain`, {
     method: 'POST',
     body: JSON.stringify({ enabled: true, previews_enabled: false }),
+  });
+  await cloudflareApi(accessToken, `${accountPath}/workers/scripts/${encodeURIComponent(installation.workerName)}/schedules`, {
+    method: 'PUT', body: JSON.stringify([{ cron: '*/5 * * * *' }]),
   });
   const subdomain = await cloudflareApi<{ subdomain?: string }>(accessToken, `${accountPath}/workers/subdomain`);
   if (!subdomain.subdomain) throw new Error('该 Cloudflare 账户尚未设置 workers.dev 子域名');

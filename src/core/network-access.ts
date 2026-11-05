@@ -365,8 +365,8 @@ function validateRequestInit(init: RequestInit, maxBytes: number): RequestInit {
 
 function validateSyncRequestInit(init: RequestInit, maxBytes: number): RequestInit {
   const method = (init.method ?? 'GET').toUpperCase();
-  if (!['GET', 'POST', 'PATCH', 'DELETE'].includes(method)) {
-    throw new Error('云同步只允许 GET、POST、PATCH 或 DELETE 请求');
+  if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    throw new Error('云同步只允许 GET、POST、PUT、PATCH 或 DELETE 请求');
   }
   const headers = new Headers(init.headers);
   for (const [name] of headers) {

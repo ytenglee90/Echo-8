@@ -855,3 +855,9 @@
   .cloud-sync-summary.phase-connecting > i,
   .cloud-sync-summary.phase-syncing > i { animation: none; }
 }
+.local-storage-details { margin: 10px 0; font-size: 12px; color: var(--muted); }
+.local-storage-details summary { cursor: pointer; color: var(--ink); }
+.local-storage-details dl > div { display: flex; justify-content: space-between; gap: 12px; margin: 6px 0; }
+.local-storage-details dd { margin: 0; white-space: nowrap; }
+.local-storage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.local-storage-actions button { padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--control-surface); color: var(--ink); cursor: pointer; }

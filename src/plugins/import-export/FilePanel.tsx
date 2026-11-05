@@ -22,6 +22,8 @@ import {
 import { PRODUCT_NAME } from '../../product.ts';
 import { Icon, IconButton } from '../../ui/Icon.tsx';
 import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
+import type { LocalStorageUsage } from '../../protocols/local-storage.ts';
+import type {} from '../../protocols/local-storage.ts';
 import {
   chooseNativeTextExport,
   chooseNativeTextExportDirectory,
@@ -46,6 +48,9 @@ export function FilePanel({ client }: { client: ViewClient }) {
   const [reloadToken, setReloadToken] = useState(0);
   const [savedDocumentRevision, setSavedDocumentRevision] = useState<number>();
   const [fileState, setFileState] = useState<FileRuntimeState>();
+  const [storageUsage,setStorageUsage]=useState<LocalStorageUsage>();
+  const [cleanupBusy,setCleanupBusy]=useState(false);
+  const [cleanupMessage,setCleanupMessage]=useState('');
 
   useEffect(() => {
     let current = true;
@@ -63,10 +68,12 @@ export function FilePanel({ client }: { client: ViewClient }) {
     void Promise.all([
       client.ask<PersistenceSnapshot>('system.persistence'),
       client.ask<RecoveryPointSummary[]>('system.recovery.list'),
-    ]).then(([nextPersistence, nextRecovery]) => {
+      client.ask<LocalStorageUsage>('system.storage.usage'),
+    ]).then(([nextPersistence, nextRecovery,nextStorage]) => {
       if (!current) return;
       setPersistence(nextPersistence);
       setRecoveryPoints(nextRecovery);
+      setStorageUsage(nextStorage);
     });
     return () => {
       current = false;
@@ -263,6 +270,19 @@ export function FilePanel({ client }: { client: ViewClient }) {
                 fileState?.cloudProjectActive === true,
               )}</span>
         </div>
+        <details className="local-storage-details">
+          <summary>浏览器本地数据占用与清理</summary>
+          <p className="file-note">分类大小为数据估算；未保存草稿、待上传修改、个人设置和唯一恢复副本始终保留。</p>
+          {storageUsage?.originUsedBytes!==undefined&&<p>本站浏览器占用约 {formatStorageBytes(storageUsage.originUsedBytes)}{storageUsage.originQuotaBytes?` / 可用额度 ${formatStorageBytes(storageUsage.originQuotaBytes)}`:''}</p>}
+          <dl>{storageUsage?.categories.map(category=><div key={category.id}><dt>{category.label}</dt><dd>{formatStorageBytes(category.bytes)} · {category.records} 条</dd></div>)}</dl>
+          <div className="local-storage-actions">{[false,true].map(backed=><button key={String(backed)} type="button" disabled={cleanupBusy} onClick={()=>{
+            setCleanupBusy(true);setCleanupMessage('');
+            void client.dispatch('system.storage.cleanup',{includeBackedUpRecovery:backed}).then(result=>{
+              setStorageUsage(result.usage);setCleanupMessage(`已清理 ${result.removedRecords} 条无引用或已备份的多余数据`);setReloadToken(value=>value+1);
+            }).catch(error=>setSettingsError(error instanceof Error?error.message:String(error))).finally(()=>setCleanupBusy(false));
+          }}>{backed?'清理已备份的多余恢复副本':'清理无引用缓存'}</button>)}</div>
+          {cleanupMessage&&<p role="status">{cleanupMessage}</p>}
+        </details>
         <div className="persistence-detail">
           <span>待合并日志 {persistence?.journalEntries ?? 0} 条</span>
           <span>恢复点 {persistence?.recoveryPoints ?? recoveryPoints.length} 个</span>
@@ -356,6 +376,10 @@ export function FilePanel({ client }: { client: ViewClient }) {
       )}
     </section>
   );
+}
+
+function formatStorageBytes(bytes:number):string{
+  return bytes>=1_000_000?`${(bytes/1_000_000).toFixed(2)} MB`:`${Math.ceil(bytes/1_000)} KB`;
 }
 
 export function ArtifactDownloadHost({ client }: { client: ViewClient }) {

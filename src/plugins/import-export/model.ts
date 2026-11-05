@@ -132,6 +132,8 @@ export function createImportExportPlugin(
         'system.document.replace',
         'system.persistence.checkpoint',
         'system.persistence.setAutosaveInterval',
+        'system.storage.cleanup',
+        'system.persistence.confirmBackup',
         'system.recovery.restore',
         'file.commitImportedDocuments',
         'cloudSync.syncNow',
@@ -143,6 +145,7 @@ export function createImportExportPlugin(
       asks: [
         'system.project.source', 'system.document.revision', 'system.persistence',
         'system.recovery.list', 'system.recovery.preview', 'cloudSync.state',
+        'system.storage.usage',
       ],
       signals: [
         'file.status', 'file.artifact.ready', 'file.recovery.changed',
@@ -452,6 +455,7 @@ export function createImportExportPlugin(
               lastProjectSavedRevision = source.document.revision;
               saveLocationRequired = false;
             }
+            if(destination)void context.commands.dispatch('system.persistence.confirmBackup',{documentRevision:source.document.revision}).catch(()=>undefined);
             context.signals.emit('file.save-state.changed', fileState());
             return `${payload.mode === 'copy' ? '本地副本已另存' : '书籍已保存'}（${formatBytes(bytes)}）`;
           }, (task) => {
@@ -614,6 +618,7 @@ export function createImportExportPlugin(
               }
               lastProjectSavedRevision = source.document.revision;
               saveLocationRequired = false;
+              void context.commands.dispatch('system.persistence.confirmBackup',{documentRevision:source.document.revision}).catch(()=>undefined);
               pendingOpen = { kind: 'picker', phase: 'ready-to-choose' };
               context.signals.emit('file.save-state.changed', fileState());
               publishPendingOpen();

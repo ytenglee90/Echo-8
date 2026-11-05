@@ -117,7 +117,7 @@ export class TransactionManager {
 
     await this.publishEvent(
       'transaction.committed',
-      { id, label: proposal.label, record: committed },
+      { id, label: proposal.label, record: committed, documentRevision: this.store.getDomainRevision('document') },
       'core.transaction',
       envelope.id,
     );
@@ -134,7 +134,7 @@ export class TransactionManager {
     const record = this.applyHistory(entry, 'undo', entry.inverse);
     this.history.markUndone();
     await this.publishEvent('history.changed', this.history.getState(), 'core.history', causationId);
-    await this.publishEvent('transaction.committed', { id: record.id, label: record.label, record }, 'core.history', causationId);
+    await this.publishEvent('transaction.committed', { id: record.id, label: record.label, record, documentRevision: this.store.getDomainRevision('document') }, 'core.history', causationId);
     return true;
   }
 
@@ -144,7 +144,7 @@ export class TransactionManager {
     const record = this.applyHistory(entry, 'redo', entry.forward);
     this.history.markRedone();
     await this.publishEvent('history.changed', this.history.getState(), 'core.history', causationId);
-    await this.publishEvent('transaction.committed', { id: record.id, label: record.label, record }, 'core.history', causationId);
+    await this.publishEvent('transaction.committed', { id: record.id, label: record.label, record, documentRevision: this.store.getDomainRevision('document') }, 'core.history', causationId);
     return true;
   }
 

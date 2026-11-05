@@ -135,6 +135,15 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
       </div>
 
       {(localError || state.error) && <p className="cloud-sync-error">{localError || state.error}</p>}
+      {state.retryAt&&state.phase==='offline'&&<p className="file-note">本机恢复副本继续保留；计划于 {formatTime(state.retryAt)} 重试同步。</p>}
+      {state.storageUsage?.capacityBytes&&state.storageUsage.usedBytes/state.storageUsage.capacityBytes>=.8&&<p className="cloud-sync-warning" role="status">
+        {state.storageUsage.usedBytes/state.storageUsage.capacityBytes>=.95?'云端空间即将用尽':'云端空间已使用超过 80%'}。系统会自动回收无引用旧数据；保存失败时仍保留本地修改。</p>}
+      {state.lastSyncedAt&&<p className="file-note">最近保存到云端：{formatTime(state.lastSyncedAt)}{state.lastUploadBytes!==undefined?` · 本次新增传输 ${Math.ceil(state.lastUploadBytes/1_000)} KB`:''}</p>}
+      {state.maintenance&&<p className="file-note">最近自动维护：{formatTime(state.maintenance.checkedAt)} · 回收 {state.maintenance.removedRows} 条{state.maintenance.errors?' · 部分维护待重试':''}</p>}
+      {state.shortcutsError&&<div className="cloud-sync-warning"><p>快捷键：{state.shortcutsError}</p>
+        <button type="button" disabled={Boolean(busy)} onClick={()=>void run('shortcuts',()=>client.dispatch('cloudSync.resolveShortcuts',{choice:'local'}))}>使用本机快捷键</button>
+        <button type="button" disabled={Boolean(busy)} onClick={()=>void run('shortcuts',()=>client.dispatch('cloudSync.resolveShortcuts',{choice:'account'}))}>使用账号快捷键</button>
+      </div>}
 
       {!state.configured && (
         <div className="cloud-sync-empty">
@@ -316,6 +325,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
       <div className="cloud-sync-section cloud-sync-data-boundary">
         <h3>跨设备数据范围</h3>
         <p><strong>随书同步：</strong>画布内容、纠错与补全规则、书内插件数据。</p>
+        <p><strong>账号同步：</strong>仅自定义快捷键。主题预设、收藏颜色、布局、草稿及撤销历史保留本机。</p>
         <p><strong>保留本机：</strong>本地语义模型与索引、本地与远程语义设置、远程语义和 AI 的 API KEY。换设备后可导入个人配置，并重新下载本地模型。</p>
       </div>
       <p className="cloud-sync-footnote">编辑数据从浏览器直接发送到你账户里的 Worker，不经过本站正文数据库。</p>

@@ -6,6 +6,7 @@ import {
 } from '../../core/contracts.ts';
 import { defineManifest } from '../manifest.ts';
 import type { ShortcutCenterState } from './types.ts';
+import type {} from '../../protocols/shortcut-sync.ts';
 import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 
 export const SHORTCUT_CENTER_NAMESPACE = 'shortcutCenter';
@@ -26,6 +27,7 @@ export function createShortcutCenterPlugin(panel?: unknown): PluginDefinition {
         'shortcuts.resetOverride',
         'shortcuts.resetAll',
         'shortcuts.restorePreferences',
+        'shortcuts.applyAccountSettings',
       ],
       dispatches: ['shortcuts.restorePreferences', 'system.preferences.set'],
       events: ['shortcuts.changed'],
@@ -154,6 +156,12 @@ export function createShortcutCenterPlugin(panel?: unknown): PluginDefinition {
           '恢复个人快捷键设置',
           context.ui.validateShortcutOverrides(payload.overrides),
         ),
+      });
+      context.commands.register({
+        type: 'shortcuts.applyAccountSettings',
+        validate: (payload): payload is import('../../protocols/shortcut-sync.ts').PersonalShortcutsSnapshot =>
+          isRecord(payload) && Array.isArray(payload.overrides) && payload.overrides.every(isStoredShortcutOverride),
+        handle: payload => overridesTransaction('同步账号快捷键', context.ui.validateShortcutOverrides(payload.overrides)),
       });
       context.events.subscribe('shortcuts.changed', () => {
         context.ui.shortcutOverrides(readOverrides());

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import dataWorker from '../cloud/data-worker/worker.js';
+import { SQLiteD1 } from './helpers/d1.ts';
 import {
   CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES,
   CLOUD_DATA_WORKER_VERSION,
@@ -34,7 +35,7 @@ test('cloud control cryptography signs sessions, encrypts grants and issues inst
 });
 
 test('cloud data Worker release detection upgrades older installs without downgrading newer ones', () => {
-  assert.equal(CLOUD_DATA_WORKER_VERSION, 4);
+  assert.equal(CLOUD_DATA_WORKER_VERSION, 5);
   assert.equal(cloudDataWorkerUpgradeAvailable(1), true);
   assert.equal(cloudDataWorkerUpgradeAvailable(CLOUD_DATA_WORKER_VERSION), false);
   assert.equal(cloudDataWorkerUpgradeAvailable(CLOUD_DATA_WORKER_VERSION + 1), false);
@@ -88,7 +89,7 @@ test('user data Worker exposes only health without a token and enforces the conf
   }), env);
   assert.equal(health.status, 200);
   assert.equal(health.headers.get('access-control-allow-origin'), 'https://canvas.example');
-  assert.deepEqual(await health.json(), { ok: true, apiVersion: 1, workerVersion: CLOUD_DATA_WORKER_VERSION });
+  assert.deepEqual(await health.json(), { ok: true, apiVersion: 1, workerVersion: CLOUD_DATA_WORKER_VERSION, bookFormat: 2 });
 
   const preflight = await dataWorker.fetch(new Request('https://data.example/v1/projects/project-123456', {
     method: 'OPTIONS',
@@ -289,173 +290,7 @@ class LegacyControlD1 {
   }
 }
 
-class MemoryD1 {
-  readonly sizeBytes = 12_500_000;
-  readonly projects = new Map<string, Record<string, unknown>>();
-  readonly leases = new Map<string, Record<string, unknown>>();
-  readonly chunks = new Map<string, Record<string, unknown>>();
-  readonly checkpointManifests = new Map<string, Record<string, unknown>>();
-  readonly checkpointParts = new Map<string, Array<Record<string, unknown>>>();
-
-  prepare(sql: string) { return new MemoryD1Statement(this, sql); }
-
-  async batch(statements: MemoryD1Statement[]) {
-    const results = [];
-    for (const statement of statements) results.push(await statement.run());
-    return results;
-  }
-
-  run(sql: string, args: unknown[]) {
-    const normalized = normalizeSql(sql);
-    if (normalized.startsWith('INSERT INTO projects')) {
-      const [id, name, createdAt, updatedAt] = args;
-      this.projects.set(String(id), {
-        id, name, created_at: createdAt, updated_at: updatedAt, head_revision: 0,
-        checkpoint_revision: 0, checkpoint_key: null, deleted_at: null,
-      });
-      return changed();
-    }
-    if (normalized.startsWith('UPDATE projects SET name')) {
-      const [name, updatedAt, projectId] = args;
-      const project = this.projects.get(String(projectId));
-      if (!project) return unchanged();
-      project.name = name;
-      project.updated_at = updatedAt;
-      return changed();
-    }
-    if (normalized.startsWith('UPDATE projects SET deleted_at')) {
-      const [deletedAt, updatedAt, projectId] = args;
-      const project = this.projects.get(String(projectId));
-      if (!project) return unchanged();
-      project.deleted_at = deletedAt;
-      project.updated_at = updatedAt;
-      return changed();
-    }
-    if (normalized.startsWith('INSERT INTO leases')) {
-      const [projectId, leaseId, deviceId, expiresAt, updatedAt] = args;
-      this.leases.set(String(projectId), {
-        project_id: projectId, lease_id: leaseId, device_id: deviceId,
-        expires_at: expiresAt, updated_at: updatedAt,
-      });
-      return changed();
-    }
-    if (normalized.startsWith('UPDATE leases SET expires_at')) {
-      const [expiresAt, updatedAt, projectId, leaseId, deviceId] = args;
-      const lease = this.leases.get(String(projectId));
-      if (!lease || lease.lease_id !== leaseId || lease.device_id !== deviceId) return unchanged();
-      lease.expires_at = expiresAt;
-      lease.updated_at = updatedAt;
-      return changed();
-    }
-    if (normalized.startsWith('DELETE FROM leases')) {
-      const [projectId, leaseId, deviceId] = args;
-      const lease = this.leases.get(String(projectId));
-      if (lease?.lease_id === leaseId && lease?.device_id === deviceId) this.leases.delete(String(projectId));
-      return changed();
-    }
-    if (normalized.startsWith('INSERT INTO content_chunks')) {
-      const [projectId, chunkId, bodyJson, sizeBytes, updatedAt] = args;
-      this.chunks.set(`${projectId}:${chunkId}`, {
-        project_id: projectId, chunk_id: chunkId, body_json: bodyJson,
-        size_bytes: sizeBytes, updated_at: updatedAt,
-      });
-      return changed();
-    }
-    if (normalized.startsWith('DELETE FROM checkpoint_parts')) {
-      this.checkpointParts.delete(`${args[0]}:${args[1]}`);
-      return changed();
-    }
-    if (normalized.startsWith('DELETE FROM checkpoint_manifests')) {
-      this.checkpointManifests.delete(`${args[0]}:${args[1]}`);
-      return changed();
-    }
-    if (normalized.startsWith('INSERT INTO checkpoint_manifests')) {
-      const [projectId, revision, partCount, sizeBytes, createdAt] = args;
-      this.checkpointManifests.set(`${projectId}:${revision}`, {
-        project_id: projectId, revision, part_count: partCount, size_bytes: sizeBytes, created_at: createdAt,
-      });
-      return changed();
-    }
-    if (normalized.startsWith('INSERT INTO checkpoint_parts')) {
-      const [projectId, revision, partIndex, bodyText, sizeBytes] = args;
-      const key = `${projectId}:${revision}`;
-      const parts = this.checkpointParts.get(key) ?? [];
-      parts[Number(partIndex)] = {
-        project_id: projectId, revision, part_index: partIndex, body_text: bodyText, size_bytes: sizeBytes,
-      };
-      this.checkpointParts.set(key, parts);
-      return changed();
-    }
-    if (normalized.startsWith('UPDATE projects SET updated_at')) {
-      const [updatedAt, headRevision, checkpointRevision, checkpointKey, projectId, expectedHead] = args;
-      const project = this.projects.get(String(projectId));
-      if (!project || project.head_revision !== expectedHead) return unchanged();
-      project.updated_at = updatedAt;
-      project.head_revision = headRevision;
-      project.checkpoint_revision = checkpointRevision;
-      project.checkpoint_key = checkpointKey;
-      return changed();
-    }
-    throw new Error(`MemoryD1 cannot run SQL: ${normalized}`);
-  }
-
-  all(sql: string, args: unknown[]) {
-    const normalized = normalizeSql(sql);
-    if (normalized === 'SELECT 1 AS echo8_storage_probe') {
-      return { results: [{ echo8_storage_probe: 1 }], meta: { size_after: this.sizeBytes } };
-    }
-    if (normalized.includes('FROM projects WHERE deleted_at IS NULL')) {
-      return {
-        results: [...this.projects.values()]
-          .filter((project) => project.deleted_at == null)
-          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at)),
-      };
-    }
-    if (normalized.includes('FROM operations WHERE project_id = ? AND revision > ?')) return { results: [] };
-    if (normalized.includes('FROM content_chunks')) {
-      const [projectId, ...ids] = args.map(String);
-      return {
-        results: ids.flatMap((id) => {
-          const row = this.chunks.get(`${projectId}:${id}`);
-          return row ? [{ chunk_id: row.chunk_id, body_json: row.body_json }] : [];
-        }),
-      };
-    }
-    if (normalized.includes('FROM checkpoint_parts')) {
-      return { results: [...(this.checkpointParts.get(`${args[0]}:${args[1]}`) ?? [])] };
-    }
-    throw new Error(`MemoryD1 cannot query SQL: ${normalized}`);
-  }
-
-  first(sql: string, args: unknown[]) {
-    const normalized = normalizeSql(sql);
-    if (normalized.includes('FROM projects WHERE id = ? AND deleted_at IS NULL')) {
-      const project = this.projects.get(String(args[0]));
-      return project?.deleted_at == null ? project : null;
-    }
-    if (normalized.includes('FROM leases WHERE project_id = ?')) return this.leases.get(String(args[0])) ?? null;
-    if (normalized.includes('FROM checkpoint_manifests')) {
-      return this.checkpointManifests.get(`${args[0]}:${args[1]}`) ?? null;
-    }
-    throw new Error(`MemoryD1 cannot read SQL: ${normalized}`);
-  }
-}
-
-class MemoryD1Statement {
-  private args: unknown[] = [];
-  private readonly db: MemoryD1;
-  private readonly sql: string;
-
-  constructor(db: MemoryD1, sql: string) {
-    this.db = db;
-    this.sql = sql;
-  }
-  bind(...args: unknown[]) { this.args = args; return this; }
-  async run() { return this.db.run(this.sql, this.args); }
-  async all() { return this.db.all(this.sql, this.args); }
-  async first() { return this.db.first(this.sql, this.args); }
-}
+class MemoryD1 extends SQLiteD1 {}
 
 function normalizeSql(sql: string) { return sql.replace(/\s+/gu, ' ').trim(); }
 function changed() { return { success: true, meta: { changes: 1 } }; }
-function unchanged() { return { success: true, meta: { changes: 0 } }; }

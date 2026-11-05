@@ -31,10 +31,12 @@ export interface ApplicationQueryMap {
   'system.actions': ValidatedMessage;
   'system.document.revision': ValidatedMessage;
   'system.persistence': ValidatedMessage;
+  'system.storage.usage': ValidatedMessage;
   'system.personalAssets.get': ValidatedMessage;
   'system.plugins': ValidatedMessage;
   'system.preferences.get': ValidatedMessage;
   'system.project.source': ValidatedMessage;
+  'system.project.catalog': ValidatedMessage;
   'system.recovery.list': ValidatedMessage;
   'system.recovery.preview': ValidatedMessage;
   'system.runtime': ValidatedMessage;

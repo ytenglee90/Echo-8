@@ -194,3 +194,26 @@ test('local model downloads use only fixed public assets and enforce redirected-
     /跳转到了未授权地址/,
   );
 });
+
+test('cloud sync egress permits authenticated PUT verified book blocks and shortcut settings', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const service = new NetworkAccessService({
+    fetcher: (async (input, init) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch,
+  });
+  service.configureOrigins('cloud-sync', ['https://data.example']);
+
+  const response = await service.request('cloud-sync', 'sync', 'https://data.example/v1/projects/project-123456', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+    body: JSON.stringify({ name: '新名称' }),
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(calls[0]?.init?.method, 'PUT');
+  assert.equal(calls[0]?.init?.credentials, 'omit');
+});

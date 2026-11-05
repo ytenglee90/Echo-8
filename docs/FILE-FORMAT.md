@@ -43,3 +43,5 @@ The footer stores the number of logical entries and CRC32 over every preceding e
 - Search indexes, statistics, previews and other rebuildable caches are not required for recovery.
 
 正文格式仍使用 `textFormat` storageVersion 2 与有序 `textFormatMark` 记录。paragraph 标记可用等值起止锚点表示末尾空段；选区标记仍为非空范围。读写必须保留 markIds 的顺序、作用域及锚点偏置。排版控制和旧 selection 标记兼容投影见 ADR-0123；不会改写 TXT 正文或重新解释已存储的字号/字距数值。
+
+云端 book formatVersion 2 与本地 .echo8 formatVersion 2 是不同边界。云端用当前头和哈希分块实现增量上传；本地导出继续是无历史的完整压缩容器。共享书籍保留 document 实际外观，不含账号快捷键或个人布局。release 5 与旧日志迁移规则见 ADR-0124。

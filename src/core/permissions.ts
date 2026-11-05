@@ -70,6 +70,8 @@ const COMMAND_PERMISSIONS: Record<string, string> = {
   'system.document.new': 'persistence.manage',
   'system.persistence.checkpoint': 'persistence.manage',
   'system.persistence.setAutosaveInterval': 'persistence.manage',
+  'system.persistence.confirmBackup': 'persistence.manage',
+  'system.storage.cleanup': 'persistence.manage',
   'system.preferences.set': 'preferences.manage',
   'system.personalAssets.set': 'personal.assets.manage',
   'system.recovery.restore': 'persistence.manage',

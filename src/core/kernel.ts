@@ -513,6 +513,24 @@ export class ApplicationKernel {
         };
       },
     });
+    this.router.registerQuery<undefined, ProjectSource['plugins']>('core.persistence', {
+      type: 'system.project.catalog',
+      handle: () => mergeProjectCatalog(this.persistence.getProjectPlugins(), this.plugins.projectCatalog()),
+    });
+    this.router.registerQuery('core.persistence',{
+      type:'system.storage.usage',handle:()=>this.persistence.localStorageUsage(),
+    });
+    this.router.registerCommand<{includeBackedUpRecovery?:boolean},import('../protocols/local-storage.ts').LocalCleanupResult>('core.persistence',{
+      type:'system.storage.cleanup',
+      validate:(payload):payload is {includeBackedUpRecovery?:boolean}=>payload===undefined||isRecord(payload)&&
+        (payload.includeBackedUpRecovery===undefined||typeof payload.includeBackedUpRecovery==='boolean'),
+      handle:async payload=>({result:await this.persistence.cleanupLocalStorage(payload?.includeBackedUpRecovery)}),
+    });
+    this.router.registerCommand<{documentRevision:number},{confirmed:boolean}>('core.persistence',{
+      type:'system.persistence.confirmBackup',
+      validate:(payload):payload is {documentRevision:number}=>isRecord(payload)&&Number.isSafeInteger(payload.documentRevision),
+      handle:async payload=>({result:await this.persistence.confirmBackup(payload.documentRevision)}),
+    });
     this.router.registerQuery<undefined, RecoveryPointSummary[]>('core.persistence', {
       type: 'system.recovery.list',
       handle: () => this.persistence.listRecoveryPoints(),

@@ -1,3 +1,6 @@
+import { readHead, routeBookRequest } from './book-service.js';
+import { maintenanceStatus, runMaintenance } from './maintenance.js';
+
 const API_VERSION = 1;
 const LEASE_MS = 90_000;
 const MAX_COMMITS = 256;
@@ -8,7 +11,8 @@ const D1_CHUNK_QUERY_SIZE = 75;
 const D1_FREE_DATABASE_CAPACITY_BYTES = 500_000_000;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, context) {
+    if (env.DB?.withSession) env = { ...env, DB: env.DB.withSession('first-primary') };
     if (request.method === 'OPTIONS') return corsResponse(request, env, new Response(null, { status: 204 }));
     try {
       const url = new URL(request.url);
@@ -17,11 +21,16 @@ export default {
           ok: true,
           apiVersion: API_VERSION,
           workerVersion: positiveInteger(env.DATA_WORKER_VERSION, 1),
+          bookFormat: env.STORAGE_MODE === 'r2' ? 1 : 2,
         }));
       }
       const identity = await authorize(request, env);
       let response;
-      if (url.pathname === '/v1/storage' && request.method === 'GET') {
+      if (url.pathname === '/v2/maintenance' && request.method === 'POST') {
+        response = json(await runMaintenance(env, maintenanceHelpers, true));
+      } else if (url.pathname.startsWith('/v2/')) {
+        response = await routeBookRequest(request, env, url, identity, { readJson, requireProject, projectSummary, storageUsage });
+      } else if (url.pathname === '/v1/storage' && request.method === 'GET') {
         response = await readStorageUsage(env);
       } else if (url.pathname === '/v1/projects' && request.method === 'GET') {
         response = await listProjects(env);
@@ -30,13 +39,38 @@ export default {
       } else {
         response = await routeProject(request, env, url, identity);
       }
+      if (context?.waitUntil && response.ok && url.pathname !== '/v2/maintenance') {
+        context.waitUntil(runMaintenance(env, maintenanceHelpers).catch(() => undefined));
+      }
       return corsResponse(request, env, response);
     } catch (error) {
       const status = Number.isInteger(error?.status) ? error.status : 500;
-      const message = status >= 500 ? '数据服务暂时不可用' : String(error?.message || error);
+      const message = status >= 500 && status !== 507 ? '数据服务暂时不可用' : String(error?.message || error);
       if (status >= 500) console.error('echo8-data-worker', error);
-      return corsResponse(request, env, json({ error: message }, status));
+      return corsResponse(request, env, json({ error: message, ...(error?.code ? { code: error.code } : {}) }, status));
     }
+  },
+  async scheduled(_event, env, context) {
+    if (env.DB?.withSession) env = { ...env, DB: env.DB.withSession('first-primary') };
+    context.waitUntil(runMaintenance(env, maintenanceHelpers, true));
+  },
+};
+
+const maintenanceHelpers = {
+  legacyBootstrap: async (projectId, env) => {
+    const first = await (await bootstrapProject(projectId, env)).json();
+    let after = first.operations.at(-1)?.revision ?? first.checkpointRevision;
+    const chunks = new Map(first.chunks.map(chunk => [chunk.id, chunk]));
+    while (after < first.project.headRevision) {
+      const operations = await readOperations(projectId, after, env);
+      if (!operations.length) throw new Error('迁移源操作缺失');
+      first.operations.push(...operations);
+      for (const chunk of await readChunkValues(projectId, [...operationChunkIds(operations)], env)) chunks.set(chunk.id, chunk);
+      after = operations.at(-1).revision;
+      if (first.operations.length > 20_000) throw new Error('迁移源过大，需要分批恢复');
+    }
+    first.chunks = [...chunks.values()];
+    return first;
   },
 };
 
@@ -47,7 +81,7 @@ function positiveInteger(value, fallback) {
 
 async function readStorageUsage(env) {
   const result = await env.DB.prepare('SELECT 1 AS echo8_storage_probe').all();
-  return json({ storage: storageUsage(env, result) });
+  return json({ storage: storageUsage(env, result), maintenance: await maintenanceStatus(env) });
 }
 
 function storageUsage(env, result) {
@@ -82,6 +116,9 @@ async function routeProject(request, env, url, identity) {
   if (!match) throw httpError(404, '接口不存在');
   const projectId = match[1];
   const action = match[2];
+  if (['bootstrap', 'changes', 'chunks', 'sync'].includes(action) && await readHead(env, projectId)) {
+    return json({ error: '书籍已升级，请刷新应用后继续；本地未上传修改仍保留', code: 'client_upgrade_required' }, 426);
+  }
   if (!action && request.method === 'PATCH') return renameProject(projectId, request, env);
   if (!action && request.method === 'DELETE') return deleteProject(projectId, env);
   if (action === 'bootstrap' && request.method === 'GET') return bootstrapProject(projectId, env);
@@ -512,7 +549,7 @@ function corsResponse(request, env, response) {
   if (origin && origin.replace(/\/$/, '') === allowed) {
     response.headers.set('access-control-allow-origin', origin);
     response.headers.set('vary', 'Origin');
-    response.headers.set('access-control-allow-methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+    response.headers.set('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
     response.headers.set('access-control-allow-headers', 'authorization,content-type');
     response.headers.set('access-control-max-age', '86400');
   }

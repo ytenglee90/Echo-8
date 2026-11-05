@@ -7,7 +7,7 @@ export const CLOUD_API_VERSION = 1 as const;
  * only when existing installations must republish that Worker or apply D1
  * migrations. It is intentionally separate from the browser wire protocol.
  */
-export const CLOUD_DATA_WORKER_VERSION = 4 as const;
+export const CLOUD_DATA_WORKER_VERSION = 5 as const;
 export const CLOUD_STORAGE_USAGE_WORKER_VERSION = 4 as const;
 /** Conservative per-database ceiling used by the D1-first free installation. */
 export const CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES = 500_000_000 as const;
@@ -143,4 +143,10 @@ export interface CloudSyncState {
   storageUsage?: CloudStorageUsage;
   storageUsageError?: string;
   error?: string;
+  errorKind?: 'conflict' | 'lease' | 'authorization' | 'upgrade' | 'capacity' | 'rate-limit' | 'service' | 'network';
+  retryAt?: number;
+  lastUploadBytes?: number;
+  maintenance?: { checkedAt: number; removedRows: number; errors: number };
+  shortcutsSyncedAt?: number;
+  shortcutsError?: string;
 }
