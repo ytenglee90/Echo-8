@@ -81,10 +81,10 @@ export default defineConfig(async () => {
     // Tests need a stable page, not hot-reload behavior. In particular, a
     // Vite HMR update is not meaningful inside the managed Web Worker.
     server: isPlaywrightServer
-      ? { hmr: false, watch: { ignored: ['**/artifacts/**', '**/test-results/**'] } }
+      ? { hmr: false, watch: { ignored: ['**/artifacts/**', '**/test-results/**', '**/local-data/**'] } }
       : isCodexSeatbeltSandbox
-        ? { watch: { useFsEvents: false, usePolling: true } }
-        : undefined,
+        ? { watch: { useFsEvents: false, usePolling: true, ignored: ['**/local-data/**'] } }
+        : { watch: { ignored: ['**/local-data/**'] } },
     plugins: [
       workerSafeDynamicImport,
       vinext(),

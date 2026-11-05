@@ -157,6 +157,26 @@ export async function commitUpload(env, project, body) {
 }
 
 export async function routeBookRequest(request, env, url, identity, helpers) {
+  if (url.pathname === '/v2/preferences') {
+    const current = await env.DB.prepare('SELECT revision, body_json FROM account_preferences WHERE user_id=?').bind(identity.sub).first();
+    if (request.method === 'GET') return json({ revision: Number(current?.revision ?? 0), preferences: current ? JSON.parse(current.body_json) : null });
+    if (request.method !== 'PUT') throw fail(405, '不支持的操作');
+    const body = await helpers.readJson(request), value = body.preferences;
+    if (!Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0 || !value || value.schemaVersion !== 1 ||
+      ![0, 1000, 30000, 60000, 120000, 300000, 600000, 1800000].includes(value.autosaveIntervalMs) ||
+      ![null, 8, 20, 50, 100].includes(value.recoveryRetentionLimit) ||
+      Object.keys(value).some(key => !['schemaVersion', 'autosaveIntervalMs', 'recoveryRetentionLimit'].includes(key)) ||
+      Object.keys(body).some(key => !['expectedRevision', 'preferences'].includes(key))) throw fail(400, '个人保存设置格式无效');
+    const result = await env.DB.prepare(`INSERT INTO account_preferences(user_id, revision, body_json, updated_at) SELECT ?, 1, ?, ? WHERE ?=0
+      ON CONFLICT(user_id) DO UPDATE SET revision=account_preferences.revision+1, body_json=excluded.body_json, updated_at=excluded.updated_at WHERE account_preferences.revision=?`)
+      .bind(identity.sub, JSON.stringify(value), Date.now(), body.expectedRevision, body.expectedRevision).run();
+    if (!result.meta?.changes) {
+      const updated = await env.DB.prepare('UPDATE account_preferences SET revision=revision+1, body_json=?, updated_at=? WHERE user_id=? AND revision=?')
+        .bind(JSON.stringify(value), Date.now(), identity.sub, body.expectedRevision).run();
+      if (!updated.meta?.changes) throw fail(409, '另一台设备已修改保存设置，请重新同步', 'preferences_conflict');
+    }
+    return json({ revision: body.expectedRevision + 1 });
+  }
   if (url.pathname === '/v2/shortcuts') {
     const current = await env.DB.prepare('SELECT revision, body_json, updated_at FROM account_shortcuts WHERE user_id=?').bind(identity.sub).first();
     if (request.method === 'GET') return json({ revision: Number(current?.revision ?? 0), overrides: current ? JSON.parse(current.body_json) : [], updatedAt: Number(current?.updated_at ?? 0) });

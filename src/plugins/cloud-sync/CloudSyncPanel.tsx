@@ -119,6 +119,16 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
         <button type="button" disabled={Boolean(busy)} onClick={()=>void run('shortcuts',()=>client.dispatch('cloudSync.resolveShortcuts',{choice:'local'}))}>使用本机快捷键</button>
         <button type="button" disabled={Boolean(busy)} onClick={()=>void run('shortcuts',()=>client.dispatch('cloudSync.resolveShortcuts',{choice:'account'}))}>使用账号快捷键</button>
       </div>}
+      {state.authenticated && <div className="cloud-sync-section">
+        <h3>个人账户配置</h3>
+        <p className="file-note">自动保存间隔（实时、定时、关闭）和自动保留数量（含“不限制”）随账号同步，换设备后恢复。恢复副本保存在各设备本地。</p>
+        {state.persistencePreferencesSyncedAt && <p className="file-note">保存设置已同步：{formatTime(state.persistencePreferencesSyncedAt)}</p>}
+        {state.persistencePreferencesError && <p className="cloud-sync-warning" role="status">{state.persistencePreferencesError}</p>}
+        {state.persistencePreferencesConflict ? <div className="local-storage-actions">
+          <button type="button" disabled={Boolean(busy)} onClick={() => void run('preferences', () => client.dispatch('cloudSync.resolvePersistencePreferences', { choice: 'local' }))}>使用本机保存设置</button>
+          <button type="button" disabled={Boolean(busy)} onClick={() => void run('preferences', () => client.dispatch('cloudSync.resolvePersistencePreferences', { choice: 'account' }))}>使用账号保存设置</button>
+        </div> : <button type="button" disabled={Boolean(busy) || !state.activeInstallationId} onClick={() => void run('preferences', () => client.dispatch('cloudSync.syncPersistencePreferences'))}>同步保存设置</button>}
+      </div>}
 
       {!state.configured && (
         <div className="cloud-sync-empty">
@@ -299,7 +309,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
       <div className="cloud-sync-section cloud-sync-data-boundary">
         <h3>跨设备数据范围</h3>
         <p><strong>随书同步：</strong>画布内容、纠错与补全规则、书内插件数据。</p>
-        <p><strong>账号同步：</strong>仅自定义快捷键。主题预设、收藏颜色、布局、草稿及撤销历史保留本机。</p>
+        <p><strong>账号同步：</strong>自定义快捷键、自动保存间隔、恢复副本自动保留数量。主题预设、收藏颜色、布局、草稿及撤销历史保留本机。</p>
         <p><strong>保留本机：</strong>本地语义模型与索引、本地与远程语义设置、远程语义和 AI 的 API KEY。换设备后可导入个人配置，并重新下载本地模型。</p>
       </div>
       <p className="cloud-sync-footnote">编辑数据从浏览器直接发送到你账户里的 Worker，不经过本站正文数据库。</p>

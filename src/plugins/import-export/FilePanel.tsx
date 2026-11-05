@@ -315,6 +315,7 @@ export function FilePanel({ client }: { client: ViewClient }) {
                 ? '浏览器会持续更新本机恢复副本，并按上方间隔覆盖当前书籍文件。'
                 : '当前尚未选择书籍保存位置：后台只更新本机浏览器恢复副本（IndexedDB），不会生成 .echo8 文件、不会写入任何文件夹；要长期保留，请点击“保存书籍”。'
         }</p>
+        <p className="file-note">自动保存间隔随个人账号同步，换设备后恢复；未登录时仍在本机保留。</p>
         {settingsError && <p className="autosave-settings-error" role="alert">{settingsError}</p>}
         <IconButton icon="snapshot" label="创建手动恢复点" className="icon-button recovery-create" disabled={busy || cleanupBusy} onClick={() => void client.dispatch('file.createRecoveryPoint')} />
         <RecoveryManager client={client} refreshToken={reloadToken} disabled={busy || cleanupBusy || persistence?.state === 'memory-only'} onChanged={() => setReloadToken((value) => value + 1)} />

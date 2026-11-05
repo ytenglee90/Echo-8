@@ -10,6 +10,7 @@ import { TaskScheduler } from './task-scheduler.ts';
 import { WorkerService, WorkerUnavailableError } from './worker-service.ts';
 import { CheckpointPerformanceMonitor } from './checkpoint-performance.ts';
 import type { PersonalTextAssetRecord } from '../protocols/personal-assets.ts';
+import { isPersistencePreferences, type PersistencePreferences } from '../protocols/persistence-preferences.ts';
 import type { LocalStorageUsage, LocalCleanupResult } from '../protocols/local-storage.ts';
 import {
   isRecoveryRetentionLimit,
@@ -393,6 +394,28 @@ export class PersistenceService {
   }
 
   async setRecoveryRetention(limit: number | null): Promise<RecoveryMaintenanceResult> {
+    return this.updateRecoveryPreferences(limit);
+  }
+
+  persistencePreferences(): PersistencePreferences {
+    return { schemaVersion: 1, autosaveIntervalMs: this.autosaveIntervalMs, recoveryRetentionLimit: this.recoveryRetentionLimit };
+  }
+
+  async applyPersistencePreferences(preferences: PersistencePreferences): Promise<PersistencePreferences> {
+    if (!isPersistencePreferences(preferences)) throw new Error('个人保存设置格式无效');
+    if (preferences.recoveryRetentionLimit === this.recoveryRetentionLimit) {
+      await this.setAutosaveInterval(preferences.autosaveIntervalMs);
+      return this.persistencePreferences();
+    }
+    await this.updateRecoveryPreferences(preferences.recoveryRetentionLimit, preferences.autosaveIntervalMs);
+    this.autosaveIntervalMs = preferences.autosaveIntervalMs;
+    this.setStatus({ ...this.status });
+    this.clearAutomaticSaveRequest();
+    this.scheduleAutomaticSaveRequest();
+    return this.persistencePreferences();
+  }
+
+  private async updateRecoveryPreferences(limit: number | null, intervalMs?: number): Promise<RecoveryMaintenanceResult> {
     if (!this.database) throw new Error('当前浏览器不支持本地恢复副本管理');
     await this.checkpoint();
     const database = this.database;
@@ -402,14 +425,18 @@ export class PersistenceService {
       // The preference and immediate deletion either commit together or both remain unchanged.
       await new Promise<void>((resolve, reject) => {
         const tx = database.transaction(['meta', 'recovery'], 'readwrite');
-        tx.objectStore('meta').put(limit, RECOVERY_RETENTION_META_KEY);
-        for (const summary of expired) tx.objectStore('recovery').delete(summary.id);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
         tx.onabort = () => reject(tx.error);
+        try {
+          tx.objectStore('meta').put(limit, RECOVERY_RETENTION_META_KEY);
+          if (intervalMs !== undefined) tx.objectStore('meta').put(intervalMs, AUTOSAVE_INTERVAL_META_KEY);
+          for (const summary of expired) tx.objectStore('recovery').delete(summary.id);
+        } catch (error) { tx.abort(); reject(error); }
       });
       this.recoveryRetentionLimit = limit;
-      await collectContentChunkGarbage(database, this.persistedContentChunkIds);
+      try { await collectContentChunkGarbage(database, this.persistedContentChunkIds); }
+      catch (error) { this.diagnostics.record('warn', 'core.persistence', 'Recovery preference saved; unused chunk cleanup will retry later', error); }
       return expired.length;
     });
     return this.recoveryMaintenanceResult(removedPoints);

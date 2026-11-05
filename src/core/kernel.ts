@@ -21,6 +21,7 @@ import {
   type RecoveryPreview,
 } from '../protocols/files.ts';
 import type { RuntimeSnapshot } from '../protocols/runtime.ts';
+import { isPersistencePreferences, type PersistencePreferences } from '../protocols/persistence-preferences.ts';
 import {
   isRecoveryDeleteRequest,
   isRecoveryRetentionLimit,
@@ -327,6 +328,10 @@ export class ApplicationKernel {
     return this.plugins.list();
   }
 
+  private publishPersistencePreferences(): void {
+    this.router.emitSignal('system.persistence.preferences.changed', this.persistence.persistencePreferences(), 'core.persistence');
+  }
+
   private reportViewActionFailure(owner: string, type: string, error: unknown): void {
     if (error instanceof DOMException && error.name === 'AbortError') return;
     const message = (error instanceof Error ? error.message : '操作没有完成').slice(0, 240);
@@ -508,6 +513,7 @@ export class ApplicationKernel {
           { intervalMs: result.autosaveIntervalMs },
           'core.persistence',
         );
+        this.publishPersistencePreferences();
         return { result };
       },
     });
@@ -557,7 +563,23 @@ export class ApplicationKernel {
     this.router.registerCommand<{ limit: number | null }, RecoveryMaintenanceResult>('core.persistence', {
       type: 'system.recovery.setRetention@1',
       validate: (payload): payload is { limit: number | null } => isRecord(payload) && isRecoveryRetentionLimit(payload.limit),
-      handle: async (payload) => ({ result: await this.persistence.setRecoveryRetention(payload.limit) }),
+      handle: async (payload) => {
+        const result = await this.persistence.setRecoveryRetention(payload.limit);
+        this.publishPersistencePreferences();
+        return { result };
+      },
+    });
+    this.router.registerQuery<undefined, PersistencePreferences>('core.persistence', {
+      type: 'system.persistence.preferences@1', handle: () => this.persistence.persistencePreferences(),
+    });
+    this.router.registerCommand<PersistencePreferences, PersistencePreferences>('core.persistence', {
+      type: 'system.persistence.applyPreferences@1', validate: isPersistencePreferences,
+      handle: async (payload) => {
+        const result = await this.persistence.applyPersistencePreferences(payload);
+        this.router.emitSignal('system.persistence.autosaveInterval.changed', { intervalMs: result.autosaveIntervalMs }, 'core.persistence');
+        this.publishPersistencePreferences();
+        return { result };
+      },
     });
     this.router.registerQuery<{ id: string }, RecoveryPreview>('core.persistence', {
       type: 'system.recovery.preview',

@@ -154,6 +154,7 @@ export function createImportExportPlugin(
         'file.status', 'file.artifact.ready', 'file.recovery.changed',
         'file.save-state.changed', 'file.save-location.required', 'file.text-export-state.changed',
         'file.open-confirmation.changed',
+        'system.persistence.preferences.changed',
         'system.persistence.automaticSave.requested', 'cloudSync.updated',
       ],
       ui: ['file.panel', 'file.artifact-host'],

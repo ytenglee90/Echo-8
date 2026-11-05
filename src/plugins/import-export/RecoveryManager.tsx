@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { RecoveryPreview } from '../../protocols/files.ts';
+import type { PersistencePreferences } from '../../protocols/persistence-preferences.ts';
 import {
   RECOVERY_RETENTION_OPTIONS,
   type RecoveryCatalog,
@@ -27,8 +28,16 @@ export function RecoveryManager({ client, refreshToken, disabled, onChanged }: {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [preferencesVersion, setPreferencesVersion] = useState(0);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const requestVersion = useRef({ value: 0 });
+  const knownRetention = useRef<number | null | undefined>(undefined);
+
+  useEffect(() => client.subscribeSignal<PersistencePreferences>('system.persistence.preferences.changed', message => {
+    if (knownRetention.current === message.payload.recoveryRetentionLimit) return;
+    knownRetention.current = message.payload.recoveryRetentionLimit;
+    setPreferencesVersion(value => value + 1);
+  }), [client]);
 
   useEffect(() => {
     let current = true;
@@ -36,6 +45,7 @@ export function RecoveryManager({ client, refreshToken, disabled, onChanged }: {
     requestState.value++;
     void client.ask<RecoveryCatalog>('system.recovery.catalog@1').then((next) => {
       if (!current) return;
+      knownRetention.current = next.retentionLimit;
       setCatalog(next);
       setSelected([]);
       setPending(undefined);
@@ -43,7 +53,7 @@ export function RecoveryManager({ client, refreshToken, disabled, onChanged }: {
       setPreviewId(undefined);
     }).catch((reason) => current && setError(String(reason)));
     return () => { current = false; requestState.value++; };
-  }, [client, refreshToken]);
+  }, [client, refreshToken, preferencesVersion]);
 
   const busy = disabled || working;
   const maintain = async (action: PendingAction) => {
@@ -80,7 +90,7 @@ export function RecoveryManager({ client, refreshToken, disabled, onChanged }: {
         {RECOVERY_RETENTION_OPTIONS.map((limit) => <option value={limit} key={limit}>最近 {limit} 个</option>)}
       </select>
     </label>
-    <p className="file-note">启用数量限制后，较早的副本（含手动恢复点）会自动删除。副本正文可能共用，列表大小仅为副本记录的估算占用。</p>
+    <p className="file-note">启用数量限制后，较早的副本（含手动恢复点）会自动删除。此选择随个人账号同步，换设备后恢复；副本本身仅保存在本机。</p>
     <div className="local-storage-actions recovery-management-actions">
       <button type="button" disabled={busy || !catalog?.points.length} onClick={() => {
         setSelected(selected.length === catalog?.points.length ? [] : catalog!.points.map((point) => point.id));

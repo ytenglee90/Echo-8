@@ -131,4 +131,6 @@
 
 | [0126](ADR-0126-TRANSACTION-AUTHORITY-AND-CLEANUP.md) | 补丁来源授权、事务回退、特殊键兼容与重复实现清理 | 有效；内存授权收紧，文件与网络协议不变 |
 
+| [0127](ADR-0127-ACCOUNT-PERSISTENCE-PREFERENCES.md) | 自动保存间隔与恢复副本保留数量的个人账户同步 | 有效；数据 Worker 6、D1 迁移 4，文件与 IndexedDB 结构兼容 |
+
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

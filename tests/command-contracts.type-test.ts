@@ -31,6 +31,13 @@ async function compileTimeCommandContracts(): Promise<void> {
     intervalMs: 60_000,
   });
   persistence.autosaveIntervalMs.toFixed();
+  const preferences = await client.dispatch('system.persistence.applyPreferences@1', {
+    schemaVersion: 1, autosaveIntervalMs: 0, recoveryRetentionLimit: null,
+  });
+  preferences.autosaveIntervalMs.toFixed();
+  await client.dispatch('cloudSync.resolvePersistencePreferences', { choice: 'account' });
+  // @ts-expect-error retention cannot use a display string
+  await client.dispatch('system.persistence.applyPreferences@1', { schemaVersion: 1, autosaveIntervalMs: 0, recoveryRetentionLimit: 'none' });
 
   const recovery = await client.dispatch('system.recovery.delete@1', { ids: ['recovery:1'] });
   recovery.removedPoints.toFixed();

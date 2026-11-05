@@ -29,6 +29,7 @@ import type { ShortcutOverride } from '../../core/contracts.ts';
 import type {} from '../../protocols/shortcut-sync.ts';
 import { planShortcutSync, shortcutFingerprint, type ShortcutAccountState, type RemoteShortcuts } from './shortcut-sync.ts';
 import { addPendingBookChange, type PendingBookChange } from './pending-book.ts';
+import { registerPersistencePreferenceSync } from './persistence-preferences-sync.ts';
 export { externalizeCloudCommit, hydrateRemoteDocument } from './legacy-transport.ts';
 
 const LOCAL_STATE_KEY = 'cloud-session';
@@ -73,6 +74,7 @@ export function createCloudSyncPlugin(
       category: 'provider',
       commands: [
         'cloudSync.open', 'cloudSync.close', 'cloudSync.refresh', 'cloudSync.install', 'cloudSync.upgrade', 'cloudSync.syncShortcuts', 'cloudSync.resolveShortcuts',
+        'cloudSync.syncPersistencePreferences', 'cloudSync.resolvePersistencePreferences',
         'cloudSync.listProjects', 'cloudSync.openProject', 'cloudSync.createProject',
         'cloudSync.renameProject', 'cloudSync.requestDeleteProject',
         'cloudSync.cancelDeleteProject', 'cloudSync.confirmDeleteProject',
@@ -84,6 +86,7 @@ export function createCloudSyncPlugin(
         'system.preferences.set', 'system.personalAssets.set', 'system.document.replace',
         'system.document.new', 'system.persistence.checkpoint', 'bookLibrary.show', 'shortcuts.applyAccountSettings',
         'cloudSync.syncShortcuts',
+        'cloudSync.syncPersistencePreferences', 'system.persistence.applyPreferences@1',
         'system.persistence.confirmBackup',
       ],
       events: ['transaction.committed', 'document.replaced', 'shortcuts.changed'],
@@ -91,10 +94,12 @@ export function createCloudSyncPlugin(
       asks: [
         'system.preferences.get', 'system.personalAssets.get', 'system.project.source', 'system.project.catalog', 'system.document.revision',
         'system.persistence', 'cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation', 'shortcuts.state',
+        'system.persistence.preferences@1',
       ],
       signals: [
         'cloudSync.updated', 'cloudSync.deleteConfirmation.changed',
         'system.persistence.automaticSave.requested', 'system.persistence.autosaveInterval.changed',
+        'system.persistence.preferences.changed',
       ],
       ui: ['cloud-sync.status', 'cloud-sync.panel', 'cloud-sync.delete-dialog'],
       actions: ['cloud-sync.open-action', 'cloud-sync.now-action'],
@@ -227,7 +232,8 @@ export function createCloudSyncPlugin(
       let applyingShortcuts = false;
       let cancelShortcutSync: (() => void) | undefined;
       let shortcutSyncing = false;
-      stopRuntime=()=>{cancelRetry?.();cancelShortcutSync?.();books.clear();};
+      const stopPreferenceSync = registerPersistencePreferenceSync(context, { state: () => state, request: dataRequest, update });
+      stopRuntime=()=>{cancelRetry?.();cancelShortcutSync?.();stopPreferenceSync();books.clear();};
       const hasBookStorage = () => state.installations.some(item => item.id === local.installationId && item.workerVersion >= 5);
       context.commands.register({
         type:'cloudSync.resolveShortcuts',
@@ -569,6 +575,7 @@ export function createCloudSyncPlugin(
           projects = listed.projects;
           update({ activeInstallationId: installation.id, error: undefined });
           context.commands.defer('cloudSync.syncShortcuts');
+          context.commands.defer('cloudSync.syncPersistencePreferences');
           await refreshStorageUsage();
           await persistLocal(envelope);
           return { result: structuredClone(projects) };

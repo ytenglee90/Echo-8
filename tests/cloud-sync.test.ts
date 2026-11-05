@@ -35,7 +35,7 @@ test('cloud control cryptography signs sessions, encrypts grants and issues inst
 });
 
 test('cloud data Worker release detection upgrades older installs without downgrading newer ones', () => {
-  assert.equal(CLOUD_DATA_WORKER_VERSION, 5);
+  assert.equal(CLOUD_DATA_WORKER_VERSION, 6);
   assert.equal(cloudDataWorkerUpgradeAvailable(1), true);
   assert.equal(cloudDataWorkerUpgradeAvailable(CLOUD_DATA_WORKER_VERSION), false);
   assert.equal(cloudDataWorkerUpgradeAvailable(CLOUD_DATA_WORKER_VERSION + 1), false);
