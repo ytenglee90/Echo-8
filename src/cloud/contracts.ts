@@ -50,6 +50,7 @@ export interface CloudInstallationSummary {
 export interface CloudControlStatus {
   configured: boolean;
   authenticated: boolean;
+  reauthorizationRequired?: boolean;
   user?: { id: string; email?: string; name?: string };
   accounts: CloudAccountSummary[];
   installations: CloudInstallationSummary[];
@@ -126,6 +127,7 @@ export interface CloudSyncState {
   phase: CloudConnectionPhase;
   configured: boolean;
   authenticated: boolean;
+  reauthorizationRequired?: boolean;
   user?: CloudControlStatus['user'];
   accounts: CloudAccountSummary[];
   installations: CloudInstallationSummary[];

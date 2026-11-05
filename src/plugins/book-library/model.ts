@@ -11,6 +11,7 @@ export function createBookLibraryPlugin(homeView?: unknown): PluginDefinition {
       dependencies: ['cloud-sync', 'import-export'],
       commands: ['bookLibrary.show', 'bookLibrary.enterCanvas', 'bookLibrary.createLocal'],
       dispatches: [
+        'cloudSync.prepareReconnect',
         'cloudSync.close',
         'cloudSync.disconnectProject',
         'cloudSync.install',

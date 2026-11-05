@@ -89,6 +89,12 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
             />
           )}
           {state.authenticated && (
+            <button type="button" disabled={Boolean(busy)} onClick={() => void run('reconnect', async () => {
+              const result = await client.dispatch('cloudSync.prepareReconnect');
+              globalThis.location.assign(result.url);
+            })}>重新连接</button>
+          )}
+          {state.authenticated && (
             <IconButton
               icon="logout"
               label="退出账户"
@@ -139,14 +145,18 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
         </div>
       )}
 
-      {state.configured && !state.authenticated && (
+      {state.configured && (!state.authenticated || state.reauthorizationRequired) && (
         <div className="cloud-sync-onboarding">
-          <p>登录 Cloudflare 后，画布正文会存进你自己的 D1；本站只保存登录和安装信息。</p>
+          <p>{state.reauthorizationRequired ? 'Cloudflare 授权已过期，请重新连接。本机未上传修改会先保存。' : '登录 Cloudflare 后，画布正文会存进你自己的 D1；本站只保存登录和安装信息。'}</p>
           <button
             className="cloud-primary-button"
             type="button"
-            onClick={() => globalThis.location.assign('/api/cloud/oauth/start?returnTo=/')}
-          >连接我的 Cloudflare</button>
+            disabled={Boolean(busy)}
+            onClick={() => void run('reconnect', async () => {
+              const result = await client.dispatch('cloudSync.prepareReconnect');
+              globalThis.location.assign(result.url);
+            })}
+          >{state.reauthorizationRequired ? '重新连接 Cloudflare' : '连接我的 Cloudflare'}</button>
         </div>
       )}
 

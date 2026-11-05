@@ -45,9 +45,17 @@ export async function cloudStatusRoute(request: Request): Promise<Response> {
       listInstallations(env.CONTROL_DB, session.sub),
     ]);
     if (!user || !grant) return json(emptyStatus(true));
+    let reauthorizationRequired = false;
+    if (grant.expiresAt && grant.expiresAt <= Date.now() + 60_000) {
+      try {
+        const tokens = await decryptJson<OAuthTokenSet>(grant.tokenEncrypted, env.TOKEN_ENCRYPTION_KEY);
+        reauthorizationRequired = !tokens.refreshToken;
+      } catch { reauthorizationRequired = true; }
+    }
     const status: CloudControlStatus = {
       configured: true,
       authenticated: true,
+      reauthorizationRequired,
       user,
       accounts: grant.accounts,
       installations: installations.map(publicInstallation),

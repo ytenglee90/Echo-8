@@ -156,6 +156,10 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                 <small className="book-library-account-storage" title={storage.title}>{storage.label}</small>
                 <small className="book-library-account-access">{access}</small>
               </span>
+              <button type="button" disabled={Boolean(busy)} onClick={() => void run('reconnect', async () => {
+                const result = await client.dispatch('cloudSync.prepareReconnect');
+                globalThis.location.assign(result.url);
+              })}>重新连接</button>
               <button type="button" disabled={Boolean(busy)} onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}>
                 {busy === 'logout' && <ProcessingIndicator size={9} />}退出
               </button>
@@ -236,10 +240,14 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
                   : '你仍可以新建或打开本地书籍。'}
               </LibraryNotice>
             )}
-            {cloud.configured && !cloud.authenticated && (
+            {cloud.configured && (!cloud.authenticated || cloud.reauthorizationRequired) && (
               <LibraryNotice title="登录后选择自己的书籍">
                 <p>书籍正文保存在你自己的 Cloudflare D1，不放在网站主人的正文数据库。</p>
-                <button type="button" onClick={() => globalThis.location.assign('/api/cloud/oauth/start?returnTo=/')}>登录 Cloudflare</button>
+                {cloud.reauthorizationRequired && <p>Cloudflare 授权已过期，请重新连接。本机未上传修改会先保存。</p>}
+                <button type="button" disabled={Boolean(busy)} onClick={() => void run('reconnect', async () => {
+                  const result = await client.dispatch('cloudSync.prepareReconnect');
+                  globalThis.location.assign(result.url);
+                })}>{cloud.reauthorizationRequired ? '重新连接 Cloudflare' : '登录 Cloudflare'}</button>
               </LibraryNotice>
             )}
             {cloud.authenticated && !installation && (

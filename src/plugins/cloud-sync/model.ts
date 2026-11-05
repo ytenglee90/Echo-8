@@ -75,6 +75,7 @@ export function createCloudSyncPlugin(
       commands: [
         'cloudSync.open', 'cloudSync.close', 'cloudSync.refresh', 'cloudSync.install', 'cloudSync.upgrade', 'cloudSync.syncShortcuts', 'cloudSync.resolveShortcuts',
         'cloudSync.syncPersistencePreferences', 'cloudSync.resolvePersistencePreferences',
+        'cloudSync.prepareReconnect',
         'cloudSync.listProjects', 'cloudSync.openProject', 'cloudSync.createProject',
         'cloudSync.renameProject', 'cloudSync.requestDeleteProject',
         'cloudSync.cancelDeleteProject', 'cloudSync.confirmDeleteProject',
@@ -145,11 +146,16 @@ export function createCloudSyncPlugin(
         context.ui.deactivateSurface('overlay.modal', 'cloud-sync.delete-dialog');
         publishDeleteConfirmation();
       };
-      const controlRequest = <T>(path: string, init: RequestInit = {}) => requestJson<T>(
-        context.network.sync,
-        resolveControlUrl(path, controlOrigin),
-        init,
-      );
+      const controlRequest = async <T>(path: string, init: RequestInit = {}) => {
+        try { return await requestJson<T>(context.network.sync, resolveControlUrl(path, controlOrigin), init); }
+        catch (error) {
+          if (isHttpStatus(error, 401)) {
+            context.ui.activateSurface('right.primary', 'cloud-sync.panel', 'cloudSync.close');
+            update({ panelOpen: true, reauthorizationRequired: true, errorKind: 'authorization', error: errorMessage(error) });
+          }
+          throw error;
+        }
+      };
       const getAccess = async (force = false): Promise<CloudDataAccess> => {
         if (!local.installationId) throw new Error('尚未选择云存储安装');
         if (!force && access && access.expiresAt > Date.now() + 60_000) return access;
@@ -518,6 +524,16 @@ export function createCloudSyncPlugin(
       };
 
       context.queries.register({ type: 'cloudSync.state', handle: () => structuredClone(state) });
+      context.commands.register({
+        type: 'cloudSync.prepareReconnect',
+        handle: async (_payload, envelope) => {
+          const persistence = await context.queries.ask<PersistenceSnapshot>('system.persistence');
+          if (persistence.state === 'memory-only') throw new Error('当前浏览器无法保存本机恢复数据，请先导出书籍再重新连接');
+          await context.commands.invoke('system.persistence.checkpoint', { label: '重新连接账户前' });
+          await persistLocal(envelope);
+          return { result: { url: '/api/cloud/oauth/start?returnTo=/' } };
+        },
+      });
       context.queries.register({ type: 'cloudSync.projects', handle: () => structuredClone(projects) });
       context.queries.register({
         type: 'cloudSync.deleteConfirmation',
@@ -952,6 +968,7 @@ export function createCloudSyncPlugin(
     update({
       configured: control.configured,
       authenticated: control.authenticated,
+      reauthorizationRequired: control.reauthorizationRequired ?? false,
       accounts: control.accounts,
       installations: control.installations,
       activeInstallationId: local.installationId,

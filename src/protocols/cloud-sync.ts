@@ -6,6 +6,7 @@ import type {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'cloudSync.prepareReconnect': CommandContract<undefined, { url: string }>;
     'cloudSync.syncShortcuts': CommandContract<undefined, { synced: boolean }>;
     'cloudSync.resolveShortcuts': CommandContract<{choice:'local'|'account'}, {synced:boolean}>;
     'cloudSync.open': CommandContract<undefined, { open: boolean }>;
