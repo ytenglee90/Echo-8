@@ -1,5 +1,6 @@
 import { readHead, routeBookRequest } from './book-service.js';
 import { maintenanceStatus, runMaintenance } from './maintenance.js';
+import { BOOK_FORMAT } from './book-format.js';
 
 const API_VERSION = 1;
 const LEASE_MS = 90_000;
@@ -21,7 +22,7 @@ export default {
           ok: true,
           apiVersion: API_VERSION,
           workerVersion: positiveInteger(env.DATA_WORKER_VERSION, 1),
-          bookFormat: env.STORAGE_MODE === 'r2' ? 1 : 2,
+          bookFormat: env.STORAGE_MODE === 'r2' ? 1 : BOOK_FORMAT,
         }));
       }
       const identity = await authorize(request, env);

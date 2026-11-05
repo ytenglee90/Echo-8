@@ -27,6 +27,25 @@ export async function readBlocks(env, projectId, hashes) {
   return result.results.map(blockFromRow);
 }
 
+/** Bounded batch reads avoid one D1 subrequest per small content block. */
+export async function prefetchBookBlocks(env, projectId, hashes, cache, knownSizes) {
+  const missing = [...new Set(hashes)].filter(hash => !cache.has(hash));
+  if (!missing.length) return;
+  if (missing.length > MAX_BOOK_BLOCKS || missing.some(hash => !validHash(hash))) throw fail(400, '分块预取无效');
+  const statements = columns => {
+    const result = [];
+    for (let offset = 0; offset < missing.length; offset += 75) {
+      const batch = missing.slice(offset, offset + 75);
+      result.push(env.DB.prepare(`SELECT ${columns} FROM book_blocks WHERE project_id=? AND hash IN (${batch.map(() => '?').join(',')})`).bind(projectId, ...batch));
+    }
+    return result;
+  };
+  const sizes = knownSizes ?? new Map();
+  if (!knownSizes) for (const result of await env.DB.batch(statements('hash,raw_bytes'))) for (const row of result.results) sizes.set(row.hash, Number(row.raw_bytes));
+  if (missing.some(hash => !sizes.has(hash)) || missing.reduce((sum, hash) => sum + sizes.get(hash), 0) > 8 * 1024 * 1024) throw fail(400, '分块预取超过内存限制或引用缺失');
+  for (const result of await env.DB.batch(statements('hash,encoding,body_text,raw_bytes'))) for (const row of result.results) cache.set(row.hash, blockFromRow(row));
+}
+
 export async function stageUpload(env, project, body) {
   const projectId = project.id;
   await requireBookLease(env, projectId, body);
@@ -81,8 +100,17 @@ async function requireUpload(env, projectId, body) {
 }
 
 export async function uploadBlocks(env, projectId, body) {
+  return storeUploadBlocks(env, projectId, body, 16);
+}
+
+/** Trusted maintenance still uses the same lease, upload-list and hash checks. */
+export async function uploadPlannedBlocks(env, projectId, body) {
+  return storeUploadBlocks(env, projectId, body, 256);
+}
+
+async function storeUploadBlocks(env, projectId, body, maximum) {
   const upload = await requireUpload(env, projectId, body);
-  if (!Array.isArray(body.blocks) || body.blocks.length > 16) throw fail(413, '单次上传分块过多');
+  if (!Array.isArray(body.blocks) || body.blocks.length > maximum) throw fail(413, '单次上传分块过多');
   const references = await env.DB.prepare("SELECT hash FROM book_upload_refs WHERE project_id = ? AND save_id = ? AND action='add'").bind(projectId, body.saveId).all();
   const allowed = new Set(references.results.map(row => row.hash));
   const statements = [];
@@ -119,17 +147,20 @@ export async function commitUpload(env, project, body) {
   let plan;
   try {
     const root = JSON.parse(new TextDecoder().decode(await decodeBlock(await get(upload.root_hash))));
+    if (current) {
+      const previousRoot = JSON.parse(new TextDecoder().decode(await decodeBlock(await get(current.root_hash))));
+      if (previousRoot.formatVersion > root.formatVersion) throw fail(426, '请刷新应用后保存，旧客户端不能覆盖新格式书籍', 'client_upgrade_required');
+    }
     if (!Array.isArray(root.pages) || root.pages.some(hash => !validHash(hash)) ||
       root.pages.reduce((sum, hash) => sum + (sizes.get(hash) ?? 0), 0) > 8 * 1024 * 1024) throw new Error('清单过大');
-    const statements = [];
-    for (let offset = 0; offset < root.pages.length; offset += 75) {
-      const batch = root.pages.slice(offset, offset + 75);
-      statements.push(env.DB.prepare(`SELECT hash, encoding, body_text, raw_bytes FROM book_blocks WHERE project_id=? AND hash IN (${batch.map(() => '?').join(',')})`).bind(project.id, ...batch));
+    const prefetch = hashes => prefetchBookBlocks(env, project.id, hashes, cache, sizes);
+    await prefetch(root.pages);
+    plan = await inspectBook(upload.root_hash, get, new Set(sizes.keys()), prefetch);
+    for (const entry of plan.entries.values()) {
+      const size = entry.segments.reduce((sum, hash) => sum + (sizes.get(hash) ?? -1), 0);
+      if (entry.offset === undefined ? size !== entry.bytes : entry.offset + entry.bytes > size) throw new Error('记录长度不一致');
     }
-    if (statements.length) for (const result of await env.DB.batch(statements)) for (const row of result.results) cache.set(row.hash, blockFromRow(row));
-    plan = await inspectBook(upload.root_hash, get, new Set(sizes.keys()));
-    for (const entry of plan.entries.values()) if (entry.segments.reduce((sum, hash) => sum + (sizes.get(hash) ?? -1), 0) !== entry.bytes) throw new Error('记录长度不一致');
-  } catch { throw fail(400, '书籍清单或引用校验失败，原书籍保持可用'); }
+  } catch (error) { if (error?.status === 426) throw error; throw fail(400, '书籍清单或引用校验失败，原书籍保持可用'); }
   const now = Date.now();
   const revision = Number(upload.base_revision) + 1;
   // All writes share one D1 transaction. Every dependent statement is guarded
@@ -196,13 +227,20 @@ export async function routeBookRequest(request, env, url, identity, helpers) {
     }
     return json({ revision: body.expectedRevision + 1 });
   }
-  const match = /^\/v2\/projects\/([a-zA-Z0-9:_-]{6,160})\/(head|blocks|uploads|commit|reads)$/.exec(url.pathname);
+  const match = /^\/v2\/projects\/([a-zA-Z0-9:_-]{6,160})\/(head|blocks|uploads|commit|reads|baseline-blocks)$/.exec(url.pathname);
   if (!match) throw fail(404, '接口不存在');
   const project = await helpers.requireProject(match[1], env);
   const action = match[2];
   if (action === 'head' && request.method === 'GET') {
+    const readableFormat=Number(url.searchParams.get('format')??2);
+    if(!Number.isSafeInteger(readableFormat)||readableFormat<2)throw fail(400,'读取格式版本无效');
     const head = await readHead(env, project.id);
     if (!head) return json({ project: helpers.projectSummary(project), head: null });
+    if (readableFormat < 3) {
+      const rootBlock=(await readBlocks(env,project.id,[head.root_hash]))[0];
+      const root=JSON.parse(new TextDecoder().decode(await decodeBlock(rootBlock)));
+      if(root.formatVersion>2)throw fail(426,'这本书籍已优化为新格式，请刷新应用后重新打开，本机修改仍保留','client_upgrade_required');
+    }
     const readerId = `reader-${crypto.randomUUID()}`;
     const expiresAt = Date.now() + UPLOAD_TTL;
     const pinned = await env.DB.batch([env.DB.prepare(`INSERT INTO book_reads(project_id,reader_id,generation,expires_at)
@@ -215,6 +253,17 @@ export async function routeBookRequest(request, env, url, identity, helpers) {
     return json({ project: { ...helpers.projectSummary(project), headRevision: Number(head.revision) }, head: { revision: Number(head.revision), rootHash: head.root_hash, documentRevision: Number(head.document_revision), savedAt: Number(head.saved_at), readerId, expiresAt } });
   }
   const body = await helpers.readJson(request);
+  if (action === 'baseline-blocks' && request.method === 'POST') {
+    await requireBookLease(env, project.id, body);
+    if (!validHash(body.rootHash) || !Array.isArray(body.hashes) || !body.hashes.length || body.hashes.length > 75 ||
+      body.hashes.some(hash => !validHash(hash)) || new Set(body.hashes).size !== body.hashes.length) throw fail(400, '保存基线请求无效');
+    const rows = await env.DB.prepare(`SELECT b.hash,b.encoding,b.body_text,b.raw_bytes FROM book_blocks b
+      JOIN book_refs r ON r.project_id=b.project_id AND r.hash=b.hash JOIN book_heads h ON h.project_id=b.project_id
+      WHERE b.project_id=? AND h.root_hash=? AND b.hash IN (${body.hashes.map(() => '?').join(',')})`)
+      .bind(project.id,body.rootHash,...body.hashes).all();
+    if (rows.results.length !== body.hashes.length) throw fail(409, '保存基线已变化，本机修改仍保留', 'revision_conflict');
+    return json({ blocks: rows.results.map(blockFromRow) });
+  }
   if (action === 'reads' && request.method === 'DELETE') {
     await env.DB.prepare('DELETE FROM book_reads WHERE project_id=? AND reader_id=?').bind(project.id, String(body.readerId)).run();
     return json({ released: true });

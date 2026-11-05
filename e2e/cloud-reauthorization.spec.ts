@@ -13,8 +13,11 @@ for (const expiredAtStartup of [true, false]) test(`Cloudflare reconnect is reac
   await page.route('**/api/cloud/oauth/start?*', route => route.fulfill({ contentType: 'text/html', body: '<h1>Cloudflare authorization</h1>' }));
   await page.goto('/');
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
-  await expect(library.getByRole('button', { name: '重新连接', exact: true })).toBeVisible();
-  if (expiredAtStartup) await expect(library.getByRole('button', { name: '重新连接 Cloudflare', exact: true })).toBeVisible();
+  await expect(library).toBeVisible();
+  if (expiredAtStartup) {
+    await expect(library.getByRole('button', { name: '重新连接', exact: true })).toBeVisible();
+    await expect(library.getByRole('button', { name: '重新连接 Cloudflare', exact: true })).toBeVisible();
+  } else await expect(library.getByRole('button', { name: '重新连接', exact: true })).toHaveCount(0);
   await library.press('Escape');
   await page.getByRole('button', { name: '新建文本', exact: true }).click();
   await expect(page.locator('.text-node-card')).toHaveCount(3);
@@ -23,12 +26,18 @@ for (const expiredAtStartup of [true, false]) test(`Cloudflare reconnect is reac
   await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开 Cloudflare 云同步');
   await palette.getByRole('option', { name: /^打开 Cloudflare 云同步/u }).click();
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步', exact: true });
-  if (!expiredAtStartup) await panel.getByRole('button', { name: '一键升级', exact: true }).click();
+  if (!expiredAtStartup) {
+    await expect(panel.getByRole('button', { name: '重新连接', exact: true })).toHaveCount(0);
+    await panel.getByRole('button', { name: '一键升级', exact: true }).click();
+  }
   await expect(panel.getByRole('button', { name: '重新连接 Cloudflare', exact: true })).toBeVisible();
   await panel.getByRole('button', { name: '重新连接 Cloudflare', exact: true }).click();
   await expect(page).toHaveURL(/\/api\/cloud\/oauth\/start\?returnTo=\/$/u);
   restored = true;
-  await page.goto('/'); await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+  await page.goto('/');
+  await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Echo-8 书库' }).getByRole('button', { name: '重新连接', exact: true })).toHaveCount(0);
+  await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   await expect(page.locator('.text-node-card')).toHaveCount(3);
   await page.locator('.canvas-surface').click({ position: { x: 1100, y: 600 } });
   await page.keyboard.press('Control+z');

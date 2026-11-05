@@ -14,13 +14,14 @@ export class BookTransport {
   private plans = new Map<string, BookPlan>();
   private attempts=new Map<string,{plan:BookPlan;saveId:string;baseRevision:number;commits:string[]}>();
   private readonly request:Request;
-  constructor(request:Request) {this.request=request;}
+  private readonly formatVersion: () => number;
+  constructor(request:Request, formatVersion: () => number = () => 3) {this.request=request;this.formatVersion=formatVersion;}
 
   clear() { this.plans.clear();this.attempts.clear(); }
 
   async bootstrap(projectId: string): Promise<CloudBootstrap | undefined> {
     const prefix = `/v2/projects/${encodeURIComponent(projectId)}`;
-    const response = await this.request<{ project: CloudProjectSummary; head: Head | null }>(`${prefix}/head`);
+    const response = await this.request<{ project: CloudProjectSummary; head: Head | null }>(`${prefix}/head?format=3`);
     if (!response.head) return undefined;
     const head = response.head;
     const blocks = new Map<string, Block>();
@@ -43,7 +44,7 @@ export class BookTransport {
       const root = JSON.parse(new TextDecoder().decode(await decodeBlock(rootBlock))) as { pages: string[] };
       if (!Array.isArray(root.pages) || root.pages.length > 2_000) throw new Error('云端书籍清单无效');
       await fetchBlocks(root.pages);
-      const inspected = await inspectBook(head.rootHash, get);
+      const inspected = await inspectBook(head.rootHash, get, undefined, fetchBlocks);
       const missing = inspected.hashes.filter(hash => !blocks.has(hash));
       await fetchBlocks(missing);
       const source = await restoreBook(inspected, get) as ProjectSource;
@@ -67,7 +68,7 @@ export class BookTransport {
     const uncertain=this.attempts.get(input.projectId);
     if(uncertain){
       const prefix=`/v2/projects/${encodeURIComponent(input.projectId)}`;
-      const current=await this.request<{head:Head|null}>(`${prefix}/head`);
+      const current=await this.request<{head:Head|null}>(`${prefix}/head?format=3`);
       if(current.head){
         await this.request(`${prefix}/reads`,json({readerId:current.head.readerId},'DELETE')).catch(()=>undefined);
         if(current.head.rootHash===uncertain.plan.rootHash&&current.head.revision===uncertain.baseRevision+1){
@@ -77,13 +78,28 @@ export class BookTransport {
       }
     }
     const previous = this.plans.get(input.projectId);
+    const formatVersion = this.formatVersion();
+    if (previous && previous.root.formatVersion > formatVersion) throw new Error('请先升级个人数据服务，再保存这本新格式书籍');
     const incremental = previous && input.commits.length && input.commits.every(commit => commit.forward.length > 0);
     const source = uncertain ? undefined : incremental ? {
       document: { revision: input.commits.at(-1)?.documentRevision ?? previous.root.documentRevision + input.commits.filter(commit => commit.forward.some(patch => patch.domain === 'document')).length, namespaces: {} },
       plugins: await input.catalog(),
     } : await input.source();
-    const plan = uncertain?.plan ?? await planBook(source!, incremental ? previous : undefined,
-      incremental ? input.commits.flatMap(commit => commit.forward) : undefined) as BookPlan;
+    const patches = incremental ? input.commits.flatMap(commit => commit.forward) : undefined;
+    const baseline = new Map<string, Block>();
+    const getBaseline = (hash: string) => baseline.get(hash);
+    getBaseline.prefetch = async (needed: string[]) => {
+      const hashes = needed.filter(hash => !previous?.blocks.has(hash));
+      for (let offset = 0; offset < hashes.length; offset += 64) {
+        const result = await this.request<{blocks:Block[]}>(`/v2/projects/${encodeURIComponent(input.projectId)}/baseline-blocks`, json({
+          deviceId: input.deviceId, leaseId: input.leaseId, rootHash: previous!.rootHash, hashes: hashes.slice(offset, offset + 64),
+        }));
+        for (const block of result.blocks) baseline.set(block.hash, block);
+      }
+    };
+    let plan: BookPlan;
+    try { plan = uncertain?.plan ?? await planBook(source!, incremental ? previous : undefined, patches, getBaseline, formatVersion) as BookPlan; }
+    finally { baseline.clear(); }
     if (previous?.rootHash === plan.rootHash) return { revision: input.baseRevision, rootHash: plan.rootHash,
       savedAt: Date.now(), documentRevision: plan.root.documentRevision, uploadedBytes: 0, unchanged: true,acceptedIds:input.commits.map(commit=>commit.id) };
     const prefix = `/v2/projects/${encodeURIComponent(input.projectId)}`;
@@ -99,7 +115,7 @@ export class BookTransport {
     // from authoritative current content; never commit an incomplete manifest.
     let supply = plan.blocks;
     if (staged.missing.some(hash => !supply.has(hash))) {
-      const full = await planBook(await input.source()) as BookPlan;
+      const full = await planBook(await input.source(), undefined, undefined, undefined, formatVersion) as BookPlan;
       supply = new Map([...full.blocks, ...plan.blocks]);
       if (staged.missing.some(hash => !supply.has(hash))) throw new Error('本机保存基线已变化，请重试；修改仍保留');
     }

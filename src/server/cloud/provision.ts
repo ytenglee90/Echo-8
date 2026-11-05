@@ -3,6 +3,8 @@ import dataSchema from '../../../cloud/data-worker/schema.sql?raw';
 import bookFormatSource from '../../../cloud/data-worker/book-format.js?raw';
 import bookServiceSource from '../../../cloud/data-worker/book-service.js?raw';
 import maintenanceSource from '../../../cloud/data-worker/maintenance.js?raw';
+import bookBlockSource from '../../../cloud/data-worker/book-block.js?raw';
+import bookPackingSource from '../../../cloud/data-worker/book-packing.js?raw';
 import {
   CLOUD_D1_FREE_DATABASE_CAPACITY_BYTES,
   CLOUD_DATA_WORKER_VERSION,
@@ -65,7 +67,7 @@ export async function provisionInstallation(input: ProvisionInput): Promise<Stor
   const form = new FormData();
   form.set('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }), 'metadata.json');
   form.set('worker.js', new Blob([dataWorkerSource], { type: 'application/javascript+module' }), 'worker.js');
-  for (const [name, source] of [['book-format.js', bookFormatSource], ['book-service.js', bookServiceSource], ['maintenance.js', maintenanceSource]]) {
+  for (const [name, source] of [['book-format.js', bookFormatSource], ['book-service.js', bookServiceSource], ['maintenance.js', maintenanceSource], ['book-block.js', bookBlockSource], ['book-packing.js', bookPackingSource]]) {
     form.set(name, new Blob([source], { type: 'application/javascript+module' }), name);
   }
   await cloudflareApi(accessToken, `${accountPath}/workers/scripts/${encodeURIComponent(installation.workerName)}`, {

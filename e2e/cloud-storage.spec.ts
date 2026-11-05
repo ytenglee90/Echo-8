@@ -14,7 +14,7 @@ async function command(page:Page,label:string){
 
 async function cloud(page:Page){
   const db=new SQLiteD1();
-  const env={DB:db,DATA_WORKER_VERSION:'5',STORAGE_MODE:'d1',INSTALLATION_ID:'installation-e2e-book',DATA_SIGNING_SECRET:'e2e-book-secret',ALLOWED_ORIGIN:'http://localhost:3000'};
+  const env={DB:db,DATA_WORKER_VERSION:'7',STORAGE_MODE:'d1',INSTALLATION_ID:'installation-e2e-book',DATA_SIGNING_SECRET:'e2e-book-secret',ALLOWED_ORIGIN:'http://localhost:3000'};
   const token=await signDataToken({sub:'user-e2e-book',aud:env.INSTALLATION_ID,installationId:env.INSTALLATION_ID,scope:['projects:read','projects:write']},env.DATA_SIGNING_SECRET,600);
   const fetch=async(path:string,method='GET',body?:unknown)=>dataWorker.fetch(new Request('https://book-data.test'+path,{method,headers:{authorization:`Bearer ${token.token}`,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})}),env);
   await fetch('/v1/projects','POST',{id:'project-e2e-book',name:'分块保存测试'});
@@ -31,7 +31,7 @@ async function cloud(page:Page){
   const saved=await fetch('/v2/projects/project-e2e-book/commit','POST',identity);
   expect(saved.status).toBe(200);
   await fetch('/v1/projects/project-e2e-book/lease','DELETE',identity);
-  await page.route('**/api/cloud/status',route=>route.fulfill({json:{configured:true,authenticated:true,user:{id:'user-e2e-book',email:'reader@example.test'},accounts:[],installations:[{id:env.INSTALLATION_ID,accountId:'account-test',accountName:'测试账户',workerUrl:'https://book-data.test',workerVersion:5,latestWorkerVersion:5,upgradeAvailable:false,status:'ready'}]}}));
+  await page.route('**/api/cloud/status',route=>route.fulfill({json:{configured:true,authenticated:true,user:{id:'user-e2e-book',email:'reader@example.test'},accounts:[],installations:[{id:env.INSTALLATION_ID,accountId:'account-test',accountName:'测试账户',workerUrl:'https://book-data.test',workerVersion:7,latestWorkerVersion:7,upgradeAvailable:false,status:'ready'}]}}));
   await page.route('**/api/cloud/token',route=>route.fulfill({json:{installationId:env.INSTALLATION_ID,workerUrl:'https://book-data.test',token:token.token,expiresAt:Date.now()+600_000}}));
   let uploadedRaw=0,holds=false,release=()=>{};
   let held=Promise.resolve();

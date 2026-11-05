@@ -88,7 +88,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
               onClick={() => void run('sync', () => client.dispatch('cloudSync.syncNow'))}
             />
           )}
-          {state.authenticated && (
+          {state.authenticated && state.reauthorizationRequired && (
             <button type="button" disabled={Boolean(busy)} onClick={() => void run('reconnect', async () => {
               const result = await client.dispatch('cloudSync.prepareReconnect');
               globalThis.location.assign(result.url);

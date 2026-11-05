@@ -227,7 +227,7 @@ export function createCloudSyncPlugin(
         await call('system.personalAssets.set', { key: QUEUE_ASSET_KEY, asset });
       };
 
-      const books = new BookTransport(dataRequest);
+      const books = new BookTransport(dataRequest, () => state.installations.some(item => item.id === local.installationId && item.workerVersion >= 7) ? 3 : 2);
       let syncQueued = false;
       let retryAt = 0;
       let failures = 0;

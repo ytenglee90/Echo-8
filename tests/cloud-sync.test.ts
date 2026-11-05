@@ -35,7 +35,7 @@ test('cloud control cryptography signs sessions, encrypts grants and issues inst
 });
 
 test('cloud data Worker release detection upgrades older installs without downgrading newer ones', () => {
-  assert.equal(CLOUD_DATA_WORKER_VERSION, 6);
+  assert.equal(CLOUD_DATA_WORKER_VERSION, 7);
   assert.equal(cloudDataWorkerUpgradeAvailable(1), true);
   assert.equal(cloudDataWorkerUpgradeAvailable(CLOUD_DATA_WORKER_VERSION), false);
   assert.equal(cloudDataWorkerUpgradeAvailable(CLOUD_DATA_WORKER_VERSION + 1), false);
@@ -89,7 +89,7 @@ test('user data Worker exposes only health without a token and enforces the conf
   }), env);
   assert.equal(health.status, 200);
   assert.equal(health.headers.get('access-control-allow-origin'), 'https://canvas.example');
-  assert.deepEqual(await health.json(), { ok: true, apiVersion: 1, workerVersion: CLOUD_DATA_WORKER_VERSION, bookFormat: 2 });
+  assert.deepEqual(await health.json(), { ok: true, apiVersion: 1, workerVersion: CLOUD_DATA_WORKER_VERSION, bookFormat: 3 });
 
   const preflight = await dataWorker.fetch(new Request('https://data.example/v1/projects/project-123456', {
     method: 'OPTIONS',

@@ -4,6 +4,7 @@ import dataWorker from '../cloud/data-worker/worker.js';
 import { planBook, inspectBook, restoreBook } from '../cloud/data-worker/book-format.js';
 import { signDataToken } from '../src/server/cloud/crypto.ts';
 import { SQLiteD1 } from './helpers/d1.ts';
+import { packedBucket } from '../cloud/data-worker/book-packing.js';
 
 interface TestResponseBody {
  status: number; revision: number; rootHash: string; errors: number;
@@ -15,7 +16,8 @@ async function harness() {
   const env = { DB: db, DATA_WORKER_VERSION: '5', STORAGE_MODE: 'd1', INSTALLATION_ID: 'installation-book-v2', DATA_SIGNING_SECRET: 'book-contract-secret', ALLOWED_ORIGIN: 'https://canvas.example' };
   const token = await signDataToken({sub:'user-book',aud:env.INSTALLATION_ID,installationId:env.INSTALLATION_ID,scope:['projects:read','projects:write']},env.DATA_SIGNING_SECRET,600);
   const request = async (path: string, method='GET', body?: unknown) => {
-    const response = await dataWorker.fetch(new Request(`https://data.example${path}`,{method,headers:{authorization:`Bearer ${token.token}`,origin:env.ALLOWED_ORIGIN,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})}),env);
+    const target=path.endsWith('/head')?`${path}?format=3`:path;
+    const response = await dataWorker.fetch(new Request(`https://data.example${target}`,{method,headers:{authorization:`Bearer ${token.token}`,origin:env.ALLOWED_ORIGIN,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})}),env);
     return {status:response.status,body:await response.json() as TestResponseBody};
   };
   await request('/v1/projects','POST',{id:'project-book-v2',name:'验证书籍'});
@@ -40,7 +42,7 @@ async function harness() {
 
 const source=()=>({document:{revision:1,namespaces:{textNode:{node:{title:'正文',x:12,color:'#aa1111'}},textContentChunk:{chunk:{text:'大文本😀'.repeat(20_000)}},unknownPlugin:{opaque:{keep:true}}}},plugins:[{id:'unknown',version:'1',dataVersion:7,available:false,namespaces:['unknownPlugin']}]});
 
-test('book v2 round trips Unicode, unknown records and appearance; incremental save only encodes changed values',async()=>{
+test('cloud book round trips Unicode, unknown records and appearance; incremental save only encodes changed values',async()=>{
   const h=await harness();
   const original=source();const plan=await planBook(original);
   const first=await h.save(plan,0);
@@ -180,4 +182,84 @@ test('an interrupted first upload expires and is reclaimed even before a book ha
  await h.request('/v2/maintenance','POST',{});
  assert.equal(h.db.sqlite.prepare('SELECT COUNT(*) AS count FROM book_blocks').get()!.count,0);
  assert.equal(h.db.sqlite.prepare('SELECT COUNT(*) AS count FROM projects').get()!.count,1);
+});
+
+test('idle format-2 books compact atomically, protect readers, stay within the free request budget and reject downgrade', async () => {
+  const h = await harness(), input = source();
+  Object.assign(input.document.namespaces, { small: Object.fromEntries(Array.from({length:600},(_,i)=>[`r${i}`,{title:`小记录 ${i}`,x:i,y:i%20,revision:1}])) });
+  const old = await planBook(input,undefined,undefined,undefined,2), first = await h.save(old,0);
+  await h.request('/v2/maintenance','POST',{});
+  assert.equal(h.db.sqlite.prepare('SELECT root_hash FROM book_heads').get()!.root_hash,old.rootHash,'a live editing lease prevents maintenance rewrites');
+  const reader = await h.request(`${h.prefix}/head`);
+  await h.request('/v1/projects/project-book-v2/lease','DELETE',h.identity);
+  h.db.sqlite.exec('UPDATE book_blocks SET updated_at=0');
+  let calls = 0, batching = false;
+  const prepare = h.db.prepare.bind(h.db), batch = h.db.batch.bind(h.db);
+  h.db.prepare = sql => {
+    const statement = prepare(sql);
+    const wrap = <T>(call:()=>Promise<T>) => async () => { if(!batching) calls++; return call(); };
+    statement.first=wrap(statement.first.bind(statement)); statement.all=wrap(statement.all.bind(statement)); statement.run=wrap(statement.run.bind(statement));
+    return statement;
+  };
+  h.db.batch = async statements => { calls++; batching=true; try { return await batch(statements); } finally { batching=false; } };
+  const maintenance = await h.request('/v2/maintenance','POST',{});
+  assert.equal(maintenance.body.errors,0); assert.ok(calls<=50,`maintenance used ${calls} D1 requests`);
+  const head = await h.request(`${h.prefix}/head`);
+  const get = async(hash:string)=>(await h.request(`${h.prefix}/blocks`,'POST',{readerId:head.body.head.readerId,hashes:[hash]})).body.blocks[0];
+  const packed = await inspectBook(head.body.head.rootHash,get);
+  assert.equal(packed.root.formatVersion,3); assert.deepEqual(JSON.parse(JSON.stringify(await restoreBook(packed,get))),input);
+  assert.equal((await h.request(`${h.prefix}/head?format=2`)).status,426,'old readers receive an actionable refresh response');
+  assert.ok(packed.hashes.length<old.hashes.length*.25);
+  assert.ok(h.db.sqlite.prepare('SELECT 1 FROM book_blocks WHERE hash=?').get(old.rootHash),'the old reader keeps its pinned generation');
+  await h.request(`${h.prefix}/reads`,'DELETE',{readerId:reader.body.head.readerId});
+  await h.request(`${h.prefix}/reads`,'DELETE',{readerId:head.body.head.readerId});
+  for(let pass=0;pass<8;pass++) {
+    await h.request('/v2/maintenance','POST',{});
+    if(h.db.sqlite.prepare('SELECT count(*) AS n FROM book_blocks').get()!.n===h.db.sqlite.prepare('SELECT count(*) AS n FROM book_refs').get()!.n) break;
+  }
+  assert.equal(h.db.sqlite.prepare('SELECT count(*) AS n FROM book_blocks').get()!.n,h.db.sqlite.prepare('SELECT count(*) AS n FROM book_refs').get()!.n);
+  const lease = await h.request('/v1/projects/project-book-v2/lease','POST',{deviceId:h.identity.deviceId});h.identity.leaseId=lease.body.lease.id;
+  const saveId='save-forbidden-downgrade';
+  const staged=await h.request(`${h.prefix}/uploads`,'POST',{...h.identity,saveId,rootHash:old.rootHash,hashes:old.hashes,baseRevision:first.revision+1});
+  for(let offset=0;offset<staged.body.missing.length;offset+=16) await h.request(`${h.prefix}/blocks`,'PUT',{...h.identity,saveId,blocks:staged.body.missing.slice(offset,offset+16).map(hash=>old.blocks.get(hash))});
+  assert.equal((await h.request(`${h.prefix}/commit`,'POST',{...h.identity,saveId})).status,426);
+  assert.equal(h.db.sqlite.prepare('SELECT root_hash FROM book_heads').get()!.root_hash,packed.rootHash);
+});
+
+test('a failed automatic compaction retains the old head, references and contents, then retries safely', async () => {
+  const h=await harness(), old=await planBook(source(),undefined,undefined,undefined,2);await h.save(old,0);
+  await h.request('/v1/projects/project-book-v2/lease','DELETE',h.identity);
+  h.db.sqlite.exec("CREATE TRIGGER compaction_fault BEFORE UPDATE ON book_heads BEGIN SELECT RAISE(ABORT,'compaction test failure'); END");
+  const result=await h.request('/v2/maintenance','POST',{});assert.equal(result.body.errors,1);
+  assert.equal(h.db.sqlite.prepare('SELECT root_hash FROM book_heads').get()!.root_hash,old.rootHash);
+  assert.equal(h.db.sqlite.prepare('SELECT count(*) AS n FROM book_refs').get()!.n,old.hashes.length);
+  assert.equal(h.db.sqlite.prepare('SELECT count(*) AS n FROM book_uploads').get()!.n,0);
+  h.db.sqlite.exec('DROP TRIGGER compaction_fault');
+  assert.equal((await h.request('/v2/maintenance','POST',{})).body.errors,0);
+  assert.notEqual(h.db.sqlite.prepare('SELECT root_hash FROM book_heads').get()!.root_hash,old.rootHash);
+});
+
+test('packed transport reads one affected group without a full source snapshot or per-edit reader references', async () => {
+  const h=await harness(), input=source();
+  const peers:Record<string,unknown>={};
+  const target=packedBucket(JSON.stringify(['textNode','node']));
+  for(let i=0;Object.keys(peers).length<120;i++) if(packedBucket(JSON.stringify(['peers',`p${i}`]))===target)peers[`p${i}`]={i,title:`保留 ${i}`};
+  Object.assign(input.document.namespaces,{peers});
+  const first=await h.save(await planBook(input),0), paths:string[]=[];
+  const transport=new BookTransport(async<T>(path:string,init:RequestInit={})=>{
+    paths.push(path);const response=await h.request(path,init.method??'GET',init.body?JSON.parse(String(init.body)):undefined);
+    assert.equal(response.status,200,JSON.stringify(response));return response.body as unknown as T;
+  });
+  await transport.bootstrap('project-book-v2'); paths.length=0;
+  const saved=await transport.save({projectId:'project-book-v2',baseRevision:first.revision,...h.identity,
+    commits:[{id:'packed-move',label:'move',timestamp:1,sourceMessageId:'test',historyAction:'record',documentRevision:2,forward:[{op:'set',domain:'document',namespace:'textNode',key:'node',value:{...input.document.namespaces.textNode.node,x:77}}],inverse:[]}],
+    source:async()=>{throw new Error('incremental packing must not snapshot the whole source');},catalog:async()=>input.plugins,
+  });
+  assert.ok(saved.uploadedBytes<32*1024);assert.equal(paths.filter(path=>path.endsWith('/baseline-blocks')).length,1);
+  assert.ok(!paths.some(path=>path.endsWith('/head')||path.endsWith('/reads')));
+  assert.equal(h.db.sqlite.prepare('SELECT count(*) AS n FROM book_read_refs').get()!.n,0);
+  const currentHash=String(h.db.sqlite.prepare('SELECT root_hash FROM book_heads').get()!.root_hash);
+  const contentHash=String(h.db.sqlite.prepare('SELECT hash FROM book_refs LIMIT 1').get()!.hash);
+  assert.equal((await h.request(`${h.prefix}/baseline-blocks`,'POST',{...h.identity,leaseId:'wrong-lease',rootHash:currentHash,hashes:[contentHash]})).status,423);
+  assert.equal((await h.request(`${h.prefix}/baseline-blocks`,'POST',{...h.identity,rootHash:first.rootHash,hashes:[contentHash]})).status,409);
 });

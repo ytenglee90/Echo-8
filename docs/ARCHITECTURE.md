@@ -20,6 +20,8 @@ Committed events are facts, not a second transaction phase. Delivery is ordered 
 
 ## Dependency boundary
 
+Cloud book format 3 packs bounded small records into stable shared blocks and coalesces its directory into 32 groups. Cached plans retain only references and byte ranges; one edit fetches only affected small groups through a lease/root-checked read endpoint. Large text remains independently chunked. Data Worker 7 atomically repacks idle format-2 books after exact record verification, with reader protection and bounded reclamation; older data services retain the format-2 writer (ADR-0129).
+
 - `src/core` is headless coordination and mandatory services. It contains no text-node, canvas, editor, group, connection, AI, or palette behavior.
 - `src/shell` owns layout and renders governed UI slots. It contains no feature data writes.
 - Embedded feature surfaces use governed slots too. The canvas owns only camera/input infrastructure and hosts `canvas.entities` plus `canvas.empty`; the text-node plugin contributes its renderer and empty-state action there without a feature-to-feature implementation import. Likewise, `ai.settings` is hosted inside the AI assistant while its content remains owned, permission-checked, and hot-removable by the AI provider plugin; it is not a right-rail surface.
