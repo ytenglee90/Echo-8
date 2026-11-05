@@ -34,6 +34,9 @@ import { connectionGraphPoints, connectionStrokeForEndpoints } from './routing.t
 import { createConnectionScenePlanner } from './connection-scene.ts';
 import type { GroupMembershipPreview } from '../../protocols/groups.ts';
 import { ConnectionJunctionMarkers } from './ConnectionJunctionMarkers.tsx';
+import { overviewNetwork } from './overview-network.ts';
+import { OverlapCycle } from './overlap-cycle.ts';
+import { OverlapHint, type OverlapHintState } from './OverlapHint.tsx';
 import { junctionGeometry, logicalConnectionPaths } from './junctions.ts';
 import type { SelectionMode } from '../../protocols/selection.ts';
 import { boundsIntersect, worldViewport } from '../../protocols/viewport.ts';
@@ -111,6 +114,7 @@ interface PendingConnectionSelection {
   startY: number;
   moved: boolean;
   lassoRequested: boolean;
+  cycle?: { ids: string[]; signature: string };
 }
 
 interface PendingConnectionBackground {
@@ -131,13 +135,11 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     duplicateOriginIds,
     sizePreviews,
     selectedIds,
-    hoveredEntityId,
-    editingEntityIds,
     lassoActive,
     canvasColor,
     surfaceSize,
     layerRef,
-  } = useCanvasLayerEnvironment<SVGSVGElement>(client, { trackInteractionFocus: true });
+  } = useCanvasLayerEnvironment<SVGSVGElement>(client);
   const [connections, setConnections] = useState<ConnectionRecord[]>([]);
   const [junctions, setJunctions] = useState<ConnectionJunction[]>([]);
   const [junctionPreview, setJunctionPreview] = useState<Record<string, { x: number; y: number }>>({});
@@ -160,6 +162,10 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     }
   }, [client]);
   const pendingSelection = useRef<PendingConnectionSelection | undefined>(undefined);
+  const lineCycle = useRef(new OverlapCycle());
+  const [overlapHint, setOverlapHint] = useState<OverlapHintState>();
+  const viewKey = `${camera.x}:${camera.y}:${camera.zoom}`;
+  useEffect(() => client.subscribeSignal('canvas.camera.preview', () => { lineCycle.current.reset(); setOverlapHint(undefined); }), [client]);
   const pendingBackground = useRef<PendingConnectionBackground | undefined>(undefined);
   const skipBlurCommitRef = useRef(false);
 
@@ -321,34 +327,17 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   }, [camera, junctionIndex, surfaceSize]);
   const editingConnectionId = labelEditor?.id;
   const overviewMode = connectionOverviewMode(camera.zoom);
-  const focusedNodeIds = useMemo(() => {
-    const ids = new Set(editingEntityIds);
-    if (hoveredEntityId) ids.add(hoveredEntityId);
-    for (const id of selected) {
-      if (stableNodeMap.has(id)) ids.add(id);
-    }
-    const pointIds = new Set(junctions.map((point) => point.id));
-    const queue = [...ids];
-    for (let index = 0; index < queue.length; index += 1) {
-      for (const edgeId of connectionLookup.byNode.get(queue[index]) ?? []) {
-        const edge = connectionLookup.byId.get(edgeId)!;
-        for (const endpoint of [edge.from, edge.to]) if (pointIds.has(endpoint.nodeId) && !ids.has(endpoint.nodeId)) {
-          ids.add(endpoint.nodeId);
-          queue.push(endpoint.nodeId);
-        }
-      }
-    }
-    return ids;
-  }, [connectionLookup, editingEntityIds, hoveredEntityId, junctions, selected, stableNodeMap]);
-  const emphasizedConnectionIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const id of selected) {
-      if (connectionLookup.byId.has(id)) ids.add(id);
-    }
-    if (hoveredId) ids.add(hoveredId);
-    if (editingConnectionId) ids.add(editingConnectionId);
-    return ids;
-  }, [connectionLookup.byId, editingConnectionId, hoveredId, selected]);
+  const selectedAnchors = useMemo(() => [...selected].filter(id => stableNodeMap.has(id) && stableNodeMap.get(id)?.kind !== 'junction'), [selected, stableNodeMap]);
+  const anchorKey = selectedAnchors.join('\u0000');
+  const [overviewSelection, setOverviewSelection] = useState({ selected, anchorKey, anchors: selectedAnchors });
+  const contextAnchors = useMemo(() => selectedAnchors.length ? selectedAnchors : selected.size ? overviewSelection.anchors : [], [selectedAnchors, selected.size, overviewSelection.anchors]);
+  if (overviewSelection.selected !== selected || overviewSelection.anchorKey !== anchorKey) setOverviewSelection({ selected, anchorKey, anchors: contextAnchors });
+  const overviewContext = useMemo(() => {
+    const network = overviewNetwork(selectedAnchors.length ? selectedAnchors : contextAnchors, connectionLookup.byNode, connectionLookup.byId);
+    if (selectedAnchors.length || [...selected].some(id => network.edges.has(id) || network.points.has(id))) return network;
+    return overviewNetwork([], connectionLookup.byNode, connectionLookup.byId);
+  }, [selectedAnchors, contextAnchors, selected, connectionLookup]);
+  const focusedNodeIds = overviewContext.nodes, emphasizedConnectionIds = overviewContext.edges;
   const connectionIndex = useMemo(() => {
     const index = new SpatialHashIndex<ConnectionRecord>();
     index.rebuild(
@@ -441,9 +430,11 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     () => new Set(renderableConnections.map((connection) => connection.id)),
     [renderableConnections],
   );
-  const paintedJunctions = useMemo(() => overviewMode ? visibleJunctions.filter(point => selected.has(point.id) ||
-    [...(connectionLookup.byNode.get(point.id) ?? [])].some(id => renderedConnectionIds.has(id))) : visibleJunctions,
-  [connectionLookup.byNode, overviewMode, renderedConnectionIds, selected, visibleJunctions]);
+  const paintedJunctions = useMemo(() => overviewMode ? visibleJunctions.filter(point => overviewContext.points.has(point.id)) : visibleJunctions,
+  [overviewContext.points, overviewMode, visibleJunctions]);
+  const paintedPointIds = useMemo(() => new Set(paintedJunctions.map(point => point.id)), [paintedJunctions]);
+  const hitJunctions = (x: number, y: number, radius: number) => junctionIndex.query({ x: x - radius, y: y - radius, width: radius * 2, height: radius * 2 })
+    .filter(point => paintedPointIds.has(point.id) && Math.hypot(point.x - x, point.y - y) <= radius);
   const renderMode = connectionRenderMode(drawableGeometry.length);
   const batchRendered = renderMode === 'batched-svg';
   const paintOrderedGeometry = useMemo(
@@ -511,7 +502,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     titleRouteIds,
   ]);
   const highlightedGeometry = useMemo(() => batchRendered
-    ? drawableGeometry.filter((item) => selected.has(item.connection.id) || item.connection.id === hoveredId || item.connection.id === draft.reconnectId)
+    ? orderConnectionsForPaint(drawableGeometry.filter((item) => selected.has(item.connection.id) || item.connection.id === hoveredId || item.connection.id === draft.reconnectId), selected)
     : [], [batchRendered, drawableGeometry, hoveredId, selected, draft.reconnectId]);
   const detailWorldScale = canvasDetailWorldScale(camera.zoom);
 
@@ -529,6 +520,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     event: ReactPointerEvent<SVGSVGElement>,
     connection: ConnectionRecord,
     part: PendingConnectionSelection['part'],
+    cycle?: PendingConnectionSelection['cycle'],
   ) => {
     pendingBackground.current = undefined;
     pendingSelection.current = {
@@ -540,6 +532,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       startY: event.clientY,
       moved: false,
       lassoRequested: false,
+      cycle,
     };
   };
 
@@ -697,14 +690,14 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     void client.dispatch('interaction.end', { mode: 'resizing', sessionId: session.token }).catch(() => undefined);
   };
 
-  const hitConnection = (
+  const hitConnections = (
     clientX: number,
     clientY: number,
     screenTolerance = CONNECTION_HOVER_TOLERANCE_PX,
-  ): ConnectionRecord | undefined => {
-    if (lassoActive || draft.reconnectId) return undefined;
+  ): Array<{ connection: ConnectionRecord; distance: number }> => {
+    if (lassoActive || draft.reconnectId) return [];
     const element = layerRef.current;
-    if (!element) return undefined;
+    if (!element) return [];
     const rect = element.getBoundingClientRect();
     const point = {
       x: (clientX - rect.left - camera.x) / camera.zoom,
@@ -721,16 +714,17 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       const connection = connectionLookup.byId.get(id);
       if (connection) candidates.set(id, connection);
     }
-    let best: { connection: ConnectionRecord; distance: number } | undefined;
+    const hits: Array<{ connection: ConnectionRecord; distance: number }> = [];
     for (const connection of candidates.values()) {
       if (!renderedConnectionIds.has(connection.id)) continue;
       const points = livePoints.get(connection.id);
       if (!points) continue;
       const distance = distanceToConnectionCurve(point, points.from, points.to);
-      if (distance <= threshold && (!best || distance < best.distance)) best = { connection, distance };
+      if (distance <= threshold) hits.push({ connection, distance });
     }
-    return best?.connection;
+    return hits.sort((a, b) => a.distance - b.distance || a.connection.id.localeCompare(b.connection.id));
   };
+  const hitConnection = (x: number, y: number, tolerance = CONNECTION_HOVER_TOLERANCE_PX) => hitConnections(x, y, tolerance)[0]?.connection;
 
   return (
     <svg
@@ -754,19 +748,24 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         if (labelEditor && event.target !== labelInputRef.current) labelInputRef.current?.blur();
         if (lassoActive || draft.reconnectId || event.button !== 0) return;
         const target = event.target as Element;
-        if (target.closest('textarea, .connection-label-resize-handle, [data-junction-id], [data-arrow-for]')) return;
+        if (target.closest('textarea, .connection-label-resize-handle, [data-junction-id], [data-arrow-for]')) { lineCycle.current.reset(); setOverlapHint(undefined); return; }
         const declaredTarget = target.closest<SVGElement>('[data-connection-id]');
         const declaredId = declaredTarget?.dataset.connectionId;
         const declaredConnection = declaredId ? connectionLookup.byId.get(declaredId) : undefined;
         const part = declaredTarget?.dataset.connectionPart;
         const declaredLabel = part === 'label-background' || part === 'label-text';
-        const connection = declaredLabel
-          ? declaredConnection
-          : hitConnection(
-              event.clientX,
-              event.clientY,
-              CONNECTION_CLICK_TOLERANCE_PX,
-            );
+        const hits = declaredLabel ? [] : hitConnections(event.clientX, event.clientY, CONNECTION_CLICK_TOLERANCE_PX);
+        let connection = declaredLabel ? declaredConnection : hits[0]?.connection;
+        let cycle: PendingConnectionSelection['cycle'];
+        if (hits.length > 1 && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          const ids = hits.map(hit => hit.connection.id).sort();
+          const signature = camera.x + ':' + camera.y + ':' + camera.zoom + ':' + ids.map(id => {
+            const edge = connectionLookup.byId.get(id)!, pair = livePoints.get(id)!;
+            return id + ':' + edge.revision + ':' + (pair.from.route?.key ?? [pair.from.x, pair.from.y, pair.to.x, pair.to.y].join(','));
+          }).join('|');
+          const id = lineCycle.current.next(ids, event.clientX, event.clientY, signature, hits[0].connection.id)!;
+          connection = connectionLookup.byId.get(id); cycle = { ids, signature };
+        } else { lineCycle.current.reset(); setOverlapHint(undefined); }
         if (!connection) {
           beginConnectionBackground(event);
           return;
@@ -774,10 +773,14 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         beginConnectionSelection(
           event,
           connection,
-          part === 'label-background' || part === 'label-text' ? part : 'line',
+          part === 'label-background' || part === 'label-text' ? part : 'line', cycle,
         );
       }}
       onPointerMove={(event) => {
+        if (overlapHint) {
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (Math.hypot(event.clientX - rect.left - camera.x - overlapHint.x * camera.zoom, event.clientY - rect.top - camera.y - overlapHint.y * camera.zoom) > 6) { lineCycle.current.reset(); setOverlapHint(undefined); }
+        }
         reconnect.move(event);
         const rect = event.currentTarget.getBoundingClientRect();
         client.emit('canvas.pointer.preview', { point: {
@@ -805,6 +808,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         pendingSelection.current = undefined;
         pendingBackground.current = undefined;
         if (pointer.moved || lassoActive) {
+          lineCycle.current.reset(); setOverlapHint(undefined);
           event.preventDefault();
           event.stopPropagation();
           client.emit('canvas.lasso.external.finished', {
@@ -816,10 +820,19 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         }
         event.preventDefault();
         event.stopPropagation();
-        if (pending) selectConnection(pending.id, pending.mode, pending.part);
+        if (pending) {
+          if (pending.cycle) {
+            lineCycle.current.commit(pending.id, event.clientX, event.clientY, pending.cycle.signature);
+            const rect = event.currentTarget.getBoundingClientRect();
+            setOverlapHint({ id: pending.id, x: (event.clientX - rect.left - camera.x) / camera.zoom, y: (event.clientY - rect.top - camera.y) / camera.zoom,
+              index: pending.cycle.ids.indexOf(pending.id), count: pending.cycle.ids.length, label: '连接线', viewKey });
+          }
+          selectConnection(pending.id, pending.mode, pending.part);
+        }
         else if (background?.mode === 'replace') void client.dispatch('selection.clear');
       }}
       onPointerCancel={(event) => {
+        lineCycle.current.reset(); setOverlapHint(undefined);
         reconnect.finish(event, true);
         const pending = pendingSelection.current ?? pendingBackground.current;
         if (pending?.pointerId === event.pointerId) {
@@ -835,8 +848,12 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         cancelLabelResize(event.pointerId);
       }}
       onLostPointerCapture={event => { cancelLabelResize(event.pointerId); reconnect.finish(event, true); }}
-      onKeyDown={event => { if (event.key === 'Escape') { cancelLabelResize(); reconnect.cancel(); } }}
-      onPointerLeave={() => setHoveredId(undefined)}
+      onKeyDown={event => { if (event.key === 'Escape') { lineCycle.current.reset(); setOverlapHint(undefined); cancelLabelResize(); reconnect.cancel(); } }}
+      onPointerLeave={() => { setHoveredId(undefined); lineCycle.current.reset(); setOverlapHint(undefined); }}
+      onDoubleClickCapture={event => {
+        if ((event.target as Element).closest('[data-junction-id], [data-arrow-for], [data-connection-part="label-background"], [data-connection-part="label-text"], textarea, .connection-label-resize-handle')) return;
+        if (hitConnections(event.clientX, event.clientY, CONNECTION_CLICK_TOLERANCE_PX).length > 1) { event.preventDefault(); event.stopPropagation(); }
+      }}
       onDoubleClick={(event) => {
         if (!batchRendered) return;
         const connection = hitConnection(
@@ -876,7 +893,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
         {batchRendered && highlightedGeometry.map(({ connection, shaftPath, arrowPath, arrowEnd }) => (
           <g key={`highlight-${connection.id}`}>
           <path
-            className={`connection-path selected ${isTitleRoute(connection) ? 'title-connection' : ''} ${connection.lineColor ||
+            className={`connection-path ${selected.has(connection.id) || connection.id === draft.reconnectId ? 'selected' : 'hovered'} ${isTitleRoute(connection) ? 'title-connection' : ''} ${connection.lineColor ||
               previewIds.has(connection.id)
               ? 'custom-color'
               : ''}`}
@@ -884,7 +901,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
             style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
             aria-hidden="true"
           />
-          {arrowPath && <path className={`connection-arrow selected ${connection.lineColor || previewIds.has(connection.id) ? 'custom-color' : ''}`} d={arrowPath} data-arrow-for={connection.id} data-arrow-end={arrowEnd} tabIndex={-1}
+          {arrowPath && <path className={`connection-arrow ${selected.has(connection.id) || connection.id === draft.reconnectId ? 'selected' : 'hovered'} ${connection.lineColor || previewIds.has(connection.id) ? 'custom-color' : ''}`} d={arrowPath} data-arrow-for={connection.id} data-arrow-end={arrowEnd} tabIndex={-1}
                 onPointerEnter={() => setHoveredId(connection.id)} onPointerLeave={() => setHoveredId(current => current === connection.id ? undefined : current)} style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
             onPointerDown={event => beginArrowReconnect(event, connection, arrowEnd)} aria-label="拖动箭头重新连接" />}
           </g>
@@ -903,7 +920,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
                 tabIndex={0}
                 role="button"
                 aria-pressed={isSelected}
-                aria-label={`${isSelected ? '已选中，' : ''}节点连线${connection.label ? `：${connection.label}` : ''}；双击或按 F2 编辑文字`}
+                aria-label={`${isSelected ? '已选中，' : ''}节点连线${connection.label ? `：${connection.label}` : ''}；双击或按 F2 编辑文字；重叠时重复单击切换`}
                 onPointerEnter={() => setHoveredId(connection.id)}
                 onPointerLeave={() => setHoveredId((current) => current === connection.id ? undefined : current)}
                 onDoubleClick={(event) => {
@@ -1080,7 +1097,9 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
             </foreignObject>
           )}</Fragment>;
         })}
+        <OverlapHint hint={overlapHint && selected.has(overlapHint.id) ? overlapHint : undefined} zoom={camera.zoom} viewKey={viewKey} />
         <ConnectionJunctionMarkers client={client} camera={camera} junctions={paintedJunctions} allJunctions={junctions} selected={selected}
+          hitJunctions={hitJunctions}
           color={junctionColor ? ensureCanvasColorContrast(junctionColor, canvasColor) : canvasContrastColors(canvasColor).line}
           nodes={nodeMap} titleJunctionIds={titleJunctionIds}
           targetId={draft.to?.kind === 'junction' ? draft.to.nodeId : undefined} />

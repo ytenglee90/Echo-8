@@ -126,4 +126,5 @@
 | [0119](ADR-0119-REMOVE-CURVE-DRAG-STEERING.md) | 移除拖动曲线调向，保留自动平滑路由 | 有效；取代 0118，数据 13 兼容旧偏移数据 |
 | [0120](ADR-0120-LAYOUT-SWITCHES-AND-EDGE-PAN.md) | 智能参考线/吸附开关、边缘自动平移、删除双击旋转 | 有效；补充 0119，取消 0111 手动旋转，连线数据 14 |
 | [0121](ADR-0121-JUNCTION-COLOR-TITLE-SHORTCUT-AND-FOCUS.md) | 中转点全局颜色、配套主题、Shift+L 与全画布聚焦 | 有效；补充 0120，兼容连线数据 14 |
+| [0122](ADR-0122-OVERVIEW-OVERLAP-AND-JUNCTION-CONTROLS.md) | 40% 选择关联概览、重叠循环选择、中转点命中区分离 | 有效；交互投影，文档/消息格式不变 |
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

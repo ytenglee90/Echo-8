@@ -5,7 +5,7 @@ import { createContentStorage } from '../src/plugins/text-node/content-storage.t
 import type { ProjectSource } from '../src/protocols/files.ts';
 
 test.use({ viewport: { width: 600, height: 960 } });
-interface FanLayout { positions: readonly (readonly [number, number])[]; junction: readonly [number, number]; pairs: readonly (readonly [string, string])[]; title: boolean; boxes?: readonly number[]; groups?: readonly number[]; unrouted?: boolean }
+interface FanLayout { positions: readonly (readonly [number, number])[]; junction: readonly [number, number]; junctions?: readonly { id: string; x: number; y: number }[]; pairs: readonly (readonly [string, string])[]; title: boolean; boxes?: readonly number[]; groups?: readonly number[]; unrouted?: boolean }
 const steepFan: FanLayout = { positions: [[208, 20], [208, 222], [208, 408], [208, 594]], junction: [64, 576],
   pairs: [['n3', 'j'], ['j', 'n0'], ['j', 'n1'], ['j', 'n2']], title: true };
 async function openSteepFan(page: Page, layout = steepFan) {
@@ -25,7 +25,8 @@ async function openSteepFan(page: Page, layout = steepFan) {
     namespaces.groups[`g${i}`] = { id: `g${i}`, memberIds: [`n${i}`, id], title: `群组 ${i}`, titleStyle: { fontSize: 13, fontWeight: 650 }, revision: 1, createdAt: 1, updatedAt: 1 };
   }
   if (!layout.unrouted) namespaces.connectionJunction.j = { id: 'j', x: layout.junction[0], y: layout.junction[1], revision: 1, branchSide: 'outgoing' };
-  const endpoint = (id: string, from: boolean) => ({ nodeId: id, ...(id === 'j' ? { kind: 'junction', side: from ? 'right' : 'left' } : { side: layout.title ? 'title' : from ? 'right' : 'left' }) });
+  for (const point of layout.junctions ?? []) namespaces.connectionJunction[point.id] = { ...point, revision: 1 };
+  const endpoint = (id: string, from: boolean) => ({ nodeId: id, ...(id.startsWith('j') ? { kind: 'junction', side: from ? 'right' : 'left' } : id.startsWith('g') ? { kind: 'group', side: from ? 'right' : 'left' } : { side: layout.title ? 'title' : from ? 'right' : 'left' }) });
   for (let i = 0; i < layout.pairs.length; i++) {
     const [from, to] = layout.pairs[i], id = i === 0 ? 'trunk' : `branch${i - 1}`;
     namespaces.connections[id] = { id, from: endpoint(from, true), to: endpoint(to, false), titleRoute: layout.title, revision: 1, createdAt: 1 };
@@ -41,7 +42,9 @@ async function openSteepFan(page: Page, layout = steepFan) {
   const notice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' }), chooser = page.waitForEvent('filechooser');
   await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
   await (await chooser).setFiles({ name: '陡峭中转分支.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
-  await expect(notice).toHaveCount(0); await expect(page.locator('.connection-hit-area')).toHaveCount(layout.pairs.length);
+  await expect(notice).toHaveCount(0);
+  if (layout.pairs.length > 600) await expect(page.locator('.connection-layer')).toHaveAttribute('data-render-mode','batched-svg');
+  else await expect(page.locator('.connection-hit-area')).toHaveCount(layout.pairs.length);
 }
 async function path(page: Page, id: string) { return (await page.locator(`.connection-hit-area[data-connection-id="${id}"]`).getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number); }
 async function expectSmoothJoint(page: Page) {
@@ -396,6 +399,95 @@ for (const oversized of [false, true]) test(`focus with no selection includes ev
   await expect.poll(async () => { const c = await camera(); return (surface.width / 2 - c.x) / c.zoom; }).toBeCloseTo(centre, 1);
   if (oversized) expect((await camera()).zoom).toBe(1);
   else { await expect(page.getByRole('article')).toHaveCount(2); expect((await camera()).zoom).toBeGreaterThan(1); }
+});
+
+test('40% overview reveals only selected node, box or group relationships, including junctions, and ignores hover', async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[100,100],[900,100],[900,450],[100,800],[900,800],[1500,800]], junction: [600,300],
+    junctions: [{ id: 'j2', x: 600, y: 1000 }, { id: 'j3', x: 1400, y: 1400 }],
+    pairs: [['n0','j'],['j','n1'],['j','n2'],['g3','j2'],['j2','n4'],['n5','n4']], title: false, boxes: [1], groups: [3] });
+  const zoom = page.getByRole('textbox', { name: /画布缩放/u }); await zoom.fill('40'); await zoom.press('Enter');
+  const lines = page.locator('.connection-hit-area'), points = page.locator('.connection-junction');
+  await expect(lines).toHaveCount(0); await expect(points).toHaveCount(0);
+  const node = page.getByRole('article', { name: /文本节点：节点 1$/u }); await node.hover();
+  await expect(lines).toHaveCount(0); await expect(points).toHaveCount(0);
+  await node.click(); await expect(lines).toHaveCount(3); await expect(points).toHaveCount(1);
+  await expect(points).toHaveAttribute('data-junction-id','j');
+  await page.getByRole('article', { name: /文本框：节点 2$/u }).click(); await expect(lines).toHaveCount(3); await expect(points).toHaveCount(1);
+  const group = page.locator('.group-frame[data-group-id="g3"]'); await group.click({ position: { x: 3, y: 3 } });
+  await expect(lines).toHaveCount(2); await expect(points).toHaveCount(1); await expect(points).toHaveAttribute('data-junction-id','j2');
+  await points.locator('.connection-junction-dot').click(); await expect(lines).toHaveCount(2); await expect(points).toHaveCount(1);
+  const surface = (await page.locator('.canvas-surface').boundingBox())!;
+  await page.mouse.click(surface.x + surface.width - 35, surface.y + surface.height - 35);
+  await expect(lines).toHaveCount(0); await expect(points).toHaveCount(0);
+  await zoom.fill('50'); await zoom.press('Enter'); await expect(lines).toHaveCount(6); await expect(points).toHaveCount(3);
+});
+
+test('repeated clicks cycle overlapping curves without opening text editing and retain multiselect and undo', async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[100,200],[900,200],[100,200]], junction: [550,500], pairs: [['n0','n1'],['n2','n1']], title: false, unrouted: true });
+  const hit = await page.locator('.connection-hit-area').first().evaluate(element => {
+    const curve = element as SVGPathElement, point = curve.getPointAtLength(curve.getTotalLength() * .5), matrix = curve.getScreenCTM()!;
+    const screen = new DOMPoint(point.x,point.y).matrixTransform(matrix); return { x: screen.x, y: screen.y };
+  });
+  const selected = () => page.locator('.connection-hit-area[aria-pressed="true"]').getAttribute('data-connection-id');
+  await page.mouse.click(hit.x,hit.y); const first = await selected(); expect(first).toBeTruthy();
+  await page.mouse.down({ clickCount: 2 }); await page.mouse.up({ clickCount: 2 }); await expect.poll(selected).not.toBe(first);
+  await expect(page.locator('.connection-layer textarea')).toHaveCount(0);
+  await expect(page.locator('.connection-overlap-hint text')).toContainText('2/2');
+  await page.keyboard.down('Shift'); await page.mouse.click(hit.x,hit.y); await page.keyboard.up('Shift');
+  await expect(page.locator('.connection-hit-area[aria-pressed="true"]')).toHaveCount(2);
+  await page.keyboard.press('Delete'); await expect(page.locator('.connection-hit-area')).toHaveCount(0);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-hit-area')).toHaveCount(2);
+});
+
+test('overlap cycling also works in batched rendering and survives deleting one of 601 coincident curves', async ({ page }) => {
+  test.setTimeout(60_000); await page.setViewportSize({width:1300,height:900});
+  await openSteepFan(page,{ positions:[...Array.from({length:601},()=>[100,200] as const),[900,200]],junction:[500,500],
+    pairs:Array.from({length:601},(_,i)=>[`n${i}`,'n601'] as const),title:false,unrouted:true });
+  const surface=(await page.locator('.canvas-surface').boundingBox())!, x=surface.x+630,y=surface.y+273;
+  const selected=()=>page.locator('.connection-arrow.selected[data-arrow-for]').getAttribute('data-arrow-for');
+  await page.mouse.click(x,y); await expect.poll(selected).toBeTruthy(); const first=await selected();
+  await page.mouse.click(x,y); await expect.poll(selected).not.toBe(first); const second=await selected();
+  await expect(page.locator('.connection-overlap-hint text')).toContainText('2/601');
+  await page.keyboard.press('Delete'); await expect(page.locator('.connection-layer')).toHaveAttribute('data-render-mode','interactive-svg');
+  await expect(page.locator(`.connection-hit-area[data-connection-id="${second}"]`)).toHaveCount(0);
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-layer')).toHaveAttribute('data-render-mode','batched-svg');
+});
+
+test('overlapping junction clicks cycle points and a following drag moves the selected point only', async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await openSteepFan(page, { positions: [[100,100]], junction: [550,400], junctions: [{ id:'j2',x:550,y:400 },{ id:'j3',x:550,y:400 }], pairs: [], title: false });
+  const centre = await page.locator('.connection-junction-dot').first().boundingBox();
+  const x=centre!.x+centre!.width/2, y=centre!.y+centre!.height/2;
+  const selected = () => page.locator('.connection-junction[aria-pressed="true"]').getAttribute('data-junction-id');
+  await page.mouse.click(x,y); await expect.poll(selected).toBe('j');
+  await page.mouse.down({ clickCount: 2 }); await page.mouse.up({ clickCount: 2 }); await expect.poll(selected).toBe('j2');
+  await expect(page.locator('.connection-overlap-hint text')).toContainText('2/3');
+  const original = await page.locator('.connection-junction[data-junction-id="j2"]').getAttribute('transform');
+  await page.mouse.move(x,y); await page.mouse.down(); await page.mouse.move(x+80,y+40,{steps:8}); await page.mouse.up();
+  await expect(page.locator('.connection-junction[data-junction-id="j2"]')).not.toHaveAttribute('transform',original!);
+  for (const id of ['j','j3']) await expect(page.locator(`.connection-junction[data-junction-id="${id}"]`)).toHaveAttribute('transform','translate(550 400)');
+  await page.keyboard.press('Control+z'); await expect(page.locator('.connection-junction[data-junction-id="j2"]')).toHaveAttribute('transform',original!);
+});
+
+for (const level of [100,40,240]) test(`junction move and connect controls remain separated at ${level}% and their gap is inert`, async ({ page }) => {
+  await page.setViewportSize({ width:1300,height:900 });
+  await openSteepFan(page,{ positions:[[800,100]],junction:[530,400],pairs:[['j','n0']],title:false });
+  await page.getByRole('article',{name:/文本节点：节点 1$/u}).click();
+  const zoom=page.getByRole('textbox',{name:/画布缩放/u}); await zoom.fill(String(level)); await zoom.press('Enter');
+  const marker=page.locator('.connection-junction'); await marker.locator('.connection-junction-dot').hover();
+  const move=(await marker.locator('.connection-junction-hit').boundingBox())!, port=marker.locator('.connection-junction-port'), portHit=(await port.locator('.connection-junction-port-hit').boundingBox())!;
+  expect(move.y-portHit.y-portHit.height).toBeGreaterThanOrEqual(12);
+  expect(move.width).toBeCloseTo(32,1); expect(portHit.width).toBeCloseTo(24,1);
+  const original=await marker.getAttribute('transform'), x=move.x+move.width/2, gapY=(move.y+portHit.y+portHit.height)/2;
+  await page.mouse.move(x,gapY); await expect(port).toHaveCSS('opacity','1');
+  await page.mouse.down(); await page.mouse.move(x+10,gapY,{steps:3}); await page.mouse.up();
+  await expect(marker).toHaveAttribute('transform',original!); await expect(page.locator('.connection-path.draft')).toHaveCount(0);
+  await page.mouse.move(portHit.x+portHit.width/2,portHit.y+portHit.height/2); await page.mouse.down();
+  await page.mouse.move(x+140,gapY+100,{steps:6}); await expect(page.locator('.connection-path.draft')).toHaveCount(1);
+  await expect(marker).toHaveAttribute('transform',original!); await page.mouse.up();
+  await expect(page.getByText(/Illegal interaction transition/u)).toHaveCount(0);
 });
 
 test('reference lines and snapping are configurable separately in the shortcut centre', async ({ page }) => {

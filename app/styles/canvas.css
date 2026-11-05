@@ -584,7 +584,7 @@
 
 @scope ([data-ui-contribution="connections:connections.layer"]) {
   .connection-junction { cursor: move; pointer-events: all; touch-action: none; outline: none; }
-  .connection-junction-hit { fill: transparent; stroke: transparent; pointer-events: all; }
+  .connection-junction-hit { fill: transparent; stroke: none; pointer-events: all; }
   .connection-junction-dot {
     fill: var(--connection-label-background, var(--canvas-background));
     stroke: var(--connection-junction-color, var(--canvas-line, var(--ink)));
@@ -660,6 +660,12 @@
 .connection-junction-port { opacity: 0; pointer-events: none; cursor: crosshair; outline: none; }
 .connection-junction:is(:hover, :focus-within, .selected) .connection-junction-port { opacity: 1; pointer-events: all; }
 .connection-junction-port circle { fill: var(--canvas-background); stroke: var(--canvas-selection); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.connection-junction-port .connection-junction-port-hit { fill: transparent; stroke: none; }
+.connection-junction-port .connection-junction-port-dot { pointer-events: none; }
+.connection-junction-port-bridge { cursor: default; }
+.connection-overlap-hint { pointer-events: none; user-select: none; }
+.connection-overlap-hint rect { fill: var(--connection-label-background, var(--canvas-background)); stroke: var(--canvas-selection-soft); stroke-width: 1; }
+.connection-overlap-hint text { fill: var(--canvas-selection); }
 .connection-junction-port path { fill: none; stroke: var(--canvas-selection); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 .connection-junction:is(.connection-target, :focus-within) .connection-junction-ring { opacity: 1; }
 .connection-arrow:is(.selected, .hovered),

@@ -25,6 +25,7 @@ interface JunctionDrag {
   ready: Promise<unknown>; failed: boolean;
   contentOrigins: ContentSummary[]; latestContent: NodePosition[];
   movingIds: string[];
+  onStationary?: () => void;
 }
 
 /** An owned gesture with coalesced previews and one revision-checked durable move. */
@@ -94,7 +95,7 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
     };
   }, [client]);
 
-  const begin = (event: PointerEvent<SVGGElement>, point: ConnectionJunction) => {
+  const begin = (event: PointerEvent<SVGGElement>, point: ConnectionJunction, onStationary?: () => void) => {
     if (event.button !== 0 || session.current) return;
     event.preventDefault();
     event.stopPropagation();
@@ -123,7 +124,7 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
       startX: event.clientX, startY: event.clientY,
       origins, primaryId: point.id, collapseOnClick: !event.shiftKey && !toggle,
       latest: origins.map(({ id, x, y }) => ({ id, x, y })), moved: false, admitted: false,
-      ready: Promise.resolve(), failed: false, contentOrigins: [], latestContent: [],
+      ready: Promise.resolve(), failed: false, contentOrigins: [], latestContent: [], onStationary,
       movingIds: selected.has(point.id) || event.shiftKey || toggle ? [...new Set([...selected, point.id])] : [point.id],
     };
     session.current = active;
@@ -229,6 +230,7 @@ export function useJunctionDrag(client: ViewClient, camera: CameraState, junctio
       if (cancel || active.failed || !active.admitted || !mounted.current) { clear(active.id); return; }
       if (!active.moved) {
         clear(active.id);
+        if (active.onStationary) { active.onStationary(); return; }
         if (active.collapseOnClick) await client.dispatch('selection.set', { items: [{ id: active.primaryId, kind: 'connection-junction' }], mode: 'replace' });
         return;
       }
