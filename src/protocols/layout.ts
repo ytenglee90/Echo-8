@@ -57,5 +57,8 @@ declare module './commands.ts' {
     'layout.toggleGuides@1': CommandContract<undefined, SmartLayoutSettings>;
     'layout.toggleSnap@1': CommandContract<undefined, SmartLayoutSettings>;
     'node.arrangeSelectedCycle': CommandContract<undefined, ArrangeCycleResult>;
+    'node.arrangeSelectedGrid': CommandContract<undefined, { selected: number; changed: number; columns: number }>;
+    'node.arrangeSelectedGrid.horizontal': CommandContract<undefined, { selected: number; changed: number; columns: number }>;
+    'node.arrangeSelectedGrid.vertical': CommandContract<undefined, { selected: number; changed: number; columns: number }>;
   }
 }

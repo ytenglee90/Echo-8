@@ -192,9 +192,17 @@ export class UIRuntime {
 
   contribute(owner: string, contribution: UIContribution): () => void {
     if (!allowedSlots.has(contribution.slot)) throw new Error(`Unknown UI slot: ${contribution.slot}`);
+    const settings = contribution.settings;
+    if (settings && (contribution.slot !== 'right.primary' || contribution.kind !== 'view' ||
+      settings.version !== 1 || !settings.label?.trim() || !settings.icon?.trim() ||
+      !settings.openCommand?.trim() || !Number.isFinite(settings.order))) {
+      throw new Error(`Invalid settings page: ${owner}:${contribution.id}`);
+    }
     const key = `${owner}:${contribution.id}`;
     if (this.contributions.has(key)) throw new Error(`Duplicate UI contribution: ${key}`);
-    const owned = Object.freeze({ ...contribution, owner });
+    const owned = Object.freeze({ ...contribution, owner,
+      ...(settings ? { settings: Object.freeze({ ...settings }) } : {}),
+    });
     this.contributions.set(key, owned);
     this.bump();
     return () => {
@@ -393,6 +401,14 @@ export class UIRuntime {
       .filter((item) => item.slot === slot)
       .filter((item) => !activeSurface || `${item.owner}:${item.id}` === activeSurface)
       .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.id.localeCompare(b.id));
+  }
+
+  /** Includes inactive pages, while ordinary slot rendering remains exclusive. */
+  listSettingsPages(): OwnedContribution[] {
+    return [...this.contributions.values()]
+      .filter((item) => item.settings)
+      .sort((a, b) => a.settings!.order - b.settings!.order ||
+        a.owner.localeCompare(b.owner) || a.id.localeCompare(b.id));
   }
 
   matchShortcut(event: KeyboardEvent): RegisteredShortcut | undefined {

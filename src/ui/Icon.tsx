@@ -10,7 +10,7 @@ export type IconName =
   | 'snapshot' | 'restore' | 'send' | 'at' | 'check' | 'dismiss' | 'settings' | 'key'
   | 'lock' | 'unlock' | 'sun' | 'moon' | 'reset' | 'command' | 'resize'
   | 'play' | 'stop' | 'more' | 'text' | 'replace' | 'find-replace' | 'paintbrush' | 'word'
-  | 'pointer' | 'hand' | 'link' | 'grid' | 'grid-horizontal' | 'grid-vertical'
+  | 'pointer' | 'hand' | 'link' | 'unlink' | 'link-title' | 'unlink-title' | 'junction' | 'junction-remove' | 'group-add' | 'group-remove' | 'grid' | 'grid-horizontal' | 'grid-vertical'
   | 'font-size' | 'font-weight' | 'line-height' | 'letter-spacing'
   | 'first-indent' | 'paragraph-spacing' | 'text-color'
   | 'spellcheck' | 'autocomplete' | 'comment' | 'globe' | 'echo-8' | 'echo-file' | 'template'
@@ -208,6 +208,13 @@ function iconPaths(name: string) {
     case 'pointer': return <><path d="m5 3 14 9-7 2-3 7L5 3Z" /><path d="m12 14 4 5" /></>;
     case 'hand': return <><path d="M8 11V6a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v7-5a2 2 0 0 1 4 0v8c0 5-3 7-7 7h-1c-3 0-5-1.5-7-4l-2-3a2 2 0 0 1 3-2l2 2" /></>;
     case 'link': return <><path d="M9.5 14.5 14.5 9" /><path d="M7.5 17H6a4 4 0 0 1 0-8h3M16.5 7H18a4 4 0 0 1 0 8h-3" /></>;
+    case 'link-title': return <><path d="M3 6h5M16 6h5M5.5 4v4M18.5 4v4" /><path strokeDasharray="2.5 2.5" d="M5.5 8v4c0 5 13 5 13 0V8" /></>;
+    case 'unlink': return <><path d="M7.5 17H6a4 4 0 0 1 0-8h3M16.5 7H18a4 4 0 0 1 0 8h-3M9.5 14.5 14.5 9M4 3l16 18" /></>;
+    case 'unlink-title': return <><path d="M3 6h5M16 6h5M5.5 4v4M18.5 4v4M4 3l16 18" /><path strokeDasharray="2.5 2.5" d="M5.5 8v4c0 5 13 5 13 0V8" /></>;
+    case 'junction': return <><path d="M3 12h6m6 0h3l3-6m-3 6 3 6" /><circle cx="12" cy="12" r="3" /></>;
+    case 'junction-remove': return <><path d="M3 12h5m8 0h2l3-6m-3 6 3 6" /><circle cx="12" cy="12" r="4" /><path d="M10 12h4" /></>;
+    case 'group-add': return <><rect x="3" y="4" width="12" height="16" rx="3" /><path d="M10 12h11m-8-3-3 3 3 3" /></>;
+    case 'group-remove': return <><rect x="3" y="4" width="12" height="16" rx="3" /><path d="M10 12h11m-3-3 3 3-3 3" /></>;
     case 'grid': return <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>;
     case 'grid-horizontal': return <><rect x="3" y="5" width="5" height="5" rx="1" /><rect x="9.5" y="5" width="5" height="5" rx="1" /><rect x="16" y="5" width="5" height="5" rx="1" /><path d="M5.5 15h13m-3-3 3 3-3 3" /></>;
     case 'grid-vertical': return <><rect x="5" y="3" width="5" height="5" rx="1" /><rect x="5" y="9.5" width="5" height="5" rx="1" /><rect x="5" y="16" width="5" height="5" rx="1" /><path d="M15 5.5v13m-3-3 3 3 3-3" /></>;

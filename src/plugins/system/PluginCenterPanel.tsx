@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { PluginSnapshot, ViewClient } from '../../core/contracts.ts';
-import { IconButton } from '../../ui/Icon.tsx';
+import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
 export function PluginCenterPanel({ client }: { client: ViewClient }) {
   const [plugins, setPlugins] = useState<PluginSnapshot[]>([]);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
   const version = useSyncExternalStore(client.subscribeState, () => client.getOwnStateVersion('pluginCenterUI'), () => 0);
   const [open, setOpen] = useState(false);
 
@@ -48,19 +49,20 @@ export function PluginCenterPanel({ client }: { client: ViewClient }) {
   };
 
   if (!open) return null;
-  const sections = groupPlugins(plugins);
+  const needle = query.trim().toLocaleLowerCase('zh-CN');
+  const sections = groupPlugins(plugins.filter(plugin =>
+    !needle || `${plugin.name} ${plugin.id}`.toLocaleLowerCase('zh-CN').includes(needle)));
 
   return (
     <section className="plugin-center" aria-label="插件中心">
-      <div className="panel-heading">
-        <div>
-          <span className="eyebrow">{plugins.length} 个内置组件</span>
-          <h2>插件中心</h2>
-        </div>
-        <IconButton icon="close" label="关闭插件中心" onClick={() => void client.dispatch('pluginCenter.close')} />
-      </div>
-      <p className="panel-copy">按使用场景整理。停用可选组件不会删除已有内容。</p>
-      {error && <p className="plugin-toggle-error">{error}</p>}
+      <SettingsPageHeader title="插件" description="管理内置组件；停用可选组件会保留已有内容。"
+        closeLabel="关闭插件中心" onClose={() => void client.dispatch('pluginCenter.close')} />
+      <div className="settings-page-summary">{plugins.filter(plugin => plugin.status === 'active').length} / {plugins.length} 个组件已启用</div>
+      <label className="settings-filter"><span className="sr-only">搜索插件</span>
+        <input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索插件…" />
+      </label>
+      {error && <p className="plugin-toggle-error" role="alert">{error}</p>}
+      {sections.length === 0 && <p className="settings-empty">没有匹配的插件。</p>}
       {sections.map((section) => {
         return (
           <section className="plugin-section" aria-labelledby={`plugin-section-${section.id}`} key={section.id}>

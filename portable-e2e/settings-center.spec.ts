@@ -1,0 +1,36 @@
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { expect, test } from '@playwright/test';
+
+test('portable settings navigates owner pages, applies dark appearance and closes cleanly', async ({ page }) => {
+  const failures: string[] = [];
+  page.on('pageerror', error => failures.push(error.message));
+  await page.goto(pathToFileURL(resolve(process.cwd(), 'artifacts/Echo-8.html')).href);
+  await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+  await expect(page.getByRole('button', { name: '设置', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '命令面板', exact: true }).click();
+  const palette = page.getByRole('dialog', { name: '命令面板' });
+  await expect(palette.getByRole('option').first()).toHaveText(/设置中心/u);
+  await palette.getByRole('option', { name: /^设置中心/u }).click();
+  const center = page.getByRole('region', { name: '设置中心', exact: true });
+  const nav = center.getByRole('navigation', { name: '设置分类' });
+  await expect(nav.getByRole('button', { name: '云同步', exact: true })).toHaveAttribute('aria-current', 'page');
+  await nav.getByRole('button', { name: '外观', exact: true }).click();
+  await center.getByRole('button', { name: /^B 暗调/u }).click();
+  await expect(center).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await nav.getByRole('button', { name: '云同步', exact: true }).click();
+  await expect(center.getByText('单文件模式没有账户服务', { exact: true })).toBeVisible();
+  await nav.getByRole('button', { name: '命令与快捷键', exact: true }).click();
+  await expect(center.getByRole('heading', { name: '命令与快捷键', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '命令面板', exact: true }).click();
+  await palette.getByRole('textbox', { name: '搜索命令' }).fill('从 TXT 更新纠错规则');
+  await palette.getByRole('option', { name: /^从 TXT 更新纠错规则/u }).click();
+  const selection = page.getByRole('status').filter({ hasText: '选择新的纠错规则' });
+  await expect(selection).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(selection).toHaveCount(0);
+  await expect(center).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(center).toHaveCount(0);
+  expect(failures).toEqual([]);
+});

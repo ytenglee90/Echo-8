@@ -52,19 +52,12 @@ export function createDiagnosticCenterPlugin(panel?: unknown): PluginDefinition 
         kind: 'view',
         label: '诊断中心',
         component: panel,
+        settings: { version: 1, label: '内核与诊断', icon: 'cpu', order: 60, openCommand: 'diagnostics.open' },
         priority: 81,
       });
       if (context.store.readValue<boolean>(DIAGNOSTIC_CENTER_NAMESPACE, 'open')) {
         context.ui.activateSurface('right.primary', 'diagnostic-center.panel', 'diagnostics.close');
       }
-      context.ui.action({
-        id: 'diagnostic-center.open-action',
-        label: '查看内核与诊断',
-        command: 'diagnostics.open',
-        category: '系统',
-        keywords: ['内核', '诊断', '插件', '内存', '任务', '保存', 'diagnostics'],
-        priority: 81,
-      });
       context.ui.shortcut({
         id: 'diagnostic-center.open-shortcut',
         chord: 'mod+alt+d',

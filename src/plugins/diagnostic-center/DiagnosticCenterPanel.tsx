@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { RuntimeSnapshot } from '../../protocols/runtime.ts';
 import { DIAGNOSTIC_CENTER_NAMESPACE } from './model.ts';
-import { IconButton } from '../../ui/Icon.tsx';
+import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 
 interface SearchIndexStatus {
@@ -64,11 +64,8 @@ export function DiagnosticCenterPanel({ client }: { client: ViewClient }) {
 
   return (
     <section className="diagnostic-center" aria-label="诊断中心">
-      <div className="panel-heading">
-        <div><span className="eyebrow">只读 · 已脱敏</span><h2>诊断中心</h2></div>
-        <IconButton icon="close" label="关闭诊断中心" onClick={() => void client.dispatch('diagnostics.close')} />
-      </div>
-      <p className="panel-copy">这里只读取内核公开的规模、队列和健康状态，不读取节点正文或插件私有内容。打开时每两秒刷新。</p>
+      <SettingsPageHeader title="内核与诊断" description="只读运行状态，已脱敏；每两秒刷新。"
+        closeLabel="关闭诊断中心" onClose={() => void client.dispatch('diagnostics.close')} />
       {error && <p className="diagnostic-error">{error}</p>}
       {!snapshot ? <p className="diagnostic-empty"><ProcessingLabel size={10}>正在读取运行状态…</ProcessingLabel></p> : (
         <>
@@ -107,7 +104,8 @@ export function DiagnosticCenterPanel({ client }: { client: ViewClient }) {
             </dl>
           </DiagnosticSection>
 
-          <DiagnosticSection title="状态仓库（只有数量，没有内容）">
+          <details className="settings-details"><summary>详细运行信息</summary>
+          <DiagnosticSection title="状态仓库">
             <div className="diagnostic-domain-list">
               {snapshot.store.map((domain) => (
                 <div key={domain.domain}>
@@ -143,6 +141,7 @@ export function DiagnosticCenterPanel({ client }: { client: ViewClient }) {
               </div>
             )}
           </DiagnosticSection>
+          </details>
 
           <DiagnosticSection title="最近错误（已脱敏）">
             {recentErrors.length === 0 ? <p className="diagnostic-empty">没有记录到错误。</p> : (

@@ -140,7 +140,7 @@ import { createShortcutCenterPlugin } from '../src/plugins/shortcut-center/model
 import { createSmartLayoutPlugin } from '../src/plugins/smart-layout/model.ts';
 import { createStatisticsPlugin } from '../src/plugins/statistics/model.ts';
 import { textNodePlugin } from '../src/plugins/text-node/plugin.ts';
-import { textAssistPlugin } from '../src/plugins/text-assist/plugin.ts';
+import { createTextAssistPlugin, textAssistPlugin } from '../src/plugins/text-assist/plugin.ts';
 import { endEllipsis } from '../src/ui/title-ellipsis.ts';
 import { scrollHorizontalOverflow } from '../src/ui/horizontal-overflow.ts';
 import { commandTooltip, formatShortcutChord } from '../src/ui/shortcut-presentation.ts';
@@ -730,6 +730,32 @@ test('text assistance bootstraps one correction-rule resource and preserves it a
   assert.equal(afterStop.filter((node) => resourceTitles.has(node.title)).length, 0);
 });
 
+test('rule selection cancels through its owned surface without changing rules or history and cleans up on stop', async () => {
+  const harness = createHarness();
+  harness.plugins.register(textNodePlugin);
+  harness.plugins.register(createTextAssistPlugin(() => null));
+  await harness.plugins.start('text-node');
+  await harness.plugins.start('text-assist');
+  const documentRevision = harness.store.getDomainRevision('document');
+  const undoCount = harness.history.getState().undoCount;
+  let cancelled = 0;
+  const unsubscribe = harness.router.subscribeSignal('core.test', 'text.assist.rules-file.cancelled@1', () => { cancelled += 1; });
+  await harness.router.dispatch('textAssist.loadRulesFile', undefined, 'core.test');
+  assert.equal(harness.ui.closableSurfaces()[0]?.closeCommand, 'textAssist.cancelRulesFileSelection@1');
+  await assert.rejects(harness.router.dispatch('textAssist.cancelRulesFileSelection@1', { unexpected: true }, 'core.test'), /Invalid command payload/u);
+  assert.equal(harness.ui.closableSurfaces()[0]?.owner, 'text-assist');
+  assert.deepEqual(await harness.router.dispatch('textAssist.cancelRulesFileSelection@1', undefined, 'core.test'), { cancelled: true });
+  assert.equal(cancelled, 1);
+  assert.equal(harness.ui.closableSurfaces().some(surface => surface.owner === 'text-assist'), false);
+  assert.equal(harness.store.getDomainRevision('document'), documentRevision);
+  assert.equal(harness.history.getState().undoCount, undoCount);
+  await harness.router.dispatch('textAssist.loadRulesFile', undefined, 'core.test');
+  assert.equal(harness.ui.closableSurfaces()[0]?.owner, 'text-assist');
+  await harness.plugins.stop('text-assist');
+  assert.equal(harness.ui.closableSurfaces().some(surface => surface.owner === 'text-assist'), false);
+  unsubscribe();
+});
+
 test('six nodes and connections serialize without embedding the bundled correction dictionary', async () => {
   const harness = createHarness();
   harness.plugins.register(textNodePlugin);
@@ -1300,6 +1326,7 @@ test('nonexclusive floating surfaces remain visible while tracking one most-rece
 
 test('command palette groups public actions by function with deterministic separators and ordering', () => {
   const groups = groupActionsByCategory([
+    { category: '快捷入口', label: '设置中心', priority: 0 },
     { category: '系统', label: '诊断', priority: 20 },
     { category: '文本格式', label: '字号', priority: 20 },
     { category: '编辑', label: '粘贴', priority: 30 },
@@ -1312,13 +1339,13 @@ test('command palette groups public actions by function with deterministic separ
     { category: 'AI', label: '助手', priority: 10 },
   ]);
   assert.deepEqual(groups.map((group) => group.category), [
+    '快捷入口',
     '书籍与同步',
-    '画布与节点',
-    '选择与排列',
     '编辑',
-    '文本编辑',
-    'AI',
-    '系统',
+    '画布与节点',
+    '连线与中转点',
+    'AI 助手',
+    '设置',
   ]);
   assert.deepEqual(
     groups.find((group) => group.category === '书籍与同步')?.actions.map((action) => action.label),
@@ -1326,6 +1353,8 @@ test('command palette groups public actions by function with deterministic separ
   );
   assert.deepEqual(groups.find((group) => group.category === '编辑')?.actions.map((action) => action.label), [
     '撤销',
+    '全选',
+    '字号',
     '粘贴',
   ]);
 });

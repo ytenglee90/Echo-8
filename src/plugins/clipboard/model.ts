@@ -239,7 +239,7 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
         command: 'clipboard.copy',
         category: '编辑',
         keywords: ['复制', 'copy'],
-        priority: 70,
+        priority: 30,
       });
       context.ui.action({
         id: 'clipboard.cut-action',
@@ -247,7 +247,7 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
         command: 'clipboard.cut',
         category: '编辑',
         keywords: ['剪切', 'cut'],
-        priority: 71,
+        priority: 40,
       });
       context.ui.action({
         id: 'clipboard.paste-action',
@@ -255,7 +255,7 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
         command: 'clipboard.paste',
         category: '编辑',
         keywords: ['粘贴', 'paste'],
-        priority: 72,
+        priority: 50,
       });
     },
   };

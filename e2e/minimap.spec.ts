@@ -113,7 +113,8 @@ test('minimap group fills support keyboard focus and disappear when their provid
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: '命令面板' });
   await palette.getByRole('textbox', { name: '搜索命令' }).fill('插件');
-  await palette.getByRole('option', { name: /插件中心/u }).click();
+  await palette.getByRole('option', { name: /^设置中心/u }).click();
+  await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '插件', exact: true }).click();
   const plugin = page.locator('.plugin-row').filter({ hasText: '群组' });
   await plugin.getByRole('switch', { name: '停用群组', exact: true }).click();
   await expect(group).toHaveCount(0);
@@ -166,7 +167,8 @@ test('minimap can be assigned a shortcut, toggled and hot-disabled without leavi
   await expect(page.locator('.canvas-minimap')).toHaveCount(1);
   await page.keyboard.press('Control+k');
   await palette.getByRole('textbox', { name: '搜索命令' }).fill('插件');
-  await palette.getByRole('option', { name: /插件中心/u }).click();
+  await palette.getByRole('option', { name: /^设置中心/u }).click();
+  await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '插件', exact: true }).click();
   const plugin = page.locator('.plugin-row').filter({ hasText: '画布小地图' });
   await plugin.getByRole('switch', { name: '停用画布小地图', exact: true }).click();
   await expect(page.locator('.canvas-minimap')).toHaveCount(0);

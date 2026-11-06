@@ -12,12 +12,12 @@ export const pluginCenterPlugin: PluginDefinition = {
     namespaceDomains: { [PLUGIN_CENTER_NAMESPACE]: 'workspace' },
     sessionOnlyWorkspace: { [PLUGIN_CENTER_NAMESPACE]: true },
     commands: ['pluginCenter.open', 'pluginCenter.close'],
-    dispatches: ['plugin.start', 'plugin.pause', 'plugin.stop', 'plugin.uninstall', 'pluginCenter.close'],
+    dispatches: ['plugin.start', 'plugin.pause', 'plugin.stop', 'plugin.uninstall', 'pluginCenter.close', 'system.ui.openSettings@1'],
     queries: ['pluginCenter.state'],
     asks: ['system.plugins', 'pluginCenter.state'],
     ui: ['plugin-center.panel'],
     actions: ['plugin-center.open-action'],
-    shortcuts: ['plugin-center.open-shortcut', 'plugin-center.close-shortcut'],
+    shortcuts: ['plugin-center.open-shortcut', 'plugin-center.close-shortcut', 'plugin-center.settings-open-shortcut'],
     permissions: [
       'store.own.read', 'store.own.write', 'ui.right.contribute',
       'ui.action.register', 'ui.shortcut.register', 'plugins.lifecycle.manage',
@@ -63,14 +63,21 @@ export const pluginCenterPlugin: PluginDefinition = {
       kind: 'view',
       label: '插件中心',
       component: PluginCenterPanel,
+      settings: { version: 1, label: '插件', icon: 'plugins', order: 50, openCommand: 'pluginCenter.open' },
     });
     context.ui.action({
       id: 'plugin-center.open-action',
-      label: '打开插件中心',
-      command: 'pluginCenter.open',
+      label: '设置中心',
+      command: 'system.ui.openSettings@1',
+      category: '快捷入口',
+      keywords: ['设置', '打开插件中心', '插件', '模块', '热插拔', 'plugin', 'settings'],
+      priority: 0,
+    });
+    context.ui.shortcut({
+      id: 'plugin-center.settings-open-shortcut',
+      command: 'system.ui.openSettings@1',
+      label: '打开设置中心',
       category: '系统',
-      keywords: ['插件', '模块', '热插拔', 'plugin'],
-      priority: 79,
     });
     context.ui.shortcut({
       id: 'plugin-center.open-shortcut',

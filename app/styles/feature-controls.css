@@ -8,7 +8,7 @@
 
 .search-field { display: grid; gap: 5px; margin-top: 12px; }
 .search-field > span,
-.search-field > label { color: var(--muted); font-size: 12px; font-weight: 650; }
+.search-field > label { color: var(--ink); font-size: 12px; font-weight: 650; }
 .search-field input,
 .search-options select {
   width: 100%;

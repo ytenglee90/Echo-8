@@ -413,6 +413,16 @@ export class ApplicationKernel {
       type: 'system.actions',
       handle: () => this.ui.listActions(),
     });
+    this.router.registerCommand<undefined, { opened: boolean }>('core.ui', {
+      type: 'system.ui.openSettings@1',
+      validate: (payload): payload is undefined => payload === undefined,
+      handle: async (_payload, envelope) => {
+        const page = this.ui.listSettingsPages()[0];
+        if (!page) return { result: { opened: false } };
+        await this.router.invoke(page.settings!.openCommand, undefined, page.owner, envelope);
+        return { result: { opened: true } };
+      },
+    });
     this.router.registerQuery<undefined, RegisteredShortcut[]>('core.shortcuts', {
       type: 'system.shortcuts',
       handle: () => this.ui.listShortcuts(),

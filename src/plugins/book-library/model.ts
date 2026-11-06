@@ -86,7 +86,7 @@ export function createBookLibraryPlugin(homeView?: unknown): PluginDefinition {
         command: 'bookLibrary.show',
         category: '文件',
         keywords: ['主页', '首页', '新建', '打开', '切换'],
-        priority: -400,
+        priority: -600,
       });
       context.ui.shortcut({
         id: 'book-library.open-shortcut',

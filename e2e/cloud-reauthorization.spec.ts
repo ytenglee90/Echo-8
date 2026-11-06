@@ -15,16 +15,16 @@ for (const expiredAtStartup of [true, false]) test(`Cloudflare reconnect is reac
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   await expect(library).toBeVisible();
   if (expiredAtStartup) {
-    await expect(library.getByRole('button', { name: '重新连接', exact: true })).toBeVisible();
     await expect(library.getByRole('button', { name: '重新连接 Cloudflare', exact: true })).toBeVisible();
-  } else await expect(library.getByRole('button', { name: '重新连接', exact: true })).toHaveCount(0);
+  }
+  await expect(library.getByRole('button', { name: '重新连接', exact: true })).toHaveCount(0);
   await library.press('Escape');
   await page.getByRole('button', { name: '新建文本', exact: true }).click();
   await expect(page.locator('.text-node-card')).toHaveCount(3);
   await page.getByRole('button', { name: '命令面板', exact: true }).click();
   const palette = page.getByRole('dialog', { name: '命令面板' });
-  await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开 Cloudflare 云同步');
-  await palette.getByRole('option', { name: /^打开 Cloudflare 云同步/u }).click();
+  await palette.getByRole('textbox', { name: '搜索命令' }).fill('云同步设置');
+  await palette.getByRole('option', { name: /^云同步设置/u }).click();
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步', exact: true });
   if (!expiredAtStartup) {
     await expect(panel.getByRole('button', { name: '重新连接', exact: true })).toHaveCount(0);

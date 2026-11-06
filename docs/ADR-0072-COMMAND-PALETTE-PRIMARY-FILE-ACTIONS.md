@@ -5,6 +5,9 @@
 Accepted — 2026-10-16. Supplements ADR-0046, ADR-0038, ADR-0070 and
 ADR-0071.
 
+The palette grouping and file-action order are superseded by ADR-0130; the
+toolbar, picker and dirty-document boundaries below remain in effect.
+
 ## Context
 
 Return to Library, Save, Save As and Open are available through the shared

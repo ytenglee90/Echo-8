@@ -1,78 +1,33 @@
 'use client';
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { GroupRecord } from '../../protocols/groups.ts';
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import { IconButton } from '../../ui/Icon.tsx';
-import { useCommandTooltip } from '../../ui/runtime-hooks.ts';
+import { groupMembershipSelection } from './membership-selection.ts';
 
 export function GroupActions({ client }: { client: ViewClient }) {
   const workspaceVersion = useSyncExternalStore(client.subscribeState, client.getWorkspaceVersion, () => 0);
-  const capabilityVersion = useSyncExternalStore(
-    client.subscribeCapabilities,
-    client.getCapabilityVersion,
-    () => 0,
-  );
+  const capabilityVersion = useSyncExternalStore(client.subscribeCapabilities, client.getCapabilityVersion, () => 0);
   const [groups, setGroups] = useState<GroupRecord[]>([]);
   const [selection, setSelection] = useState<SelectionSnapshot>({ ids: [], items: [] });
-  const [groupsVersion, setGroupsVersion] = useState(0);
-
-  useEffect(
-    () => client.subscribeSignal('groups.invalidated', () => setGroupsVersion((version) => version + 1)),
-    [client],
-  );
-
+  const [version, setVersion] = useState(0);
+  useEffect(() => client.subscribeSignal('groups.invalidated', () => setVersion(value => value + 1)), [client]);
   useEffect(() => {
     let current = true;
-    void Promise.all([
-      client.request<GroupRecord[]>('groups.list@1'),
-      client.request<SelectionSnapshot>('selection.read@1'),
-    ]).then(([nextGroups, nextSelection]) => {
-      if (!current) return;
-      setGroups(nextGroups);
-      setSelection(nextSelection);
-    });
-    return () => {
-      current = false;
-    };
-  }, [capabilityVersion, client, groupsVersion, workspaceVersion]);
-
-  const exactGroup = useMemo(
-    () => groups.find((group) => selection.ids.includes(group.id)),
-    [groups, selection.ids],
-  );
-  const occupied = useMemo(
-    () => new Set(groups.flatMap((group) => group.memberIds)),
-    [groups],
-  );
-
-  const selectedNodeIds = selection.items
-    .filter((item) => item.kind === 'text-node' || item.kind === 'unknown')
-    .map((item) => item.id);
-  const hasOccupiedNode = selectedNodeIds.some((id) => occupied.has(id));
-  const canCreate = !exactGroup && selectedNodeIds.length >= 2 && !hasOccupiedNode;
-  const canManageMembership = groups.length > 0 && selection.ids.length > 0;
-  const toggleLabel = useCommandTooltip(
-    client,
-    'group.toggleSelection',
-    exactGroup ? '取消群组' : hasOccupiedNode ? '选中节点已属于群组' : '创建群组',
-  );
-  const membershipLabel = useCommandTooltip(client, 'group.membership.open', '加入或踢出已有群组');
-  return (
-    <div className="group-context-actions" aria-label="群组操作">
-      <IconButton
-        icon={exactGroup ? 'ungroup' : 'group'}
-        label={toggleLabel}
-        disabled={!exactGroup && !canCreate}
-        onClick={() => void client.dispatch('group.toggleSelection')}
-      />
-      <IconButton
-        icon="group-membership"
-        label={membershipLabel}
-        disabled={!canManageMembership}
-        onClick={() => void client.dispatch('group.membership.open')}
-      />
-    </div>
-  );
+    void Promise.all([client.request<GroupRecord[]>('groups.list@1'), client.request<SelectionSnapshot>('selection.read@1')]).then(([nextGroups, nextSelection]) => {
+      if (current) { setGroups(nextGroups); setSelection(nextSelection); }
+    }).catch(() => undefined);
+    return () => { current = false; };
+  }, [capabilityVersion, client, version, workspaceVersion]);
+  const nodes = selection.items.filter(item => item.kind === 'text-node' || item.kind === 'unknown').map(item => item.id);
+  const intent = groupMembershipSelection(groups, selection, nodes);
+  const targetWithNodes = intent.selectedGroups.length > 0 && intent.selectedNodes.length > 0;
+  const mode = targetWithNodes ? 'add' : intent.canRemove ? 'remove' : intent.selectedGroups.length === 1 ? 'ungroup' : 'create';
+  const ready = mode === 'add' ? intent.canAdd : mode === 'remove' ? intent.canRemove : mode === 'ungroup' || intent.canCreate;
+  const icon = mode === 'add' ? 'group-add' : mode === 'remove' ? 'group-remove' : mode === 'ungroup' ? 'ungroup' : 'group';
+  const label = mode === 'add' ? '加入群组' : mode === 'remove' ? '踢出群组' : mode === 'ungroup' ? '取消群组' : '创建群组';
+  const apply = (action: 'add' | 'remove') => void client.dispatch('group.membership.applySelected@1', { action });
+  return <IconButton icon={icon} label={label} disabled={!ready} onClick={() => mode === 'add' || mode === 'remove' ? apply(mode) : void client.dispatch('group.toggleSelection')} />;
 }

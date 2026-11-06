@@ -1,5 +1,15 @@
 # Echo-8 Architecture
 
+The UI-owned assistant finish layer scopes shared typography, control geometry, spacing, semantic surfaces and focus states to ai-floating-panel across chat, memory, templates and governed provider contributions. Library account capacity and access share one metadata row below the account identity (ADR-0135).
+
+Settings opens from the first command-palette group rather than adding toolbar chrome. Explicit rule-file selection joins the governed Esc surface stack and cancels through textAssist.cancelRulesFileSelection@1; the owning view discards late file reads after cancellation (ADR-0134).
+
+The versioned system.ui.openSettings@1 command opens the first available settings contribution on every invocation (cloud sync by the registered order), using an inline owner command invocation. Direct category commands remain independent, and disabling the first owner falls back to the next contribution (ADR-0134).
+
+Settings pages opt into shared shell navigation through the runtime-only `SettingsPageContributionV1` metadata. The UI runtime keeps inactive registered pages discoverable while rendering only the active governed right-side surface. Owners retain their commands, views and preferences; stopping an owner removes its navigation entry. Shared settings headers and semantic colors cover all six management pages, while command execution remains in the independent palette (ADR-0133).
+
+Toolbar hover/focus menus share the UI-owned native popover component. Connection menus retain three vertical icon slots with contextual connect/disconnect/delete states and disabled unavailable actions. The group icon acts directly; primary arrangement clicks cycle while the menu selects fixed layouts. Connection owners batch compatible shared junctions or individual points in one transaction, filtering selected edges from mixed selections. New junction selection refreshes missing catalog IDs before frame-coalesced invalidations arrive. Document formats remain unchanged (ADR-0131, superseded interaction details in ADR-0132).
+
 ## Runtime path
 
 Every durable user operation follows one path:
@@ -55,6 +65,8 @@ Theme tokens are an exception only in location, not in discipline: the mandatory
 The shell derives local ink, muted, faint, border, control and hover values from semantic chrome backgrounds before rendering governed slots. Every `right.primary`, floating-panel, command-palette and immersive-panel-overlay contribution consumes the panel-derived set; modal dialogs, task notices and inline suggestion surfaces opt into the same scope at their surface root. Labels, inputs, placeholders, shortcuts, controls and state messages therefore follow the actual panel luminance instead of assuming the theme's general text color. Document paper and node content remain outside this chrome scope.
 
 The UI runtime also owns the action catalog and the only global keyboard registry. Plugins declare searchable actions and default shortcuts through scoped contributions. The command-palette plugin reads the catalog and broadcasts `system.action.execute`; the core resolves the still-active contribution and queues its command for the next serialized dispatch turn. Personal shortcut overrides are proposed by the shortcut-center plugin, atomically conflict-checked by the UI runtime, stored in workspace state and removed from the active registry when that plugin stops.
+
+Palette groups use a stable task order, while feature owners curate their own actions and priorities; removed palette duplicates retain their commands and shortcuts. Displayed group names participate in search. The versioned cloudSync.requestSaveAs@1 opens the cloud-owned local-book Save As flow without saving before the user supplies a name (ADR-0130).
 
 The mandatory UI surface arbiter owns right-side visibility conflicts. A committed `right.editor` or `right.primary` reveal publishes the generic `system.ui.surface.revealed` fact with its slot and contribution identity. The arbiter excludes that new surface, then queues the active conflicting editor or previous property surface owner's declared yield command through the router; the ordinary close command remains the fallback. This distinction lets Escape close one editor pane while a newly opened property panel closes the whole editor dock. Editors and panels never import, inspect or mutate one another, and a future right-side panel participates by registering its governed surface and public close/yield command and publishing the generic reveal fact rather than adding feature-specific listeners. Ordinary `editor.open` replaces the dock with one pane; only explicit `mode: 'add'` entry points, including Shift+double-click on a canvas text node, preserve the three-pane workflow.
 

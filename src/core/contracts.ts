@@ -9,6 +9,7 @@ import type {
   KnownCommandType,
 } from '../protocols/commands.ts';
 import type { KnownCapabilityType, KnownQueryType } from '../protocols/messages.ts';
+import type { SettingsPageContributionV1 } from '../protocols/settings.ts';
 
 export type {
   DomainSnapshot,
@@ -147,6 +148,8 @@ export interface UIContribution {
     | 'tools'
     | 'system';
   component?: unknown;
+  /** Opts a right.primary view into the shared settings navigation. */
+  settings?: SettingsPageContributionV1;
 }
 
 export interface ShortcutContribution {

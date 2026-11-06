@@ -21,6 +21,7 @@ import { commandTooltip } from '../ui/shortcut-presentation.ts';
 import { useNonPassiveWheel } from '../ui/use-non-passive-wheel.ts';
 import { PluginBoundary } from './PluginBoundary.tsx';
 import { TaskNoticeCenter } from './TaskNoticeCenter.tsx';
+import { SettingsCenter } from './SettingsCenter.tsx';
 
 type PluginView = ComponentType<{
   client: ViewClient;
@@ -31,6 +32,10 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
   const uiVersion = useSyncExternalStore(kernel.ui.subscribe.bind(kernel.ui), kernel.ui.getVersion, () => 0);
   const theme = kernel.ui.getActiveTheme();
   const themeStyle = toThemeStyle(theme.tokens);
+  const lastToolbarTrigger = useRef<HTMLElement | null>(null);
+  const restoreToolbarFocus = useCallback(() => {
+    if (lastToolbarTrigger.current?.isConnected) lastToolbarTrigger.current.focus();
+  }, []);
 
   useEffect(() => {
     const localizedEvents = new WeakSet<Event>();
@@ -180,6 +185,10 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
   const shortcuts = kernel.ui.listShortcuts();
   const rightPrimaryOpen = Boolean(kernel.ui.topSurface(['right.primary']));
   const rightEditorOpen = Boolean(kernel.ui.topSurface(['right.editor']));
+  const settingsPages = kernel.ui.listSettingsPages();
+  const activeSettingsPage = rightPrimaryOpen
+    ? kernel.listUI('right.primary').find(item => item.settings)
+    : undefined;
   const groups = [
     ['file', '文件与命令'],
     ['create', '新建'],
@@ -199,6 +208,7 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
       data-theme={theme.mode}
       data-right-primary-open={rightPrimaryOpen ? 'true' : 'false'}
       data-right-editor-open={rightEditorOpen ? 'true' : 'false'}
+      data-settings-open={activeSettingsPage ? 'true' : 'false'}
       style={themeStyle}
     >
       <div className="welcome-layer">
@@ -216,6 +226,7 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
                     contribution={contribution}
                     kernel={kernel}
                     shortcuts={shortcuts}
+                    onTrigger={element => { lastToolbarTrigger.current = element; }}
                     key={`${contribution.owner}:${contribution.id}`}
                   />
                 ))}
@@ -238,7 +249,16 @@ export function InfiniteCanvasShell({ kernel }: { kernel: ApplicationKernel }) {
 
       <aside className="right-rail">
         <Slot kernel={kernel} slot="right.editor" />
-        <Slot kernel={kernel} slot="right.primary" />
+        {activeSettingsPage ? (
+          <SettingsCenter
+            pages={settingsPages}
+            active={activeSettingsPage}
+            onReturnFocus={restoreToolbarFocus}
+            onOpen={page => kernel.createViewClient(page.owner).dispatchDynamic(page.settings!.openCommand, undefined)}
+          >
+            <Slot kernel={kernel} slot="right.primary" />
+          </SettingsCenter>
+        ) : <Slot kernel={kernel} slot="right.primary" />}
       </aside>
 
       <div className="floating-layer">
@@ -348,10 +368,12 @@ function TopContribution({
   kernel,
   contribution,
   shortcuts,
+  onTrigger,
 }: {
   kernel: ApplicationKernel;
   contribution: UIContribution & { owner: string };
   shortcuts: RegisteredShortcut[];
+  onTrigger: (element: HTMLElement) => void;
 }) {
   if (contribution.kind === 'button') {
     return (
@@ -361,10 +383,18 @@ function TopContribution({
         aria-label={contribution.label}
         title={commandTooltip(contribution, shortcuts)}
         onPointerDown={contribution.preserveEditableFocus ? (event) => event.preventDefault() : undefined}
-        onClick={() =>
-          contribution.command &&
-          void kernel.createViewClient(contribution.owner).dispatchDynamic(contribution.command, undefined)
-        }
+        onClick={(event) => {
+          // Safari does not focus buttons on pointer activation. Capture a real
+          // return target before a governed panel takes focus, except for tools
+          // which explicitly preserve an editor selection.
+          if (!contribution.preserveEditableFocus) {
+            event.currentTarget.focus();
+            onTrigger(event.currentTarget);
+          }
+          if (contribution.command) {
+            void kernel.createViewClient(contribution.owner).dispatchDynamic(contribution.command, undefined);
+          }
+        }}
       >
         <Icon name={contribution.icon ?? 'more'} />
       </button>

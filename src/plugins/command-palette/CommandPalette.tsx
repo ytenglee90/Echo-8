@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { RegisteredAction, RegisteredShortcut, ViewClient } from '../../core/contracts.ts';
 import { formatShortcutChord } from '../../ui/shortcut-presentation.ts';
-import { groupActionsByCategory, sortActionsByCategory } from './action-groups.ts';
+import { displayCategory, groupActionsByCategory, sortActionsByCategory } from './action-groups.ts';
 import { COMMAND_PALETTE_NAMESPACE } from './model.ts';
 
 export function CommandPalette({ client }: { client: ViewClient }) {
@@ -44,7 +44,7 @@ export function CommandPalette({ client }: { client: ViewClient }) {
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
     const matches = !needle ? actions : actions.filter((action) =>
-      [action.label, action.category, action.command, ...(action.keywords ?? [])]
+      [action.label, action.category, displayCategory(action.category), action.command, ...(action.keywords ?? [])]
         .join(' ')
         .toLocaleLowerCase('zh-CN')
         .includes(needle),
@@ -142,7 +142,7 @@ export function CommandPalette({ client }: { client: ViewClient }) {
           {filtered.length === 0 && <p>没有匹配的命令</p>}
         </div>
         {error && <p className="command-error">{error}</p>}
-        <footer><span>↑↓ 选择</span><span>Enter 执行</span><span>{actions.length} 个已注册动作</span></footer>
+        <footer><span>↑↓ 选择</span><span>Enter 执行</span><span>{filtered.length} 个命令</span></footer>
       </section>
     </div>
   );

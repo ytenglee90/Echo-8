@@ -31,7 +31,7 @@ async function account(browser: Browser) {
     });
     await page.goto('/');
     await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
-    await command(page, '打开 Cloudflare 云同步');
+    await command(page, '云同步设置');
     await expect(page.getByText(/^保存设置已同步：/u)).toBeVisible();
     await command(page, '书籍与恢复设置');
     return page;
@@ -79,7 +79,7 @@ test('concurrent device preference edits retain local choices until explicit acc
     await interval(first).selectOption('0');
     await expect.poll(() => JSON.parse(String(a.stored()?.body_json)).autosaveIntervalMs).toBe(0);
     await interval(second).selectOption('300000');
-    await command(second, '打开 Cloudflare 云同步');
+    await command(second, '云同步设置');
     await expect(second.getByRole('button', { name: '使用账号保存设置', exact: true })).toBeVisible();
     await second.screenshot({ path: info.outputPath('saving-preferences-conflict.png') });
     expect(JSON.parse(String(a.stored()?.body_json)).autosaveIntervalMs).toBe(0);
@@ -108,7 +108,7 @@ test('a failed account preference write rolls back both local policies and reten
         return original.call(this, value, key);
       };
     });
-    await command(second, '打开 Cloudflare 云同步');
+    await command(second, '云同步设置');
     await second.getByRole('button', { name: '同步保存设置', exact: true }).click();
     await expect(second.getByText('模拟设置写入失败', { exact: true })).toBeVisible();
     await command(second, '书籍与恢复设置');

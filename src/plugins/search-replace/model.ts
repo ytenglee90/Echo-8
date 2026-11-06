@@ -779,7 +779,7 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
         command: 'search.open',
         category: '编辑',
         keywords: ['搜索', '替换', '全画布', 'find'],
-        priority: 20,
+        priority: 70,
       });
       if (isOpen()) context.ui.activateSurface('overlay.floating', 'search.panel', 'search.close');
     },

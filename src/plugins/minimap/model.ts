@@ -35,7 +35,7 @@ export function createMinimapPlugin(view?: unknown, toggle?: unknown): PluginDef
       context.ui.contribute({ id: 'minimap.toggle-button', slot: 'top.primary', kind: 'view',
         group: 'status', priority: 6, label: '打开或关闭小地图', component: toggle });
       context.ui.action({ id: 'minimap.toggle-action', label: '打开或关闭小地图',
-        command: 'minimap.toggle', category: '画布', keywords: ['导航', '全貌', 'minimap'] });
+        command: 'minimap.toggle', category: '画布', keywords: ['导航', '全貌', 'minimap'], priority: 70 });
       context.ui.shortcut({ id: 'minimap.toggle-shortcut', label: '打开或关闭小地图',
         command: 'minimap.toggle', category: '画布' });
     },

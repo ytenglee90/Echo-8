@@ -19,6 +19,7 @@ import {
 } from '../../protocols/files.ts';
 import { PRODUCT_NAME } from '../../product.ts';
 import { Icon, IconButton } from '../../ui/Icon.tsx';
+import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import type { LocalStorageUsage } from '../../protocols/local-storage.ts';
 import type {} from '../../protocols/local-storage.ts';
@@ -195,13 +196,8 @@ export function FilePanel({ client }: { client: ViewClient }) {
 
   return (
     <section className="file-panel" aria-label="书籍与恢复">
-      <div className="file-heading">
-        <div>
-          <span className="eyebrow">本地文件与数据保险</span>
-          <h2>书籍与恢复</h2>
-        </div>
-        <IconButton icon="close" label="关闭书籍与恢复面板" onClick={close} />
-      </div>
+      <SettingsPageHeader title="书籍与恢复" description="保存、导出书籍，管理自动保存与本机恢复副本。"
+        closeLabel="关闭书籍与恢复面板" onClose={close} />
 
       <div className="file-section">
         <div className="file-section-title">
@@ -217,6 +213,11 @@ export function FilePanel({ client }: { client: ViewClient }) {
             onClick={saveProject}
           />
           <IconButton icon="save-as" label="另存本地副本" disabled={busy} onClick={saveProjectAs} />
+          {!fileState?.cloudProjectActive && <IconButton icon="sync" label="另存到云端" disabled={busy}
+            onClick={() => void client.dispatch('cloudSync.requestSaveAs@1').catch((reason) => setStatus({
+              operation: 'project-save', state: 'error',
+              message: reason instanceof Error ? reason.message : String(reason),
+            }))} />}
           <IconButton icon="folder-open" label="打开书籍" disabled={busy} onClick={requestOpen} />
           <input
             ref={inputRef}
@@ -247,25 +248,9 @@ export function FilePanel({ client }: { client: ViewClient }) {
         <p className="file-note">当前节点先导出标题段，再导出正文段；全画布先选择保存文件夹，每个节点生成一份以标题命名的 TXT。</p>
       </div>
 
-      <section className="file-section local-storage-section" aria-label="浏览器本地数据占用与清理">
-        <div className="file-section-title">
-          <strong>浏览器本地数据占用与清理</strong>
-        </div>
-        <p className="file-note">分类大小为数据估算；下方安全清理会保留未保存草稿、待上传修改、个人设置和唯一恢复副本。需要删除历史版本时，请使用恢复副本管理。</p>
-        {storageUsage?.originUsedBytes!==undefined&&<p>本站浏览器占用约 {formatStorageBytes(storageUsage.originUsedBytes)}{storageUsage.originQuotaBytes?` / 可用额度 ${formatStorageBytes(storageUsage.originQuotaBytes)}`:''}</p>}
-        <dl>{storageUsage?.categories.map(category=><div key={category.id}><dt>{category.label}</dt><dd>{formatStorageBytes(category.bytes)} · {category.records} 条</dd></div>)}</dl>
-        <div className="local-storage-actions">{[false,true].map(backed=><button key={String(backed)} type="button" disabled={cleanupBusy} onClick={()=>{
-          setCleanupBusy(true);setCleanupMessage('');
-          void client.dispatch('system.storage.cleanup',{includeBackedUpRecovery:backed}).then(result=>{
-            setStorageUsage(result.usage);setCleanupMessage(`已清理 ${result.removedRecords} 条无引用或已备份的多余数据`);setReloadToken(value=>value+1);
-          }).catch(error=>setSettingsError(error instanceof Error?error.message:String(error))).finally(()=>setCleanupBusy(false));
-        }}>{backed?'清理已备份的多余恢复副本':'清理无引用缓存'}</button>)}</div>
-        {cleanupMessage&&<p role="status">{cleanupMessage}</p>}
-      </section>
-
       <div className="file-section">
         <div className="file-section-title">
-          <strong>保存与恢复</strong>
+          <strong>自动保存</strong>
           <span>{!persistence || persistence.state === 'saving' || persistence.state === 'pending'
             ? <ProcessingLabel size={9}>{persistenceLabel(
                 persistence,
@@ -317,9 +302,26 @@ export function FilePanel({ client }: { client: ViewClient }) {
         }</p>
         <p className="file-note">自动保存间隔随个人账号同步，换设备后恢复；未登录时仍在本机保留。</p>
         {settingsError && <p className="autosave-settings-error" role="alert">{settingsError}</p>}
-        <IconButton icon="snapshot" label="创建手动恢复点" className="icon-button recovery-create" disabled={busy || cleanupBusy} onClick={() => void client.dispatch('file.createRecoveryPoint')} />
-        <RecoveryManager client={client} refreshToken={reloadToken} disabled={busy || cleanupBusy || persistence?.state === 'memory-only'} onChanged={() => setReloadToken((value) => value + 1)} />
       </div>
+
+      <RecoveryManager client={client} refreshToken={reloadToken}
+        disabled={busy || cleanupBusy || persistence?.state === 'memory-only'}
+        onChanged={() => setReloadToken(value => value + 1)}
+        actions={<IconButton icon="snapshot" label="创建手动恢复点" className="icon-button recovery-create"
+          disabled={busy || cleanupBusy} onClick={() => void client.dispatch('file.createRecoveryPoint')} />}
+        overview={<section className="local-storage-section" aria-label="浏览器本地数据占用与清理">
+          {storageUsage?.originUsedBytes !== undefined && <p>本站浏览器占用约 {formatStorageBytes(storageUsage.originUsedBytes)}{storageUsage.originQuotaBytes ? ` / 可用额度 ${formatStorageBytes(storageUsage.originQuotaBytes)}` : ''}</p>}
+          <dl>{storageUsage?.categories.map(category => <div key={category.id}><dt>{category.label}</dt><dd>{formatStorageBytes(category.bytes)} · {category.records} 条</dd></div>)}</dl>
+          <p className="file-note">分类大小为估算。安全清理保留未保存草稿、待上传修改和唯一恢复副本。</p>
+          <div className="local-storage-actions">{[false, true].map(backed => <button key={String(backed)} type="button" disabled={cleanupBusy} onClick={() => {
+            setCleanupBusy(true); setCleanupMessage('');
+            void client.dispatch('system.storage.cleanup', { includeBackedUpRecovery: backed }).then(result => {
+              setStorageUsage(result.usage); setCleanupMessage(`已清理 ${result.removedRecords} 条无引用或已备份的多余数据`); setReloadToken(value => value + 1);
+            }).catch(error => setSettingsError(error instanceof Error ? error.message : String(error))).finally(() => setCleanupBusy(false));
+          }}>{backed ? '清理已备份的多余恢复副本' : '清理无引用缓存'}</button>)}</div>
+          {cleanupMessage && <p role="status">{cleanupMessage}</p>}
+        </section>}
+      />
 
       {status && (
         <div className={`file-status ${status.state}`} aria-live="polite">

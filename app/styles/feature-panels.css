@@ -375,6 +375,10 @@
 .recovery-manager { margin-top: 12px; }
 .recovery-manager h3 { margin: 0; color: var(--ink); font-size: 12px; }
 .recovery-manager h3 > span { color: var(--muted); font-weight: 400; }
+.recovery-copies { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.recovery-copies h4 { display: flex; align-items: baseline; gap: 6px; margin: 0 0 10px; font-size: 12px; }
+.recovery-copies h4 > span { color: var(--muted); font-weight: 400; }
+.recovery-module-heading .recovery-create { margin: 0; }
 .recovery-manager .recovery-select { display: flex; flex: 1; align-items: flex-start; gap: 7px; min-width: 0; cursor: pointer; }
 .recovery-manager .recovery-select > span { display: grid; min-width: 0; gap: 3px; }
 .recovery-manager .recovery-select input { margin: 2px 0 0; accent-color: var(--ink); }
@@ -739,6 +743,8 @@
 .cloud-sync-section > h3,
 .cloud-section-heading h3 { margin: 0; font-size: 12px; }
 .cloud-sync-section > p { margin: 5px 0 10px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.cloud-save-as > label { display: grid; gap: 6px; margin-bottom: 10px; font-size: 12px; }
+.cloud-save-as input { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--control-surface); color: var(--ink); font: inherit; }
 .cloud-section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .cloud-sync-heading-actions { display: inline-flex; align-items: center; gap: 3px; }
 .cloud-sync-heading-actions .icon-button,

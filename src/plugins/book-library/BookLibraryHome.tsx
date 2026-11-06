@@ -153,13 +153,11 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
               <span className="book-library-avatar" aria-hidden="true">{accountInitial(accountLabel)}</span>
               <span className="book-library-account-copy">
                 <strong>{accountLabel || 'Cloudflare 账户'}</strong>
-                <small className="book-library-account-storage" title={storage.title}>{storage.label}</small>
-                <small className="book-library-account-access">{access}</small>
+                <span className="book-library-account-meta">
+                  <small className="book-library-account-storage" title={storage.title}>{storage.label}</small>
+                  <small className="book-library-account-access">{access}</small>
+                </span>
               </span>
-              {cloud.reauthorizationRequired && <button type="button" disabled={Boolean(busy)} onClick={() => void run('reconnect', async () => {
-                const result = await client.dispatch('cloudSync.prepareReconnect');
-                globalThis.location.assign(result.url);
-              })}>重新连接</button>}
               <button type="button" disabled={Boolean(busy)} onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}>
                 {busy === 'logout' && <ProcessingIndicator size={9} />}退出
               </button>

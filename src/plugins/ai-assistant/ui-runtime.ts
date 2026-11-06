@@ -39,7 +39,7 @@ export function registerAIAssistantUI(
     command: 'ai.open',
     category: 'AI',
     keywords: ['润色', '扩写', '总结', '大纲', '提取', 'assistant'],
-    priority: 25,
+    priority: 10,
   });
   context.ui.action({
     id: 'ai.open-new-assistant-action',
@@ -47,15 +47,15 @@ export function registerAIAssistantUI(
     command: 'ai.assistant.openNew',
     category: 'AI',
     keywords: ['新助手', '多助手', '并行', '新会话', 'assistant'],
-    priority: 24,
+    priority: 20,
   });
   context.ui.action({
     id: 'ai.open-provider-settings-action',
     label: '配置 AI 模型连接与密钥',
     command: 'ai.openProviderSettings',
-    category: 'AI',
+    category: '设置',
     keywords: ['模型', '平台', '接口', '密钥', 'KEY', 'endpoint', 'API'],
-    priority: 24,
+    priority: 70,
   });
   context.ui.action({
     id: 'ai.save-session-action',
@@ -63,7 +63,7 @@ export function registerAIAssistantUI(
     command: 'ai.session.save',
     category: 'AI',
     keywords: ['保存对话', '存档', '记忆', '索引', 'memory'],
-    priority: 23,
+    priority: 30,
   });
   context.ui.shortcut({
     id: 'ai.open-shortcut',

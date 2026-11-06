@@ -73,7 +73,7 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
         } });
         context.ui.shortcut({ id: `smart-layout.toggle-${key}-shortcut`, label: `打开或关闭${label}`, command, category: '选择与排列' });
         context.ui.action({ id: `smart-layout.toggle-${key}-action`, label: `打开或关闭${label}`, command,
-          category: '选择与排列', keywords: ['对齐', '拖动', '吸附', '参考线', 'snap', 'guides'] });
+          category: '设置', keywords: ['对齐', '拖动', '吸附', '参考线', 'snap', 'guides'], priority: key === 'guides' ? 50 : 51 });
       }
       context.events.subscribe('layout.settings.changed@1', () => context.signals.emit('canvas.snap.preview', { clear: true }));
       const allEntities = new SpatialHashIndex<SnapEntity>();

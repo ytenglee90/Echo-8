@@ -382,3 +382,16 @@
   cursor: nwse-resize;
   touch-action: none;
 }
+.toolbar-dropdown { position: relative; display: flex; }
+.toolbar-dropdown-trigger { position: relative; display: flex; }
+.toolbar-dropdown-trigger > svg { position: absolute; right: 1px; bottom: 1px; transform: rotate(90deg); pointer-events: none; }
+.toolbar-dropdown-menu {
+  position: fixed; inset: auto; margin: 0; padding: 6px; border: 1px solid var(--toolbar-border);
+  border-radius: 12px; background: var(--toolbar); color: var(--toolbar-ink); box-shadow: 0 14px 36px rgba(24, 24, 27, .16);
+}
+.toolbar-dropdown-menu:not(:popover-open) { display: none; }
+.toolbar-dropdown-menu:popover-open { display: grid; gap: 3px; }
+.toolbar-dropdown-menu.toolbar-icon-menu:popover-open { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.toolbar-dropdown-menu .icon-button { background: transparent; color: var(--toolbar-ink); border-color: transparent; }
+.toolbar-dropdown-menu .icon-button:hover { background: var(--toolbar-hover); }
+.toolbar-dropdown-menu .icon-button:focus-visible { outline: 2px solid var(--toolbar-ink); outline-offset: 1px; }

@@ -114,6 +114,7 @@ textarea:focus-visible,
  * supplies values that remain visible against the actual panel background.
  */
 :where(
+  .settings-center,
   .ui-contribution-root[data-ui-slot="right.primary"],
   .ui-contribution-root[data-ui-slot="overlay.floating"],
   .ui-contribution-root[data-ui-slot="command.palette"],

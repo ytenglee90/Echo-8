@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { RecoveryPreview } from '../../protocols/files.ts';
 import type { PersistencePreferences } from '../../protocols/persistence-preferences.ts';
@@ -14,11 +14,13 @@ import { IconButton } from '../../ui/Icon.tsx';
 type PendingAction = { kind: 'delete'; request: RecoveryDeleteRequest; count: number } |
   { kind: 'retention'; limit: number | null };
 
-export function RecoveryManager({ client, refreshToken, disabled, onChanged }: {
+export function RecoveryManager({ client, refreshToken, disabled, onChanged, overview, actions }: {
   client: ViewClient;
   refreshToken: number;
   disabled: boolean;
   onChanged: () => void;
+  overview: ReactNode;
+  actions: ReactNode;
 }) {
   const [catalog, setCatalog] = useState<RecoveryCatalog>();
   const [selected, setSelected] = useState<string[]>([]);
@@ -75,9 +77,14 @@ export function RecoveryManager({ client, refreshToken, disabled, onChanged }: {
     }
   };
 
-  return <section className="recovery-manager" aria-label="恢复副本管理" aria-busy={working}>
-    <h3 ref={headingRef} tabIndex={-1}>恢复副本管理 <span>{catalog?.totalCount ?? 0} 个</span></h3>
-    <p className="file-note">这是此浏览器保存的历史版本。删除后无法再恢复到该版本；当前书籍、撤销历史、云端书籍和个人设置会保留。</p>
+  return <section className="file-section recovery-manager local-data-recovery" aria-label="本机数据与恢复" aria-busy={working}>
+    <div className="file-section-title recovery-module-heading">
+      <h3 ref={headingRef} tabIndex={-1}>本机数据与恢复</h3>{actions}
+    </div>
+    <p className="file-note">查看本机占用、清理缓存和管理历史副本。删除副本不可撤销；当前书籍、撤销历史、云端书籍和个人设置会保留。</p>
+    {overview}
+    <section className="recovery-copies" aria-label="恢复副本管理">
+    <h4>恢复副本 <span>{catalog?.totalCount ?? 0} 个</span></h4>
     <label className="autosave-interval-control">
       <span>自动保留数量</span>
       <select aria-label="恢复副本自动保留数量" value={catalog?.retentionLimit ?? 'none'} disabled={busy || !catalog}
@@ -92,10 +99,6 @@ export function RecoveryManager({ client, refreshToken, disabled, onChanged }: {
     </label>
     <p className="file-note">启用数量限制后，较早的副本（含手动恢复点）会自动删除。此选择随个人账号同步，换设备后恢复；副本本身仅保存在本机。</p>
     <div className="local-storage-actions recovery-management-actions">
-      <button type="button" disabled={busy || !catalog?.points.length} onClick={() => {
-        setSelected(selected.length === catalog?.points.length ? [] : catalog!.points.map((point) => point.id));
-        setPending(undefined);
-      }}>{catalog?.points.length && selected.length === catalog.points.length ? '取消选择' : '选择已加载副本'}</button>
       <button type="button" disabled={busy || !selected.length} onClick={() => setPending({ kind: 'delete', request: { ids: selected }, count: selected.length })}>删除选中副本{selected.length ? `（${selected.length}）` : ''}</button>
       <button type="button" disabled={busy || !catalog?.totalCount} onClick={() => setPending({ kind: 'delete', request: { through: catalog!.listedAt }, count: catalog!.totalCount })}>清空恢复副本</button>
     </div>
@@ -161,6 +164,7 @@ export function RecoveryManager({ client, refreshToken, disabled, onChanged }: {
     }}>加载更多恢复副本</button>}
     {message && <p className="file-note" role="status">{message}</p>}
     {error && <p className="autosave-settings-error" role="alert">{error}</p>}
+    </section>
   </section>;
 }
 

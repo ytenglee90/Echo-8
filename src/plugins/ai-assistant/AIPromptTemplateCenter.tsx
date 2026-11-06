@@ -52,7 +52,7 @@ export function AIPromptTemplateCenter({
   return (
     <section className="ai-prompt-center" aria-label="AI Prompt 模板" aria-busy={busy || undefined}>
       <header>
-        <div><span className="eyebrow">个人工作区</span><h3>Prompt 模板</h3></div>
+        <div><h3>Prompt 模板</h3></div>
         <div>
           <IconButton
             icon="add"

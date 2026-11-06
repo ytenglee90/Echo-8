@@ -42,6 +42,12 @@ function sameEndpoint(left: ConnectionEndpoint, right: ConnectionEndpoint): bool
   return left.nodeId === right.nodeId && left.kind === right.kind;
 }
 
+/** Sharing a point must preserve every original source/target relationship and line type. */
+export function canShareConnectionJunction(records: readonly ConnectionRecord[]): boolean {
+  return records.length > 0 && new Set(records.map(isTitleConnection)).size === 1 &&
+    (records.every(edge => sameEndpoint(edge.from, records[0].from)) || records.every(edge => sameEndpoint(edge.to, records[0].to)));
+}
+
 /** Validate only edited components; legacy unrelated mixed graphs remain readable and removable. */
 export function assertJunctionLineTypes(records: readonly ConnectionRecord[], touched?: ReadonlySet<string>): void {
   const parent = new Map<string, string>();

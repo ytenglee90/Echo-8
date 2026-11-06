@@ -13,6 +13,28 @@ pnpm run dev
 
 原生依赖构建许可集中在 `pnpm-workspace.yaml`，不向未知依赖开放构建脚本。
 
+## 换设备后继续使用 Codex
+
+可以从 GitHub 克隆，或解压本次开发交接包。交接包中的 `Echo-8/` 是干净的 Git 仓库，包含完整提交历史、源码、锁文件、仓库内架构技能、测试、迁移、许可证和便携成品；不包含依赖、本机书籍、浏览器数据、登录凭据或构建缓存。
+
+```powershell
+git clone https://github.com/ytenglee90/Echo-8.git
+cd Echo-8
+git status --short
+git log -1 --oneline
+node --version
+pnpm --version
+pnpm install --frozen-lockfile
+pnpm exec playwright install chromium firefox webkit
+pnpm run dev
+```
+
+解压方式从 `cd Echo-8` 开始即可，不必再次克隆。使用 Node.js >=22.13.0、pnpm 11.19.0；缺少指定 pnpm 时可先运行 `npm install --global pnpm@11.19.0`。Linux 浏览器运行库缺失时使用 `pnpm exec playwright install --with-deps chromium firefox webkit`。依赖和浏览器需要在新设备重新安装，不复制旧设备的 `node_modules`。
+
+在 Codex 中打开解压或克隆后的 `Echo-8/` 文件夹，先让它读取 `AGENTS.md` 和本文，再读取 `docs/HANDOFF-2026-11-06.md` 获取本次验收状态。项目规则与技能随仓库携带；后续开发仍在同一源码目录中进行。GitHub 推送身份、Cloudflare 身份和本机环境变量需要在新设备独立配置，环境变量格式见 `.env.example`、`.dev.vars.example`，部署见项目内 Cloudflare 文档。
+
+源码交接包不迁移画布书籍或浏览器恢复副本；书籍通过正式保存的 `.echo8` 文件或既有云同步单独转移。个人 AI 配置同样不随源码分发。
+
 ## 验收与交付
 
 ```powershell

@@ -6,6 +6,7 @@ import type { CloudProjectSummary, CloudSyncState } from '../../cloud/contracts.
 import { AUTOSAVE_DISABLED_INTERVAL_MS } from '../../protocols/files.ts';
 import { useInlineRename } from '../../ui/use-inline-rename.ts';
 import { Icon, IconButton } from '../../ui/Icon.tsx';
+import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
 const INITIAL: CloudSyncState = {
@@ -18,6 +19,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
   const [projects, setProjects] = useState<CloudProjectSummary[]>([]);
   const [busy, setBusy] = useState('');
   const [localError, setLocalError] = useState('');
+  const [newProjectName, setNewProjectName] = useState('');
   const upgradeInstallation = state.installations.find(
     (item) => item.id === state.activeInstallationId && item.status === 'ready' && item.upgradeAvailable,
   ) ?? state.installations.find((item) => item.status === 'ready' && item.upgradeAvailable);
@@ -73,12 +75,8 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
 
   return (
     <section className="cloud-sync-panel" aria-label="Cloudflare 云同步" aria-busy={processing || undefined}>
-      <div className="panel-heading">
-        <div>
-          <span className="eyebrow">BYOC · 用户自有云</span>
-          <h2>跨设备继续编辑</h2>
-        </div>
-        <div className="cloud-sync-heading-actions">
+      <SettingsPageHeader title="云同步" description="连接自有云，在设备之间同步书籍与个人设置。"
+        closeLabel="关闭云同步" onClose={() => void client.dispatch('cloudSync.close')} actions={<>
           {state.authenticated && state.installations.some((item) => item.status === 'ready') && (
             <IconButton
               icon="sync"
@@ -103,9 +101,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
               onClick={() => void run('logout', () => client.dispatch('cloudSync.logout'))}
             />
           )}
-          <IconButton icon="close" label="关闭云同步" onClick={() => void client.dispatch('cloudSync.close')} />
-        </div>
-      </div>
+      </>} />
 
       <div className={`cloud-sync-summary phase-${state.phase}`} role="status">
         {processing ? <ProcessingIndicator size={11} /> : <i aria-hidden="true" />}
@@ -188,6 +184,26 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
 
       {state.authenticated && state.installations.some((item) => item.status === 'ready') && (
         <>
+          {!state.activeProjectId && !state.reauthorizationRequired && (
+            <form className="cloud-sync-section cloud-save-as" aria-label="另存到云端" onSubmit={(event) => {
+              event.preventDefault();
+              if (processing || !newProjectName.trim()) return;
+              void run('save-as-cloud', () => client.dispatch('cloudSync.saveCurrentAsProject', { name: newProjectName.trim() }));
+            }}>
+              <h3>另存到云端</h3>
+              <p>将当前书籍和未保存修改保存为新的云端书籍。之后的保存与自动保存使用云端，本地文件保留。</p>
+              <p>书库已有同名书籍时自动加编号，不覆盖原书籍。</p>
+              <label>
+                <span>云端书籍名称</span>
+                <input value={newProjectName} maxLength={120} placeholder="输入云端书籍名称" disabled={processing}
+                  onChange={(event) => setNewProjectName(event.target.value)} />
+              </label>
+              <button className="cloud-primary-button" type="submit" disabled={processing || !newProjectName.trim()}>
+                {busy === 'save-as-cloud' && <ProcessingIndicator size={9} />}
+                {busy === 'save-as-cloud' ? '正在保存…' : '另存到云端'}
+              </button>
+            </form>
+          )}
           {upgradeInstallation && (
             <div className="cloud-sync-warning">
               <strong>个人数据服务有新版本</strong>

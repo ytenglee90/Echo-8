@@ -30,6 +30,7 @@ import type {} from '../../protocols/shortcut-sync.ts';
 import { planShortcutSync, shortcutFingerprint, type ShortcutAccountState, type RemoteShortcuts } from './shortcut-sync.ts';
 import { addPendingBookChange, type PendingBookChange } from './pending-book.ts';
 import { registerPersistencePreferenceSync } from './persistence-preferences-sync.ts';
+import { availableCloudProjectName } from './project-name.ts';
 export { externalizeCloudCommit, hydrateRemoteDocument } from './legacy-transport.ts';
 
 const LOCAL_STATE_KEY = 'cloud-session';
@@ -72,10 +73,14 @@ export function createCloudSyncPlugin(
   return {
     manifest: defineManifest('cloud-sync', 'Cloudflare 云同步', {
       category: 'provider',
+      namespaces: ['cloudSyncUI'],
+      namespaceDomains: { cloudSyncUI: 'workspace' },
+      sessionOnlyWorkspace: { cloudSyncUI: true },
       commands: [
         'cloudSync.open', 'cloudSync.close', 'cloudSync.refresh', 'cloudSync.install', 'cloudSync.upgrade', 'cloudSync.syncShortcuts', 'cloudSync.resolveShortcuts',
         'cloudSync.syncPersistencePreferences', 'cloudSync.resolvePersistencePreferences',
         'cloudSync.prepareReconnect',
+        'cloudSync.requestSaveAs@1',
         'cloudSync.listProjects', 'cloudSync.openProject', 'cloudSync.createProject',
         'cloudSync.renameProject', 'cloudSync.requestDeleteProject',
         'cloudSync.cancelDeleteProject', 'cloudSync.confirmDeleteProject',
@@ -84,6 +89,7 @@ export function createCloudSyncPlugin(
         'cloudSync.takeover', 'cloudSync.acceptRemote', 'cloudSync.logout',
       ],
       dispatches: [
+        'cloudSync.open',
         'system.preferences.set', 'system.personalAssets.set', 'system.document.replace',
         'system.document.new', 'system.persistence.checkpoint', 'bookLibrary.show', 'shortcuts.applyAccountSettings',
         'cloudSync.syncShortcuts',
@@ -103,9 +109,10 @@ export function createCloudSyncPlugin(
         'system.persistence.preferences.changed',
       ],
       ui: ['cloud-sync.status', 'cloud-sync.panel', 'cloud-sync.delete-dialog'],
-      actions: ['cloud-sync.open-action', 'cloud-sync.now-action'],
-      shortcuts: ['cloud-sync.open-shortcut', 'cloud-sync.now-shortcut'],
+      actions: ['cloud-sync.open-action', 'cloud-sync.save-as-action'],
+      shortcuts: ['cloud-sync.open-shortcut', 'cloud-sync.now-shortcut', 'cloud-sync.save-as-shortcut'],
       permissions: [
+        'store.own.read', 'store.own.write',
         'ui.top.contribute', 'ui.right.contribute', 'ui.modal.contribute',
         'ui.action.register', 'ui.shortcut.register',
         'preferences.manage', 'personal.assets.manage', 'persistence.manage', 'tasks.schedule',
@@ -549,7 +556,7 @@ export function createCloudSyncPlugin(
             transaction: {
               label: '打开云同步面板',
               history: false,
-              patches: [],
+              patches: [{ op: 'set', domain: 'workspace', namespace: 'cloudSyncUI', key: 'open', value: true }],
               events: [{
                 type: UI_SURFACE_REVEALED_EVENT,
                 payload: uiSurfaceRevealed('right.primary', 'cloud-sync', 'cloud-sync.panel'),
@@ -559,11 +566,24 @@ export function createCloudSyncPlugin(
         },
       });
       context.commands.register({
+        type: 'cloudSync.requestSaveAs@1',
+        handle: async () => {
+          if (state.activeProjectId || local.projectId) throw new Error('当前书籍已在云端，请使用“保存书籍”更新。本地书籍可以另存到云端。');
+          return { result: await context.commands.invoke('cloudSync.open') };
+        },
+      });
+      context.commands.register({
         type: 'cloudSync.close',
         handle: () => {
           context.ui.deactivateSurface('right.primary', 'cloud-sync.panel');
           update({ panelOpen: false });
-          return { result: { open: false } };
+          return {
+            result: { open: false },
+            transaction: {
+              label: '关闭云同步面板', history: false,
+              patches: [{ op: 'set', domain: 'workspace', namespace: 'cloudSyncUI', key: 'open', value: false }],
+            },
+          };
         },
       });
       context.commands.register({
@@ -790,11 +810,22 @@ export function createCloudSyncPlugin(
           payload === undefined || (isRecord(payload) && (payload.name === undefined || typeof payload.name === 'string')),
         handle: async (payload, envelope) => {
           if (state.activeProjectId || local.projectId) throw new Error('当前书籍已经连接云端');
+          if (!state.authenticated || state.reauthorizationRequired) throw new Error('请先连接 Cloudflare 账户');
+          const installation = state.installations.find((item) => item.id === local.installationId && item.status === 'ready') ??
+            state.installations.find((item) => item.status === 'ready');
+          if (!installation) throw new Error('请先在自己的 Cloudflare 账户中安装数据服务');
+          local.installationId = installation.id;
+          const listed = await dataRequest<{ projects: CloudProjectSummary[] }>('/v1/projects');
+          projects = listed.projects;
+          const name = availableCloudProjectName(payload?.name?.trim() || defaultCloudProjectName(), projects.map((project) => project.name));
           const created = await dataRequest<{ project: CloudProjectSummary }>('/v1/projects', jsonInit({
-            name: payload?.name?.trim() || defaultCloudProjectName(),
+            name,
           }));
           projects = [created.project, ...projects];
           await openProject(created.project.id, false, false, envelope);
+          if (state.phase !== 'ready' || state.pendingCommits > 0) {
+            throw new Error(state.error || '云端书籍尚未完成首次保存，本机内容仍然保留');
+          }
           return { result: created.project };
         },
       });
@@ -887,24 +918,28 @@ export function createCloudSyncPlugin(
       context.ui.contribute({
         id: 'cloud-sync.panel', slot: 'right.primary', kind: 'view', label: 'Cloudflare 云同步',
         component: panelView,
+        settings: { version: 1, label: '云同步', icon: 'sync', order: 10, openCommand: 'cloudSync.open' },
       });
       context.ui.contribute({
         id: 'cloud-sync.delete-dialog', slot: 'overlay.modal', kind: 'view', label: '确认删除云端书籍',
         component: deleteDialogView,
       });
       context.ui.action({
-        id: 'cloud-sync.open-action', label: '打开 Cloudflare 云同步', command: 'cloudSync.open',
-        category: '云同步', keywords: ['cloudflare', '跨设备', '账户'], priority: 95,
+        id: 'cloud-sync.open-action', label: '云同步设置', command: 'cloudSync.open',
+        category: '设置', keywords: ['打开 Cloudflare 云同步', 'cloudflare', '跨设备', '账户'], priority: 20,
       });
       context.ui.action({
-        id: 'cloud-sync.now-action', label: '立即保存当前云端书籍', command: 'cloudSync.syncNow',
-        category: '云同步', keywords: ['保存', '上传', '同步'], priority: 94,
+        id: 'cloud-sync.save-as-action', label: '另存到云端', command: 'cloudSync.requestSaveAs@1',
+        category: '云同步', keywords: ['保存', '本地', '上传', '同步', 'cloud', 'save as'], priority: -200,
       });
       context.ui.shortcut({
         id: 'cloud-sync.open-shortcut', chord: 'mod+alt+s', command: 'cloudSync.open', label: '打开云同步',
       });
       context.ui.shortcut({
         id: 'cloud-sync.now-shortcut', command: 'cloudSync.syncNow', label: '立即保存当前云端书籍', category: '云同步',
+      });
+      context.ui.shortcut({
+        id: 'cloud-sync.save-as-shortcut', command: 'cloudSync.requestSaveAs@1', label: '另存到云端', category: '文件',
       });
 
       const saved = await context.queries.ask<LocalCloudState | undefined>('system.preferences.get', { key: LOCAL_STATE_KEY });

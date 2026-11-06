@@ -97,7 +97,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.book-library-account-access { color: var(--ink) !important; }
+.book-library-account-meta { display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; }
+.book-library-account-meta .book-library-account-storage { flex: 0 1 auto; }
+.book-library-account-meta .book-library-account-access { flex: 0 0 auto; }
+.book-library-account-meta small { font-size: 10px; line-height: 1.4; }
 .book-library-account button,
 .book-library-refresh {
   display: inline-flex;

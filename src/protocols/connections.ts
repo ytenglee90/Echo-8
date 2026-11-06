@@ -52,6 +52,10 @@ export interface ConnectionAddJunctionRequest {
   connections: Array<{ id: string; revision: number }>;
 }
 
+export interface ConnectionAddJunctionBatchRequest {
+  junctions: ConnectionAddJunctionRequest[];
+}
+
 export interface ConnectionMoveJunctionRequest {
   id: string;
   x: number;
@@ -138,6 +142,8 @@ export interface ConnectionResizeLabelRequest {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'connection.toolbarToggle@1': CommandContract<{ kind: 'body' | 'title' | 'junction' | 'disconnect' }, { id?: string; ids?: string[]; removed?: number }>;
+    'connection.addJunctionBatch@1': CommandContract<ConnectionAddJunctionBatchRequest, { ids: string[] }>;
     'connection.reconnect': CommandContract<ConnectionReconnectRequest, { id?: string }>;
     'connection.moveJunctions': CommandContract<{ positions: ConnectionMoveJunctionRequest[] }, { moved: number }>;
     'connection.connectSelectedEndpoints': CommandContract<undefined, { id?: string }>;

@@ -122,7 +122,7 @@ export const canvasPlugin: PluginDefinition = {
       'content.reference.drop',
     ],
     ui: ['canvas.surface', 'canvas.tool-actions', 'canvas.focus-button', 'canvas.toolbar-zoom'],
-    actions: ['canvas.select-tool-action', 'canvas.hand-tool-action', 'canvas.focus-selection-action'],
+    actions: ['canvas.focus-selection-action'],
     shortcuts: [
       'canvas.pan-shortcut',
       'canvas.select-tool-shortcut',
@@ -501,22 +501,6 @@ export const canvasPlugin: PluginDefinition = {
       command: 'canvas.resetZoom',
       label: '画布缩放恢复 100%',
       category: '画布',
-    });
-    context.ui.action({
-      id: 'canvas.select-tool-action',
-      label: '切换为选择工具',
-      command: 'canvas.tool.select',
-      category: '画布',
-      keywords: ['选择', '指针', 'select', 'pointer'],
-      priority: 60,
-    });
-    context.ui.action({
-      id: 'canvas.hand-tool-action',
-      label: '切换为手抓工具',
-      command: 'canvas.tool.hand',
-      category: '画布',
-      keywords: ['手抓', '平移', 'hand', 'pan'],
-      priority: 61,
     });
     context.ui.action({
       id: 'canvas.focus-selection-action',

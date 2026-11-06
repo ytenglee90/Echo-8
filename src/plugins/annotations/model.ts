@@ -638,7 +638,7 @@ export function createAnnotationsPlugin(
         command: 'annotation.createAtContext',
         category: '文本编辑',
         keywords: ['注释', '批注', '备注', '气泡'],
-        priority: 39,
+        priority: 80,
       });
       context.ui.shortcut({
         id: 'annotations.create-shortcut',

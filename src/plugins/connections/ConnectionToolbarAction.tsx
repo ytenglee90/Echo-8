@@ -2,37 +2,20 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
-import type { ConnectionGraphSnapshot, ConnectionTarget } from '../../protocols/connections.ts';
+import type { ConnectionGraphSnapshot, ConnectionNodeGeometry, ConnectionTarget } from '../../protocols/connections.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import { IconButton } from '../../ui/Icon.tsx';
-import { useCommandTooltip } from '../../ui/runtime-hooks.ts';
+import { ToolbarDropdown } from '../../ui/ToolbarDropdown.tsx';
+import { connectionToolbarSelection } from './toolbar-selection.ts';
 
+const EMPTY = connectionToolbarSelection([], { version: 1, connections: [], junctions: [] }, []);
 export function ConnectionToolbarAction({ client }: { client: ViewClient }) {
-  const workspaceVersion = useSyncExternalStore(
-    client.subscribeState,
-    client.getWorkspaceVersion,
-    () => 0,
-  );
-  const capabilityVersion = useSyncExternalStore(
-    client.subscribeCapabilities,
-    client.getCapabilityVersion,
-    () => 0,
-  );
-  const [ready, setReady] = useState(false);
-  const [connectionsVersion, setConnectionsVersion] = useState(0);
-  const actionLabel = useCommandTooltip(
-    client,
-    'connection.toggleSelected',
-    '连接两个节点，或断开一个选中节点的连线',
-  );
-
-  useEffect(
-    () => client.subscribeSignal('connections.invalidated', () =>
-      setConnectionsVersion((version) => version + 1)),
-    [client],
-  );
-
+  const workspaceVersion = useSyncExternalStore(client.subscribeState, client.getWorkspaceVersion, () => 0);
+  const capabilityVersion = useSyncExternalStore(client.subscribeCapabilities, client.getCapabilityVersion, () => 0);
+  const [version, setVersion] = useState(0);
+  const [state, setState] = useState(EMPTY);
+  useEffect(() => client.subscribeSignal('connections.invalidated', () => setVersion(value => value + 1)), [client]);
   useEffect(() => {
     let current = true;
     void (async () => {
@@ -43,30 +26,19 @@ export function ConnectionToolbarAction({ client }: { client: ViewClient }) {
           client.request<ConnectionGraphSnapshot>('connections.graph@1'),
           client.requestAll<ConnectionTarget[]>('connections.targets@1'),
         ]);
-        if (!current) return;
-        const known = new Set([...nodes.map(node => node.id), ...targets.flat().map(target => target.id), ...graph.junctions.map(point => point.id)]);
-        const selected = selection.ids.filter(id => known.has(id));
-        const singleNodeCanDisconnect = selected.length === 1 && graph.connections.some((connection) =>
-          connection.from.nodeId === selected[0] || connection.to.nodeId === selected[0],
-        );
-        setReady(selected.length === 2 || singleNodeCanDisconnect);
-      } catch {
-        if (current) setReady(false);
-      }
+        const endpoints: ConnectionNodeGeometry[] = [...nodes, ...targets.flat(), ...graph.junctions.map(point => ({ ...point, width: 0, height: 0, kind: 'junction' as const }))];
+        if (current) setState(connectionToolbarSelection(selection.ids, graph, endpoints));
+      } catch { if (current) setState(EMPTY); }
     })();
-    return () => {
-      current = false;
-    };
-  }, [capabilityVersion, client, connectionsVersion, workspaceVersion]);
-
-  return (
-    <div className="connection-toolbar-action" aria-label="节点连线工具">
-      <IconButton
-        icon="link"
-        label={actionLabel}
-        disabled={!ready}
-        onClick={() => void client.dispatch('connection.toggleSelected')}
-      />
-    </div>
-  );
+    return () => { current = false; };
+  }, [capabilityVersion, client, version, workspaceVersion]);
+  const run = (kind: 'body' | 'title' | 'junction' | 'disconnect') => void client.dispatch('connection.toolbarToggle@1', { kind });
+  const primaryLabel = state.primary === 'junction' ? '删除中转点' : state.primary === 'disconnect' ? '断开选中连线' : state.primary === 'title' ? state.titleRemoves ? '断开标题连接' : '标题连接' : state.bodyRemoves ? '断开正文连接' : '正文连接';
+  const primaryIcon = state.primary === 'junction' ? 'junction-remove' : state.primary === 'disconnect' ? 'unlink' : state.primary === 'title' ? state.titleRemoves ? 'unlink-title' : 'link-title' : state.bodyRemoves ? 'unlink' : 'link';
+  return <ToolbarDropdown className="connection-toolbar-action" menuClassName="toolbar-icon-menu" label="连接选项" width="max-content"
+    trigger={<IconButton icon={primaryIcon} label={primaryLabel} disabled={!state.ready} onClick={() => run(state.primary)} />}>
+    <IconButton role="menuitem" disabled={!state.body} icon={state.bodyRemoves ? 'unlink' : 'link'} label={state.bodyRemoves ? '断开正文连接' : '正文连接'} onClick={() => run('body')} />
+    <IconButton role="menuitem" disabled={!state.title} icon={state.titleRemoves ? 'unlink-title' : 'link-title'} label={state.titleRemoves ? '断开标题连接' : '标题连接'} onClick={() => run('title')} />
+    <IconButton role="menuitem" disabled={!state.junction} icon={state.removesJunction ? 'junction-remove' : 'junction'} label={state.removesJunction ? '删除中转点' : '创建中转点'} onClick={() => run('junction')} />
+  </ToolbarDropdown>;
 }

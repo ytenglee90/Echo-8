@@ -53,6 +53,10 @@ test('single, selected and clear operations preserve current document and undo a
   const manager = page.getByRole('region', { name: '恢复副本管理', exact: true });
   const rows = manager.locator('.recovery-row');
   await expect(rows).toHaveCount(4);
+  const localData = page.getByRole('region', { name: '本机数据与恢复', exact: true });
+  await expect(localData.getByRole('region', { name: '浏览器本地数据占用与清理', exact: true })).toBeVisible();
+  await expect(localData.getByRole('region', { name: '恢复副本管理', exact: true })).toBeVisible();
+  await expect(localData.getByRole('button', { name: '选择已加载副本', exact: true })).toHaveCount(0);
   await rows.first().getByRole('button', { name: /^删除恢复副本/u }).click();
   const confirm = manager.getByRole('group', { name: '确认清理恢复副本' });
   await manager.screenshot({ path: info.outputPath('recovery-manager.png') });

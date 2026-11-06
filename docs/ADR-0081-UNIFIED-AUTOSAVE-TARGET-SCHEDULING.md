@@ -68,6 +68,32 @@ changed.
 
 ## Verification
 
+### Explicit local-to-cloud Save As (2026-11-06)
+
+The file panel exposes “另存到云端” for a book without an active cloud target.
+It opens the cloud owner's panel, where the user supplies a name and invokes the
+existing `cloudSync.saveCurrentAsProject` command. This is an explicit target
+choice; ordinary local saves and automatic saves still follow their existing
+origin rules. The current document, including unsaved edits and opaque plugin
+data, becomes a new cloud book without replacing the document or clearing its
+local undo history. The original local file is retained. Subsequent Save and
+automatic-save requests target the cloud book.
+
+Before creation, cloud-sync refreshes the library and chooses the first free
+display name using ` (2)`, ` (3)`, etc., within the 120-character limit. Names
+are display labels, never overwrite keys: every creation receives a new project
+ID. The existing list API returns the latest 200 books; a concurrent creation
+or a name outside that list can still share a label, but cannot replace an
+existing book. This UI addition does not change the cloud API, file format,
+schema, permissions or migration policy.
+
+First-upload errors reject the command and remain visible in the cloud panel.
+The local document and recovery data remain available; the retained new cloud
+binding allows the same book to be retried instead of creating another copy.
+Browser coverage exercises local import, unsaved edits, name collisions,
+upload failure/retry, original cloud-book preservation, undo/redo and reopening
+the saved book with its complete chunked body.
+
 - Kernel tests cover accepted cadence values, disabled automatic save, local
   destination overwrite and coalesced text exports through the unified signal.
 - AI tests retain the shared interval contract and cancel delayed automatic

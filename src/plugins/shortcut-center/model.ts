@@ -32,7 +32,7 @@ export function createShortcutCenterPlugin(panel?: unknown): PluginDefinition {
       dispatches: ['shortcuts.restorePreferences', 'system.preferences.set'],
       events: ['shortcuts.changed'],
       queries: ['shortcuts.state'],
-      asks: ['shortcuts.state', 'system.shortcuts', 'system.actions', 'system.preferences.get'],
+      asks: ['shortcuts.state', 'system.shortcuts', 'system.actions', 'system.preferences.get', 'system.plugins'],
       ui: ['shortcut-center.panel'],
       actions: ['shortcut-center.open-action'],
       shortcuts: ['shortcut-center.open-shortcut', 'shortcut-center.close-shortcut'],
@@ -180,6 +180,7 @@ export function createShortcutCenterPlugin(panel?: unknown): PluginDefinition {
         kind: 'view',
         label: '快捷键中心',
         component: panel,
+        settings: { version: 1, label: '命令与快捷键', icon: 'keyboard', order: 30, openCommand: 'shortcuts.open' },
         priority: 80,
       });
       if (readState().open) {
@@ -190,8 +191,8 @@ export function createShortcutCenterPlugin(panel?: unknown): PluginDefinition {
         label: '打开快捷键中心',
         command: 'shortcuts.open',
         category: '系统',
-        keywords: ['快捷键', '键盘', '冲突', 'shortcut'],
-        priority: 80,
+        keywords: ['命令与快捷键', '快捷键', '键盘', '冲突', 'shortcut', '设置'],
+        priority: 40,
       });
       context.ui.shortcut({
         id: 'shortcut-center.open-shortcut',

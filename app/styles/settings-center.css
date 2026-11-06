@@ -1,0 +1,107 @@
+/* Shared settings chrome. Feature content and commands remain owner supplied. */
+.application-shell[data-settings-open="true"] {
+  grid-template-columns: minmax(0, 1fr) min(720px, 64vw);
+  grid-template-areas: "top top" "canvas right";
+}
+.settings-center {
+  display: grid;
+  grid-template-columns: 156px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--panel);
+  color: var(--ink);
+}
+.settings-sidebar {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 10px;
+  border-right: 1px solid var(--border);
+  background: var(--control-surface);
+}
+.settings-center-title { display: flex; align-items: center; gap: 8px; padding: 0 10px 23px; }
+.settings-center-title h2 { margin: 0; font-size: 14px; font-weight: 650; }
+.settings-navigation { display: grid; gap: 4px; }
+.settings-navigation button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-navigation button:hover { background: var(--accent-soft); color: var(--ink); }
+.settings-navigation button[aria-current="page"] { background: var(--panel-hover); color: var(--ink); font-weight: 650; }
+.settings-center :is(button, input, select, summary):focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+.settings-content { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; outline: none; }
+.settings-content > .ui-contribution-root > :is(.plugin-center, .shortcut-center, .diagnostic-center, .palette-panel, .file-panel, .cloud-sync-panel) {
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  padding: 22px 24px 32px;
+  border: 0;
+  background: var(--panel);
+}
+.settings-page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 22px; }
+.settings-page-header > div:first-child { min-width: 0; }
+.settings-page-header h2 { margin: 0; color: var(--ink); font-size: 16px; font-weight: 650; letter-spacing: -.02em; line-height: 32px; }
+.settings-page-header p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.settings-page-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
+.settings-page-summary, .settings-empty { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.settings-filter { display: block; margin-top: 12px; }
+.settings-filter input, .settings-center .shortcut-filter input {
+  width: 100%; height: 36px; padding: 0 11px;
+  border: 1px solid var(--border); border-radius: var(--radius-control);
+  background: var(--control-surface); color: var(--ink); font-size: 12px;
+}
+.settings-filter input::placeholder { color: var(--faint); }
+.settings-list-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; color: var(--muted); font-size: 12px; }
+.settings-list-controls select { min-height: 30px; max-width: 55%; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--panel); color: var(--ink); font: inherit; }
+.settings-center .shortcut-category { gap: 0; }
+.settings-center .shortcut-category h3 { margin: 10px 0 5px; letter-spacing: 0; }
+.settings-center .shortcut-row { padding: 12px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+.settings-center .shortcut-operation-copy strong { white-space: normal; line-height: 1.5; }
+.settings-center .shortcut-operation-copy > small { overflow: hidden; color: var(--faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-center .shortcut-binding { grid-template-columns: minmax(90px, 1fr) auto auto; gap: 3px; }
+.settings-center .shortcut-binding > small { display: none; }
+.settings-center .shortcut-unbound { font-size: 11px; text-align: right; }
+.settings-center .palette-setting-card { margin-top: 0; padding: 16px 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
+.settings-center .palette-section-title { align-items: flex-start; flex-direction: column; gap: 4px; }
+.settings-center .palette-section-title span { font-size: 11px; text-align: left; line-height: 1.5; }
+.settings-center .palette-color-row { justify-content: flex-end; }
+.settings-center .palette-presets > button { background: var(--control-surface); }
+.settings-center .plugin-row { padding: 9px 0; border-bottom: 1px solid var(--border); border-radius: 0; }
+.settings-center .file-section { margin-top: 18px; padding-top: 16px; }
+.settings-details { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.settings-details > summary { width: fit-content; color: var(--muted); font-size: 12px; cursor: pointer; }
+.settings-navigation-error { margin: 12px 24px; color: var(--danger); font-size: 12px; }
+
+@media (max-width: 1100px) {
+  .settings-center { grid-template-columns: 132px minmax(0, 1fr); }
+  .settings-sidebar { padding-inline: 6px; }
+  .settings-navigation button { gap: 6px; padding-inline: 8px; }
+  .settings-content > .ui-contribution-root > :is(.plugin-center, .shortcut-center, .diagnostic-center, .palette-panel, .file-panel, .cloud-sync-panel) { padding-inline: 18px; }
+  .settings-center .shortcut-row { grid-template-columns: minmax(0, 1fr); }
+  .settings-center .shortcut-bindings { justify-self: start; width: min(100%, 260px); }
+}
+@media (max-width: 720px) {
+  .application-shell[data-settings-open="true"] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "canvas"; }
+  .application-shell[data-settings-open="true"] .right-rail { width: 100vw; min-width: 0; height: calc(100dvh - 56px); }
+}
+@media (max-width: 480px) {
+  .settings-center { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .settings-sidebar { padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .settings-center-title { padding: 0 2px 8px; }
+  .settings-navigation { display: flex; overflow-x: auto; gap: 4px; }
+  .settings-navigation button { flex: 0 0 auto; width: auto; min-height: 34px; white-space: nowrap; }
+  .settings-navigation .ui-icon { display: none; }
+  .settings-center .palette-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

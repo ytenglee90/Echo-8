@@ -1,0 +1,4 @@
+# Keep portable release bytes and their checksums identical after any Git checkout.
+artifacts/Echo-8.html text eol=lf
+artifacts/Echo-8-text-assist-rules.txt text eol=lf
+artifacts/SHA256SUMS.txt text eol=lf

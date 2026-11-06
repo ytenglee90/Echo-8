@@ -78,6 +78,7 @@ export interface TextAssistEnsureResourcesResult {
 }
 
 export const TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL = 'text.assist.rules-file.requested';
+export const TEXT_ASSIST_RULE_FILE_CANCELLED_SIGNAL = 'text.assist.rules-file.cancelled@1';
 
 export interface TextAssistImportRulesFileRequest {
   name: string;
@@ -182,6 +183,7 @@ export interface TextAssistResourceStatus {
 declare module './commands.ts' {
   interface ApplicationCommandMap {
     'textAssist.loadRulesFile': CommandContract<undefined, { requested: true }>;
+    'textAssist.cancelRulesFileSelection@1': CommandContract<undefined, { cancelled: true }>;
     'textAssist.importRulesFile': CommandContract<
       TextAssistImportRulesFileRequest,
       TextAssistImportRulesFileResult

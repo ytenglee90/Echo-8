@@ -24,6 +24,7 @@ import {
   MAX_CONNECTION_LABEL_LENGTH,
   normalizeConnectionLabelSize,
   type ConnectionCreatePlanRequest,
+  type ConnectionAddJunctionBatchRequest,
   type ConnectionAppearanceSnapshot,
   type ConnectionEndpoint,
   type ConnectionMutationPlan,
@@ -54,11 +55,12 @@ import { canvasContrastColors } from '../../ui/canvas-contrast.ts';
 import {
   CONNECTION_LASSO_REGION_PADDING,
   connectionCurveBounds,
+  connectionCurveMidpoint,
   connectionCurveLassoRegions,
 } from './rendering.ts';
 
 import {
-  assertJunctionChanges, assertJunctionLineTypes,
+  assertJunctionChanges, assertJunctionLineTypes, canShareConnectionJunction,
   JUNCTION_NAMESPACE, isJunction, isAddJunctionRequest, isMoveJunctionRequest,
   junctionGeometry, logicalConnectionPaths, planConnectionGraphDeletion, serializeConnectionGraph, splitConnectionsAtJunction,
 } from './junctions.ts';
@@ -126,6 +128,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.moveJunctions',
         'connection.connectSelectedEndpoints',
         'connection.addJunction',
+        'connection.addJunctionBatch@1',
         'connection.addJunctionFromContext',
         'connection.addJunctionAtPointer',
         'connection.moveJunction',
@@ -135,8 +138,9 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.resizeLabel',
         'connection.toggleSelected',
         'connection.toggleTitleSelected',
+        'connection.toolbarToggle@1',
       ],
-      dispatches: ['canvas.camera.commit', 'selection.moveEntities', 'selection.set', 'selection.clear', 'interaction.begin', 'interaction.end', 'connection.addJunction', 'connection.moveJunction', 'connection.moveJunctions'],
+      dispatches: ['canvas.camera.commit', 'selection.moveEntities', 'selection.set', 'selection.clear', 'interaction.begin', 'interaction.end', 'connection.addJunction', 'connection.addJunctionBatch@1', 'connection.moveJunction', 'connection.moveJunctions', 'connection.removeSelectedJunctions', 'connection.toggleSelected', 'connection.toggleTitleSelected'],
       asks: ['editor.openPanes'],
       events: [
         'entity.deleted',
@@ -172,7 +176,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'canvas.lasso.external.finished',
       ],
       ui: ['connections.layer', 'connections.toolbar-action'],
-      actions: ['connections.toggle-selected-action', 'connections.toggle-title-selected-action', 'connections.add-junction-action', 'connections.remove-junction-action', 'connections.connect-endpoints-action'],
+      actions: ['connections.toggle-selected-action', 'connections.toggle-title-selected-action', 'connections.add-junction-action', 'connections.remove-junction-action'],
       shortcuts: ['connections.toggle-selected-shortcut', 'connections.toggle-title-selected-shortcut', 'connections.add-junction-shortcut', 'connections.remove-junction-shortcut', 'connections.connect-endpoints-shortcut'],
       permissions: [
         'store.own.read',
@@ -313,6 +317,88 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         const records = readConnections();
         return selection.ids.flatMap((id) => records[id] ? [{ id, revision: records[id].revision }] : []);
       };
+      context.commands.register<ConnectionAddJunctionBatchRequest, { ids: string[] }>({
+        type: 'connection.addJunctionBatch@1',
+        validate: (value): value is ConnectionAddJunctionBatchRequest => isRecord(value) && Array.isArray(value.junctions) &&
+          value.junctions.length > 0 && value.junctions.length <= 10_000 && value.junctions.every(isAddJunctionRequest) &&
+          value.junctions.reduce((count, item) => count + item.connections.length, 0) <= 10_000,
+        handle: ({ junctions }) => {
+          const all = readConnections();
+          const used = new Set<string>();
+          const splits = junctions.map(request => {
+            const records = request.connections.map(reference => {
+              if (used.has(reference.id)) throw new Error('连接线选择不能重复');
+              used.add(reference.id);
+              const record = all[reference.id];
+              if (!record || record.revision !== reference.revision) throw new Error('连接线已变化，请重新选择后添加中转点');
+              return record;
+            });
+            return splitConnectionsAtJunction(records, request);
+          });
+          const connections = splits.flatMap(split => split.connections);
+          assertJunctionChanges(Object.values(all), connections);
+          return { result: { ids: splits.map(split => split.junction.id) }, transaction: {
+            label: '添加连接中转点',
+            patches: [
+              ...splits.map(split => ({ op: 'set' as const, domain: 'document' as const, namespace: JUNCTION_NAMESPACE, key: split.junction.id, value: split.junction })),
+              ...connections.map(record => ({ op: 'set' as const, domain: 'document' as const, namespace: CONNECTION_NAMESPACE, key: record.id, value: record })),
+            ],
+            events: [{ type: 'connection.changed', payload: { ids: connections.map(record => record.id) } }],
+          } };
+        },
+      });
+      context.commands.register<{ kind: 'body' | 'title' | 'junction' | 'disconnect' }, { id?: string; ids?: string[]; removed?: number }>({
+        type: 'connection.toolbarToggle@1',
+        validate: (value): value is { kind: 'body' | 'title' | 'junction' | 'disconnect' } => isRecord(value) && ['body', 'title', 'junction', 'disconnect'].includes(String(value.kind)),
+        handle: async ({ kind }) => {
+          const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+          const all = Object.values(readConnections());
+          const selectedIds = new Set(selection.ids);
+          const edges = all.filter(edge => selectedIds.has(edge.id));
+          const points = Object.values(readJunctions());
+          if (kind === 'junction') {
+            const selectedPoints = points.filter(point => selectedIds.has(point.id));
+            if (selectedPoints.length && selectedPoints.length === selectedIds.size) return { result: await context.commands.invoke('connection.removeSelectedJunctions') };
+            if (!edges.length) throw new Error('请选中要拆分的连接线，或要解除的中转点');
+            if (edges.length > 10_000) throw new Error('一次最多处理 10000 条连接线，请分批选择');
+            const nodeIds = [...new Set(all.flatMap(edge => [edge.from.nodeId, edge.to.nodeId]))];
+            const nodes = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds });
+            const geometry = new Map<string, ConnectionNodeGeometry>([...nodes, ...await readTargets(), ...points.map(point => ({ ...junctionGeometry(point), kind: 'junction' as const }))].map(node => [node.id, node]));
+            const rendered = connectionGraphPoints(all, geometry);
+            const batches = canShareConnectionJunction(edges) ? [edges] : edges.map(edge => [edge]);
+            const result = await context.commands.invoke('connection.addJunctionBatch@1', { junctions: batches.map(batch => {
+              const centers = batch.map(edge => {
+                const curve = rendered.get(edge.id);
+                if (!curve) throw new Error('连线端点已经变化，请重新选择');
+                return connectionCurveMidpoint(curve.from, curve.to);
+              });
+              return {
+                x: centers.reduce((sum, point) => sum + point.x, 0) / centers.length,
+                y: centers.reduce((sum, point) => sum + point.y, 0) / centers.length,
+                connections: batch.map(edge => ({ id: edge.id, revision: edge.revision })),
+              };
+            }) });
+            await context.commands.invoke('selection.set', { ids: result.ids, mode: 'replace' });
+            return { result: { id: result.ids[0], ids: result.ids } };
+          }
+          let removed = edges.filter(edge => kind === 'disconnect' || isTitleConnection(edge) === (kind === 'title'));
+          if (!edges.length && selectedIds.size === 1) removed = all.filter(edge => (selectedIds.has(edge.from.nodeId) || selectedIds.has(edge.to.nodeId)) && isTitleConnection(edge) === (kind === 'title'));
+          if (!edges.length && selectedIds.size === 2) {
+            const candidates = points.some(point => selectedIds.has(point.id)) ? all : logicalConnectionPaths(all).map(path => path.record);
+            removed = candidates.filter(edge => selectedIds.has(edge.from.nodeId) && selectedIds.has(edge.to.nodeId) && isTitleConnection(edge) === (kind === 'title'));
+          }
+          if (removed.length) return {
+            result: { removed: removed.length }, transaction: {
+              label: '取消选中连线',
+              patches: removed.map(edge => ({ op: 'delete' as const, domain: 'document' as const, namespace: CONNECTION_NAMESPACE, key: edge.id })),
+              events: [{ type: 'connections.deleted', payload: { ids: removed.map(edge => edge.id) } }],
+            },
+          };
+          if (kind === 'disconnect' || edges.length || selectedIds.size === 1) throw new Error('选中对象没有对应的连线');
+          if (kind === 'body' && points.some(point => selectedIds.has(point.id) && all.some(edge => isTitleConnection(edge) && (edge.from.nodeId === point.id || edge.to.nodeId === point.id)))) throw new Error('该中转点使用标题连线，请使用标题连接');
+          return { result: await context.commands.invoke(kind === 'title' ? 'connection.toggleTitleSelected' : 'connection.toggleSelected') };
+        },
+      });
       context.commands.register({
         type: 'connection.addJunctionAtPointer',
         handle: async () => {
@@ -550,8 +636,6 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           return { result: await context.commands.invoke('connection.create', { from: endpoints[0], to: endpoints[1] }) };
         },
       });
-      context.ui.action({ id: 'connections.connect-endpoints-action', label: '按选择顺序连接节点或中转点',
-        category: '连接', command: 'connection.connectSelectedEndpoints', keywords: ['中转点', '连接', '分支'] });
       context.ui.shortcut({ id: 'connections.connect-endpoints-shortcut', label: '按选择顺序连接节点或中转点',
         category: '连接', command: 'connection.connectSelectedEndpoints' });
 
@@ -1232,7 +1316,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         ['remove', 'connection.removeSelectedJunctions', '删除选中中转点并恢复节点连接'],
       ] as const) {
         context.ui.shortcut({ id: 'connections.' + suffix + '-junction-shortcut', command, label, category: '节点与连线' });
-        context.ui.action({ id: 'connections.' + suffix + '-junction-action', command, label, category: '节点与连线', keywords: ['连线', '中转点', '连接点', 'junction', 'route'], priority: 65 });
+        context.ui.action({ id: 'connections.' + suffix + '-junction-action', command, label, category: '节点与连线', keywords: ['连线', '中转点', '连接点', 'junction', 'route'], priority: suffix === 'add' ? 65 : 66 });
       }
       context.ui.action({
         id: 'connections.toggle-selected-action',

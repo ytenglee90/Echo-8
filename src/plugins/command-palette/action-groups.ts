@@ -1,12 +1,12 @@
 const CATEGORY_ORDER = [
+  '快捷入口',
   '书籍与同步',
-  '画布与节点',
-  '选择与排列',
   '编辑',
-  '文本编辑',
-  'AI',
-  '外观',
-  '系统',
+  '画布与节点',
+  '群组与排列',
+  '连线与中转点',
+  'AI 助手',
+  '设置',
 ] as const;
 
 const CATEGORY_ALIASES: Readonly<Record<string, (typeof CATEGORY_ORDER)[number]>> = {
@@ -14,11 +14,17 @@ const CATEGORY_ALIASES: Readonly<Record<string, (typeof CATEGORY_ORDER)[number]>
   云同步: '书籍与同步',
   画布: '画布与节点',
   文本节点: '画布与节点',
-  节点与连线: '画布与节点',
-  选择: '选择与排列',
-  群组: '选择与排列',
+  节点与连线: '连线与中转点',
+  连接: '连线与中转点',
+  选择: '编辑',
+  群组: '群组与排列',
+  选择与排列: '群组与排列',
   查找替换: '编辑',
-  文本格式: '文本编辑',
+  文本编辑: '编辑',
+  文本格式: '编辑',
+  AI: 'AI 助手',
+  外观: '设置',
+  系统: '设置',
 };
 
 interface CategorizedAction {

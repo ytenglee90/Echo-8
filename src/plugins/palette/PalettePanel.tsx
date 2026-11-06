@@ -10,6 +10,7 @@ import type {
 } from '../../protocols/appearance.ts';
 import { ColorPickerTrigger } from '../../ui/ColorPickerTrigger.tsx';
 import { IconButton } from '../../ui/Icon.tsx';
+import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import { PALETTE_PRESETS, type PalettePreset, type PalettePresetId } from './presets.ts';
 
 const EMPTY_STATE: PalettePanelState = {
@@ -246,12 +247,8 @@ export function PalettePanel({ client }: { client: ViewClient }) {
 
   return (
     <section className="palette-panel global-color-settings-panel" aria-label="全局颜色设置">
-      <div className="panel-heading palette-heading">
-        <div>
-          <span className="eyebrow">外观</span>
-          <h2>全局颜色设置</h2>
-        </div>
-        <div className="palette-heading-actions">
+      <SettingsPageHeader title="全局颜色设置" description="选择配套主题，或逐项调整颜色；修改即时生效。"
+        closeLabel="关闭全局颜色设置" onClose={close} actions={
           <IconButton
             icon="reset"
             label={resetting ? '正在重置全部颜色' : '重置全部颜色'}
@@ -259,9 +256,7 @@ export function PalettePanel({ client }: { client: ViewClient }) {
             disabled={resetting || applyingPreset !== undefined}
             onClick={() => void resetColors()}
           />
-          <IconButton icon="close" label="关闭全局颜色设置" onClick={close} />
-        </div>
-      </div>
+      } />
 
       <PaletteSetting title="配套主题" description="一键统一画布与界面颜色，可继续逐项微调。">
         <div className="palette-presets" role="group" aria-label="配套主题">

@@ -59,7 +59,7 @@ export const historyControlsPlugin: PluginDefinition = {
       command: 'history.undo',
       category: '编辑',
       keywords: ['返回', 'undo'],
-      priority: 40,
+        priority: 10,
     });
     context.ui.action({
       id: 'history.redo-action',
@@ -67,7 +67,7 @@ export const historyControlsPlugin: PluginDefinition = {
       command: 'history.redo',
       category: '编辑',
       keywords: ['恢复', 'redo'],
-      priority: 41,
+        priority: 20,
     });
   },
 };

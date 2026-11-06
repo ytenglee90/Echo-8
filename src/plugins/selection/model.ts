@@ -62,7 +62,7 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         'annotations.invalidated',
       ],
       ui: ['selection.actions', 'selection.delete-button'],
-      actions: ['selection.all-action', 'selection.delete-action', 'selection.clear-action'],
+      actions: ['selection.all-action', 'selection.delete-action'],
       shortcuts: [
         'selection.all-shortcut', 'selection.delete-shortcut', 'selection.backspace-shortcut',
         'selection.clear-shortcut',
@@ -167,7 +167,9 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         await ensureCatalogReady();
         const declaredItems = payload.items;
         if ((declaredItems?.map(item => item.id) ?? payload.ids ?? []).some((id) => !catalog.get(id))) {
-          await ensureCatalogCurrent();
+          // A newly committed entity may precede the coalesced invalidation
+          // signal. Missing IDs require a fresh owner projection immediately.
+          await refreshCatalog();
         }
         const incoming = payload.items ?? (payload.ids ?? []).map((id) => ({
           id,
@@ -420,14 +422,6 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         chord: 'escape',
         command: 'selection.clear',
         label: '取消选择',
-      });
-      context.ui.action({
-        id: 'selection.clear-action',
-        label: '取消选择',
-        command: 'selection.clear',
-        category: '选择',
-        keywords: ['清除', '取消选择', 'escape'],
-        priority: 62,
       });
       context.ui.shortcut({
         id: 'selection.backspace-shortcut',

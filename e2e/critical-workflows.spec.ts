@@ -534,13 +534,21 @@ test('the brand returns home while cloud sync stays in its governed panel', asyn
   await expect(commandPalette).toBeVisible();
   await expect(commandPalette.getByRole('group', { name: '书籍与同步' }).locator('strong')).toHaveText([
     '返回首页（书库）',
+    '打开书籍',
     '保存书籍',
     '另存本地副本',
-    '打开书籍',
-    '书籍与恢复设置',
-    '立即保存当前云端书籍',
-    '打开 Cloudflare 云同步',
+    '另存到云端',
   ]);
+  expect(await commandPalette.getByRole('group').evaluateAll(groups => groups.map(group => group.getAttribute('aria-label')))).toEqual([
+    '快捷入口', '书籍与同步', '编辑', '画布与节点', '群组与排列', '连线与中转点', 'AI 助手', '设置',
+  ]);
+  for (const label of ['立即保存当前云端书籍', '切换为选择工具', '切换为手抓工具', '取消选择', '将选中节点建立群组', '取消选中的群组', '查看内核与诊断', '按选择顺序连接节点或中转点']) {
+    await expect(commandPalette.getByRole('option', { name: label, exact: true })).toHaveCount(0);
+  }
+  await commandPalette.getByRole('textbox', { name: '搜索命令' }).fill('书籍与同步');
+  await expect(commandPalette.getByRole('option')).toHaveCount(5);
+  await expect(commandPalette.locator('footer')).toContainText('5 个命令');
+  await commandPalette.getByRole('textbox', { name: '搜索命令' }).fill('');
   await expect(commandPalette.getByRole('option', { name: /进入当前画布/u })).toHaveCount(0);
   await expect(commandPalette.getByRole('option', { name: /打开命令面板/u })).toHaveCount(0);
   await page.keyboard.press('Escape');
@@ -557,25 +565,25 @@ test('the brand returns home while cloud sync stays in its governed panel', asyn
   await expect(page.getByRole('region', { name: 'AI 助手' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: '查找与替换' })).toHaveCount(0);
   await library.press('Escape');
-  await executeCommand(page, '打开 Cloudflare 云同步');
+  await executeCommand(page, '云同步设置');
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   await expect(panel).toBeVisible();
   await expect(panel.getByText('部署端还没有配置 OAuth')).toBeVisible();
   await expect(panel.getByText(/随书同步.*纠错与补全规则/u)).toBeVisible();
   await expect(panel.getByText(/保留本机.*本地语义模型/u)).toBeVisible();
   const canvasBox = await page.locator('.canvas-host').boundingBox();
-  const panelBox = await panel.boundingBox();
+  const panelBox = await page.getByRole('region', { name: '设置中心', exact: true }).boundingBox();
   expect(canvasBox).not.toBeNull();
   expect(panelBox).not.toBeNull();
   expect(Math.abs(panelBox!.y - canvasBox!.y)).toBeLessThanOrEqual(1);
   expect(Math.abs(panelBox!.x - (canvasBox!.x + canvasBox!.width))).toBeLessThanOrEqual(1);
   expect(Math.abs(panelBox!.height - canvasBox!.height)).toBeLessThanOrEqual(1);
-  expect(panelBox!.width).toBeGreaterThanOrEqual(340);
-  expect(panelBox!.width).toBeLessThanOrEqual(420);
+  expect(panelBox!.width).toBeGreaterThanOrEqual(500);
+  expect(panelBox!.width).toBeLessThanOrEqual(720);
   await expect(panel.getByRole('button', { name: '返回书库' })).toHaveCount(0);
   await panel.getByRole('button', { name: '关闭云同步' }).click();
   await expect(panel).toHaveCount(0);
-  await executeCommand(page, '打开 Cloudflare 云同步');
+  await executeCommand(page, '云同步设置');
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: '关闭云同步' }).click();
 });
@@ -585,7 +593,7 @@ test('refresh keeps book data and color preferences but closes every session-onl
   const cards = page.locator('.text-node-card');
   await cards.nth(0).click({ position: { x: 80, y: 90 } });
   await cards.nth(1).click({ position: { x: 80, y: 90 }, modifiers: ['Shift'] });
-  await page.getByRole('button', { name: /^连接两个节点/u }).click();
+  await page.getByRole('button', { name: /^(正文连接|断开正文连接|断开选中连线)/u }).click();
   await expect(page.locator('.connection-hit-area')).toHaveCount(1);
 
   await executeCommand(page, '打开全局颜色设置');
@@ -813,6 +821,11 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
   await expect(library.getByText('reader@example.com', { exact: true })).toBeVisible();
   await expect(library.getByText('已用 12 MB / 剩余 488 MB', { exact: true })).toBeVisible();
   await expect(library.getByText('权限：未打开云端书籍', { exact: true })).toBeVisible();
+  const storageLine = await library.locator('.book-library-account-storage').boundingBox();
+  const accessLine = await library.locator('.book-library-account-access').boundingBox();
+  expect(storageLine).not.toBeNull();
+  expect(accessLine).not.toBeNull();
+  expect(Math.abs(storageLine!.y - accessLine!.y)).toBeLessThanOrEqual(1);
   await expect(library.getByText("reader@example.com's Account", { exact: true })).toHaveCount(0);
   const libraryRow = library.locator('.book-library-project-row').filter({ hasText: '初始书名' });
   const libraryIconBox = await libraryRow.locator('.book-library-project-icon').boundingBox();
@@ -868,7 +881,7 @@ test('cloud book names can be edited inline in the library and sync panel', asyn
     };
   });
   expect(syncedVisual.beforeContent).toBe('none');
-  await executeCommand(page, '打开 Cloudflare 云同步');
+  await executeCommand(page, '云同步设置');
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   await expect(panel.getByRole('button', { name: '立即保存到云端' }).locator('[data-icon="sync"]')).toBeVisible();
   await expect(panel.getByRole('button', { name: '退出账户' }).locator('[data-icon="logout"]')).toBeVisible();
@@ -1106,7 +1119,7 @@ test('cloud books can be confirmed and deleted from the library and sync panel',
   await library.locator('.book-library-project-row').filter({ hasText: '同步页待删除' })
     .getByRole('button', { name: '打开书籍：同步页待删除' }).click();
   await expect(library).toHaveCount(0);
-  await executeCommand(page, '打开 Cloudflare 云同步');
+  await executeCommand(page, '云同步设置');
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   const panelDelete = panel.getByRole('button', { name: '删除书籍：同步页待删除' });
   await expect(panelDelete.locator('[data-icon="trash"]')).toBeVisible();
@@ -1155,7 +1168,7 @@ test('a missing external correction file is exposed as a clickable canvas associ
     (associationBox?.x ?? 0) + (associationBox?.width ?? 0) / 2 - (viewport?.width ?? 0) / 2,
   )).toBeLessThanOrEqual(1);
   const chooserPromise = page.waitForEvent('filechooser');
-  await association.getByRole('button').click();
+  await association.getByRole('button', { name: /导入一次后会保存在本机/u }).click();
   const chooser = await chooserPromise;
   await chooser.setFiles('public/Echo-8-text-assist-rules.txt');
   await expect(association).toHaveCount(0, { timeout: 15_000 });
@@ -1573,7 +1586,7 @@ test('toolbar palette changes only the selected object and opens beside it', asy
   const clipboardGroup = page.getByRole('group', { name: '剪贴板', exact: true });
   const createTextButton = createGroup.getByRole('button', { name: '新建文本', exact: true });
   const annotationButton = createGroup.getByRole('button', { name: '添加注释', exact: true });
-  const connectionButton = appearanceGroup.getByRole('button', { name: /^连接两个节点/u });
+  const connectionButton = appearanceGroup.getByRole('button', { name: /^(正文连接|断开正文连接|断开选中连线)/u });
   const arrangeButton = appearanceGroup.getByRole('button', { name: /^自动排列/u });
   const conversionButton = appearanceGroup.getByRole('button', {
     name: '文本框与文字节点相互转换',
@@ -3044,8 +3057,8 @@ test('command palette and Escape close surfaces without leaking shortcuts into e
   await expect(commandPalette).toBeVisible();
   await expect(commandPalette.getByRole('group', { name: '书籍与同步' })).toBeVisible();
   await expect(commandPalette.getByRole('group', { name: '画布与节点' })).toBeVisible();
-  await expect(commandPalette.getByRole('group', { name: '选择与排列' })).toBeVisible();
-  await expect(commandPalette.getByRole('group', { name: 'AI' })).toBeVisible();
+  await expect(commandPalette.getByRole('group', { name: '群组与排列' })).toBeVisible();
+  await expect(commandPalette.getByRole('group', { name: 'AI 助手' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(commandPalette).toHaveCount(0);
 
@@ -3128,14 +3141,16 @@ test('governed panels, popup controls and notices follow the panel background lu
   await expect(colorPanel).toHaveCount(0);
 
   const panels = [
-    ['打开插件中心', '插件中心'],
+    ['设置中心', '插件中心'],
     ['打开快捷键中心', '快捷键中心'],
     ['查看内核与诊断', '诊断中心'],
     ['打开全局颜色设置', '全局颜色设置'],
     ['书籍与恢复设置', '书籍与恢复'],
   ] as const;
   for (const [action, region] of panels) {
-    await executeCommand(page, action);
+    if (region === '诊断中心') await page.keyboard.press('Control+Alt+d');
+    else await executeCommand(page, action);
+    if (region === '插件中心') await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '插件', exact: true }).click();
     const panel = page.getByRole('region', { name: region });
     await expect(panel).toBeVisible();
     await expect(panel).toHaveCSS('background-color', 'rgb(27, 28, 31)');
@@ -3243,7 +3258,7 @@ test('a custom-color connection uses the shared gray highlight and restores its 
   const cards = page.locator('.text-node-card');
   await cards.nth(0).click({ position: { x: 80, y: 90 } });
   await cards.nth(1).click({ position: { x: 80, y: 90 }, modifiers: ['Shift'] });
-  await page.getByRole('button', { name: /^连接两个节点/u }).click();
+  await page.getByRole('button', { name: /^(正文连接|断开正文连接|断开选中连线)/u }).click();
 
   const hitArea = page.locator('.connection-hit-area').first();
   const renderedConnection = page.locator('.connection-path').first();
@@ -3285,7 +3300,7 @@ test('global color settings preview, save, undo and redo the connection curve co
   const cards = page.locator('.text-node-card');
   await cards.nth(0).click({ position: { x: 80, y: 90 } });
   await cards.nth(1).click({ position: { x: 80, y: 90 }, modifiers: ['Shift'] });
-  const connect = page.getByRole('button', { name: /^连接两个节点/u });
+  const connect = page.getByRole('button', { name: /^(正文连接|断开正文连接|断开选中连线)/u });
   await expect(connect).toBeEnabled();
   await connect.click();
 
@@ -3826,7 +3841,8 @@ test('unsaved books clearly distinguish browser recovery from a real book file',
 
 test('AI connection form keeps the routine connection path clear', async ({ page }) => {
   await openApplication(page);
-  await executeCommand(page, '打开插件中心');
+  await executeCommand(page, '设置中心');
+  await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '插件', exact: true }).click();
   const pluginCenter = page.getByRole('region', { name: '插件中心' });
   await pluginCenter.getByRole('switch', { name: '启用远程语义检索' }).click();
   await page.keyboard.press('Escape');

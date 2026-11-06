@@ -140,6 +140,7 @@ export function createImportExportPlugin(
         'file.commitImportedDocuments',
         'cloudSync.syncNow',
         'cloudSync.open',
+        'cloudSync.requestSaveAs@1',
         'cloudSync.disconnectProject',
         'cloudSync.saveCurrentAsProject',
       ],
@@ -1162,6 +1163,7 @@ export function createImportExportPlugin(
         kind: 'view',
         label: '书籍与恢复',
         component: panel,
+        settings: { version: 1, label: '书籍与恢复', icon: 'restore', order: 20, openCommand: 'file.openPanel' },
         priority: -10,
       });
       context.ui.contribute({
@@ -1234,7 +1236,7 @@ export function createImportExportPlugin(
         command: 'file.saveProject',
         category: '文件',
         keywords: ['保存', '云端', '同步', 'save'],
-        priority: -300,
+        priority: -400,
       });
       context.ui.action({
         id: 'file.save-as-action',
@@ -1242,7 +1244,7 @@ export function createImportExportPlugin(
         command: 'file.saveProjectAs',
         category: '文件',
         keywords: ['另存', '副本', '下载', 'export', 'save as'],
-        priority: -200,
+        priority: -300,
       });
       context.ui.action({
         id: 'file.choose-open-action',
@@ -1250,15 +1252,15 @@ export function createImportExportPlugin(
         command: 'file.chooseOpenProject',
         category: '文件',
         keywords: ['打开', '本地', '文件', 'open'],
-        priority: -100,
+        priority: -500,
       });
       context.ui.action({
         id: 'file.open-action',
         label: '书籍与恢复设置',
         command: 'file.openPanel',
-        category: '文件',
+        category: '设置',
         keywords: ['书籍', '恢复', '自动保存', '导出', '设置', 'file'],
-        priority: 50,
+        priority: 10,
       });
     },
 

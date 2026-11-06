@@ -1,0 +1,117 @@
+/* UI-owned finish shared by every assistant view and its governed contributions. */
+.ai-floating-panel {
+  --ai-control-height: 34px;
+  --ai-control-radius: 8px;
+  --ai-card-radius: 10px;
+  --ai-page-padding: 16px;
+  --ai-section-gap: 16px;
+  --border: color-mix(in srgb, var(--ink) 13%, transparent);
+  --border-strong: color-mix(in srgb, var(--ink) 24%, transparent);
+  --control-surface: color-mix(in srgb, var(--ink) 3%, var(--panel));
+  --accent-soft: color-mix(in srgb, var(--ink) 6%, transparent);
+  grid-template-rows: 48px minmax(0, 1fr);
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 12%), 0 2px 8px rgb(0 0 0 / 5%);
+}
+.ai-floating-panel :is(button, input, select, textarea) { font-family: inherit; letter-spacing: 0; }
+.ai-floating-panel :is(h2, h3) { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; letter-spacing: -.01em; }
+.ai-floating-panel p { font-size: 12px; line-height: 1.6; }
+.ai-floating-panel small { font-size: 11px; line-height: 1.6; }
+.ai-floating-panel :is(.eyebrow, .ai-provider-setup-eyebrow, .local-semantic-eyebrow) { font-size: 11px; font-weight: 500; line-height: 1.5; letter-spacing: 0; }
+.ai-floating-panel .floating-panel-header { height: 48px; min-height: 48px; padding: 0 12px; gap: 12px; }
+.ai-floating-panel .floating-panel-title { font-size: 12px; line-height: 1.5; }
+.ai-floating-panel .floating-panel-title strong { font-weight: 600; }
+.ai-floating-panel :is(.icon-button, .primary-icon-button),
+.ai-floating-panel .floating-panel-actions > .icon-button { width: 32px; min-width: 32px; height: 32px; min-height: 32px; border-radius: var(--ai-control-radius); }
+.ai-floating-panel .floating-panel-actions { gap: 4px; }
+.ai-floating-panel :is(.ai-field, .ai-provider-profile-toolbar, .ai-model-selector) :is(input, select),
+.ai-floating-panel :is(.ai-memory-filter, .ai-memory-scope) input {
+  width: 100%;
+  min-width: 0;
+  height: var(--ai-control-height);
+  min-height: var(--ai-control-height);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--ai-control-radius);
+  background: var(--control-surface);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.ai-floating-panel :is(.ai-field, .ai-provider-profile-toolbar, .ai-model-selector) select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 14px) calc(50% + 1px), calc(100% - 10px) calc(50% + 1px);
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+.ai-floating-panel option { background: var(--panel); color: var(--ink); }
+.ai-floating-panel :is(button, input, select, textarea):disabled { opacity: .4; cursor: not-allowed; }
+.ai-floating-panel .ai-field { gap: 6px; margin-top: 14px; }
+.ai-floating-panel .ai-field > span { color: var(--ink); font-size: 12px; font-weight: 550; line-height: 1.5; }
+.ai-floating-panel .ai-field textarea { padding: 10px 12px; border-color: var(--border); border-radius: var(--ai-control-radius); background: var(--control-surface); font-size: 12px; line-height: 1.6; }
+.ai-floating-panel :is(input, textarea)::placeholder { color: var(--faint); opacity: 1; }
+.ai-floating-panel :is(.ai-field input, .ai-field textarea, .ai-field select):focus { border-color: var(--border-strong); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.ai-floating-panel :is(button, summary):focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+.ai-floating-panel :is(.ai-chat-topbar, .ai-memory-center, .ai-provider-panel, .ai-prompt-center, .local-semantic-provider-settings, .semantic-provider-settings) button:not(:where(.icon-button, .primary-icon-button, .ai-memory-title-inline-button, .ai-source-citation)) {
+  min-height: var(--ai-control-height);
+  border-radius: var(--ai-control-radius);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+.ai-floating-panel :is(.ai-error, .ai-message, .ai-hint, .ai-provider-note) { margin-top: 8px; font-size: 12px; line-height: 1.6; }
+.ai-floating-panel :is(.ai-memory-center, .ai-prompt-center) { padding: var(--ai-page-padding); }
+.ai-floating-panel .ai-prompt-center > header { align-items: center; gap: 12px; margin-bottom: 8px; }
+.ai-floating-panel .ai-prompt-center > header h3 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.ai-floating-panel .ai-prompt-center > p { margin: 0 0 16px; }
+.ai-floating-panel .ai-prompt-center > small { margin-top: 12px; }
+.ai-floating-panel .ai-memory-center > .ai-memory-center-overview { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 12px; }
+.ai-floating-panel .ai-memory-center-overview h2 { font-size: 14px; line-height: 1.5; }
+.ai-floating-panel .ai-memory-center-overview p { margin: 3px 0 0; line-height: 1.6; }
+.ai-floating-panel .ai-memory-center-overview > .ai-memory-file-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px; width: 100%; }
+.ai-floating-panel .ai-memory-file-actions > small { flex: 1 1 150px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-floating-panel .ai-memory-file-actions > span { gap: 8px; }
+.ai-floating-panel .ai-memory-daily-action { display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: var(--ai-section-gap); padding: 12px; border-color: var(--border); border-radius: var(--ai-card-radius); background: var(--control-surface); }
+.ai-floating-panel .ai-memory-daily-action > div { flex: 1 1 180px; gap: 4px; }
+.ai-floating-panel .ai-memory-daily-action > button { flex: 0 0 auto; width: auto; }
+.ai-floating-panel .ai-memory-daily-action strong { font-size: 12px; font-weight: 600; }
+.ai-floating-panel :is(.ai-memory-maintenance, .ai-memory-center-candidates, .ai-memory-center-entry, .ai-memory-candidate-card) { border-color: var(--border); border-radius: var(--ai-card-radius); }
+.ai-floating-panel .ai-memory-center-entry { padding: 12px; gap: 12px; }
+.ai-floating-panel .ai-memory-title-copy strong { font-size: 13px; font-weight: 600; line-height: 1.5; }
+.ai-floating-panel .ai-memory-center-list { margin-top: 16px; gap: 12px; }
+.ai-floating-panel .ai-provider-settings-host { padding: var(--ai-page-padding); gap: var(--ai-section-gap); }
+.ai-floating-panel .ai-provider-settings-host > .ui-contribution-root:has(.ai-provider-panel) > .ai-provider-panel { margin: 0; padding: 0; gap: var(--ai-section-gap); border: 0; border-radius: 0; background: transparent; }
+.ai-floating-panel :is(.ai-provider-transfer-actions, .ai-provider-connection-module) { padding: 12px; border-color: var(--border); border-radius: var(--ai-card-radius); }
+.ai-floating-panel .ai-provider-transfer-actions { flex-wrap: wrap; gap: 12px; }
+.ai-floating-panel .ai-provider-transfer-actions > div { flex: 1 1 180px; }
+.ai-floating-panel .ai-provider-transfer-actions > span { gap: 8px; }
+.ai-floating-panel .ai-provider-setup-intro h2 { font-size: 14px; line-height: 1.5; }
+.ai-floating-panel .ai-provider-setup-intro p { line-height: 1.6; }
+.ai-floating-panel .ai-provider-profile-toolbar { margin-top: 12px; gap: 8px; }
+.ai-floating-panel .ai-provider-state { margin: 8px 0 0; padding: 8px 10px; font-size: 12px; font-weight: 500; line-height: 1.5; }
+.ai-floating-panel .ai-provider-retrieval-module { margin: 0; border-color: var(--border); border-radius: var(--ai-card-radius); }
+.ai-floating-panel .ai-provider-retrieval-module .local-semantic-provider-settings { padding: 12px; gap: 12px; }
+.ai-floating-panel .local-semantic-hero h2 { font-size: 14px; line-height: 1.5; }
+.ai-floating-panel :is(.ai-provider-advanced, .ai-provider-manual-details, .ai-provider-remote-semantic-details, .local-semantic-maintenance) { padding: 10px 12px; border-color: var(--border); border-radius: var(--ai-card-radius); background: var(--control-surface); }
+.ai-floating-panel :is(.ai-provider-advanced, .local-semantic-maintenance) > summary { font-weight: 550; }
+.ai-floating-panel .ai-chat-topbar { display: flex; align-items: center; flex-wrap: wrap; padding: 12px; gap: 8px; }
+.ai-floating-panel .ai-model-controls { flex: 1 1 180px; }
+.ai-floating-panel :is(.ai-prompt-active-summary, .ai-memory-picker) { max-width: 156px; min-height: var(--ai-control-height); padding: 0 10px; }
+.ai-floating-panel .ai-chat-topbar .ai-web-search-toggle { width: 34px; min-width: 34px; height: 34px; min-height: 34px; }
+.ai-floating-panel .ai-chat-feed { padding: var(--ai-page-padding); }
+.ai-floating-panel .ai-command-hints { padding: 12px; border-color: var(--border); border-radius: var(--ai-card-radius); background: var(--control-surface); }
+.ai-floating-panel .ai-command-hints > summary strong { font-weight: 600; }
+.ai-floating-panel .ai-command-hints > summary span { font-size: 11px; }
+.ai-floating-panel .ai-status { min-height: 34px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--ai-control-radius); font-size: 12px; line-height: 1.5; }
+.ai-floating-panel .ai-chat-bubble { padding: 10px 12px; border-radius: 12px; }
+.ai-floating-panel .ai-chat-bubble p { font-size: 13px; line-height: 1.65; }
+.ai-floating-panel .ai-composer { padding: 0 12px 12px; }
+.ai-floating-panel .ai-composer-resize-handle { margin: 0 -12px 8px; }
+.ai-floating-panel .ai-composer-input { border-color: var(--border); border-radius: var(--ai-card-radius); }
+.ai-floating-panel .ai-composer-input textarea { padding: 10px 12px; font-size: 12px; line-height: 1.6; }
+.ai-floating-panel .ai-composer-input:focus-within { border-color: var(--border-strong); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ai-floating-panel .ai-send-button { border-radius: var(--ai-control-radius); }

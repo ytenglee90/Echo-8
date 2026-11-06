@@ -1,4 +1,4 @@
-import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
+import { createId, isRecord, type PatchOperation, type PluginDefinition } from '../../core/contracts.ts';
 import {
   isAppearanceColor,
   isAppearanceEntityUpdateRequest,
@@ -36,6 +36,7 @@ import type { StatisticsContribution } from '../../protocols/statistics.ts';
 import { defineManifest } from '../manifest.ts';
 import { resolveGroupDropTarget } from './drop-target.ts';
 import { computeGroupBounds } from './layout.ts';
+import { groupMembershipSelection } from './membership-selection.ts';
 
 const GROUP_NAMESPACE = 'groups';
 const GROUP_MEMBERSHIP_UI_NAMESPACE = 'groupMembershipUI';
@@ -107,8 +108,10 @@ export function createGroupsPlugin(
         'group.membership.add',
         'group.membership.remove',
         'group.membership.drop',
+        'group.membership.applySelected@1',
       ],
       dispatches: [
+        'group.membership.add',
         'canvas.camera.commit',
         'selection.set',
         'selection.moveEntities',
@@ -146,8 +149,6 @@ export function createGroupsPlugin(
       actions: [
         'groups.toggle-action',
         'groups.membership-action',
-        'groups.create-action',
-        'groups.ungroup-action',
       ],
       shortcuts: [
         'groups.toggle-shortcut',
@@ -392,6 +393,42 @@ export function createGroupsPlugin(
         },
       });
 
+      context.commands.register<{ action: 'add' | 'remove' }, { changed: number }>({
+        type: 'group.membership.applySelected@1',
+        validate: (value): value is { action: 'add' | 'remove' } => isRecord(value) && (value.action === 'add' || value.action === 'remove'),
+        handle: async ({ action }) => {
+          const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+          const nodes = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: selection.ids });
+          const groups = Object.values(readGroups());
+          const intent = groupMembershipSelection(groups, selection, nodes.map(node => node.id));
+          if (action === 'add') {
+            if (!intent.canAdd || !intent.target) throw new Error('请先选择未分组对象，最后多选一个目标群组；其他群组中的对象须先移出');
+            const result = await context.commands.invoke('group.membership.add', { groupId: intent.target.id, nodeIds: intent.addIds }) as { added: number };
+            return { result: { changed: result.added } };
+          }
+          if (!intent.canRemove) throw new Error('请只选中要踢出的群组成员，不要选中群组框');
+          const requested = new Set(intent.removeIds);
+          const patches: PatchOperation[] = [];
+          const events: NonNullable<ContentMovePlan['events']> = [];
+          const dissolved: string[] = [];
+          for (const group of groups) {
+            const removed = group.memberIds.filter(id => requested.has(id));
+            if (!removed.length) continue;
+            const memberIds = group.memberIds.filter(id => !requested.has(id));
+            const dissolve = memberIds.length < 2;
+            if (dissolve) dissolved.push(group.id);
+            patches.push(dissolve
+              ? { op: 'delete', domain: 'document', namespace: GROUP_NAMESPACE, key: group.id, schemaOwner: 'groups' }
+              : { op: 'set', domain: 'document', namespace: GROUP_NAMESPACE, key: group.id, schemaOwner: 'groups', value: { ...group, memberIds, revision: group.revision + 1, updatedAt: Date.now() } });
+            events.push({ type: 'group.members.changed', payload: { groupId: group.id, added: [], removed, dissolved: dissolve } });
+            if (dissolve) events.push({ type: 'group.ungrouped', payload: { id: group.id, memberIds: group.memberIds } });
+          }
+          const detached = dissolved.length ? await detachConnections(dissolved) : { patches: [], events: [] };
+          return { result: { changed: requested.size }, transaction: {
+            label: `踢出群组（${requested.size} 个对象）`, patches: [...patches, ...detached.patches], events: [...events, ...(detached.events ?? [])],
+          } };
+        },
+      });
       context.commands.register<GroupMembershipPayload>({
         type: 'group.membership.add',
         validate: isGroupMembershipPayload,
@@ -890,14 +927,6 @@ export function createGroupsPlugin(
         keywords: ['加入群组', '移出群组', '成员', 'membership'],
         priority: 65,
       });
-      context.ui.action({
-        id: 'groups.create-action',
-        label: '将选中节点建立群组',
-        command: 'group.create',
-        category: '选择与排列',
-        keywords: ['群组', '组合', 'group'],
-        priority: 66,
-      });
       context.ui.shortcut({
         id: 'groups.toggle-shortcut',
         chord: 'mod+g',
@@ -927,14 +956,6 @@ export function createGroupsPlugin(
         command: 'group.membership.close',
         label: '关闭群组成员管理',
         category: '群组',
-      });
-      context.ui.action({
-        id: 'groups.ungroup-action',
-        label: '取消选中的群组',
-        command: 'group.ungroupSelection',
-        category: '选择与排列',
-        keywords: ['取消群组', '解组', 'ungroup'],
-        priority: 67,
       });
     },
   };

@@ -4,6 +4,8 @@
 
 Accepted.
 
+Toolbar entry interaction follows ADR-0132: primary clicks cycle grid/horizontal/vertical; the vertical hover menu offers fixed layouts. This supersedes ADR-0131's fixed-grid primary button. The existing cycle command and shortcut retain their behavior.
+
 ## Problem
 
 Free dragging makes precise edge, center and equal-spacing placement slow. A durable command for every pointer movement would also flood global history and persistence. Batch layout must remain a normal broadcast operation, reset node sizes predictably and undo as one user action.

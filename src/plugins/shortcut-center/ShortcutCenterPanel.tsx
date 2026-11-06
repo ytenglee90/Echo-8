@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import type { RegisteredAction, RegisteredShortcut, ViewClient } from '../../core/contracts.ts';
+import type { PluginSnapshot, RegisteredAction, RegisteredShortcut, ViewClient } from '../../core/contracts.ts';
 import { IconButton } from '../../ui/Icon.tsx';
+import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import { formatShortcutChord } from '../../ui/shortcut-presentation.ts';
 import { SHORTCUT_CENTER_NAMESPACE } from './model.ts';
 import type { ShortcutCenterState } from './types.ts';
@@ -14,6 +15,8 @@ interface OperationRow {
   label: string;
   category: string;
   detail: string;
+  owner: string;
+  searchText: string;
   shortcuts: RegisteredShortcut[];
 }
 
@@ -30,6 +33,8 @@ export function ShortcutCenterPanel({ client }: { client: ViewClient }) {
   const [capturing, setCapturing] = useState('');
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
+  const [plugins, setPlugins] = useState<PluginSnapshot[]>([]);
+  const [filter, setFilter] = useState('all');
 
   useEffect(() => {
     let current = true;
@@ -37,23 +42,28 @@ export function ShortcutCenterPanel({ client }: { client: ViewClient }) {
       client.ask<ShortcutCenterState>('shortcuts.state'),
       client.ask<RegisteredShortcut[]>('system.shortcuts'),
       client.ask<RegisteredAction[]>('system.actions'),
-    ]).then(([nextState, nextShortcuts, nextActions]) => {
+      client.ask<PluginSnapshot[]>('system.plugins'),
+    ]).then(([nextState, nextShortcuts, nextActions, nextPlugins]) => {
       if (!current) return;
       setState(nextState);
       setShortcuts(nextShortcuts);
       setActions(nextActions);
+      setPlugins(nextPlugins);
     });
     return () => { current = false; };
   }, [client, stateVersion, uiVersion]);
 
   const operations = useMemo(() => buildOperationRows(actions, shortcuts), [actions, shortcuts]);
+  const pluginNames = useMemo(() => new Map(plugins.map(plugin => [plugin.id, plugin.name])), [plugins]);
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
-    if (!needle) return operations;
     return operations.filter((operation) =>
-      `${operation.label} ${operation.category} ${operation.detail}`.toLocaleLowerCase('zh-CN').includes(needle),
+      (filter !== 'custom' || operation.shortcuts.some(shortcut => shortcut.overridden)) &&
+      (filter !== 'unbound' || operation.shortcuts.length === 0 || operation.shortcuts.every(shortcut => !shortcut.chord)) &&
+      (!needle || `${operation.label} ${operation.category} ${operation.detail} ${operation.searchText} ${pluginNames.get(operation.owner) ?? operation.owner}`
+        .toLocaleLowerCase('zh-CN').includes(needle)),
     );
-  }, [operations, query]);
+  }, [operations, query, filter, pluginNames]);
   const grouped = useMemo(() => groupOperations(filtered), [filtered]);
 
   if (!state.open) return null;
@@ -88,19 +98,22 @@ export function ShortcutCenterPanel({ client }: { client: ViewClient }) {
 
   return (
     <section className="shortcut-center" aria-label="快捷键中心">
-      <div className="panel-heading">
-        <div><span className="eyebrow">{operations.length} 项操作</span><h2>快捷键中心</h2></div>
-        <IconButton icon="close" label="关闭快捷键中心" onClick={() => void client.dispatch('shortcuts.close')} />
-      </div>
-      <p className="panel-copy">按工作场景整理全部公开操作。点按按键框即可修改，冲突会自动拦截。</p>
+      <SettingsPageHeader title="命令与快捷键" description="查看命令来源，点按按键框修改快捷键；冲突会自动拦截。"
+        closeLabel="关闭快捷键中心" onClose={() => void client.dispatch('shortcuts.close')} />
       <div className="shortcut-center-toolbar">
-        <span>{shortcuts.length} 组按键 · {shortcuts.filter((item) => item.overridden).length} 项已自定义</span>
+        <span>{operations.length} 项操作 · {shortcuts.filter((item) => item.overridden).length} 项已自定义</span>
         <IconButton icon="reset" label="全部恢复默认" onClick={() => void client.dispatch('shortcuts.resetAll')} />
       </div>
       <label className="shortcut-filter">
         <span className="sr-only">查找操作指令</span>
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索操作或分类…" />
       </label>
+      <div className="settings-list-controls">
+        <span aria-live="polite">{filtered.length} 项匹配</span>
+        <select aria-label="筛选命令" value={filter} onChange={event => setFilter(event.target.value)}>
+          <option value="all">全部命令</option><option value="custom">已自定义</option><option value="unbound">未绑定按键</option>
+        </select>
+      </div>
       {error && <p className="shortcut-error" role="alert">{error}</p>}
       <div className="shortcut-list">
         {grouped.map(([category, rows]) => (
@@ -111,8 +124,10 @@ export function ShortcutCenterPanel({ client }: { client: ViewClient }) {
                 <div className="shortcut-operation-copy">
                   <strong>{operation.label}</strong>
                   <span>{operation.detail}</span>
+                  <small>来源：{pluginNames.get(operation.owner) ?? operation.owner}</small>
                 </div>
                 <div className="shortcut-bindings">
+                  {operation.shortcuts.length === 0 && <span className="shortcut-unbound">通过命令面板执行</span>}
                   {operation.shortcuts.map((shortcut) => {
                     const target = `${shortcut.owner}:${shortcut.id}`;
                     return (
@@ -125,6 +140,7 @@ export function ShortcutCenterPanel({ client }: { client: ViewClient }) {
                           onFocus={() => setCapturing(target)}
                           onBlur={() => setCapturing('')}
                           onKeyDown={(event) => {
+                            if (event.nativeEvent.isComposing || event.key === 'Process') return;
                             event.preventDefault();
                             event.stopPropagation();
                             if (event.key === 'Escape') {
@@ -174,6 +190,8 @@ function buildOperationRows(actions: RegisteredAction[], shortcuts: RegisteredSh
     for (const shortcut of bindings) matched.add(`${shortcut.owner}:${shortcut.id}`);
     return {
       key: `action:${action.owner}:${action.id}`,
+      owner: action.owner,
+      searchText: `${action.command} ${(action.keywords ?? []).join(' ')}`,
       label: action.label,
       category: shortcutCategory(action.owner, action.category),
       detail: bindings.some((shortcut) => shortcut.instruction)
@@ -187,6 +205,8 @@ function buildOperationRows(actions: RegisteredAction[], shortcuts: RegisteredSh
     if (matched.has(key)) continue;
     rows.push({
       key: `shortcut:${key}`,
+      owner: shortcut.owner,
+      searchText: shortcut.command ?? '',
       label: shortcut.label,
       category: shortcutCategory(shortcut.owner, shortcut.category),
       detail: shortcut.instruction ?? (shortcut.mode === 'hold' ? '按住使用' : '快捷键可自定义'),

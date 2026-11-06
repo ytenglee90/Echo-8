@@ -21,7 +21,6 @@
 }
 .ai-toolbar-menu {
   position: fixed;
-  z-index: 180;
   inset: auto;
   display: grid;
   gap: 3px;

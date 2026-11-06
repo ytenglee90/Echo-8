@@ -573,6 +573,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         kind: 'view',
         label: '全局颜色设置',
         component: panel,
+        settings: { version: 1, label: '外观', icon: 'palette', order: 40, openCommand: 'palette.open' },
       });
       context.ui.contribute({
         id: 'palette.node-title-picker',
@@ -624,9 +625,9 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         id: 'palette.selection-color-action',
         label: '修改选中项颜色',
         command: 'palette.selectionColor.open',
-        category: '外观',
+        category: '编辑',
         keywords: ['调色盘', '选中项', '局部颜色', 'palette', 'color'],
-        priority: 31,
+        priority: 90,
       });
 
       applyTheme();

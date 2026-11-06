@@ -4,6 +4,7 @@ import { SQLiteD1 } from '../tests/helpers/d1.ts';
 import { signDataToken } from '../src/server/cloud/crypto.ts';
 import { planBook } from '../cloud/data-worker/book-format.js';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
+import { serializeProject } from '../src/plugins/import-export/codec.ts';
 
 async function command(page:Page,label:string){
   await page.getByRole('button',{name:'命令面板',exact:true}).click();
@@ -45,8 +46,61 @@ async function cloud(page:Page){
     const response=await dataWorker.fetch(new Request(request.url(),{method:request.method(),headers:request.headers(),...(['GET','HEAD'].includes(request.method())?{}:{body:request.postData()??undefined})}),env);
     const responseText=await response.text();await route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body:responseText});
   });
-  return {db,uploaded:()=>uploadedRaw,hold:()=>{holds=true;},release:()=>release(),fetch};
+  return {db,source,uploaded:()=>uploadedRaw,hold:()=>{holds=true;},release:()=>release(),fetch};
 }
+
+for (const failFirstUpload of [false, true]) test(`a local book is saved as a separate named cloud book${failFirstUpload ? ' after a failed upload is retried' : ''}`, async ({ page }) => {
+  const backend = await cloud(page);
+  const original = await serializeProject(backend.source);
+  await page.goto('/');
+  const library = page.getByRole('region', { name: 'Echo-8 书库' });
+  await expect(library.getByRole('button', { name: '打开书籍：分块保存测试', exact: true })).toBeVisible();
+  await library.locator('input[type=file]').setInputFiles({ name: '本地书籍.echo8', mimeType: original.type, buffer: Buffer.from(await original.arrayBuffer()) });
+  await expect(library).toHaveCount(0);
+  await expect(page.locator('.text-node-card')).toHaveCount(1);
+  await page.getByRole('button', { name: '新建文本', exact: true }).click();
+  await expect(page.locator('.text-node-card')).toHaveCount(2);
+  expect(backend.db.sqlite.prepare('SELECT COUNT(*) AS count FROM projects').get()!.count).toBe(1);
+  if (failFirstUpload) {
+    await command(page, '书籍与恢复设置');
+    await page.getByRole('region', { name: '书籍与恢复', exact: true }).getByRole('button', { name: '另存到云端', exact: true }).click();
+  } else await command(page, '另存到云端');
+  const panel = page.getByRole('region', { name: 'Cloudflare 云同步', exact: true });
+  const form = panel.getByRole('form', { name: '另存到云端' });
+  await expect(form.getByRole('button', { name: '另存到云端', exact: true })).toBeDisabled();
+  await form.getByRole('textbox', { name: '云端书籍名称', exact: true }).fill('分块保存测试');
+  if (!failFirstUpload) await panel.screenshot({ path: test.info().outputPath('local-save-as-cloud.png') });
+  if (failFirstUpload) await page.route('https://book-data.test/v2/projects/*/commit', async route => {
+    await page.unroute('https://book-data.test/v2/projects/*/commit');
+    await route.fulfill({ status: 503, json: { error: '测试上传中断' } });
+  });
+  await form.getByRole('button', { name: '另存到云端', exact: true }).click();
+  if (failFirstUpload) {
+    await expect(panel.locator('.cloud-sync-error')).toContainText('测试上传中断');
+    await expect(page.locator('.text-node-card')).toHaveCount(2);
+    await panel.getByRole('button', { name: '立即保存到云端', exact: true }).click();
+  }
+  await expect(panel.getByText('已连接并可编辑', { exact: true })).toBeVisible();
+  await expect(panel.locator('.cloud-project-row.active')).toContainText('分块保存测试 (2)');
+  expect(backend.db.sqlite.prepare('SELECT COUNT(*) AS count FROM projects').get()!.count).toBe(2);
+  expect(backend.db.sqlite.prepare("SELECT revision FROM book_heads WHERE project_id='project-e2e-book'").get()!.revision).toBe(1);
+  const savedCloudRevision = () => Number(backend.db.sqlite.prepare("SELECT revision FROM book_heads WHERE project_id <> 'project-e2e-book'").get()?.revision ?? 0);
+  await expect.poll(savedCloudRevision).toBeGreaterThan(0);
+  await page.getByRole('button', { name: '关闭云同步', exact: true }).click();
+  await page.getByRole('button', { name: '撤销', exact: true }).click();
+  await expect(page.locator('.text-node-card')).toHaveCount(1);
+  await page.getByRole('button', { name: '重做', exact: true }).click();
+  await expect(page.locator('.text-node-card')).toHaveCount(2);
+  const beforeSave = savedCloudRevision();
+  await command(page, '保存书籍');
+  await expect.poll(savedCloudRevision).toBeGreaterThan(beforeSave);
+  await page.reload();
+  await page.getByRole('button', { name: /^(打开|继续)书籍：分块保存测试 \(2\)$/u }).click();
+  await expect(page.locator('.text-node-card')).toHaveCount(2);
+  const node = page.getByRole('article', { name: /文本节点：跨设备节点$/u });
+  await node.getByRole('paragraph').dblclick({ position: { x: 60, y: 70 } });
+  await expect(page.locator('.editor-writing-area').first()).toContainText('保留的大段正文');
+});
 
 test('real-time book saving uploads changed blocks, survives a held save and reopens complete content',async({page})=>{
   const backend=await cloud(page);const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));

@@ -10,6 +10,7 @@ declare module './commands.ts' {
     'cloudSync.syncShortcuts': CommandContract<undefined, { synced: boolean }>;
     'cloudSync.resolveShortcuts': CommandContract<{choice:'local'|'account'}, {synced:boolean}>;
     'cloudSync.open': CommandContract<undefined, { open: boolean }>;
+    'cloudSync.requestSaveAs@1': CommandContract<undefined, { open: boolean }>;
     'cloudSync.close': CommandContract<undefined, { open: boolean }>;
     'cloudSync.refresh': CommandContract<undefined, CloudSyncState>;
     'cloudSync.listProjects': CommandContract<undefined, CloudProjectSummary[]>;

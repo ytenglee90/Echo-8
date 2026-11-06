@@ -26,6 +26,7 @@ import {
   type TextAssistImportRulesFileResult,
   type TextAssistSettings,
   TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL,
+  TEXT_ASSIST_RULE_FILE_CANCELLED_SIGNAL,
 } from '../../protocols/text-assist.ts';
 import { defineManifest } from '../manifest.ts';
 import {
@@ -107,6 +108,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
       'textAssist.mergeDefaultRules',
       'textAssist.openRules',
       'textAssist.loadRulesFile',
+      'textAssist.cancelRulesFileSelection@1',
       'textAssist.importRulesFile',
     ],
     dispatches: [
@@ -132,6 +134,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
       'text.assist.settings.changed',
       'text.assist.resources.status',
       TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL,
+      TEXT_ASSIST_RULE_FILE_CANCELLED_SIGNAL,
       EDITOR_OPEN_REQUESTED_EVENT,
     ],
     ui: associationNotice ? ['text-assist.association-notice'] : [],
@@ -549,8 +552,22 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
     context.commands.register({
       type: 'textAssist.loadRulesFile',
       handle: () => {
+        if (associationNotice) context.ui.activateSurface(
+          'canvas.selection', 'text-assist.association-notice', 'textAssist.cancelRulesFileSelection@1',
+        );
         context.signals.emit(TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL, undefined);
         return { result: { requested: true as const } };
+      },
+    });
+    const finishRuleSelection = () => {
+      if (associationNotice) context.ui.deactivateSurface('canvas.selection', 'text-assist.association-notice');
+    };
+    context.commands.register({
+      type: 'textAssist.cancelRulesFileSelection@1',
+      handle: () => {
+        finishRuleSelection();
+        context.signals.emit(TEXT_ASSIST_RULE_FILE_CANCELLED_SIGNAL, undefined);
+        return { result: { cancelled: true as const } };
       },
     });
     context.commands.register<TextAssistImportRulesFileRequest, TextAssistImportRulesFileResult>({
@@ -574,6 +591,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
         const current = await readResourceText(context, binding);
         if (current.text === normalized) {
           emitResourceStatus();
+          finishRuleSelection();
           return { result: { loaded: true, name: payload.name, ensured } };
         }
         const plan = await context.capabilities.request<ContentMutationPlan>('content.deltaPlan@1', {
@@ -583,6 +601,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
           insert: normalized,
           expectedRevision: current.revision,
         } satisfies ContentDeltaPlanRequest);
+        finishRuleSelection();
         return {
           result: { loaded: true, name: payload.name, ensured },
           transaction: {
@@ -768,33 +787,33 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
       id: 'text-assist.toggle-correction-action',
       label: '开启或关闭文本纠错',
       command: 'textAssist.toggleCorrection',
-      category: '文本编辑',
+      category: '设置',
       keywords: ['纠错', '错字', '拼写', '校对'],
-      priority: 44,
+      priority: 60,
     });
     context.ui.action({
       id: 'text-assist.toggle-completion-action',
       label: '开启或关闭文字补全',
       command: 'textAssist.toggleCompletion',
-      category: '文本编辑',
+      category: '设置',
       keywords: ['补全', '联想', '候选', '自动完成'],
-      priority: 43,
+      priority: 61,
     });
     context.ui.action({
       id: 'text-assist.open-rules-action',
       label: '打开纠错补全规则',
       command: 'textAssist.openRules',
-      category: '文本编辑',
+      category: '设置',
       keywords: ['纠错规则', '补全规则', '编辑规则', '系统文档'],
-      priority: 41,
+      priority: 62,
     });
     context.ui.action({
       id: 'text-assist.load-rules-file-action',
       label: '从 TXT 更新纠错规则',
       command: 'textAssist.loadRulesFile',
-      category: '文本编辑',
+      category: '设置',
       keywords: ['规则文件', 'TXT', '导入', '更新', '纠错规则'],
-      priority: 40,
+      priority: 63,
     });
     context.ui.shortcut({
       id: 'text-assist.toggle-correction-shortcut',

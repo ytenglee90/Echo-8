@@ -577,6 +577,9 @@ export class PluginManager {
         contribute: (contribution: UIContribution) => {
           assertDeclared(manifest.ui, contribution.id, 'UI contribution');
           assertSlotPermission(manifest, contribution.slot);
+          if (contribution.settings) {
+            assertDeclared(manifest.commands, contribution.settings.openCommand, 'settings open command');
+          }
           track('ui', this.ui.contribute(owner, contribution));
         },
         action: (contribution: ActionContribution) => {

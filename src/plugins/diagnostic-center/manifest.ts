@@ -12,10 +12,9 @@ export const diagnosticCenterManifest = defineManifest('diagnostic-center', '诊
   queries: ['diagnostics.state'],
   asks: ['diagnostics.state', 'system.runtime'],
   ui: ['diagnostic-center.panel'],
-  actions: ['diagnostic-center.open-action'],
   shortcuts: ['diagnostic-center.open-shortcut', 'diagnostic-center.close-shortcut'],
   permissions: [
     'store.own.read', 'store.own.write', 'ui.right.contribute',
-    'ui.action.register', 'ui.shortcut.register',
+    'ui.shortcut.register',
   ],
 });

@@ -4,9 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import {
   TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL,
+  TEXT_ASSIST_RULE_FILE_CANCELLED_SIGNAL,
   type TextAssistResourceStatus,
 } from '../../protocols/text-assist.ts';
-import { Icon } from '../../ui/Icon.tsx';
+import { Icon, IconButton } from '../../ui/Icon.tsx';
 import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 
 const MAX_RULE_FILE_BYTES = 16 * 1024 * 1024;
@@ -16,8 +17,17 @@ export function TextAssistAssociationNotice({ client }: { client: ViewClient }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [selectionRequested, setSelectionRequested] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const mountedRef = useRef(true);
+  const importGeneration = useRef(0);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    const cancelPicker = () => { void client.dispatch('textAssist.cancelRulesFileSelection@1'); };
+    input?.addEventListener('cancel', cancelPicker);
+    return () => input?.removeEventListener('cancel', cancelPicker);
+  }, [client]);
 
   const refresh = useCallback(() => {
     void client.request<TextAssistResourceStatus>('text.assist.resources@3')
@@ -32,37 +42,51 @@ export function TextAssistAssociationNotice({ client }: { client: ViewClient }) 
   useEffect(() => {
     mountedRef.current = true;
     const unsubscribe = client.subscribeSignal(TEXT_ASSIST_RULE_FILE_REQUESTED_SIGNAL, () => {
+      importGeneration.current += 1;
       setSelectionRequested(true);
+      setDismissed(false);
       setError('');
+    });
+    const unsubscribeCancel = client.subscribeSignal(TEXT_ASSIST_RULE_FILE_CANCELLED_SIGNAL, () => {
+      importGeneration.current += 1;
+      setSelectionRequested(false);
+      setDismissed(true);
+      setError('');
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = '';
     });
     return () => {
       mountedRef.current = false;
+      importGeneration.current += 1;
       unsubscribe();
+      unsubscribeCancel();
     };
   }, [client]);
 
   const importFile = async (file: File) => {
+    const generation = importGeneration.current;
     try {
       if (!file.name.toLocaleLowerCase().endsWith('.txt')) throw new Error('请选择 TXT 规则文件');
       if (file.size > MAX_RULE_FILE_BYTES) throw new Error('规则文件不能超过 16 MiB');
       setBusy(true);
       setError('');
       const text = await file.text();
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || generation !== importGeneration.current) return;
       await client.dispatch('textAssist.importRulesFile', { name: file.name, text });
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || generation !== importGeneration.current) return;
       setSelectionRequested(false);
       refresh();
     } catch (reason) {
-      if (mountedRef.current) {
+      if (mountedRef.current && generation === importGeneration.current) {
         setError(reason instanceof Error ? reason.message : '导入纠错规则失败');
       }
     } finally {
-      if (mountedRef.current) setBusy(false);
+      if (mountedRef.current && generation === importGeneration.current) setBusy(false);
     }
   };
 
-  const visible = Boolean(status && (
+  const cancel = () => client.dispatch('textAssist.cancelRulesFileSelection@1');
+  const visible = Boolean(status && !dismissed && (
     status.association.state === 'unassociated' || selectionRequested
   ));
 
@@ -84,7 +108,7 @@ export function TextAssistAssociationNotice({ client }: { client: ViewClient }) 
       />
       {visible && (
         <aside className="text-assist-association-notice" role="status" aria-live="polite">
-          <button type="button" onClick={() => inputRef.current?.click()} disabled={busy}>
+          <button className="text-assist-association-import" type="button" onClick={() => inputRef.current?.click()} disabled={busy}>
             <span className="text-assist-association-icon">
               {busy ? <ProcessingIndicator size={16} /> : <Icon name="link" size={20} />}
             </span>
@@ -95,6 +119,7 @@ export function TextAssistAssociationNotice({ client }: { client: ViewClient }) 
             </span>
             <span className="text-assist-association-action">导入</span>
           </button>
+          <IconButton icon="close" label="取消导入纠错规则（Esc）" disabled={busy} onClick={() => void cancel()} />
         </aside>
       )}
     </>
