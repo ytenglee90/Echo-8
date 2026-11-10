@@ -13,6 +13,7 @@ import {
 } from '../../protocols/files.ts';
 import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
 import { ownValue, setOwn } from '../../services/records.ts';
+import { AITextBookReader, isAITextBookHeader } from './ai-text-book.ts';
 
 const FRAGMENT_SIZE = 64 * 1024;
 const MAX_LINE_SIZE = 1024 * 1024;
@@ -206,12 +207,23 @@ export async function parseProject(
   let current: { start: WireStart; fragments: string[]; bytes: number } | undefined;
   let entryCount = 0;
   let consumed = 0;
+  let aiTextBook: AITextBookReader | undefined;
 
   for await (const line of readLines(stream, signal, limits.maxDecompressedBytes)) {
     assertNotAborted(signal);
-    consumed += new TextEncoder().encode(`${line}\n`).byteLength;
+    const lineBytes = new TextEncoder().encode(`${line}\n`).byteLength;
+    consumed += lineBytes;
     report(blob.size === 0 ? 0 : Math.min(0.99, consumed / blob.size));
     const parsed: unknown = parseLine(line);
+    if (aiTextBook) {
+      aiTextBook.accept(parsed, lineBytes);
+      if (entryCount++ % 24 === 23) await yieldToMainThread();
+      continue;
+    }
+    if (!manifest && isAITextBookHeader(parsed)) {
+      aiTextBook = new AITextBookReader(parsed, limits);
+      continue;
+    }
     if (isFooter(parsed)) {
       if (footer || current) throw new Error('书籍文件结尾不完整');
       footer = parsed;
@@ -262,6 +274,11 @@ export async function parseProject(
     if (entryCount > limits.maxEntries) throw new Error('书籍文件记录数量超出安全上限');
   }
 
+  if (aiTextBook) {
+    const project = await aiTextBook.finish(signal);
+    report(1);
+    return project;
+  }
   if (!manifest || !footer || current) throw new Error('书籍文件不完整');
   if (footer.algorithm !== 'crc32' || footer.checksum !== checksum.digest()) {
     throw new Error('书籍文件校验失败，内容可能损坏或写入中断');

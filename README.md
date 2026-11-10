@@ -8,6 +8,8 @@
 
 便携单 HTML 每次重新打开都从新的空画布开始，正式保存依赖带校验和的 `.echo8` 书籍文件；托管版会恢复当前浏览器的 IndexedDB 副本，并可选择连接用户自己的 Cloudflare Worker、D1 与 R2，在其他设备继续编辑。也可以把 `.echo8`（兼容误写 `.eco8`）直接拖入画布打开。当前书籍有未保存修改时，“打开书籍”会先在顶部询问保存或不保存；拖入书籍文件时也使用同一裁决。
 
+支持 AI 直接编写的文本书籍输入 `echo-8-ai-book` v1：让 AI 交付规定格式的成品 TXT，下载后将后缀改为 `.echo8` 再打开，无需用户运行生成脚本。画布会自动生成类目分组、标题与排版，正常保存时写为原生带 CRC32 的 v2 书籍。普通小说正文 TXT 仍按普通文档导入；新输入协议见 [`docs/ADR-0136-AI-TEXT-BOOK-INPUT.md`](docs/ADR-0136-AI-TEXT-BOOK-INPUT.md)。
+
 公开 BYOC 部署、OAuth 权限、数据库迁移与跨设备验收见 [`docs/CLOUDFLARE-BYOC-DEPLOYMENT.zh-CN.md`](docs/CLOUDFLARE-BYOC-DEPLOYMENT.zh-CN.md)。
 
 ## 架构纪律

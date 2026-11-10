@@ -26,7 +26,7 @@ export function createBookLibraryPlugin(homeView?: unknown): PluginDefinition {
         'system.document.new',
       ],
       events: ['document.replaced'],
-      signals: ['bookLibrary.updated', 'cloudSync.updated'],
+      signals: ['bookLibrary.updated', 'cloudSync.updated', 'file.status'],
       asks: ['cloudSync.state', 'cloudSync.projects'],
       ui: ['book-library.home'],
       actions: ['book-library.open-action'],

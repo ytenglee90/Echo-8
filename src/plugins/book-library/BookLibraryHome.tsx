@@ -10,6 +10,7 @@ import type {
 import {
   AUTOSAVE_DISABLED_INTERVAL_MS,
   PROJECT_OPEN_ACCEPT,
+  type FileOperationStatus,
   type FileSaveTarget,
 } from '../../protocols/files.ts';
 import { chooseNativeProjectOpen } from '../../services/native-save.ts';
@@ -30,6 +31,7 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
   const [error, setError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const listedInstallation = useRef<string | undefined>(undefined);
+  const localOpenPending = useRef(false);
 
   const refresh = useCallback(async () => {
     const [nextCloud, nextProjects] = await Promise.all([
@@ -49,6 +51,15 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
     };
     const cloudSubscription = client.subscribeSignal('cloudSync.updated', updateCloud);
     const librarySubscription = client.subscribeSignal('bookLibrary.updated', updateOpen);
+    const fileSubscription = client.subscribeSignal<FileOperationStatus>('file.status', ({ payload }) => {
+      if (!current || !localOpenPending.current || payload.operation !== 'project-open') return;
+      if (payload.state === 'running') setBusy('open-local');
+      else {
+        localOpenPending.current = false;
+        setBusy('');
+        if (payload.state === 'error') setError(payload.message);
+      }
+    });
     const timer = setTimeout(() => {
       void refresh().then((next) => {
         if (!current) return;
@@ -65,6 +76,8 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
       clearTimeout(timer);
       cloudSubscription();
       librarySubscription();
+      fileSubscription();
+      localOpenPending.current = false;
     };
   }, [client, refresh]);
 
@@ -83,10 +96,21 @@ export function BookLibraryHome({ client }: { client: ViewClient }) {
     }
   };
 
-  const openSelectedLocalBook = (
+  const openSelectedLocalBook = async (
     file: File,
     destination?: FileSaveTarget,
-  ) => run('open-local', () => client.dispatch('file.openProjectFromLibrary', { file, destination }));
+  ) => {
+    localOpenPending.current = true;
+    setBusy('open-local'); setError('');
+    try {
+      await client.dispatch('file.openProjectFromLibrary', { file, destination });
+      return true;
+    } catch (reason) {
+      localOpenPending.current = false;
+      setBusy(''); setError(errorMessage(reason));
+      return false;
+    }
+  };
 
   const { editingProjectId, editingProjectName, setEditingProjectName, startRename, finishRename, cancelRename } = useInlineRename(
     (projectId, name) => run(`rename:${projectId}`, () => client.dispatch('cloudSync.renameProject', { projectId, name })),

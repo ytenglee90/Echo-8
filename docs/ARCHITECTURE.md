@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+The import/export owner accepts versioned `echo-8-ai-book` v1 NDJSON as an explicitly checksum-free authored input. AI can supply literal nodes, appended text parts and semantic links in a TXT attachment that users rename to `.echo8`; bounded parsing stages existing text/group/connection records through the unchanged document-replacement route. Category sections, title boxes, colors and layout are materialized in staging. Normal saves migrate to native CRC32/gzip project v2; native v1/v2 integrity checks and unknown-plugin preservation remain unchanged (ADR-0136).
+
 The UI-owned assistant finish layer scopes shared typography, control geometry, spacing, semantic surfaces and focus states to ai-floating-panel across chat, memory, templates and governed provider contributions. Library account capacity and access share one metadata row below the account identity (ADR-0135).
 
 Settings opens from the first command-palette group rather than adding toolbar chrome. Explicit rule-file selection joins the governed Esc surface stack and cancels through textAssist.cancelRulesFileSelection@1; the owning view discards late file reads after cancellation (ADR-0134).
