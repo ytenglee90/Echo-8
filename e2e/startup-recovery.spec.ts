@@ -93,7 +93,7 @@ test('startup failure offers non-destructive safe entry and confirmed local reco
   await page.getByRole('button', { name: '退出安全模式并重试恢复' }).click();
   await expect(fatal).toBeVisible();
   await fatal.getByRole('button', { name: '清除损坏的本机恢复数据' }).click();
-  await expect(fatal.getByRole('alert')).toContainText('已保存的 .echo8 文件不受影响');
+  await expect(fatal.getByRole('alert')).toContainText('已保存的 .e8 文件不受影响');
   await fatal.getByRole('button', { name: '确认清除并进入空白画布' }).click();
 
   await expect(page).not.toHaveURL(/echo8-safe-start/u);

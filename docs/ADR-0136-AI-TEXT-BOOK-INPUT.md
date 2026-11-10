@@ -2,6 +2,8 @@
 
 ## 决策与所有权
 
+当前书籍扩展名已切换为 `.e8`，见 [ADR-0137](ADR-0137-E8-EXTENSION-AND-CONNECTION-HOVER.md)。下文的 `.echo8` 是本 ADR 首次发布时的扩展名。
+
 `import-export` 新增输入格式 `kind: "echo-8-ai-book", formatVersion: 1`，复用原有书库选择、拖入 `.echo8`、后台打开任务、取消、未保存裁决、恢复点与 `system.document.replace` 路径。纯聊天 AI 无法可靠执行 CRC32 生成代码；用户不应运行脚本来把创作数据变成文件。AI 可直接写 UTF-8 NDJSON，作为 `.txt` 附件交付；用户只把扩展名改为 `.echo8` 后打开。
 
 格式声明位于 `src/protocols/ai-text-book.ts`，读取和暂存归文件插件的 `ai-text-book.ts`。不增加指令、跨插件实现导入、核心写入口或新插件。转换只生成待验证的普通项目快照，不直接写 Store。正常打开仍由核心创建恢复点和替换文档。

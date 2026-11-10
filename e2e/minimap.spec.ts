@@ -31,7 +31,7 @@ async function openMap(page: Page) {
   const notice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' });
   const chooser = page.waitForEvent('filechooser');
   await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
-  await (await chooser).setFiles({ name: '小地图.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
+  await (await chooser).setFiles({ name: '小地图.e8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
   await expect(notice).toHaveCount(0);
   await page.getByRole('button', { name: '打开小地图', exact: true }).click();
   await expect(page.locator('[data-map-node]')).toHaveCount(3);

@@ -2,24 +2,16 @@ import type { DomainSnapshot, PatchOperation } from './state.ts';
 
 export const PROJECT_KIND = 'echo-8-project' as const;
 export const PROJECT_FORMAT_VERSION = 2 as const;
-export const PROJECT_FILE_EXTENSION = '.echo8' as const;
+export const PROJECT_FILE_EXTENSION = '.e8' as const;
 /** Compact project exports are gzip-compressed NDJSON snapshots. */
 export const PROJECT_MEDIA_TYPE = 'application/x-echo-8-canvas+gzip' as const;
 export const LEGACY_PROJECT_MEDIA_TYPE = 'application/x-echo-8-canvas+ndjson' as const;
 /** Opens a user-confirmed writable directory, preferring the current book's location. */
 export const PROJECT_RELATED_DIRECTORY_CAPABILITY = 'file.chooseDirectoryNearProject@1' as const;
-export const PROJECT_OPEN_ACCEPT = [
-  PROJECT_FILE_EXTENSION,
-  '.eco8',
-  PROJECT_MEDIA_TYPE,
-  LEGACY_PROJECT_MEDIA_TYPE,
-].join(',');
+export const PROJECT_OPEN_ACCEPT = PROJECT_FILE_EXTENSION;
 
-/** `eco8` is accepted as a forgiving import alias; new files are always saved as `.echo8`. */
-export function isEcho8ProjectFile(file: Pick<File, 'name' | 'type'>): boolean {
-  const name = file.name.toLocaleLowerCase();
-  return name.endsWith(PROJECT_FILE_EXTENSION) || name.endsWith('.eco8') ||
-    file.type === PROJECT_MEDIA_TYPE || file.type === LEGACY_PROJECT_MEDIA_TYPE;
+export function isEcho8ProjectFile(file: { name?: string }): boolean {
+  return file.name?.toLowerCase().endsWith(PROJECT_FILE_EXTENSION) === true;
 }
 
 /** Produces a bounded cross-platform filename stem without changing document data. */

@@ -475,7 +475,7 @@ test('book library switches books without the in-canvas unsaved confirmation', a
     }, 10_000);
   }));
   await chooser.setFiles({
-    name: '从书库打开.echo8',
+    name: '从书库打开.e8',
     mimeType: targetBlob.type,
     buffer: Buffer.from(await targetBlob.arrayBuffer()),
   });
@@ -1186,7 +1186,7 @@ test('opening another canvas resolves unsaved work before opening the native fil
     Object.defineProperty(window, 'showSaveFilePicker', {
       configurable: true,
       value: async () => ({
-        name: '当前书籍.echo8',
+        name: '当前书籍.e8',
         createWritable: async () => ({
           write: async () => undefined,
           close: async () => { Reflect.set(window, '__echo8NativeSaveClosed', true); },
@@ -1220,7 +1220,7 @@ test('opening another canvas resolves unsaved work before opening the native fil
   const chooser = await chooserPromise;
   await expect(readyNotice).toBeVisible();
   await chooser.setFiles({
-    name: '另一张画布.echo8',
+    name: '另一张画布.e8',
     mimeType: targetBlob.type,
     buffer: Buffer.from(await targetBlob.arrayBuffer()),
   });
@@ -1236,7 +1236,7 @@ test('opening another canvas resolves unsaved work before opening the native fil
   const discardChooser = await discardChooserPromise;
   await expect(discardNotice).toBeVisible();
   await discardChooser.setFiles({
-    name: '再次打开.echo8',
+    name: '再次打开.e8',
     mimeType: targetBlob.type,
     buffer: Buffer.from(await targetBlob.arrayBuffer()),
   });
@@ -1252,11 +1252,11 @@ test('opening a native book keeps its handle for direct subsequent saves', async
   };
   const targetBlob = await serializeProject(targetSource);
   await page.addInitScript(async ({ bytes, type }) => {
-    const file = new File([new Uint8Array(bytes)], '可自动保存的书籍.echo8', { type });
+    const file = new File([new Uint8Array(bytes)], '可自动保存的书籍.e8', { type });
     Reflect.set(window, '__echo8NativeBookOpened', false);
     Reflect.set(window, '__echo8NativeBookWrites', 0);
     const handle = {
-      name: '可自动保存的书籍.echo8',
+      name: '可自动保存的书籍.e8',
       async getFile() {
         Reflect.set(window, '__echo8NativeBookOpened', true);
         return file;
@@ -1340,7 +1340,7 @@ test('Ctrl+S saves the current book, reuses its native handle, and blocks browse
           Number(Reflect.get(window, '__echo8ProjectSavePickerCalls') ?? 0) + 1,
         );
         return {
-          name: '快捷键保存.echo8',
+          name: '快捷键保存.e8',
           async createWritable() {
             return {
               async write() { return undefined; },
@@ -1993,6 +1993,8 @@ test('title-bar ports create persistent connections on facing left and right tit
     }
     throw new Error(`No visible connection segment can receive a double click (${hitTargets.join(', ')})`);
   });
+  await expect(renderedConnection).toHaveClass(/related-hover/u);
+  await page.mouse.move(0, 0);
   await expect(renderedConnection).toHaveCSS('stroke-width', '1.5px');
   await page.mouse.move(connectionPoint.x, connectionPoint.y);
   await expect(renderedConnection).toHaveCSS('stroke-width', '3px');
@@ -3829,7 +3831,7 @@ test('unsaved books clearly distinguish browser recovery from a real book file',
     '实时', '30 秒', '1 分钟', '2 分钟', '5 分钟', '10 分钟', '30 分钟', '关闭',
   ]);
   await expect(filePanel.getByText(/当前尚未选择书籍保存位置/u)).toBeVisible();
-  await expect(filePanel.getByText(/不会生成 \.echo8 文件/u)).toBeVisible();
+  await expect(filePanel.getByText(/不会生成 \.e8 文件/u)).toBeVisible();
   await autosaveInterval.selectOption('0');
   await expect(filePanel.getByText(/自动保存已关闭/u)).toBeVisible();
   await autosaveInterval.selectOption('1000');

@@ -37,6 +37,7 @@ import { ConnectionJunctionMarkers } from './ConnectionJunctionMarkers.tsx';
 import { overviewNetwork } from './overview-network.ts';
 import { OVERLAP_CLICK_SLOP, OverlapCycle } from './overlap-cycle.ts';
 import { OverlapHint, type OverlapHintState } from './OverlapHint.tsx';
+import { ConnectionHoverHint } from './ConnectionHoverHint.tsx';
 import { junctionGeometry, logicalConnectionPaths } from './junctions.ts';
 import type { SelectionMode } from '../../protocols/selection.ts';
 import { boundsIntersect, worldViewport } from '../../protocols/viewport.ts';
@@ -136,11 +137,12 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     duplicateOriginIds,
     sizePreviews,
     selectedIds,
+    hoveredEntityId,
     lassoActive,
     canvasColor,
     surfaceSize,
     layerRef,
-  } = useCanvasLayerEnvironment<SVGSVGElement>(client, { trackLasso: true });
+  } = useCanvasLayerEnvironment<SVGSVGElement>(client, { trackEntityHover: true, trackLasso: true });
   const [connections, setConnections] = useState<ConnectionRecord[]>([]);
   const [junctions, setJunctions] = useState<ConnectionJunction[]>([]);
   const [junctionPreview, setJunctionPreview] = useState<Record<string, { x: number; y: number }>>({});
@@ -293,6 +295,11 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     return { byId, byNode };
   }, [connections]);
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const hoveredNode = hoveredEntityId && !lassoActive && !draft.from &&
+    !previews[hoveredEntityId] && !sizePreviews[hoveredEntityId]
+    ? nodeById.get(hoveredEntityId)
+    : undefined;
+  const relatedIds = hoveredNode && connectionLookup.byNode.get(hoveredNode.id);
   const titleRouteIds = useMemo(() => {
     const ids = new Set(connections.filter(isTitleConnection).map((edge) => edge.id));
     for (const route of logicalConnectionPaths(connections)) if (isTitleConnection(route.record)) {
@@ -361,8 +368,9 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     }
     return ids;
   }, [connectionLookup, liveJunctions, liveTargets, previews, sizePreviews, stableNodeMap, draft.from, draft.to, draft.reconnectId]);
+  const overviewRelatedIds = overviewMode ? relatedIds : undefined;
   const drawable = useMemo(() => {
-    if (overviewMode && focusedNodeIds.size === 0 && emphasizedConnectionIds.size === 0) return [];
+    if (overviewMode && !overviewRelatedIds?.size && focusedNodeIds.size === 0 && emphasizedConnectionIds.size === 0) return [];
     const viewport = worldViewport(camera, surfaceSize, CULL_MARGIN);
     const candidates = new Map(connectionIndex.query(viewport).map((connection) => [connection.id, connection]));
     for (const id of previewAffectedIds) {
@@ -370,7 +378,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
       if (connection) candidates.set(id, connection);
     }
     return [...candidates.values()].filter((connection) => {
-      if (overviewMode && !connectionVisibleForOverview(
+      if (overviewMode && !overviewRelatedIds?.has(connection.id) && !connectionVisibleForOverview(
         connection,
         focusedNodeIds,
         emphasizedConnectionIds,
@@ -386,6 +394,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     focusedNodeIds,
     livePoints,
     overviewMode,
+    overviewRelatedIds,
     previewAffectedIds,
     surfaceSize,
   ]);
@@ -496,8 +505,24 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
     linePreview,
     titleRouteIds,
   ]);
+  const relatedBatches = useMemo(() => {
+    if (!batchRendered || !relatedIds?.size) return [];
+    const batches = new Map<boolean, { shafts: string[]; arrows: string[] }>();
+    for (const { connection, shaftPath, arrowPath } of committedGeometry) {
+      if (!relatedIds.has(connection.id) || connection.id === draft.reconnectId) continue;
+      const dashed = titleRouteIds.has(connection.id);
+      const batch = batches.get(dashed) ?? { shafts: [], arrows: [] };
+      batch.shafts.push(shaftPath);
+      if (arrowPath) batch.arrows.push(arrowPath);
+      batches.set(dashed, batch);
+    }
+    return [...batches].map(([dashed, { shafts, arrows }]) => ({
+      dashed, shaft: shafts.join(' '), arrow: arrows.join(' '),
+    }));
+  }, [batchRendered, committedGeometry, draft.reconnectId, relatedIds, titleRouteIds]);
   const highlightedGeometry = useMemo(() => batchRendered
-    ? orderConnectionsForPaint(drawableGeometry.filter((item) => selected.has(item.connection.id) || item.connection.id === hoveredId || item.connection.id === draft.reconnectId), selected)
+    ? orderConnectionsForPaint(drawableGeometry.filter(({ connection }) =>
+      selected.has(connection.id) || connection.id === hoveredId || connection.id === draft.reconnectId), selected)
     : [], [batchRendered, drawableGeometry, hoveredId, selected, draft.reconnectId]);
   const detailWorldScale = canvasDetailWorldScale(camera.zoom);
 
@@ -725,6 +750,7 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
   const hitConnection = (x: number, y: number, tolerance = CONNECTION_HOVER_TOLERANCE_PX) => hitConnections(x, y, tolerance)[0]?.connection;
 
   return (
+    <>
     <svg
       ref={layerRef}
       className={`connection-layer ${batchRendered ? 'is-batched' : ''} ${lassoActive ? 'lasso-hit-disabled' : ''}`}
@@ -888,6 +914,12 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
           <path className="connection-arrow connection-arrow-batch" d={arrows} style={{ '--connection-line': color } as CSSProperties} aria-hidden="true" />
           </g>
         ))}
+        {relatedBatches.map(({ dashed, shaft, arrow }) => (
+          <g key={String(dashed)} aria-hidden="true">
+            <path className={`connection-path related-hover ${dashed ? 'title-connection' : ''}`} d={shaft} />
+            <path className="connection-arrow related-hover" d={arrow} />
+          </g>
+        ))}
         {batchRendered && highlightedGeometry.map(({ connection, shaftPath, arrowPath, arrowEnd }) => (
           <g key={`highlight-${connection.id}`}>
           <path
@@ -943,12 +975,12 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
                 }}
               />
               <path
-                className={`connection-path ${isTitleRoute(connection) ? 'title-connection' : ''} ${isSelected ? 'selected' : ''} ${connection.id === hoveredId ? 'hovered' : ''} ${hasLocalColor ? 'custom-color' : ''}`}
+                className={`connection-path ${isTitleRoute(connection) ? 'title-connection' : ''} ${isSelected ? 'selected' : ''} ${connection.id === hoveredId ? 'hovered' : ''} ${relatedIds?.has(connection.id) ? 'related-hover' : ''} ${hasLocalColor ? 'custom-color' : ''}`}
                 d={shaftPath}
                 style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
                 aria-hidden="true"
               />
-              {arrowPath && <path className={`connection-arrow ${isSelected ? 'selected' : ''} ${connection.id === hoveredId ? 'hovered' : ''} ${hasLocalColor ? 'custom-color' : ''}`} data-arrow-for={connection.id} data-arrow-end={arrowEnd} tabIndex={-1}
+              {arrowPath && <path className={`connection-arrow ${isSelected ? 'selected' : ''} ${connection.id === hoveredId ? 'hovered' : ''} ${relatedIds?.has(connection.id) ? 'related-hover' : ''} ${hasLocalColor ? 'custom-color' : ''}`} data-arrow-for={connection.id} data-arrow-end={arrowEnd} tabIndex={-1}
                 onPointerEnter={() => setHoveredId(connection.id)} onPointerLeave={() => setHoveredId(current => current === connection.id ? undefined : current)} d={arrowPath} style={{ '--connection-line': lineColorFor(connection) } as CSSProperties}
                 onPointerDown={event => beginArrowReconnect(event, connection, arrowEnd)}
                 aria-label="拖动箭头重新连接" />}
@@ -1103,6 +1135,11 @@ export function ConnectionLayer({ client }: { client: ViewClient }) {
           targetId={draft.to?.kind === 'junction' ? draft.to.nodeId : undefined} />
       </g>
     </svg>
+    {hoveredNode && relatedIds?.size ? <ConnectionHoverHint
+      client={client} node={hoveredNode} camera={camera} surfaceSize={surfaceSize}
+      ids={relatedIds} byId={connectionLookup.byId} titleRoutes={titleRouteIds}
+    /> : null}
+    </>
   );
 }
 

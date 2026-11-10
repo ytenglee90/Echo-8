@@ -59,7 +59,7 @@ export function CloudProjectDeleteDialog({ client }: { client: ViewClient }) {
       description={<>“{pending.name}”将从你的云端书库中移除，其他设备也无法再打开。</>}
       notice={pending.active
         ? <>这本书当前正在编辑。删除前会先建立本机恢复副本；当前画布会保留并改为未连接状态，未上传队列不会再发送。</>
-        : <>此操作无法在应用内撤销，但不会删除你另存到本机的 .echo8 文件。</>}
+        : <>此操作无法在应用内撤销，但不会删除你另存到本机的 .e8 文件。</>}
       error={error}
       busy={deleting}
       confirmLabel="删除云端书籍"

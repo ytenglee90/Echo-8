@@ -6,7 +6,7 @@ const fixture = readFileSync(new URL('../../tests/fixtures/ai-text-book-v1.txt',
 
 export function aiTextBookScenarios(url: string): void {
   test.use({ viewport: { width: 3000, height: 4000 } });
-  test('AI finished TXT renamed to echo8 opens, edits, undoes, saves and reopens without user scripts', async ({ page, context }) => {
+  test('AI finished TXT renamed to e8 opens, previews links, edits, saves and reopens', async ({ page, context }) => {
     test.setTimeout(60_000);
     await context.addInitScript(() => Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true }));
     const errors: string[] = [];
@@ -25,6 +25,17 @@ export function aiTextBookScenarios(url: string): void {
     for (const title of ['大纲', '卷纲', '小剧情｜第001卷·旧钟', '章纲｜第001卷·旧钟', '正文｜第001卷·旧钟']) {
       await expect(page.getByRole('article', { name: `文本框：${title}`, exact: true })).toBeVisible();
     }
+    await page.getByRole('article', { name: /文本节点：正文｜第001卷·第001章/u }).hover();
+    const hint = page.getByRole('tooltip').filter({ hasText: '关联连线' });
+    await expect(hint).toContainText('关联连线 · 3 条');
+    await expect(hint).toContainText('实线 · 下一章 · 指向正文｜第001卷·第002章');
+    await expect(hint).toContainText('虚线 · 引用 · 来自配角｜沈青');
+    await expect(page.locator('.connection-path.related-hover')).toHaveCount(3);
+    await expect(page.locator('.connection-path.related-hover.title-connection')).toHaveCount(1);
+    await expect(page.locator('.connection-path.selected')).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await expect(hint).toHaveCount(0);
+    await expect(page.locator('.connection-path.related-hover')).toHaveCount(0);
     await page.getByRole('article', { name: /文本节点：主角｜林渊$/u }).getByRole('paragraph').dblclick({ position: { x: 50, y: 35 } });
     const editor = page.locator('.editor-writing-area').first();
     await expect(editor).toContainText('“明天见🧭”');
@@ -42,6 +53,7 @@ export function aiTextBookScenarios(url: string): void {
     const downloadPromise = page.waitForEvent('download');
     await palette.getByRole('option', { name: /^另存本地副本/u }).click();
     const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/\.e8$/u);
     const stream = await download.createReadStream();
     const chunks: Buffer[] = []; for await (const chunk of stream) chunks.push(Buffer.from(chunk));
     const bytes = Buffer.concat(chunks);
@@ -64,8 +76,13 @@ export function aiTextBookScenarios(url: string): void {
     await page.getByRole('button', { name: '返回首页', exact: true }).click();
     const library = page.getByRole('region', { name: 'Echo-8 书库' });
     const before = await page.locator('.text-node-card').count();
+    const input = library.locator('input[type=file]');
+    await expect(input).toHaveAttribute('accept', '.e8');
+    await input.setInputFiles({ name: '旧扩展名.echo8', mimeType: 'text/plain', buffer: fixture });
+    await expect(library.getByText('请选择 .e8 书籍文件')).toBeVisible();
+    await expect(page.locator('.text-node-card')).toHaveCount(before);
     const incomplete = fixture.toString('utf8').replace('{"type":"end"}', '');
-    await library.locator('input[type=file]').setInputFiles({ name: '未输出完整.echo8', mimeType: 'text/plain', buffer: Buffer.from(incomplete) });
+    await input.setInputFiles({ name: '未输出完整.e8', mimeType: 'text/plain', buffer: Buffer.from(incomplete) });
     await expect(page.getByText(/AI 文本书籍缺少节点或结束标记/u).first()).toBeVisible();
     await expect(library).toBeVisible(); await expect(page.locator('.text-node-card')).toHaveCount(before);
   });
@@ -74,6 +91,6 @@ export function aiTextBookScenarios(url: string): void {
 async function openBook(page: Page, url: string, buffer: Buffer): Promise<void> {
   await page.goto(url);
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
-  await library.locator('input[type=file]').setInputFiles({ name: 'AI直接给出的成品.echo8', mimeType: 'text/plain', buffer });
+  await library.locator('input[type=file]').setInputFiles({ name: 'AI直接给出的成品.e8', mimeType: 'text/plain', buffer });
   await expect(library).toHaveCount(0);
 }

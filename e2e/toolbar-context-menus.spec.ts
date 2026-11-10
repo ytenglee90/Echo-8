@@ -29,7 +29,7 @@ async function openFixture(page: Page, grouped = false, lines?: 'parallel' | 'mi
   ] });
   await page.goto('/');
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
-  await library.locator('input[type=file]').setInputFiles({ name: '导航栏测试.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
+  await library.locator('input[type=file]').setInputFiles({ name: '导航栏测试.e8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
   await expect(library).toHaveCount(0);
   await expect(page.locator('.text-node-card')).toHaveCount(4);
 }

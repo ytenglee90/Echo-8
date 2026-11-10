@@ -36,7 +36,7 @@ async function openGroups(page: Page, routedCopy = false, routedTitle = false, s
   const notice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' });
   const chooser = page.waitForEvent('filechooser');
   await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
-  await (await chooser).setFiles({ name: '群组连线.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
+  await (await chooser).setFiles({ name: '群组连线.e8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
   await expect(notice).toHaveCount(0);
   await expect(page.locator('.group-frame')).toHaveCount(2);
 }

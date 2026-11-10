@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type { DomainSnapshot } from '../src/core/contracts.ts';
 import { createContentStorage } from '../src/plugins/text-node/content-storage.ts';
 import { serializeProject } from '../src/plugins/import-export/codec.ts';
-import type { ProjectSource } from '../src/protocols/files.ts';
+import { PROJECT_FILE_EXTENSION, type ProjectSource } from '../src/protocols/files.ts';
 
 const NODE_COUNT = 2_000;
 const CONNECTION_COUNT = 1_600;
@@ -159,7 +159,7 @@ async function openProjectBlob(page: Page, project: Blob): Promise<void> {
   await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
   const chooser = await chooserPromise;
   await chooser.setFiles({
-    name: '浏览器极限测试.echo8',
+    name: `浏览器极限测试${PROJECT_FILE_EXTENSION}`,
     mimeType: project.type,
     buffer: Buffer.from(await project.arrayBuffer()),
   });

@@ -2815,10 +2815,12 @@ test('project parser rejects decompression expansion and oversized logical fragm
   );
 });
 
-test('project file detection accepts the saved extension and the common eco8 typing alias', () => {
-  assert.equal(isEcho8ProjectFile(new File([''], '项目.echo8')), true);
-  assert.equal(isEcho8ProjectFile(new File([''], '项目.ECO8')), true);
-  assert.equal(isEcho8ProjectFile(new File([''], '项目.txt', { type: PROJECT_MEDIA_TYPE })), true);
+test('project file detection requires the e8 extension regardless of MIME', () => {
+  assert.equal(isEcho8ProjectFile(new File([''], '项目.e8')), true);
+  assert.equal(isEcho8ProjectFile(new File([''], '项目.E8', { type: 'text/plain' })), true);
+  assert.equal(isEcho8ProjectFile(new File([''], '项目.echo8', { type: PROJECT_MEDIA_TYPE })), false);
+  assert.equal(isEcho8ProjectFile(new File([''], '项目.eco8')), false);
+  assert.equal(isEcho8ProjectFile(new File([''], '项目.txt', { type: PROJECT_MEDIA_TYPE })), false);
   assert.equal(isEcho8ProjectFile(new File([''], '项目.txt', { type: 'text/plain' })), false);
 });
 
@@ -2840,7 +2842,7 @@ test('opening another project arbitrates picker and dropped-file intents before 
   );
   const targetSource = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
   const targetBlob = await serializeProject(targetSource) as Blob & { name?: string };
-  Object.defineProperty(targetBlob, 'name', { value: '另一本书籍.echo8' });
+  Object.defineProperty(targetBlob, 'name', { value: '另一本书籍.e8' });
   const currentOnly = await kernel.router.dispatch<{ id: string }>(
     'node.create',
     { title: '当前未保存节点', body: '不能被直接覆盖' },
@@ -2896,7 +2898,7 @@ test('opening another project arbitrates picker and dropped-file intents before 
   let saveClosed = false;
   await kernel.router.dispatch('file.saveAndOpenPending', {
     destination: {
-      name: '当前书籍.echo8',
+      name: '当前书籍.e8',
       createWritable: async () => ({
         write: async (part: Blob) => { savedParts.push(part); },
         close: async () => { saveClosed = true; },
@@ -2946,7 +2948,7 @@ test('book-library file switching skips the canvas prompt and keeps a recovery p
     history: { undo: [], redo: [] },
     plugins: [],
   }) as Blob & { name?: string };
-  Object.defineProperty(targetBlob, 'name', { value: '书库目标.echo8' });
+  Object.defineProperty(targetBlob, 'name', { value: '书库目标.e8' });
 
   await kernel.router.dispatch('file.openProjectFromLibrary', { file: targetBlob }, 'core.test');
   assert.equal(
@@ -2970,12 +2972,12 @@ test('opening a native book binds it as the automatic-save destination immediate
   );
   const source = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
   const file = await serializeProject(source) as Blob & { name?: string };
-  Object.defineProperty(file, 'name', { value: '自动保存目标.echo8' });
+  Object.defineProperty(file, 'name', { value: '自动保存目标.e8' });
 
   let written = new Blob();
   let writeCount = 0;
   const destination: FileSaveTarget = {
-    name: '自动保存目标.echo8',
+    name: '自动保存目标.e8',
     async createWritable() {
       const pending: Blob[] = [];
       return {
@@ -3097,7 +3099,7 @@ test('cloud books use cloud save by default, suppress local-location prompts, an
     configurable: true,
     value: {
       showSaveFilePicker: async () => ({
-        name: '云端测试书籍-副本.echo8',
+        name: '云端测试书籍-副本.e8',
         createWritable: async () => ({
           write: async (part: Blob) => { copied.push(part); },
           close: async () => { copyClosed = true; },
@@ -3289,7 +3291,7 @@ test('a new book gets a cloud target on the unified autosave request while a loc
 
     const localSource = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
     const localFile = await serializeProject(localSource) as Blob & { name?: string };
-    Object.defineProperty(localFile, 'name', { value: '仍按本地规则.echo8' });
+    Object.defineProperty(localFile, 'name', { value: '仍按本地规则.e8' });
     const localOpened = new Promise<void>((resolve) => {
       const unsubscribe = kernel.router.subscribeEvent(
         'core.test',
@@ -3329,7 +3331,7 @@ test('project-related directory picker starts from the bound native book without
   const kernel = new ApplicationKernel([textNodePlugin, createImportExportPlugin()]);
   await kernel.start();
   const destination: FileSaveTarget = {
-    name: '同目录书籍.echo8',
+    name: '同目录书籍.e8',
     async createWritable() {
       return {
         async write() { /* test sink */ },
@@ -9803,7 +9805,7 @@ test('AI assistant keeps concurrent generation tasks and stream signals scoped t
   let projectClosed = false;
   await harness.router.dispatch('file.saveProject', {
     destination: {
-      name: '并发保存.echo8',
+      name: '并发保存.e8',
       createWritable: async () => ({
         write: async (part: Blob) => { savedProject.push(part); },
         close: async () => { projectClosed = true; },

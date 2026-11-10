@@ -227,12 +227,16 @@ export function FilePanel({ client }: { client: ViewClient }) {
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.target.value = '';
-              if (file) void client.dispatch('file.openProject', { file });
+              if (file) void client.dispatch('file.openProject', { file }).catch((reason) => setStatus({
+                operation: 'project-open',
+                state: 'error',
+                message: reason instanceof Error ? reason.message : String(reason),
+              }));
             }}
           />
         </div>
         <p className="file-note">{fileState?.cloudProjectActive
-          ? '“保存”直接同步当前云端书籍，不再要求选择本地地址；“另存”只导出一份本地 .echo8 副本，不改变云端保存目标。'
+          ? '“保存”直接同步当前云端书籍，不再要求选择本地地址；“另存”只导出一份本地 .e8 副本，不改变云端保存目标。'
           : '默认保存当前书籍快照，不携带撤销历史、恢复日志、个人主题、编辑器宽度或 API KEY；打开后从新的撤销历史开始。'}</p>
       </div>
 
@@ -293,12 +297,12 @@ export function FilePanel({ client }: { client: ViewClient }) {
               ? '自动保存已关闭；本机恢复仍持续记录，云端书籍只在手动保存、切换书籍或退出当前绑定时刷新。'
               : fileState?.hasProjectDestination
                 ? '自动保存已关闭；本机恢复仍持续记录，当前书籍文件只在手动保存时覆盖。'
-                : '自动保存已关闭；后台仍更新本机浏览器恢复副本，但不会生成或覆盖 .echo8 文件。'
+                : '自动保存已关闭；后台仍更新本机浏览器恢复副本，但不会生成或覆盖 .e8 文件。'
             : fileState?.cloudProjectActive
               ? '浏览器会持续更新本机恢复副本，并按上方间隔把编辑保存到当前云端书籍。'
               : fileState?.hasProjectDestination
                 ? '浏览器会持续更新本机恢复副本，并按上方间隔覆盖当前书籍文件。'
-                : '当前尚未选择书籍保存位置：后台只更新本机浏览器恢复副本（IndexedDB），不会生成 .echo8 文件、不会写入任何文件夹；要长期保留，请点击“保存书籍”。'
+                : '当前尚未选择书籍保存位置：后台只更新本机浏览器恢复副本（IndexedDB），不会生成 .e8 文件、不会写入任何文件夹；要长期保留，请点击“保存书籍”。'
         }</p>
         <p className="file-note">自动保存间隔随个人账号同步，换设备后恢复；未登录时仍在本机保留。</p>
         {settingsError && <p className="autosave-settings-error" role="alert">{settingsError}</p>}

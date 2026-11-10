@@ -15,7 +15,7 @@ import type {
   ProjectSource,
 } from '../../protocols/files.ts';
 import type { CloudSyncState } from '../../cloud/contracts.ts';
-import { PROJECT_FILE_EXTENSION, PROJECT_RELATED_DIRECTORY_CAPABILITY } from '../../protocols/files.ts';
+import { isEcho8ProjectFile, PROJECT_FILE_EXTENSION, PROJECT_RELATED_DIRECTORY_CAPABILITY } from '../../protocols/files.ts';
 import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { PRODUCT_NAME } from '../../product.ts';
 import {
@@ -529,6 +529,7 @@ export function createImportExportPlugin(
           isRecord(payload) && isBlobLike(payload.file) &&
           (payload.destination === undefined || isFileSaveTarget(payload.destination)),
         handle: async (payload) => {
+          if (!isEcho8ProjectFile(payload.file)) throw new Error(`请选择 ${PROJECT_FILE_EXTENSION} 书籍文件`);
           clearPendingOpen();
           await disconnectActiveCloudProject();
           return {
@@ -547,6 +548,7 @@ export function createImportExportPlugin(
           (payload.destination === undefined || isFileSaveTarget(payload.destination)) &&
           (payload.authorizationId === undefined || typeof payload.authorizationId === 'string'),
         handle: async (payload) => {
+          if (!isEcho8ProjectFile(payload.file)) throw new Error(`请选择 ${PROJECT_FILE_EXTENSION} 书籍文件`);
           if (!consumeOpenAuthorization(payload.authorizationId) && await currentCanvasIsDirty()) {
             pendingOpenFile = payload.file;
             pendingOpenDestination = payload.destination;

@@ -34,7 +34,7 @@ export function StartupFailureView({
         )}
         {canDiscard && discardState === 'confirm' && (
           <div className="fatal-screen-confirm" role="alert">
-            <span>这会删除本机检查点、恢复点和事务日志，但保留个人设置；已保存的 .echo8 文件不受影响。</span>
+            <span>这会删除本机检查点、恢复点和事务日志，但保留个人设置；已保存的 .e8 文件不受影响。</span>
             <button type="button" className="danger" onClick={onDiscard}>
               确认清除并进入空白画布
             </button>
@@ -52,7 +52,7 @@ export function StartupSafeModeBanner({ onRetryRecovery }: { onRetryRecovery: ()
     <section className="startup-safe-mode" role="status">
       <span>
         <strong>恢复安全模式</strong>
-        本次没有读取或覆盖浏览器恢复数据。请打开已保存的 .echo8 文件，并尽快另存一份。
+        本次没有读取或覆盖浏览器恢复数据。请打开已保存的 .e8 文件，并尽快另存一份。
       </span>
       <button type="button" onClick={onRetryRecovery}>退出安全模式并重试恢复</button>
     </section>

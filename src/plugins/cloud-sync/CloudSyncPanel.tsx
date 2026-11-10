@@ -136,7 +136,7 @@ export function CloudSyncPanel({ client }: { client: ViewClient }) {
         <div className="cloud-sync-empty">
           <strong>{isLocalFile ? '单文件模式没有账户服务' : '部署端还没有配置 OAuth'}</strong>
           <p>{isLocalFile
-            ? '同步入口已保留；请通过配套的 HTTP(S) 部署地址打开此应用后登录。当前本地画布和 .echo8 文件仍可正常使用。'
+            ? '同步入口已保留；请通过配套的 HTTP(S) 部署地址打开此应用后登录。当前本地画布和 .e8 文件仍可正常使用。'
             : '应用本身可以正常本地使用。按部署文档绑定控制 D1 并设置 5 个密钥后，这里会自动启用。'}</p>
         </div>
       )}

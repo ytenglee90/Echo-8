@@ -41,7 +41,7 @@ async function openSteepFan(page: Page, layout = steepFan) {
   await palette.getByRole('option', { name: /^打开书籍/u }).click();
   const notice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' }), chooser = page.waitForEvent('filechooser');
   await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
-  await (await chooser).setFiles({ name: '陡峭中转分支.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
+  await (await chooser).setFiles({ name: '陡峭中转分支.e8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
   await expect(notice).toHaveCount(0);
   if (layout.pairs.length > 600) await expect(page.locator('.connection-layer')).toHaveAttribute('data-render-mode','batched-svg');
   else await expect(page.locator('.connection-hit-area')).toHaveCount(layout.pairs.length);
@@ -403,7 +403,7 @@ for (const oversized of [false, true]) test(`focus with no selection includes ev
   else { await expect(page.getByRole('article')).toHaveCount(2); expect((await camera()).zoom).toBeGreaterThan(1); }
 });
 
-test('40% overview reveals only selected node, box or group relationships, including junctions, and ignores hover', async ({ page }) => {
+test('40% overview previews direct hovered links and reveals full selected relationships through junctions', async ({ page }) => {
   await page.setViewportSize({ width: 1300, height: 900 });
   await openSteepFan(page, { positions: [[100,100],[900,100],[900,450],[100,800],[900,800],[1500,800]], junction: [600,300],
     junctions: [{ id: 'j2', x: 600, y: 1000 }, { id: 'j3', x: 1400, y: 1400 }],
@@ -412,6 +412,10 @@ test('40% overview reveals only selected node, box or group relationships, inclu
   const lines = page.locator('.connection-hit-area'), points = page.locator('.connection-junction');
   await expect(lines).toHaveCount(0); await expect(points).toHaveCount(0);
   const node = page.getByRole('article', { name: /文本节点：节点 1$/u }); await node.hover();
+  await expect(lines).toHaveCount(1);
+  await expect(page.locator('.connection-path.related-hover')).toHaveCount(1);
+  await expect(points).toHaveCount(0);
+  await page.mouse.move(0, 0);
   await expect(lines).toHaveCount(0); await expect(points).toHaveCount(0);
   await node.click(); await expect(lines).toHaveCount(3); await expect(points).toHaveCount(1);
   await expect(points).toHaveAttribute('data-junction-id','j');
@@ -460,6 +464,13 @@ test('overlap cycling also works in batched rendering and survives deleting one 
   await openSteepFan(page,{ positions:[...Array.from({length:601},()=>[100,200] as const),[900,200]],junction:[500,500],
     pairs:Array.from({length:601},(_,i)=>[`n${i}`,'n601'] as const),title:false,unrouted:true });
   const surface=(await page.locator('.canvas-surface').boundingBox())!, x=surface.x+630,y=surface.y+273;
+  await page.getByRole('article', { name: '文本节点：节点 602', exact: true }).hover();
+  const related = page.locator('.connection-path.related-hover');
+  await expect(related).toHaveCount(1);
+  expect((await related.getAttribute('d'))?.match(/\bM\s/gu)).toHaveLength(601);
+  await expect(page.getByRole('tooltip').filter({ hasText: '关联连线' })).toContainText('另有 597 条');
+  await page.mouse.move(0, 0);
+  await expect(related).toHaveCount(0);
   const selected=()=>page.locator('.connection-arrow.selected[data-arrow-for]').getAttribute('data-arrow-for');
   await page.mouse.click(x,y); await expect.poll(selected).toBeTruthy(); const first=await selected();
   await page.mouse.click(x,y); await expect.poll(selected).not.toBe(first); const second=await selected();

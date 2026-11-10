@@ -1,7 +1,7 @@
 import type {
   CSSProperties,
 } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { SearchMatchPreview } from '../../protocols/search.ts';
@@ -61,6 +61,7 @@ function TextNodeCanvasLayerView({
     value: string;
   }>();
   const [searchMatch, setSearchMatch] = useState<SearchMatchPreview>();
+  const hoveredNode = useRef<string | undefined>(undefined);
   useEffect(
     () => client.subscribeSignal<SearchMatchPreview>('search.match.preview', (message) => {
       setSearchMatch(message.payload.clear ? undefined : message.payload);
@@ -68,8 +69,16 @@ function TextNodeCanvasLayerView({
     [client],
   );
   useEffect(() => () => {
-    client.emit('canvas.entity.hover.preview', { clear: true });
+    const id = hoveredNode.current;
+    hoveredNode.current = undefined;
+    if (id) client.emit('canvas.entity.hover.preview', { id, clear: true });
   }, [client]);
+  useEffect(() => {
+    const id = hoveredNode.current;
+    if (!id || visibleNodes.some(node => node.id === id)) return;
+    hoveredNode.current = undefined;
+    client.emit('canvas.entity.hover.preview', { id, clear: true });
+  }, [client, visibleNodes]);
   const finishTitleEdit = (save: boolean) => {
     const edit = titleEdit;
     if (!edit) return;
@@ -177,8 +186,16 @@ function TextNodeCanvasLayerView({
               '--text-box-color': renderedTextBoxColor,
             } as CSSProperties}
             onPointerDown={(event) => beginNodeDrag(event, node)}
-            onPointerEnter={() => client.emit('canvas.entity.hover.preview', { id: node.id })}
-            onPointerLeave={() => client.emit('canvas.entity.hover.preview', { id: node.id, clear: true })}
+            onPointerEnter={(event) => {
+              if (event.pointerType === 'touch') return;
+              hoveredNode.current = node.id;
+              client.emit('canvas.entity.hover.preview', { id: node.id });
+            }}
+            onPointerLeave={() => {
+              if (hoveredNode.current !== node.id) return;
+              hoveredNode.current = undefined;
+              client.emit('canvas.entity.hover.preview', { id: node.id, clear: true });
+            }}
             onDoubleClick={(event) => {
               if (isTextBox && !event.ctrlKey && !event.metaKey) {
                 event.preventDefault();

@@ -55,7 +55,7 @@ for (const failFirstUpload of [false, true]) test(`a local book is saved as a se
   await page.goto('/');
   const library = page.getByRole('region', { name: 'Echo-8 书库' });
   await expect(library.getByRole('button', { name: '打开书籍：分块保存测试', exact: true })).toBeVisible();
-  await library.locator('input[type=file]').setInputFiles({ name: '本地书籍.echo8', mimeType: original.type, buffer: Buffer.from(await original.arrayBuffer()) });
+  await library.locator('input[type=file]').setInputFiles({ name: '本地书籍.e8', mimeType: original.type, buffer: Buffer.from(await original.arrayBuffer()) });
   await expect(library).toHaveCount(0);
   await expect(page.locator('.text-node-card')).toHaveCount(1);
   await page.getByRole('button', { name: '新建文本', exact: true }).click();

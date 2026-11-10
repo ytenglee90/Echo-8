@@ -41,7 +41,7 @@ test('same native file target has one strict write lane while different targets 
 
 test('an aborted waiter releases its slot without overtaking the active write', async () => {
   const coordinator = new FileWriteCoordinator();
-  const destination = target('book.echo8');
+  const destination = target('book.e8');
   const releaseFirst = deferred();
   const events: string[] = [];
   const first = coordinator.run(destination, new AbortController().signal, async () => {

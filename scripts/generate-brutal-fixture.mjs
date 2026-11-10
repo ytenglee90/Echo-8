@@ -38,7 +38,7 @@ class Crc32 {
 }
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const outputPath = resolve(projectRoot, 'artifacts', 'Echo-8-Brutal-2000.echo8');
+const outputPath = resolve(projectRoot, 'artifacts', 'Echo-8-Brutal-2000.e8');
 const partialPath = `${outputPath}.partial`;
 
 await assertAbsent(outputPath);

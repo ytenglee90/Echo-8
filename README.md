@@ -6,9 +6,9 @@
 
 打开 `artifacts/Echo-8.html`。它不引用外部脚本、样式或字体。纠错内容单独保存在同目录的 `Echo-8-text-assist-rules.txt`；直接双击 HTML 时，按画布中央上方的“纠错规则尚未导入”提示选择该文件即可。成功导入后，完整规则会保存在当前浏览器的独立本机资源库中，后续启动不再要求重新选择；换浏览器、移动到另一站点来源或清理站点数据后需要重新导入，命令面板中的“从 TXT 更新纠错规则”可覆盖本机副本。
 
-便携单 HTML 每次重新打开都从新的空画布开始，正式保存依赖带校验和的 `.echo8` 书籍文件；托管版会恢复当前浏览器的 IndexedDB 副本，并可选择连接用户自己的 Cloudflare Worker、D1 与 R2，在其他设备继续编辑。也可以把 `.echo8`（兼容误写 `.eco8`）直接拖入画布打开。当前书籍有未保存修改时，“打开书籍”会先在顶部询问保存或不保存；拖入书籍文件时也使用同一裁决。
+便携单 HTML 每次重新打开都从新的空画布开始，正式保存依赖带校验和的 `.e8` 书籍文件；托管版会恢复当前浏览器的 IndexedDB 副本，并可选择连接用户自己的 Cloudflare Worker、D1 与 R2，在其他设备继续编辑。也可以把 `.e8` 直接拖入画布打开。当前书籍有未保存修改时，“打开书籍”会先在顶部询问保存或不保存；拖入书籍文件时也使用同一裁决。
 
-支持 AI 直接编写的文本书籍输入 `echo-8-ai-book` v1：让 AI 交付规定格式的成品 TXT，下载后将后缀改为 `.echo8` 再打开，无需用户运行生成脚本。画布会自动生成类目分组、标题与排版，正常保存时写为原生带 CRC32 的 v2 书籍。普通小说正文 TXT 仍按普通文档导入；新输入协议见 [`docs/ADR-0136-AI-TEXT-BOOK-INPUT.md`](docs/ADR-0136-AI-TEXT-BOOK-INPUT.md)。
+支持 AI 直接编写的文本书籍输入 `echo-8-ai-book` v1：让 AI 交付规定格式的成品 TXT，下载后将后缀改为 `.e8` 再打开，无需用户运行生成脚本。画布会自动生成类目分组、标题与排版，正常保存时写为原生带 CRC32 的 v2 书籍。普通小说正文 TXT 仍按普通文档导入；新输入协议见 [`docs/ADR-0136-AI-TEXT-BOOK-INPUT.md`](docs/ADR-0136-AI-TEXT-BOOK-INPUT.md)。
 
 公开 BYOC 部署、OAuth 权限、数据库迁移与跨设备验收见 [`docs/CLOUDFLARE-BYOC-DEPLOYMENT.zh-CN.md`](docs/CLOUDFLARE-BYOC-DEPLOYMENT.zh-CN.md)。
 
@@ -44,4 +44,4 @@ pnpm run test:portable
 
 ## 暴力测试夹具
 
-`npm run fixture:brutal` 会流式生成 `artifacts/Echo-8-Brutal-2000.echo8`，包含2000个文本节点、2.199亿正文字符、8000条跨距连线和200个群组。生成器拒绝覆盖已有夹具；需要重建时请先明确移走旧文件。`npm run verify:brutal` 使用应用正式解析器复核CRC、正文分块、引用完整性和群组互斥关系。
+`npm run fixture:brutal` 会流式生成 `artifacts/Echo-8-Brutal-2000.e8`，包含2000个文本节点、2.199亿正文字符、8000条跨距连线和200个群组。生成器拒绝覆盖已有夹具；需要重建时请先明确移走旧文件。`npm run verify:brutal` 使用应用正式解析器复核CRC、正文分块、引用完整性和群组互斥关系。

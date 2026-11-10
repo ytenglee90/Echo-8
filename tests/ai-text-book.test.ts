@@ -22,7 +22,7 @@ function body(ns: Record<string, Record<string, unknown>>, contentId: string): s
 }
 
 test('AI-authored text renamed to echo8 opens without scripts, checksums or generated native metadata', async () => {
-  const input = new Blob([fixture]); Object.defineProperty(input, 'name', { value: '只改后缀.echo8' });
+  const input = new Blob([fixture]); Object.defineProperty(input, 'name', { value: '只改后缀.e8' });
   const parsed = await parseProject(input), ns = parsed.document.namespaces;
   assert.equal(parsed.manifest.kind, 'echo-8-project'); assert.equal(parsed.manifest.formatVersion, 2);
   assert.deepEqual(parsed.history, { undo: [], redo: [] });

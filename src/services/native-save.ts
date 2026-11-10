@@ -1,5 +1,4 @@
 import {
-  LEGACY_PROJECT_MEDIA_TYPE,
   PROJECT_FILE_EXTENSION,
   PROJECT_MEDIA_TYPE,
   safeLocalFilename,
@@ -40,12 +39,10 @@ export async function chooseNativeProjectOpen(): Promise<FileReadWriteTarget | u
   const handles = await picker({
     id: `${PRODUCT_SLUG}-project`,
     multiple: false,
+    excludeAcceptAllOption: true,
     types: [{
       description: `${PRODUCT_NAME} 书籍`,
-      accept: {
-        [PROJECT_MEDIA_TYPE]: [PROJECT_FILE_EXTENSION, '.eco8'],
-        [LEGACY_PROJECT_MEDIA_TYPE]: [PROJECT_FILE_EXTENSION, '.eco8'],
-      },
+      accept: { [PROJECT_MEDIA_TYPE]: [PROJECT_FILE_EXTENSION] },
     }],
   });
   return handles[0];
@@ -65,6 +62,7 @@ interface NativeSaveWindow extends Window {
   showOpenFilePicker?: (options: {
     id?: string;
     multiple?: boolean;
+    excludeAcceptAllOption?: boolean;
     types: Array<{ description: string; accept: Record<string, string[]> }>;
   }) => Promise<FileReadWriteTarget[]>;
 }

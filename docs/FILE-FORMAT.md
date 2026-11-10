@@ -1,12 +1,12 @@
 # Echo-8 file format 2
 
-Extension: `.echo8`  
-Media type: `application/x-echo-8-canvas+gzip`  
-Container: gzip-compressed UTF-8 newline-delimited JSON
+- Extension: `.e8`
+- Media type: `application/x-echo-8-canvas+gzip`
+- Container: gzip-compressed UTF-8 newline-delimited JSON
 
 New saves use compact version 2. The compressed payload contains the current document snapshot only: it does not include undo/redo history, local recovery logs, user interface preferences, search indexes, model keys or personal connections. Opening a version 2 book starts a fresh undo history in the receiving browser.
 
-File opening and drag-opening also accept `.eco8` as a forgiving filename alias; recognition and integrity still depend on the internal manifest and checksum, not the extension. Readers continue to accept the uncompressed version 1 format (`application/x-echo-8-canvas+ndjson`) so existing books remain usable.
+The book picker, drag and drop, and file open commands require the `.e8` filename extension. This naming change leaves the bytes and format version intact. A previous book can be renamed to `.e8` without conversion. The reader still checks the internal manifest and checksum for native books, including uncompressed native version 1.
 
 ## Record order
 
@@ -44,4 +44,4 @@ The footer stores the number of logical entries and CRC32 over every preceding e
 
 正文格式仍使用 `textFormat` storageVersion 2 与有序 `textFormatMark` 记录。paragraph 标记可用等值起止锚点表示末尾空段；选区标记仍为非空范围。读写必须保留 markIds 的顺序、作用域及锚点偏置。排版控制和旧 selection 标记兼容投影见 ADR-0123；不会改写 TXT 正文或重新解释已存储的字号/字距数值。
 
-云端 book formatVersion 2 与本地 .echo8 formatVersion 2 是不同边界。云端用当前头和哈希分块实现增量上传；本地导出继续是无历史的完整压缩容器。共享书籍保留 document 实际外观，不含账号快捷键或个人布局。release 5 与旧日志迁移规则见 ADR-0124。
+云端 book formatVersion 2 与本地 .e8 formatVersion 2 是不同边界。云端用当前头和哈希分块实现增量上传；本地导出继续是无历史的完整压缩容器。共享书籍保留 document 实际外观，不含账号快捷键或个人布局。release 5 与旧日志迁移规则见 ADR-0124。

@@ -685,9 +685,31 @@
 .connection-overlap-hint { pointer-events: none; user-select: none; }
 .connection-overlap-hint rect { fill: var(--connection-label-background, var(--canvas-background)); stroke: var(--canvas-selection-soft); stroke-width: 1; }
 .connection-overlap-hint text { fill: var(--canvas-selection); }
+/* Node hints paint over cards and below the canvas gesture shield. */
+.connection-hover-hint {
+  position: absolute;
+  z-index: 9;
+  box-sizing: border-box;
+  display: grid;
+  gap: 2px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 17px;
+  pointer-events: none;
+}
+.connection-hover-hint span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .connection-junction-port path { fill: none; stroke: var(--canvas-selection); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 .connection-junction:is(.connection-target, :focus-within) .connection-junction-ring { opacity: 1; }
-.connection-arrow:is(.selected, .hovered),
+.connection-arrow:is(.selected, .hovered, .related-hover),
 .connection-hit-area:focus-visible ~ .connection-arrow { fill: var(--canvas-selection, var(--selection)); }
 
 .connection-hit-area {
@@ -703,6 +725,7 @@
 .connection-hit-area:hover + .connection-path,
 .connection-hit-area:focus-visible + .connection-path,
 .connection-path.hovered,
+.connection-path.related-hover,
 .connection-path.selected {
   fill: none;
   stroke: var(--canvas-selection, var(--selection));

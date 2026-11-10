@@ -12,7 +12,7 @@ const CONNECTION_COUNT = 8_000;
 const GROUP_COUNT = 200;
 const CHUNK_COUNT = 4_304;
 const TOTAL_CHARACTERS = 219_900_000;
-const projectPath = resolve('artifacts', 'Echo-8-Brutal-2000.echo8');
+const projectPath = resolve('artifacts', 'Echo-8-Brutal-2000.e8');
 
 const blob = await openAsBlob(projectPath, { type: 'application/x-echo-8-canvas+ndjson' });
 let reportedBucket = -1;

@@ -25,7 +25,7 @@ async function openFixture(page: Page) {
   await palette.getByRole('textbox', { name: '搜索命令' }).fill('打开书籍'); await palette.getByRole('option', { name: /^打开书籍/u }).click();
   const notice = page.getByRole('status').filter({ hasText: '当前书籍还有未保存修改' }); const chooser = page.waitForEvent('filechooser');
   await notice.getByRole('button', { name: '不保存，继续选择书籍' }).click();
-  await (await chooser).setFiles({ name: '中转点移动.echo8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
+  await (await chooser).setFiles({ name: '中转点移动.e8', mimeType: blob.type, buffer: Buffer.from(await blob.arrayBuffer()) });
   await expect(notice).toHaveCount(0); await expect(page.locator('.connection-junction')).toHaveCount(2);
 }
 async function points(page: Page) { return page.locator('.connection-junction').evaluateAll(elements => elements.sort((a, b) => a.getAttribute('data-junction-id')!.localeCompare(b.getAttribute('data-junction-id')!)).map(element => element.getAttribute('transform')!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number))); }

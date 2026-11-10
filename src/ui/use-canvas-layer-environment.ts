@@ -40,7 +40,7 @@ interface CanvasLayerEnvironment<TElement extends Element> {
 /** Shared, read-only environment used by governed canvas overlay layers. */
 export function useCanvasLayerEnvironment<TElement extends Element>(
   client: ViewClient,
-  options: { trackInteractionFocus?: boolean; trackLasso?: boolean } = {},
+  options: { trackInteractionFocus?: boolean; trackEntityHover?: boolean; trackLasso?: boolean } = {},
 ): CanvasLayerEnvironment<TElement> {
   const workspaceVersion = useSyncExternalStore(client.subscribeState, client.getWorkspaceVersion, () => 0);
   const capabilityVersion = useSyncExternalStore(
@@ -175,14 +175,14 @@ export function useCanvasLayerEnvironment<TElement extends Element>(
   }, [capabilityVersion, client, options.trackInteractionFocus, workspaceVersion]);
 
   useEffect(() => {
-    if (!options.trackInteractionFocus) return;
+    if (!options.trackInteractionFocus && !options.trackEntityHover) return;
     return client.subscribeSignal<CanvasEntityHoverPreview>('canvas.entity.hover.preview', (message) => {
       const payload = message.payload;
       setHoveredEntityId((current) => payload.clear
         ? payload.id && current !== payload.id ? current : undefined
         : payload.id);
     });
-  }, [client, options.trackInteractionFocus]);
+  }, [client, options.trackEntityHover, options.trackInteractionFocus]);
 
   useEffect(() => {
     if (!options.trackInteractionFocus && !options.trackLasso) return;
