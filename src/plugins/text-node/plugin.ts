@@ -160,6 +160,7 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
     dispatches: ['editor.open', 'connection.create'],
     queries: ['textNode.count'],
     providesCapabilities: [
+      'canvasControl.nodesPlan@1',
       'content.summaries@1',
       'content.catalog@2',
       'content.metrics@1',

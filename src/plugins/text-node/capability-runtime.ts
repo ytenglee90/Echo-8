@@ -4,6 +4,7 @@ import {
   type PatchOperation,
   type PluginContext,
 } from '../../core/contracts.ts';
+import { registerTextControlPlans } from './control-plans.ts';
 import type {
   AIContextCatalogContribution,
   AIContextReadContribution,
@@ -184,7 +185,9 @@ export interface TextNodeCapabilityRuntime {
   planNodeRename: (node: TextNodeRecord, title: string) => Promise<ContentRenamePlan>;
 }
 
-export function registerTextNodeCapabilities({
+export function registerTextNodeCapabilities(runtime: TextNodeCapabilityRuntime): void {
+  registerTextControlPlans(runtime);
+  const {
   context,
   readNodes,
   readNodeIndex,
@@ -197,7 +200,7 @@ export function registerTextNodeCapabilities({
   readSummaries,
   buildCreateTransaction,
   planNodeRename,
-}: TextNodeCapabilityRuntime): void {
+  } = runtime;
     context.capabilities.provide({
       key: 'content.summaries@1',
       invoke: () => readSummaries(),

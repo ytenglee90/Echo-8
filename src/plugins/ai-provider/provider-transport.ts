@@ -55,7 +55,9 @@ function isValidToolDefinition(value: unknown): boolean {
 }
 
 function resolveEndpoint(endpoint: string): string {
-  return new URL(endpoint, typeof location === 'undefined' ? 'http://localhost' : location.origin).toString();
+  const base = typeof location === 'undefined' ? 'http://localhost'
+    : location.origin === 'null' ? location.href : location.origin;
+  return new URL(endpoint, base).toString();
 }
 
 export function buildProviderRequest(

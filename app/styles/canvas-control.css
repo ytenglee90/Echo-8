@@ -1,0 +1,14 @@
+.canvas-control-panel .canvas-control-content { padding: 16px; overflow: auto; display: grid; gap: 14px; font-size: 13px; }
+.canvas-control-content > p { margin: 0; line-height: 1.65; }
+.canvas-control-content label { display: grid; gap: 7px; font-weight: 600; }
+.canvas-control-note, .canvas-control-empty { color: var(--muted); }
+.canvas-control-content [role="alert"] { color: var(--danger); }
+.canvas-control-review { border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.canvas-control-review header, .canvas-control-review footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.canvas-control-review header span { color: var(--muted); font-size: 12px; }
+.canvas-control-review ol { padding-left: 22px; display: grid; gap: 12px; }
+.canvas-control-review li > strong { font-size: 13px; }
+.canvas-control-review li p { margin: 5px 0; overflow-wrap: anywhere; color: var(--muted); }
+.canvas-control-review details { margin-top: 7px; }
+.canvas-control-review summary { cursor: pointer; color: var(--muted); }
+.canvas-control-review pre { margin: 7px 0 0; padding: 9px; max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; background: var(--surface); border-radius: 6px; }

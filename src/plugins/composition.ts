@@ -3,6 +3,7 @@ import { annotationsPlugin } from './annotations/plugin.ts';
 import { aiAssistantPlugin } from './ai-assistant/plugin.ts';
 import { aiProviderPlugin } from './ai-provider/plugin.ts';
 import { canvasPlugin } from './canvas/plugin.ts';
+import { canvasControlPlugin } from './canvas-control/plugin.ts';
 import { minimapPlugin } from './minimap/plugin.ts';
 import { bookLibraryPlugin } from './book-library/plugin.ts';
 import { clipboardPlugin } from './clipboard/plugin.ts';
@@ -56,5 +57,6 @@ export function composeBuiltInPlugins(semanticProvider: PluginDefinition): Plugi
     semanticProvider,
     aiProviderPlugin,
     aiAssistantPlugin,
+    canvasControlPlugin,
   ];
 }

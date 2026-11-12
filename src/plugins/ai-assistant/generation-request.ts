@@ -11,7 +11,7 @@ import type {
 } from '../../protocols/ai.ts';
 import { AI_MEMORY_SYSTEM_INSTRUCTIONS } from './memory-protocol.ts';
 import { SEARCH_MEMORY_TOOL } from './memory-search-tool.ts';
-import { isAbortError } from './runtime-errors.ts';
+import { isAbortError, isCapabilityUnavailable } from './runtime-errors.ts';
 import {
   operationInstruction,
   operationLabel,
@@ -102,7 +102,16 @@ export async function buildGenerateRequest(
     operationTemperature(prepared.operation);
   const maxOutputTokens = policies.find((policy) => policy.maxOutputTokens !== undefined)?.maxOutputTokens ??
     defaultOutputTokenBudget(prepared);
-  const tools = await availableReadOnlyTools(context, prepared, signal);
+  const tools = prepared.operation === 'canvas-control' ? [] : await availableReadOnlyTools(context, prepared, signal);
+  const controlContext = prepared.operation === 'canvas-control'
+    ? await context.capabilities.request<{ instruction: string }>('canvasControl.context@1', {
+      preparationId: prepared.id, sessionId: prepared.sessionId, prompt: prepared.prompt,
+      sourceIds: prepared.sources.filter(source => source.provider === 'text-node' && source.kind === 'text' && source.reason === 'explicit-reference').map(source => source.sourceId),
+    }, signal).catch(error => {
+      if (isCapabilityUnavailable(error, 'canvasControl.context@1')) throw new Error('请先在插件中心启用“AI 画布控制”');
+      throw error;
+    })
+    : undefined;
   // Keep the immutable protocol in its own first message. Compatible model
   // providers can cache that stable prefix across turns; per-assistant
   // templates and per-request search state remain after it.
@@ -118,6 +127,7 @@ export async function buildGenerateRequest(
       content: '本次请求已启用当前模型平台的原生联网搜索；对实时事实应使用其返回的网络证据，并明确区分网络资料与画布原文。',
     });
   }
+  if (controlContext) messages.push({ role: 'system', content: controlContext.instruction });
   if (customSystem) {
     messages.push({
       role: 'system',
@@ -170,6 +180,7 @@ async function availableReadOnlyTools(
 }
 
 const LONG_FORM_OPERATIONS = new Set([
+  'canvas-control',
   'expand', 'rewrite', 'translate', 'plan', 'decompose', 'brainstorm',
   'outline', 'detailed-outline', 'script', 'copywriting',
 ]);

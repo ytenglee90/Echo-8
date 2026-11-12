@@ -51,6 +51,7 @@ import type {
 import type { StatisticsContribution } from '../../protocols/statistics.ts';
 import { defineManifest } from '../manifest.ts';
 import { connectionGraphPoints } from './routing.ts';
+import { registerConnectionControlPlans } from './control-plans.ts';
 import { canvasContrastColors } from '../../ui/canvas-contrast.ts';
 import {
   CONNECTION_LASSO_REGION_PADDING,
@@ -104,6 +105,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       ],
       optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'canvas.pointer@1', 'canvas.viewport@1', 'layout.snap@1', 'connections.targets@1', 'selection.resolve@1'],
       providesCapabilities: [
+        'canvasControl.connectionsPlan@1',
         'entity.movePlan@1',
         'connections.detachPlan@1',
         'connections.targetAt@1',
@@ -253,6 +255,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
     start(context) {
       const readConnections = () =>
         context.store.readNamespace<Record<string, ConnectionRecord>>(CONNECTION_NAMESPACE);
+      registerConnectionControlPlans(context, readConnections);
       const readJunctions = () => {
         const points = context.store.readNamespace<Record<string, ConnectionJunction>>(JUNCTION_NAMESPACE);
         for (const [id, point] of Object.entries(points)) {

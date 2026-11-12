@@ -60,7 +60,7 @@ export async function prepareAIContext(
     ? { budget: budgetOverride, modelContextWindowTokens: undefined }
     : await resolveAIContextBudget(context, payload.providerProfileId, signal);
   const budget = resolvedBudget.budget;
-  const contextMode = payload.contextMode ?? 'automatic';
+  const contextMode = payload.operation === 'canvas-control' ? 'explicit-only' : payload.contextMode ?? 'automatic';
   const selectedMemorySourceIds = [...new Set(payload.memorySourceIds ?? [])];
   const selectedMemorySet = new Set(selectedMemorySourceIds);
   const memoryArtifactOwner = new Map<string, string>();

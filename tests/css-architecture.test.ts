@@ -11,6 +11,7 @@ const expectedImports = [
   "@import './styles/foundation.css';",
   "@import './styles/shell-base.css';",
   "@import './styles/canvas.css';",
+  "@import './styles/canvas-control.css';",
   "@import './styles/feature-controls.css';",
   "@import './styles/editor.css';",
   "@import './styles/feature-panels.css';",

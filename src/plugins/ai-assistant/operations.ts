@@ -22,6 +22,11 @@ export const AI_OPERATION_DEFINITIONS: readonly AIOperationDefinition[] = [
     instruction: '不要预设内容领域，直接按照用户说明、限制和交付形式完成任务',
   },
   {
+    operation: 'canvas-control', label: '画布操作', category: '通用', temperature: 0.25,
+    description: '通过画布控制插件生成可审查的对象操作计划',
+    instruction: '按用户本次要求规划画布对象操作，只使用控制插件本轮提供的范围和操作类型',
+  },
+  {
     operation: 'polish', label: '润色', category: '内容处理', temperature: 0.45,
     description: '改善表达、结构和清晰度', instruction: '改善表达、结构和清晰度，不改变事实、数据、结论与约束',
   },

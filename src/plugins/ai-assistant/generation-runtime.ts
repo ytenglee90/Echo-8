@@ -130,7 +130,7 @@ export function registerAIGenerationRuntime(
     if (!prepared) return;
     options.tasks.get(prepared.sessionId)?.cancel();
     options.actionBySession.delete(prepared.sessionId);
-    const generationMessage = operationCreatesWriteback(prepared.operation)
+    const generationMessage = prepared.operation === 'canvas-control' ? '正在规划画布对象操作' : operationCreatesWriteback(prepared.operation)
       ? '模型正在生成可审查的正文修改'
       : '模型正在回答';
     options.stateBySession.set(prepared.sessionId, {
@@ -172,6 +172,7 @@ export function registerAIGenerationRuntime(
             );
             const result = await consumeAIGenerationStream(stream, signal, {
               onDelta: (event) => {
+                if (prepared.operation === 'canvas-control') return;
                 emittedSequence += 1;
                 const current = options.stateBySession.get(prepared.sessionId);
                 const text = event.channel === 'answer'
@@ -284,6 +285,14 @@ export function registerAIGenerationRuntime(
     options.tasks.set(prepared.sessionId, task);
     void task.result.then(
       async (result) => {
+        if (prepared.operation === 'canvas-control') {
+          if (options.tasks.get(prepared.sessionId) !== task) return;
+          const offer = await context.commands.dispatch('canvasControl.offer@1', {
+            preparationId: prepared.id, sessionId: prepared.sessionId, prompt: prepared.prompt,
+            text: result.text, complete: result.finishReason !== 'length',
+          });
+          result = { ...result, text: offer.message, reasoning: undefined };
+        }
         if (options.tasks.get(prepared.sessionId) === task) options.tasks.delete(prepared.sessionId);
         const recorded = await context.commands.dispatch('ai.generation.record', {
           preparationId: prepared.id,

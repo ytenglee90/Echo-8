@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+The optional canvas-control plugin accepts plans only from explicit @画布操作 turns. It captures bounded object metadata through public capabilities, stages untrusted model data for review, and obtains owner-produced text/group/connection patches. A token-bound inline commit applies the accepted batch in one document transaction. Review state remains transient, body edits retain chunk/format/annotation handling, and stale revisions or overlapping storage targets reject the batch (ADR-0138).
+
 The import/export owner accepts versioned `echo-8-ai-book` v1 NDJSON as an explicitly checksum-free authored input. AI can supply literal nodes, appended text parts and semantic links in a TXT attachment that users rename to `.e8`; bounded parsing stages existing text/group/connection records through the unchanged document-replacement route. Category sections, title boxes, colors and layout are materialized in staging. Normal saves migrate to native CRC32/gzip project v2; native v1/v2 integrity checks and unknown-plugin preservation remain unchanged (ADR-0136).
 
 The UI-owned assistant finish layer scopes shared typography, control geometry, spacing, semantic surfaces and focus states to ai-floating-panel across chat, memory, templates and governed provider contributions. Library account capacity and access share one metadata row below the account identity (ADR-0135).

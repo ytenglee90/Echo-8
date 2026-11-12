@@ -37,6 +37,7 @@ import { defineManifest } from '../manifest.ts';
 import { resolveGroupDropTarget } from './drop-target.ts';
 import { computeGroupBounds } from './layout.ts';
 import { groupMembershipSelection } from './membership-selection.ts';
+import { registerGroupControlPlans } from './control-plans.ts';
 
 const GROUP_NAMESPACE = 'groups';
 const GROUP_MEMBERSHIP_UI_NAMESPACE = 'groupMembershipUI';
@@ -82,6 +83,7 @@ export function createGroupsPlugin(
       ],
       optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'canvas.viewport@1', 'layout.snap@1', 'connections.graph@1', 'connections.targets@1', 'connections.detachPlan@1'],
       providesCapabilities: [
+        'canvasControl.groupsPlan@1',
         'canvas.overview@1',
         'connections.targets@1',
         'groups.list@1',
@@ -173,6 +175,7 @@ export function createGroupsPlugin(
     start(context) {
       const readGroups = () =>
         context.store.readNamespace<Record<string, GroupRecord>>(GROUP_NAMESPACE);
+      registerGroupControlPlans(context, readGroups);
       const membershipPanelOpen = () =>
         context.store.readValue<boolean>(GROUP_MEMBERSHIP_UI_NAMESPACE, 'open') ?? false;
       const projectTargets = (input: ConnectionTargetsRequest | undefined, nodes: readonly import('../../protocols/connections.ts').ConnectionNodeGeometry[]): ConnectionTarget[] => {

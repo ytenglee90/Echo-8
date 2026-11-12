@@ -720,7 +720,7 @@ function validateSemanticBackupProfile(profile: SemanticProviderProfile): Semant
     profile.label.length > 120 || profile.platform.length > 120 || profile.endpoint.length > 2048 ||
     profile.model.length > 200) throw new Error('语义检索连接内容不完整或过长');
   if (profile.endpoint) {
-    const url = new URL(profile.endpoint, typeof location === 'undefined' ? 'http://localhost' : location.origin);
+    const url = new URL(profile.endpoint, providerEndpointBase());
     if (!['http:', 'https:'].includes(url.protocol)) throw new Error('语义接口只支持 HTTP 或 HTTPS');
   }
   return {
@@ -813,7 +813,7 @@ function validatePreferences(value: AIProviderPreferences): AIProviderPreference
   const model = value.model.trim();
   if (endpoint.length > 2048 || model.length > 200) throw new Error('模型连接配置过长');
   if (endpoint) {
-    const url = new URL(endpoint, typeof location === 'undefined' ? 'http://localhost' : location.origin);
+    const url = new URL(endpoint, providerEndpointBase());
     if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('模型接口只支持 HTTP 或 HTTPS');
   }
   const apiStyle = value.apiStyle ?? (/generativelanguage\.googleapis\.com/iu.test(endpoint) ? 'gemini' : 'openai');
@@ -881,4 +881,9 @@ function isPersonalConnections(value: unknown): value is PersonalConnections {
   return isRecord(value) && isRecord(value.configuration) && isRecord(value.apiKeys) &&
     Object.entries(value.apiKeys).every(([profileId, apiKey]) =>
       profileId.length <= 200 && typeof apiKey === 'string' && apiKey.length <= 4096);
+}
+
+function providerEndpointBase(): string {
+  if (typeof location === 'undefined') return 'http://localhost';
+  return location.origin === 'null' ? location.href : location.origin;
 }

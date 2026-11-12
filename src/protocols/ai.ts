@@ -1,6 +1,7 @@
 import type { EventDeclaration, PatchOperation } from './state.ts';
 
 export type AIOperation =
+  | 'canvas-control'
   | 'general'
   | 'polish'
   | 'expand'

@@ -227,6 +227,7 @@ export function createAIAssistantPlugin(
         'entity.deletePlan@1',
       ],
       optionalCapabilities: [
+        'canvasControl.context@1',
         'context.search@1',
         'context.search@2',
         'context.search@3',
@@ -295,6 +296,7 @@ export function createAIAssistantPlugin(
         'ai.memory.candidate.dismiss',
       ],
       dispatches: [
+        'canvasControl.offer@1',
         'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings',
         'ai.context.prepare',
         'aiProvider.profile.activate', 'ai.promptTemplate.restorePersonal', 'system.preferences.set',
