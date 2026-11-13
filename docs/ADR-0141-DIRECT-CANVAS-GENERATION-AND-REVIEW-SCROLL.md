@@ -15,3 +15,5 @@
 2026-11-13：类型检查、ESLint、592 项单元测试、219 项 Chromium 完整回归、file:// 三浏览器共 39 项检查通过。直接生成、长计划滚动及图标查看场景在 Firefox/WebKit 全量检查中通过，滚动截图已核对。模型使用模拟接口，无个人 API Key 或付费调用。
 
 全量 Firefox/WebKit 为 425/438，13 个非本次新增的连线、拖动与剪贴板场景失败，诊断保存在忽略的 local-data/direct-canvas-cross-hosted。独立重查成员移除和批注剪贴板两项通过，WebKit 的 held-node 边缘平移仍失败；先前已记录的中转点、浮点精度和重叠曲线问题也未在本次范围修复。不把相关场景通过记为全量通过。
+
+源码 `1fdeebd` 已推送并发布至 `https://echo8.ytenglee90.workers.dev`，Worker 版本 `fabaa2c6-438e-4d1e-b22f-642433c52e61`。生产地址三浏览器八条场景共 24 项通过。发布前已备份数据库，无迁移；离线成品 SHA256 为 `edc8d8d51816e8b51dceae11a8208bb7b8f7fd36d2e8082dba9f890b6b82facc`。
