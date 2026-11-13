@@ -1,5 +1,20 @@
 import type { CanvasControlPlan } from '../../protocols/canvas-control.ts';
 import type { ControlSnapshot } from './context.ts';
+import { isTitleConnection } from '../../protocols/connections.ts';
+
+export function lineStyleFollowup(prompt: string): 'solid' | 'dashed' | undefined {
+  const command = prompt.trim().replace(/^@画布操作\s*/u, '').replace(/[。！!]$/u, '').trim();
+  const match = /^(?:(?:插入|引用)(?:是|应该)?(?:用|使用)|(?:把|将)?(?:刚才的|上一条|这条|刚才那条)(?:连线|线)?(?:改为|改成|设为|用))\s*(虚线|实线)$/u.exec(command);
+  return match ? (match[1] === '虚线' ? 'dashed' : 'solid') : undefined;
+}
+
+export function localLinePlan(snapshot: ControlSnapshot, line: 'solid' | 'dashed'): CanvasControlPlan {
+  const candidates = snapshot.graph.connections.filter(edge => snapshot.relatedLineIds?.has(edge.id));
+  if (candidates.length !== 1) return { version: 1, actions: [], answer: '请选中要修改的那条连线，或说出它连接的两个节点。' };
+  const edge = candidates[0]!;
+  if (isTitleConnection(edge) === (line === 'dashed')) return { version: 1, actions: [], answer: `这条连线已经是${line === 'dashed' ? '虚线' : '实线'}。` };
+  return { version: 1, actions: [{ type: 'update-connection', id: edge.id, line }] };
+}
 
 export function localOperation(prompt: string): { color: string } | { axis: 'x' | 'y'; delta: number } | { x: number; y: number } | undefined {
   const command = prompt.trim().replace(/^@画布操作\s*/u, '').replace(/[。！!]$/u, '').trim();

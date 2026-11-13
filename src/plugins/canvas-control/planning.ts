@@ -14,7 +14,10 @@ export function validateControlScope(plan: CanvasControlPlan, snapshot: ControlS
     if ((action.type === 'create-group' || action.type === 'update-group') && !snapshot.available.groups) throw new Error('请先启用群组插件');
     if ((action.type === 'create-connection' || action.type === 'update-connection') && !snapshot.available.connections) throw new Error('请先启用连线插件');
     if (action.type === 'delete' && (!snapshot.available.groups || !snapshot.available.connections)) throw new Error('删除前请启用群组和连线插件');
-    if ('id' in action && !snapshot.writable.has(action.id)) throw new Error('AI 计划修改了当前控制范围外的对象');
+    const scopedLineChange = action.type === 'update-connection' && action.line !== undefined && snapshot.relatedLineIds?.has(action.id) &&
+      Object.keys(action).every(key => key === 'type' || key === 'id' || key === 'line');
+    const namedNodeChange = action.type === 'update-node' && snapshot.namedTargetIds?.includes(action.id) && snapshot.nodes.some(node => node.id === action.id);
+    if ('id' in action && !snapshot.writable.has(action.id) && !scopedLineChange && !namedNodeChange) throw new Error('AI 计划修改了当前控制范围外的对象');
     if (action.type === 'delete' && action.ids.some(id => !snapshot.writable.has(id))) throw new Error('AI 计划删除了当前控制范围外的对象');
     const references = 'members' in action ? action.members ?? [] : 'from' in action || 'to' in action ? [action.from, action.to].filter((id): id is string => id !== undefined) : [];
     if (references.some(id => (!known.has(id) && !refs.has(id)) || deleted.has(id))) throw new Error('操作计划引用了不存在、范围外或待删除对象');

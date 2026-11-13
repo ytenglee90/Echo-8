@@ -1,4 +1,4 @@
-import type { PluginContext, TaskHandle } from '../../core/contracts.ts';
+import { isRecord, type PluginContext, type TaskHandle } from '../../core/contracts.ts';
 import type {
   AIGenerateResult,
   AIGenerateRequest,
@@ -12,6 +12,7 @@ import type {
 } from '../../protocols/ai.ts';
 import { assertNotAborted } from '../../services/async-control.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
+import { needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
 import { aggregateTokenUsage, withTokenUsageEstimates } from '../../services/ai-token-usage.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
 import { buildGenerateRequest } from './generation-request.ts';
@@ -168,7 +169,17 @@ export function registerAIGenerationRuntime(
           }, signal).catch(error => { if (isCapabilityUnavailable(error, 'canvasControl.localPlan@1')) return { handled: false }; throw error; });
           if (local.handled && 'text' in local && local.text) return { text: local.text, provider: 'local', model: '确定性操作', usage: { inputTokens: 0, outputTokens: 0 } };
         }
-        const request = await buildGenerateRequest(
+        const interpretSearch = prepared.operation === 'canvas-control' && needsCanvasSearchInterpretation(prepared.prompt);
+        const request: AIGenerateRequest = interpretSearch ? {
+          providerId: prepared.providerProfileId,
+          temperature: 0,
+          maxOutputTokens: 512,
+          messages: [
+            { role: 'system', content: '从用户请求提取当前画布本地搜索的关键词和未分组条件。只输出 JSON：{"terms":["关键词"],"ungrouped":true}。关键词最多 8 个，每个最多 48 字。用户明确要求未归类或未分组时 ungrouped 为 true。不要编造节点名、ID 或搜索结果。' },
+            { role: 'user', content: prepared.prompt },
+          ],
+          usageContext: { taskId: prepared.sessionId, sessionId: prepared.sessionId, purpose: 'plan', outputKind: 'plan' },
+        } : await buildGenerateRequest(
           context,
           prepared,
           options.readPromptTemplates(),
@@ -258,6 +269,16 @@ export function registerAIGenerationRuntime(
         };
 
         let result = await generateWithToolFallback(request);
+        if (interpretSearch) {
+          let raw: unknown;
+          try { raw = JSON.parse(result.text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/iu, '$1')); }
+          catch { throw new Error('模型没有返回可用的筛选条件，请试着提供一个关键词。'); }
+          if (!isRecord(raw) || !Array.isArray(raw.terms) || typeof raw.ungrouped !== 'boolean') throw new Error('模型没有返回可用的筛选条件，请试着提供一个关键词。');
+          const local = await context.capabilities.request<{ text: string }>('canvasControl.searchPlan@1', {
+            preparationId: prepared.id, sessionId: prepared.sessionId, prompt: prepared.prompt, terms: raw.terms, ungrouped: raw.ungrouped,
+          }, signal);
+          return { ...result, text: local.text, reasoning: undefined, usage: aggregateTokenUsage(requestUsages) };
+        }
         if (result.toolCalls?.length) {
           context.signals.emit('ai.status', {
             state: 'generating',

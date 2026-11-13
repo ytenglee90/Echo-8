@@ -28,3 +28,7 @@
 官方依据：[Gemini 结构化输出](https://ai.google.dev/gemini-api/docs/structured-output)、[DeepSeek 缓存](https://api-docs.deepseek.com/zh-cn/guides/kv_cache/)、[OpenAI 流式用量](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。缓存子集不会使实际发送的上下文变短，不为命中率保留无用内容。
 
 运行结果在交付验证后追加。
+
+## 连续关系操作
+
+画布控制 v2 在本地按用户所写的唯一节点名查找文字节点，发送匹配标题与必要元数据。具名对象可提出待确认的节点更新。关系操作读取当前选中对象的直接连线和端点，并优先结合最近一次已执行且仍存在的会话连线。范围扩展的关联线只允许审查修改线型，不能改端点、删除或扩大其他对象的修改权限。明确的短句如「插入是用虚线」可由程序生成计划，遇到多个候选时请用户指明。正文仍通过明确引用读取。

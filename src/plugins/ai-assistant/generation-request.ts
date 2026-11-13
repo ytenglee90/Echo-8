@@ -122,7 +122,7 @@ export async function buildGenerateRequest(
     : undefined;
   let taskState: CanvasControlTaskState | undefined;
   const targetIds = prepared.sources.filter(source => source.reason === 'explicit-reference').map(source => source.sourceId);
-  if (targetIds.length || controlContext?.targetIds?.length || /继续|刚才|上次|这份计划|应用|撤销/u.test(prepared.prompt)) {
+  if (controlContext?.targetIds?.length || (prepared.operation === 'canvas-control' && targetIds.length) || (!prepared.writebackTarget && /继续|刚才|上次|这份计划|应用|撤销/u.test(prepared.prompt))) {
     taskState = await context.capabilities.request<CanvasControlTaskState>('canvasControl.taskState@1', {
       sessionId: prepared.sessionId, targetIds: targetIds.length ? targetIds : controlContext?.targetIds,
     }, signal).catch(error => { if (isAbortError(error)) throw error; return undefined; });
@@ -149,7 +149,12 @@ export async function buildGenerateRequest(
   if (contextText) push('references', 'user', '画布原文证据：\n' + contextText);
   if (controlContext?.objectDirectory) push('objectDirectory', 'user', controlContext.objectDirectory);
   if (taskState?.plans?.length) push('taskState', 'user', '当前任务状态（正文片段仅用于定位，需原文时重新引用；以实际状态区分计划和执行）：\n' + JSON.stringify(taskState));
-  if (prepared.writebackTarget) push('taskState', 'user', '本轮正文目标（UTF-16 偏移）：' + JSON.stringify(prepared.writebackTarget) + '。仅输出新增或替换正文；画布操作则返回 version:2 的 edit 范围，不要复述未修改正文。');
+  if (prepared.writebackTarget) {
+    const source = prepared.sources.find(item => item.sourceId === prepared.writebackTarget?.nodeId && item.reason === 'explicit-reference');
+    const relative = source && prepared.writebackTarget.mode === 'replace' ? `。目标对应所附片段内偏移 ${prepared.writebackTarget.start - source.start} 至 ${prepared.writebackTarget.end - source.start}` : '';
+    push('taskState', 'user', '本轮正文目标（UTF-16 偏移）：' + JSON.stringify(prepared.writebackTarget) + relative + '。仅输出新增或替换正文；画布操作则返回 version:2 的 edit 范围，不要复述未修改正文。');
+  }
+  if (prepared.previousWritebackDraft) push('taskState', 'user', '上一版待应用草稿。按本轮要求调整这版草稿，写回同一范围。\n<untrusted-canvas-content>\n' + prepared.previousWritebackDraft + '\n</untrusted-canvas-content>');
   if (retrievalText) push('references', 'user', '记忆检索覆盖报告：\n' + retrievalText);
   if (conflictText) push('references', 'user', '记忆冲突目录：\n' + conflictText);
   if (historyIndex >= 0) for (const message of nativeConversation(prepared.sources[historyIndex]!.text, prepared.prompt, Boolean(taskState?.plans?.length))) push('history', message.role, message.content);

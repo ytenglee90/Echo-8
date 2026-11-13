@@ -49,7 +49,17 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
     onClose={() => void client.dispatch('canvasControl.close@1').catch(() => undefined)}>
     <div className="canvas-control-layout" aria-busy={busy}>
     <div className="canvas-control-content" role="region" aria-label="画布控制内容" tabIndex={0}>
-      <p>在 AI 助手输入 <strong>@画布操作</strong> 后描述要求，例如“新建三个人物节点，按类目分组，并连接关系”。</p>
+      <p>在 AI 助手直接说要做什么，例如「把主角连到武器，用虚线」。也可以用 @ 指定节点。</p>
+      {state.navigation && <section aria-label={state.navigation.heading} className="canvas-control-review">
+        <header><strong>{state.navigation.heading}</strong></header>
+        <ol>{state.navigation.items.map(item => <li key={item.id}><button type="button" onClick={() => void client.dispatch('canvasControl.navigate@1', { id: item.id }).catch(reason => setError(String(reason)))}>{item.label}</button></li>)}</ol>
+      </section>}
+      {state.background && <section aria-label="画布背景预览" className="canvas-control-review">
+        <p>画布背景 · {state.background.previous} → {state.background.color}</p>
+        <span aria-label="新背景颜色" style={{ backgroundColor: state.background.color, display: 'inline-block', width: 60, height: 22 }} />
+        <button type="button" onClick={() => void client.dispatch('canvasControl.background.apply@1').catch(reason => setError(String(reason)))}>应用背景</button>
+        <button type="button" onClick={() => void client.dispatch('canvasControl.background.dismiss@1')}>放弃背景</button>
+      </section>}
       <label>生成方式
         <select aria-label="画布生成方式" value={state.execution} disabled={busy} onChange={event => void client.dispatch('canvasControl.execution@1', { execution: event.target.value as 'direct' | 'review' }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason)))}>
           <option value="direct">直接生成新对象和空白正文</option>
@@ -58,7 +68,7 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
       </label>
       <label>下一次请求的对象范围
         <select aria-label="画布控制范围" value={state.scope} disabled={busy} onChange={event => void client.dispatch('canvasControl.scope@1', { scope: event.target.value as 'selection' | 'canvas' }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason)))}>
-          <option value="selection">选中及 @ 引用对象，可新建对象</option>
+          <option value="selection">选中、引用与本轮相关对象</option>
           <option value="canvas">整个画布，最多 80 个对象</option>
         </select>
       </label>
@@ -85,7 +95,7 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
 }
 function ActionDetails({ action, titles }: { action: CanvasControlAction; titles: Record<string, string> }) {
   const name = (id: string) => titles[id] ?? id;
-  if (action.type === 'delete') return <p>同时清理这些对象的关联连线和群组成员关系。</p>;
+  if (action.type === 'delete') return <p>取消群组会保留其中的节点。删除节点时会同时清理关联连线和成员关系。</p>;
   return <>
     {'title' in action && action.title !== undefined && <p>标题 · {action.title}</p>}
     {'color' in action && action.color && <p>颜色 · {action.color}</p>}

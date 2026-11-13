@@ -172,6 +172,7 @@ export function AIWritebackReview({
           <select
             aria-label="AI 提案写入方式"
             value={mode}
+              disabled={Boolean(proposal.suggestedTarget?.range)}
             onChange={(event) => onSelectionChange(event.target.value as AIWritebackMode, nodeId)}
           >
              <option value="replace">{proposal.suggestedTarget?.range ? '替换已定位范围' : '替换已有节点全文'}</option>
@@ -180,6 +181,7 @@ export function AIWritebackReview({
           <select
             aria-label="AI 提案目标节点"
             value={nodeId}
+              disabled={Boolean(proposal.suggestedTarget?.range)}
             onChange={(event) => onSelectionChange(mode, event.target.value)}
           >
             <option value="">选择目标节点…</option>

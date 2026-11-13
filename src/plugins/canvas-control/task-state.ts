@@ -25,11 +25,12 @@ export async function readTaskMarkers(context: PluginContext, ids: string[], sig
   return { markers, nodes };
 }
 export async function controlTaskState(context: PluginContext, drafts: StoredControlReview[], input: { sessionId: string; targetIds?: string[] }, signal?: AbortSignal): Promise<CanvasControlTaskState> {
+  const draftIds = (draft: StoredControlReview) => [...new Set([...draft.snapshot.writable, ...Object.keys(draft.before ?? {}), ...(draft.createdIds ?? [])])];
   const relevant = drafts.filter(draft => draft.review.sessionId === input.sessionId && (!input.targetIds?.length ||
-    [...draft.snapshot.writable, ...(draft.createdIds ?? [])].some(id => input.targetIds!.includes(id)))).slice(-2);
+    draftIds(draft).some(id => input.targetIds!.includes(id)))).slice(-2);
   const plans: CanvasControlTaskState['plans'] = [];
   for (const draft of relevant) {
-    const ids = [...new Set([...draft.snapshot.writable, ...(draft.createdIds ?? [])])];
+    const ids = draftIds(draft);
     const current = await readTaskMarkers(context, ids, signal);
     let status: CanvasControlTaskState['plans'][number]['status'] = draft.review.status;
     const matches = (expected: Record<string, string>) => ids.every(id => current.markers[id] === (expected[id] ?? 'absent'));

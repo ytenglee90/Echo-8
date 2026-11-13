@@ -16,6 +16,7 @@ import type {
   AIStatusSignal,
 } from '../../protocols/ai.ts';
 import { useLocalTextHistory } from '../../ui/use-local-text-history.ts';
+import { naturalCanvasOperation } from '../../services/ai-task-route.ts';
 import type { AIComposerProps } from './AIComposer.tsx';
 import {
   activeInlineReferences,
@@ -190,7 +191,7 @@ export function useAIComposerController({
     await run(async () => {
       if (!activeSession) throw new Error('当前对话仍在初始化，请稍候');
       if (!prompt.trim()) throw new Error('请输入要求');
-      if (!selectedProviderConfigured) throw new Error('当前助手的模型连接尚未配置，请点击 KEY 按钮完成配置');
+      if (!selectedProviderConfigured && !naturalCanvasOperation(prompt)) throw new Error('当前助手的模型连接尚未配置，请点击 KEY 按钮完成配置');
       setPrepared(undefined);
       onSubmitted();
       await client.dispatch('ai.context.prepare', {
@@ -284,7 +285,7 @@ export function useAIComposerController({
     dropReady,
     status,
     sendDisabled: !activeSession || !prompt.trim() || status === 'preparing' || status === 'indexing' ||
-      !selectedProviderConfigured,
+        (!selectedProviderConfigured && !naturalCanvasOperation(prompt)),
     mentionMenuId,
     mentionMenuOpen,
     mentionSuggestions,

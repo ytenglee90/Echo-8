@@ -25,6 +25,86 @@ async function harness(execution: 'direct' | 'review' = 'review') {
 }
 let sequence = 0;
 
+test('natural commands locate two distant nodes among 2000 and preserve connection identity through follow-ups and disambiguation', async () => {
+  const kernel = await harness('direct');
+  const create = (title: string, x: number, body = '') => kernel.router.dispatch<{ id: string }>('node.create', { title, x, y: 5_000, body }, 'core.test');
+  const hero = await create('主角', 20_000, '年龄：29。\n\n左腕有一道旧伤。');
+  const weapon = await create('武器', 21_000);
+  for (let index = 0; index < 1_998; index += 1) await create(`其他节点 ${index}`, index * 4);
+  const command = async (prompt: string) => {
+    const input = { preparationId: `natural:${++sequence}`, sessionId: 'natural-test', prompt };
+    const local = await kernel.capabilities.request<{ handled: boolean; text: string }>('canvasControl.localPlan@1', input);
+    assert.equal(local.handled, true, prompt);
+    const result = await kernel.router.dispatch<{ message: string; directPlanId?: string }>('canvasControl.offer@1', { ...input, text: local.text, complete: true }, 'core.test');
+    assert.equal(result.directPlanId, undefined);
+    return result;
+  };
+  const state = () => kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test');
+  const apply = async () => kernel.router.dispatch('canvasControl.apply@1', { id: (await state()).reviews.at(-1)!.id }, 'core.test');
+  const edges = () => kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
+  await command('把主角连到武器，用虚线');
+  assert.equal((await edges()).connections.length, 0);
+  await apply();
+  const edge = (await edges()).connections[0]!;
+  assert.equal(edge.from.nodeId, hero.id); assert.equal(edge.to.nodeId, weapon.id); assert.equal(edge.titleRoute, true);
+  await command('改成实线'); await apply();
+  assert.deepEqual((await edges()).connections.map(item => [item.id, item.titleRoute]), [[edge.id, false]]);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.equal((await edges()).connections[0]?.titleRoute, true);
+  const otherHero = await create('主角', 22_000);
+  await command('把主角连到武器，用虚线');
+  assert.equal((await state()).navigation?.choice, true);
+  assert.ok((await state()).navigation?.items.some(item => item.id === otherHero.id));
+  await kernel.router.dispatch('canvasControl.navigate@1', { id: otherHero.id }, 'core.test');
+  assert.equal((await state()).navigation, undefined);
+  await apply();
+  assert.ok((await edges()).connections.some(item => item.from.nodeId === otherHero.id && item.to.nodeId === weapon.id));
+  await command('把主角的年龄从 29 改成 31');
+  await kernel.router.dispatch('canvasControl.navigate@1', { id: hero.id }, 'core.test');
+  await apply();
+  const read = await kernel.capabilities.requestAll<{ text?: string }>('context.read@1', { sourceId: hero.id, start: 0, length: 100 });
+  assert.equal(read.find(item => item.text)?.text, '年龄：31。\n\n左腕有一道旧伤。');
+  await kernel.plugins.stop('canvas-control');
+});
+
+test('a relationship follow-up resolves the actual neighboring node and only changes the line after review', async () => {
+  const kernel = await harness('direct');
+  const initial = await offer(kernel, [
+    { type: 'create-node', ref: 'hero', title: '主角', text: '主角正文' },
+    { type: 'create-node', ref: 'weapon', title: '武器' },
+    { type: 'create-connection', ref: 'relation', from: 'hero', to: 'weapon', line: 'solid' },
+  ]);
+  await kernel.router.dispatch('canvasControl.generate@1', { id: initial }, 'core.test');
+  const hero = (await nodes(kernel)).find(node => node.title === '主角')!;
+  const weapon = (await nodes(kernel)).find(node => node.title === '武器')!;
+  const readEdge = async () => (await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections[0]!;
+  const edge = await readEdge();
+  await kernel.router.dispatch('selection.set', { ids: [weapon.id], mode: 'replace' }, 'core.test');
+  const admission = { preparationId: 'line-followup', sessionId: 'session:test', prompt: '@画布操作 插入是用虚线' };
+  const discovered = await kernel.capabilities.request<CanvasControlContextV2>('canvasControl.context@2', { ...admission, purpose: 'structure' });
+  assert.match(discovered.objectDirectory, /主角/u);
+  assert.match(discovered.objectDirectory, /"line":"solid"/u);
+  assert.doesNotMatch(discovered.objectDirectory, /主角正文/u);
+  const illegal = JSON.stringify({ version: 1, actions: [{ type: 'update-connection', id: edge.id, line: 'dashed', label: '越出线型范围' }] });
+  await assert.rejects(() => kernel.router.dispatch('canvasControl.offer@1', { ...admission, text: illegal, complete: true }, 'core.test'), /范围外/u);
+  const local = await kernel.capabilities.request<{ handled: boolean; text: string }>('canvasControl.localPlan@1', admission);
+  assert.equal(local.handled, true);
+  assert.deepEqual(JSON.parse(local.text).actions, [{ type: 'update-connection', id: edge.id, line: 'dashed' }]);
+  const queued = await kernel.router.dispatch<{ directPlanId?: string }>('canvasControl.offer@1', { ...admission, text: local.text, complete: true }, 'core.test');
+  assert.equal(queued.directPlanId, undefined);
+  assert.equal((await readEdge()).titleRoute, false);
+  const pending = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;
+  await kernel.router.dispatch('canvasControl.apply@1', { id: pending.id }, 'core.test');
+  assert.equal((await readEdge()).titleRoute, true);
+  assert.equal((await readEdge()).id, edge.id);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.equal((await readEdge()).titleRoute, false);
+  const named = await kernel.capabilities.request<CanvasControlContextV2>('canvasControl.context@2', { ...admission, preparationId: 'named-hero', prompt: '@画布操作 补充主角正文', purpose: 'content' });
+  assert.match(named.objectDirectory, /"title":"主角","writable":false,"namedForReview":true/u);
+  await assert.rejects(() => kernel.router.dispatch('canvasControl.offer@1', { ...admission, preparationId: 'named-hero', prompt: '@画布操作 补充主角正文', complete: true, text: JSON.stringify({ version: 1, actions: [{ type: 'delete', ids: [hero.id] }] }) }, 'core.test'), /范围外/u);
+  await kernel.plugins.stop('canvas-control');
+});
+
 test('local recolor/move plans use the reviewed transaction path and task state follows apply undo redo and discard', async () => {
   const kernel = await harness();
   try {

@@ -5,8 +5,11 @@ import type {
   AIPreparedContext,
   AISessionRecord,
   AIStatusSignal,
+  AIProposalRecord,
 } from '../../protocols/ai.ts';
 import { explicitAtOperation } from './command-parser.ts';
+import { canvasCommandText, naturalCanvasOperation, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
+import { naturalWritebackIntent } from './natural-writeback.ts';
 import {
   isGenerationCancelPayload,
   isGenerationRetryPayload,
@@ -63,6 +66,7 @@ export interface AIRequestRuntimeOptions {
   readSessions(): Record<string, AISessionRecord>;
   readMemoryIndexes(): Record<string, AIMemoryIndexRecord>;
   readAssistantInstances(): AIAssistantInstanceState[];
+  readProposals?(): Record<string, AIProposalRecord>;
 }
 
 export function registerAIRequestRuntime(
@@ -82,7 +86,7 @@ export function registerAIRequestRuntime(
       if (payload.assistantId && !boundAssistant) throw new Error('当前 AI 助手窗口已经不存在');
       const normalizedPayload: PreparePayload = {
         ...payload,
-        operation: explicitAtOperation(payload.prompt) ?? payload.operation,
+        operation: explicitAtOperation(payload.prompt) ?? (naturalCanvasOperation(payload.prompt) || needsCanvasSearchInterpretation(payload.prompt) ? 'canvas-control' : naturalWritebackIntent(canvasCommandText(payload.prompt).trim()) ? 'rewrite' : payload.operation),
         ...(boundAssistant
           ? {
               memorySourceIds: boundAssistant.memorySourceIds ?? [],
@@ -114,6 +118,8 @@ export function registerAIRequestRuntime(
           normalizedPayload,
           signal,
           report,
+          undefined,
+          Object.values(options.readProposals?.() ?? {}).filter(proposal => proposal.sessionId === session.id).sort((a, b) => b.createdAt - a.createdAt)[0],
         ),
       });
       options.preparationTasks.set(session.id, task);

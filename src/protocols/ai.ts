@@ -144,6 +144,8 @@ export interface AIInlineReference {
 }
 
 export interface AIPreparedContext {
+  previousWritebackProposalId?: string;
+  previousWritebackDraft?: string;
   writebackTarget?: { nodeId: string; expectedRevision: number; start: number; end: number; mode: 'append' | 'replace' };
   id: string;
   sessionId: string;
@@ -537,6 +539,7 @@ export interface AIProposalRecord {
     length: number;
   };
   acceptedNodeId?: string;
+  acceptedRevision?: number;
   acceptedTarget?: AIProposalTarget;
 }
 

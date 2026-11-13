@@ -79,9 +79,14 @@ export interface CanvasControlState {
   scope: 'selection' | 'canvas';
   execution: 'direct' | 'review';
   reviews: CanvasControlReview[];
+  navigation?: { heading: string; items: Array<{ id: string; label: string }>; choice?: boolean };
+  background?: { color: string; previous: string };
 }
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'canvasControl.navigate@1': CommandContract<{ id: string }>;
+    'canvasControl.background.apply@1': CommandContract;
+    'canvasControl.background.dismiss@1': CommandContract;
     'canvasControl.open@1': CommandContract;
     'canvasControl.close@1': CommandContract;
     'canvasControl.scope@1': CommandContract<{ scope: 'selection' | 'canvas' }>;
@@ -95,6 +100,7 @@ declare module './commands.ts' {
 }
 declare module './messages.ts' {
   interface ApplicationCapabilityMap {
+    'canvasControl.searchPlan@1': MessageContract<CanvasControlAdmission & { terms: string[]; ungrouped: boolean }, { text: string }>;
     'canvasControl.context@2': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
     'canvasControl.localPlan@1': MessageContract<CanvasControlAdmission, { handled: boolean; text?: string }>;
     'canvasControl.taskState@1': MessageContract<{ sessionId: string; targetIds?: string[] }, CanvasControlTaskState>;

@@ -234,7 +234,8 @@ export function createAIAssistantPlugin(
         'ai.provider.taskUsage@1',
         'ai.provider.requestTrace@1',
         'canvasControl.context@1',
-        'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1',
+        'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1',
+        'editor.selection@1', 'selection.read@1',
         'context.search@1',
         'context.search@2',
         'context.search@3',
@@ -1383,6 +1384,7 @@ export function createAIAssistantPlugin(
         readSessions,
         readMemoryIndexes,
         readAssistantInstances,
+        readProposals,
       });
       registerAIMemoryCandidateRuntime(context, {
         taskForSession: taskUsage.taskFor,

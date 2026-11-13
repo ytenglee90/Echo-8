@@ -90,6 +90,8 @@ export function registerAIProposalRuntime(
         turns: session.turns + 1,
         updatedAt: Date.now(),
       };
+      const previous = prepared.previousWritebackProposalId ? options.readProposals()[prepared.previousWritebackProposalId] : undefined;
+      const replacePending = proposal && previous?.status === 'pending' && previous.sessionId === session.id;
       const reasoning = payload.reasoning?.trim();
       const citations = collectAIResponseCitations(payload.text, prepared.sources).map((citation) => ({
         ...citation,
@@ -126,6 +128,7 @@ export function registerAIProposalRuntime(
               key: proposal.id,
               value: proposal,
             }] : []),
+            ...(replacePending ? [{ op: 'set' as const, domain: 'document' as const, namespace: AI_PROPOSAL_NAMESPACE, key: previous.id, value: { ...previous, status: 'dismissed' as const } }] : []),
           ],
           events: [
             ...(append.events ?? []),
@@ -153,6 +156,9 @@ export function registerAIProposalRuntime(
         end: proposal.suggestedTarget.range?.end ?? proposal.suggestedTarget.length,
       } : undefined);
       if (!target) throw new Error('这条回答没有明确的正文写回目标');
+      const bound = proposal.suggestedTarget;
+      if (bound?.range && (target.nodeId !== bound.nodeId || target.expectedRevision !== bound.expectedRevision || target.mode !== bound.mode ||
+        (target.mode === 'replace' && (target.start !== bound.range.start || target.end !== bound.range.end)))) throw new Error('此提案绑定了原来的正文范围，请重新生成后再修改其他位置');
       const plan = target.mode === 'append'
         ? await context.capabilities.request<ContentMutationPlan>(
             'content.appendPlan@1',
@@ -176,6 +182,7 @@ export function registerAIProposalRuntime(
         ...proposal,
         status: 'accepted',
         acceptedNodeId: plan.nodeId,
+        acceptedRevision: plan.revision,
         acceptedTarget: target,
       };
       return {

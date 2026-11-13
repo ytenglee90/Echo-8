@@ -5,6 +5,7 @@ import type {
   AIContextSource,
   AIProviderCatalog,
   AIMemoryIndexRecord,
+  AIProposalRecord,
   AIPreparedContext,
   AIPreparedSource,
   AISessionRecord,
@@ -32,9 +33,10 @@ import {
 } from './memory-retrieval.ts';
 import { extractTerms } from './memory-terms.ts';
 import { sessionTranscriptSourceId } from './transcript-storage.ts';
-import { canvasCommandText, canvasControlPurpose } from '../../services/ai-task-route.ts';
+import { canvasCommandText, canvasControlPurpose, naturalCanvasOperation, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
 import { readParagraphTarget } from './paragraph-target.ts';
 import { operationCreatesWriteback } from './operations.ts';
+import { bindNaturalWriteback, naturalWritebackIntent, readBoundWriteback } from './natural-writeback.ts';
 
 export interface AIContextBudget {
   characterLimit: number;
@@ -58,7 +60,15 @@ export async function prepareAIContext(
   signal: AbortSignal,
   report: (progress: number) => void,
   budgetOverride?: Readonly<AIContextBudget>,
+  previousProposal?: AIProposalRecord,
 ): Promise<AIPreparedContext> {
+  if (payload.operation === 'canvas-control' && (naturalCanvasOperation(payload.prompt) || needsCanvasSearchInterpretation(payload.prompt)) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length) {
+    const createdAt = Date.now();
+    report(1);
+    return { id: createId('ai-context'), sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+      operation: 'canvas-control', providerProfileId: payload.providerProfileId, contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
+      estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000 };
+  }
   const resolvedBudget = budgetOverride
     ? { budget: budgetOverride, modelContextWindowTokens: undefined }
     : await resolveAIContextBudget(context, payload.providerProfileId, signal);
@@ -79,10 +89,11 @@ export async function prepareAIContext(
     ...parseExplicitReferences(unboundPrompt),
   ])];
   const command = canvasCommandText(payload.prompt);
+  const naturalEdit = operationCreatesWriteback(payload.operation) ? naturalWritebackIntent(command.trim()) : undefined;
   const paragraph = /(?:改写|修改|重写|润色)[\s\S]{0,30}?第\s*(\d+)\s*段/u.exec(command) ?? /第\s*(\d+)\s*段[\s\S]{0,30}?(?:改写|修改|重写|润色)/u.exec(command);
   const continuation = /续写|接着写|继续写|从末尾/u.test(command);
-  const boundedEdit = explicit.length === 1 && (paragraph || continuation) && operationCreatesWriteback(payload.operation) &&
-    !selectedMemorySet.size && !/历史|上次|之前|结合|设定|参考|查找/u.test(command);
+  const boundedEdit = (naturalEdit || (explicit.length === 1 && (paragraph || continuation) && operationCreatesWriteback(payload.operation))) &&
+    !selectedMemorySet.size && !/历史|上次|之前|结合|参考|查找/u.test(command);
   const contextMode = payload.operation === 'canvas-control' || boundedEdit ? 'explicit-only' : payload.contextMode ?? 'automatic';
   const contextIntent: AIContextIntent = classifyAIContextIntent(payload.prompt, payload.operation, {
     hasExplicitSource: explicit.length > 0,
@@ -152,7 +163,20 @@ export async function prepareAIContext(
     return true;
   };
 
-  for (const reference of explicit) {
+  if (naturalEdit) {
+    writebackTarget = await bindNaturalWriteback(context, naturalEdit, catalog, explicit, previousProposal, signal);
+    const source = catalog.find(item => item.sourceId === writebackTarget?.nodeId);
+    if (!source || !writebackTarget) throw new Error('没有找到可改写的正文。');
+    const block = await readBoundWriteback(context, source, writebackTarget, remainingCharacters, remainingTokens, signal);
+    const evidence = { ...source, ...block, reason: 'explicit-reference' as const, boundary: 'range' as const, complete: true };
+    if (block.length === 0 && writebackTarget.mode === 'append') sources.push(evidence);
+    else if (!add(evidence)) throw new Error('目标正文超过本轮预算。');
+  }
+  const previousDraft = naturalEdit?.kind === 'followup' && previousProposal?.status === 'pending' ? previousProposal.text : undefined;
+  if (previousDraft && (previousDraft.length > remainingCharacters || estimateAITokens(previousDraft) > remainingTokens)) {
+    throw new Error('上一版草稿超过本轮预算，请先应用草稿，再选中要继续调整的段落。');
+  }
+  for (const reference of naturalEdit ? [] : explicit) {
     const source = catalog.find((candidate) => candidate.sourceId === reference ||
       candidate.title.toLocaleLowerCase('zh-CN') === reference.toLocaleLowerCase('zh-CN'));
     if (!source) throw new Error(`没有找到 @ 引用：“${reference}”`);
@@ -182,7 +206,7 @@ export async function prepareAIContext(
   report(0.25);
 
   const transcriptMeta = catalog.find((source) => source.sourceId === transcriptSourceId);
-  if (transcriptMeta?.length) {
+  if (transcriptMeta?.length && !naturalEdit) {
     const block = await readTailEvidenceBlock(
       context,
       transcriptMeta,
@@ -378,6 +402,7 @@ export async function prepareAIContext(
     prompt: payload.prompt,
     operation: payload.operation,
     ...(writebackTarget ? { writebackTarget } : {}),
+    ...(previousDraft && previousProposal ? { previousWritebackProposalId: previousProposal.id, previousWritebackDraft: previousDraft } : {}),
     ...(payload.providerProfileId ? { providerProfileId: payload.providerProfileId } : {}),
     ...(payload.webSearchEnabled ? { webSearchEnabled: true } : {}),
     ...(payload.promptTemplateId ? { promptTemplateId: payload.promptTemplateId } : {}),
