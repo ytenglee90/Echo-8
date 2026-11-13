@@ -11,6 +11,7 @@ import type { ContentSummary } from '../src/protocols/content.ts';
 import type { GroupRecord } from '../src/protocols/groups.ts';
 import type { ConnectionGraphSnapshot } from '../src/protocols/connections.ts';
 import { parseCanvasControlPlan } from '../src/services/canvas-control-validation.ts';
+import { naturalCanvasOperation } from '../src/services/ai-task-route.ts';
 import { serializeProject, parseProject } from '../src/plugins/import-export/codec.ts';
 import type { ProjectSource } from '../src/protocols/files.ts';
 import { createAIProviderPlugin } from '../src/plugins/ai-provider/model.ts';
@@ -24,6 +25,16 @@ async function harness(execution: 'direct' | 'review' = 'review') {
   return kernel;
 }
 let sequence = 0;
+
+test('local canvas routing distinguishes relationship questions, literal titles, and directed operations', () => {
+  assert.deepEqual(naturalCanvasOperation('『调查和取证』和武器连着吗？'), { kind: 'relations', names: ['调查和取证', '武器'] });
+  assert.deepEqual(naturalCanvasOperation('从『写着连到武器的纸条』拉一条虚线到主角'), { kind: 'connect', names: ['写着连到武器的纸条', '主角'], line: 'dashed' });
+  assert.deepEqual(naturalCanvasOperation('主角连到武器，用实线'), { kind: 'connect', names: ['主角', '武器'], line: 'solid' });
+  assert.deepEqual(naturalCanvasOperation('请让主角指向武器，用虚线'), { kind: 'connect', names: ['主角', '武器'], line: 'dashed' });
+  for (const prompt of ['如果把主角连到武器会怎样', '先别把主角连到武器', '把主角连到武器？', '主角为什么隐瞒旧伤？']) {
+    assert.equal(naturalCanvasOperation(prompt), undefined, prompt);
+  }
+});
 
 test('natural commands locate two distant nodes among 2000 and preserve connection identity through follow-ups and disambiguation', async () => {
   const kernel = await harness('direct');
@@ -42,28 +53,89 @@ test('natural commands locate two distant nodes among 2000 and preserve connecti
   const state = () => kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test');
   const apply = async () => kernel.router.dispatch('canvasControl.apply@1', { id: (await state()).reviews.at(-1)!.id }, 'core.test');
   const edges = () => kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
-  await command('把主角连到武器，用虚线');
+  await command('把武器连到主角');
+  const initial = (await state()).reviews.at(-1)!;
+  assert.deepEqual(initial.actions, [{ type: 'create-connection', ref: 'natural-line', from: weapon.id, to: hero.id, line: 'solid' }]);
+  assert.match((await command('用虚线')).message, /待应用的连线预览改为虚线/u);
+  assert.equal((await state()).reviews.length, 1);
+  assert.deepEqual((await state()).reviews[0], { ...initial, actions: [{ ...initial.actions[0], line: 'dashed' }] });
   assert.equal((await edges()).connections.length, 0);
   await apply();
   const edge = (await edges()).connections[0]!;
-  assert.equal(edge.from.nodeId, hero.id); assert.equal(edge.to.nodeId, weapon.id); assert.equal(edge.titleRoute, true);
-  await command('改成实线'); await apply();
+  assert.equal(edge.from.nodeId, weapon.id); assert.equal(edge.to.nodeId, hero.id); assert.equal(edge.titleRoute, true);
+  assert.match((await command('主角和武器连着吗？')).message, /有 1 条直接连线/u);
+  assert.deepEqual((await state()).navigation?.items, [{ id: edge.id, label: '武器 → 主角 · 虚线' }]);
+  await command('改回实线');
+  assert.deepEqual((await state()).reviews.at(-1)?.actions, [{ type: 'update-connection', id: edge.id, line: 'solid' }]);
+  assert.equal((await edges()).connections[0]?.titleRoute, true);
+  await apply();
   assert.deepEqual((await edges()).connections.map(item => [item.id, item.titleRoute]), [[edge.id, false]]);
   await kernel.router.dispatch('history.undo', undefined, 'core.test');
   assert.equal((await edges()).connections[0]?.titleRoute, true);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.equal((await edges()).connections.length, 0);
+  assert.match((await command('刚才那条用实线')).message, /已撤销或删除/u);
   const otherHero = await create('主角', 22_000);
-  await command('把主角连到武器，用虚线');
+  await command('把武器和主角连起来，用虚线');
   assert.equal((await state()).navigation?.choice, true);
   assert.ok((await state()).navigation?.items.some(item => item.id === otherHero.id));
   await kernel.router.dispatch('canvasControl.navigate@1', { id: otherHero.id }, 'core.test');
+  assert.equal((await state()).navigation?.heading, '选择箭头方向');
+  await kernel.router.dispatch('canvasControl.navigate@1', { id: weapon.id }, 'core.test');
   assert.equal((await state()).navigation, undefined);
   await apply();
-  assert.ok((await edges()).connections.some(item => item.from.nodeId === otherHero.id && item.to.nodeId === weapon.id));
+  assert.ok((await edges()).connections.some(item => item.from.nodeId === weapon.id && item.to.nodeId === otherHero.id && item.titleRoute));
   await command('把主角的年龄从 29 改成 31');
   await kernel.router.dispatch('canvasControl.navigate@1', { id: hero.id }, 'core.test');
   await apply();
   const read = await kernel.capabilities.requestAll<{ text?: string }>('context.read@1', { sourceId: hero.id, start: 0, length: 100 });
   assert.equal(read.find(item => item.text)?.text, '年龄：31。\n\n左腕有一道旧伤。');
+  await kernel.plugins.stop('canvas-control');
+});
+
+test('late line follow-ups cannot change a different review and explicit line references retain their targets', async () => {
+  const kernel = await harness('direct');
+  const create = (title: string) => kernel.router.dispatch<{ id: string }>('node.create', { title, x: 0, y: 0 }, 'core.test');
+  const hero = await create('主角');
+  const weapon = await create('武器');
+  const map = await create('地图');
+  const state = () => kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test');
+  const prepare = async (prompt: string) => {
+    const input = { preparationId: `natural:${++sequence}`, sessionId: 'line-race', prompt };
+    const local = await kernel.capabilities.request<{ handled: boolean; text: string }>('canvasControl.localPlan@1', input);
+    assert.equal(local.handled, true);
+    return { ...input, text: local.text, complete: true };
+  };
+  const command = async (prompt: string) => kernel.router.dispatch<{ message: string }>('canvasControl.offer@1', await prepare(prompt), 'core.test');
+  const apply = (id: string) => kernel.router.dispatch('canvasControl.apply@1', { id }, 'core.test');
+  await command('把主角连到武器');
+  const weaponPlan = (await state()).reviews.at(-1)!;
+  const late = await prepare('用虚线');
+  await command('把主角连到地图');
+  const mapPlan = (await state()).reviews.at(-1)!;
+  const result = await kernel.router.dispatch<{ message: string }>('canvasControl.offer@1', late, 'core.test');
+  assert.match(result.message, /预览已失效/u);
+  assert.deepEqual((await state()).reviews, [weaponPlan, mapPlan]);
+  await command('用虚线');
+  await apply(mapPlan.id);
+  await apply(weaponPlan.id);
+  const edges = (await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections;
+  const weaponLine = edges.find(edge => edge.to.nodeId === weapon.id)!;
+  const mapLine = edges.find(edge => edge.to.nodeId === map.id)!;
+  assert.equal(weaponLine.from.nodeId, hero.id);
+  await kernel.router.dispatch('selection.set', { ids: [mapLine.id], mode: 'replace' }, 'core.test');
+  await command('刚才那条用虚线');
+  const pending = (await state()).reviews.at(-1)!;
+  assert.deepEqual(pending.actions, [{ type: 'update-connection', id: weaponLine.id, line: 'dashed' }]);
+  await kernel.router.dispatch('canvasControl.dismiss@1', { id: pending.id }, 'core.test');
+  await command('这条线改回实线');
+  assert.deepEqual((await state()).reviews.at(-1)?.actions, [{ type: 'update-connection', id: mapLine.id, line: 'solid' }]);
+  await apply((await state()).reviews.at(-1)!.id);
+  const count = (await state()).reviews.length;
+  assert.match((await command('把主角连到武器')).message, /已有实线/u);
+  assert.equal((await state()).reviews.length, count);
+  await command('用虚线');
+  assert.deepEqual((await state()).reviews.at(-1)?.actions, [{ type: 'update-connection', id: weaponLine.id, line: 'dashed' }]);
   await kernel.plugins.stop('canvas-control');
 });
 

@@ -21,7 +21,8 @@ export function canvasCommandText(prompt: string): string {
 export type NaturalCanvasOperation =
   | { kind: 'find' | 'relations' | 'ungroup'; names: string[] }
   | { kind: 'presentation'; names: string[]; presentation: 'card' | 'text-box'; color?: string; members?: boolean }
-  | { kind: 'connect' | 'line'; names: string[]; line: 'solid' | 'dashed' }
+  | { kind: 'connect'; names: string[]; line?: 'solid' | 'dashed'; chooseDirection?: boolean }
+  | { kind: 'line'; names: string[]; line: 'solid' | 'dashed'; reference?: 'previous' | 'selection' }
   | { kind: 'color'; names: string[]; color: string; members?: boolean }
   | { kind: 'background'; names: string[]; color: string }
   | { kind: 'theme'; names: string[]; theme: 'light' | 'dark' }
@@ -34,16 +35,44 @@ export type NaturalCanvasOperation =
 const colors: Record<string, string> = { 墨绿: '#235347', 浅蓝: '#add8e6', 深蓝: '#244b85', 暖灰: '#b8afa4', 黑: '#202124', 白: '#ffffff', 红: '#c43d49', 蓝: '#3568a8', 绿: '#387453', 灰: '#888888', 紫: '#7455a1', 黄色: '#e5b945' };
 const readColor = (value: string) => /^#[a-f\d]{6}$/iu.test(value) ? value.toLowerCase() : colors[value] ?? colors[value.replace(/色$/u, '')];
 const name = (value: string) => value.trim().replace(/^@\[([^\]]+)\](?:\([^)]+\))?$/u, '$1').replace(/^[「“"『]|[」”"』]$/gu, '').trim();
-const names = (value: string) => value.split(/[、，,]|和|与/u).map(name).filter(Boolean);
+// Quoted titles and inline references are single operands, including any list separators.
+const quotedName = String.raw`「[^」\r\n]+」|『[^』\r\n]+』|“[^”\r\n]+”|"[^"\r\n]+"|@\[[^\]\r\n]+\](?:\([^\)\r\n]*\))?`;
+const listPart = new RegExp(`${quotedName}|[、，,和与]|[^「『“"@、，,和与]+|.`, 'gu');
+function names(value: string): string[] {
+  const parts = [''];
+  for (const [part] of value.matchAll(listPart)) {
+    if (/^[、，,和与]$/u.test(part)) parts.push('');
+    else parts[parts.length - 1] += part;
+  }
+  return parts.map(name).filter(Boolean);
+}
+const connectionOperand = `(${quotedName}|[^「」『』“”"，,？?\r\n]+?)`;
+const connectionStyle = String.raw`(?:[，,\s]*(?:用|使用)\s*(实线|虚线))?`;
+const directedConnection = new RegExp(`^(?:把|将)?\\s*${connectionOperand}\\s*(?:连接到|连到|连向|连接至)\\s*${connectionOperand}${connectionStyle}$`, 'u');
+const fromConnection = new RegExp(`^从\\s*${connectionOperand}\\s*拉(?:一)?条\\s*(实线|虚线|线)\\s*到\\s*${connectionOperand}$`, 'u');
+const pointingConnection = new RegExp(`^让\\s*${connectionOperand}\\s*指向\\s*${connectionOperand}${connectionStyle}$`, 'u');
 const lineStyle = (value: string) => value === '实线' ? 'solid' as const : 'dashed' as const;
 
 export function naturalCanvasOperation(prompt: string): NaturalCanvasOperation | undefined {
-  const text = prompt.trim().replace(/^@画布操作\s*/u, '').replace(/[。！？!?]$/u, '').trim();
+  const command = prompt.trim().replace(/^@画布操作\s*/u, '').replace(/^请\s*/u, '');
+  const text = command.replace(/[。！？!?]$/u, '').trim();
   let match: RegExpExecArray | null;
+  if (/^(?:如果|假如|假设|要是|先别|不要|别|不用|暂不)/u.test(text)) return undefined;
   if ((match = /^(?:找到|定位|查找|查一下)\s*(.+?)(?:节点)?(?:[，,]\s*(?:带我过去|定位过去|跳过去))?$/u.exec(text))) return { kind: 'find', names: [name(match[1]!)] };
   if ((match = /^(?:查(?:看|一下)?\s*)?(.+?)(?:(?:跟|和|与)谁有(?:连线|连接)|的(?:连线|连接关系)|(?:连接|连着)了哪些(?:节点|对象))$/u.exec(text))) return { kind: 'relations', names: [name(match[1]!)] };
-  if ((match = /^(?:把|将)?\s*(.+?)\s*(?:连接到|连到|连向|连接至)\s*(.+?)(?:[，,\s]+(?:用|使用)\s*(实线|虚线))?$/u.exec(text))) return { kind: 'connect', names: [name(match[1]!), name(match[2]!)], line: lineStyle(match[3] ?? '实线') };
-  if ((match = /^(?:(?:把|将)?(.+?)的连线)?\s*(?:改为|改成|设为)\s*(实线|虚线)$/u.exec(text))) return { kind: 'line', names: match[1] ? names(match[1]) : [], line: lineStyle(match[2]!) };
+  if ((match = /^(.+?)(?:连着吗|有连线吗|之间有几条(?:连)?线)$/u.exec(text))) {
+    const pair = names(match[1]!);
+    if (pair.length === 2) return { kind: 'relations', names: pair };
+  }
+  if (/[？?]$/u.test(command) || /(?:吗|么|会怎样|怎么样)$/u.test(text)) return undefined;
+  if ((match = directedConnection.exec(text) ?? pointingConnection.exec(text))) return { kind: 'connect', names: [name(match[1]!), name(match[2]!)], line: match[3] ? lineStyle(match[3]) : undefined };
+  if ((match = fromConnection.exec(text))) return { kind: 'connect', names: [name(match[1]!), name(match[3]!)], line: match[2] === '线' ? undefined : lineStyle(match[2]!) };
+  if ((match = /^(?:把|将)\s*(.+?)\s*连起来(?:[，,\s]*(?:用|使用)\s*(实线|虚线))?$/u.exec(text))) {
+    const pair = names(match[1]!);
+    if (pair.length === 2) return { kind: 'connect', names: pair, line: match[2] ? lineStyle(match[2]) : undefined, chooseDirection: true };
+  }
+  if ((match = /^(?:(?:把|将)?\s*(刚才的|刚才那条|上一条|这条)(?:连线|线)?)?\s*(?:改为|改成|改回|设为|用|使用)\s*(实线|虚线)$/u.exec(text))) return { kind: 'line', names: [], line: lineStyle(match[2]!), reference: match[1] === '这条' ? 'selection' : match[1] ? 'previous' : undefined };
+  if ((match = /^(?:把|将)?(.+?)的连线\s*(?:改为|改成|改回|设为)\s*(实线|虚线)$/u.exec(text))) return { kind: 'line', names: names(match[1]!), line: lineStyle(match[2]!) };
   if ((match = /^(?:把|将)?\s*(.+?)(?:的标题栏|的颜色)?\s*(?:统一)?(?:改成|改为|设为|换成|改色为)\s*(#[\da-f]{6}|[\p{Script=Han}]{1,5})$/iu.exec(text))) {
     const color = readColor(match[2]!);
     if (color) {

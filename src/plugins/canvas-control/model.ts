@@ -66,8 +66,8 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         let result: NaturalControlResult;
         if (operation.kind === 'theme' || operation.kind === 'background') {
           result = { plan: { version: 1, actions: [] }, setting: operation };
-        } else if (operation.kind === 'line' && !operation.names.length && previous.pendingLine) {
-          result = { plan: { version: 1, actions: [] }, pendingLineStyle: operation.line };
+        } else if (operation.kind === 'line' && !operation.names.length && operation.reference !== 'selection' && previous.pendingLine) {
+          result = { plan: { version: 1, actions: [] }, pendingLine: { id: previous.pendingLine, line: operation.line } };
         } else {
           result = await resolveNaturalOperation(context, input, operation, previous, chosen, signal);
         }
@@ -203,12 +203,13 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
             openSurface(); publish();
             return { result: { message: '已准备画布背景颜色，请在画布控制中预览并应用。' }, transaction: showControl() };
           }
-          if (local.pendingLineStyle) {
-            const previous = lastNatural.get(input.sessionId);
-            const pending = previous?.pendingLine ? reviews.get(previous.pendingLine) : undefined;
-            const line = pending?.review.status === 'pending' && pending.review.actions.length === 1 ? pending.review.actions[0] : undefined;
+          if (local.pendingLine) {
+            const { id, line: style } = local.pendingLine;
+            const pending = reviews.get(id);
+            const line = lastNatural.get(input.sessionId)?.pendingLine === id && pending?.review.status === 'pending' &&
+              pending.snapshot.expiresAt >= Date.now() && pending.review.actions.length === 1 ? pending.review.actions[0] : undefined;
             if (!line || (line.type !== 'create-connection' && line.type !== 'update-connection')) return { result: { message: '上一条连线预览已失效，请重新指定端点。' } };
-            line.line = local.pendingLineStyle;
+            line.line = style;
             openSurface(); publish();
             return { result: { message: `已把待应用的连线预览改为${line.line === 'dashed' ? '虚线' : '实线'}。` }, transaction: showControl() };
           }
