@@ -81,6 +81,7 @@ export interface AIGenerationAction {
 }
 
 export interface AIResponseDetail {
+  retrieval?: Omit<import('../../protocols/retrieval.ts').SemanticRetrievalResult, 'contributions'>;
   id: string;
   sessionId: string;
   turn: number;

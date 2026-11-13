@@ -14,6 +14,7 @@ import {
   prepareAIContext,
 } from '../src/plugins/ai-assistant/context-preparation.ts';
 import { classifyAIContextIntent } from '../src/plugins/ai-assistant/context-intent.ts';
+import { collectFullSourceSummary } from '../src/plugins/ai-assistant/full-source-summary.ts';
 
 function session(): AISessionRecord {
   return {
@@ -102,6 +103,51 @@ test('explicit AI references parse linked IDs, bracketed titles and direct IDs o
   );
 });
 
+test('natural comparison binds named sources and separates the proposed output node', async () => {
+  const context = preparationContext({
+    'node:transcript': { title: '当前对话', text: '' },
+    'node:a': { title: '主角初稿', text: '年龄二十。' },
+    'node:b': { title: '主角终稿', text: '年龄二十九。' },
+    'node:other': { title: '无关', text: '不可发送。' },
+  });
+  const prepared = await prepareAIContext(context, session(), {}, {
+    sessionId: 'session:1', prompt: '对比主角初稿和「主角终稿」，并把冲突整理成名为「人物冲突」的新节点', operation: 'compare',
+  }, new AbortController().signal, () => undefined);
+  assert.equal(prepared.outputNodeTitle, '人物冲突');
+  assert.equal(prepared.contextMode, 'explicit-only');
+  assert.deepEqual(prepared.sources.map(item => item.sourceId), ['node:a', 'node:b']);
+  context.capabilities.request = async <T>() => ({ ids: ['node:a', 'node:b'] }) as T;
+  const selected = await prepareAIContext(context, session(), {}, {
+    sessionId: 'session:1', prompt: '对比这两个节点，说明差异', operation: 'compare',
+  }, new AbortController().signal, () => undefined);
+  assert.deepEqual(selected.sources.map(item => item.sourceId), ['node:a', 'node:b']);
+});
+
+test('full group summary requires review, reads the tail and never sends an unrelated node', async () => {
+  const context = preparationContext({
+    'node:transcript': { title: '当前对话', text: '' },
+    'node:a': { title: '旧案记录', text: '最早的事实。' + '档案。'.repeat(2_500) + '最终证据。' },
+    'node:b': { title: '现场记录', text: '独立现场发现。' },
+    'node:other': { title: '无关', text: '不可发送。' },
+  });
+  context.capabilities.request = async <T>() => [{ title: '档案组', memberIds: ['node:a', 'node:b'] }] as T;
+  const signal = new AbortController().signal;
+  const prepared = await prepareAIContext(context, session(), {}, {
+    sessionId: 'session:1', prompt: '总结档案组里的全部节点', operation: 'summarize',
+  }, signal, () => undefined);
+  assert.equal(prepared.review?.reason, 'full-source-summary');
+  const sent: string[] = [];
+  const final = await collectFullSourceSummary(context, prepared, {
+    temperature: 0.3, maxOutputTokens: 512, messages: [{ role: 'user', content: prepared.prompt }],
+  }, signal, async request => {
+    sent.push(request.messages[1]!.content);
+    return { text: '分段证据', model: '测试模型', provider: 'mock' };
+  }, () => undefined);
+  assert.match(sent.join('\n'), /最早的事实[\s\S]*最终证据[\s\S]*独立现场发现/u);
+  assert.doesNotMatch(sent.join('\n'), /不可发送/u);
+  assert.match(final.messages[0]!.content, /2 个来源/u);
+});
+
 test('AI context budgets scale conservatively from a provider-declared model window', () => {
   assert.deepEqual(deriveAIContextBudget(undefined), {
     characterLimit: 12_000,
@@ -131,6 +177,18 @@ test('intent routing keeps ordinary chat fast while preserving explicit and reca
   assert.equal(classifyAIContextIntent('你好', 'general', {
     hasExplicitSource: true, hasSelectedMemory: false,
   }), 'memory-recall');
+});
+
+test('a short revision of a regular answer keeps recent context without requiring a canvas draft', async () => {
+  const context = preparationContext({
+    'node:transcript': { title: '当前对话', text: '[用户]\n总结发现。\n\n[助手]\n这里是前一版回答，需要继续缩短。' },
+  });
+  const prepared = await prepareAIContext(context, session(), {}, {
+    sessionId: 'session:1', prompt: '再短一点', operation: 'shorten',
+  }, new AbortController().signal, () => undefined);
+  assert.equal(prepared.contextMode, 'explicit-only');
+  assert.equal(prepared.writebackTarget, undefined);
+  assert.match(prepared.sources.find(item => item.reason === 'recent-conversation')?.text ?? '', /前一版回答/u);
 });
 
 test('AI context preparation reads explicit references first and reports bounded progress', async () => {

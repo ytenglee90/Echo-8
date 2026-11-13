@@ -144,6 +144,11 @@ export interface AIInlineReference {
 }
 
 export interface AIPreparedContext {
+  localMemoryDirective?: string;
+  outputNodeTitle?: string;
+  fullSummary?: { sources: AIContextSource[]; characters: number; chunkSize: number };
+  taskInstructions?: string[];
+  retrievalDetails?: import('./retrieval.ts').SemanticRetrievalResult;
   previousWritebackProposalId?: string;
   previousWritebackDraft?: string;
   writebackTarget?: { nodeId: string; expectedRevision: number; start: number; end: number; mode: 'append' | 'replace' };
@@ -177,7 +182,7 @@ export interface AIPreparedContext {
   memoryIssues?: AIMemoryIssue[];
   memoryRetrieval?: AIMemoryRetrievalReport;
   review?: {
-    reason: 'unresolved-memory-conflict' | 'memory-state-change';
+    reason: 'unresolved-memory-conflict' | 'memory-state-change' | 'full-source-summary';
     message: string;
   };
 }
@@ -520,6 +525,9 @@ export interface AISessionRecord {
 }
 
 export interface AIProposalRecord {
+  outputNodeTitle?: string;
+  /** Verbatim user constraints carried through revisions of the same proposal. */
+  taskInstructions?: string[];
   id: string;
   sessionId: string;
   operation: AIOperation;

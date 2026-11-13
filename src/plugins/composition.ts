@@ -16,6 +16,7 @@ import { groupsPlugin } from './groups/plugin.ts';
 import { importExportPlugin } from './import-export/plugin.ts';
 import { localSemanticProviderPlugin } from './local-semantic-provider/plugin.ts';
 import { palettePlugin } from './palette/plugin.ts';
+import { retrievalSettingsPlugin } from './retrieval-settings/plugin.ts';
 import { searchReplacePlugin } from './search-replace/plugin.ts';
 import { searchIndexPlugin } from './search-index/plugin.ts';
 import { smartLayoutPlugin } from './smart-layout/plugin.ts';
@@ -56,6 +57,7 @@ export function composeBuiltInPlugins(semanticProvider: PluginDefinition): Plugi
     localSemanticProviderPlugin,
     semanticProvider,
     aiProviderPlugin,
+    retrievalSettingsPlugin,
     aiAssistantPlugin,
     canvasControlPlugin,
   ];

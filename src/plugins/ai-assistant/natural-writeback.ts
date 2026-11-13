@@ -3,23 +3,46 @@ import type { AIContextSource, AIPreparedContext, AIProposalRecord } from '../..
 import type { EditorSelectionSnapshot } from '../../protocols/editor.ts';
 import { readContextSource } from './context-source-reader.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
+import { naturalName } from '../../services/natural-canvas-rules.ts';
 
 export function naturalWritebackIntent(prompt: string) {
-  const selected = /^(?:把|将)?(?:选中的?文字|这段选区|选区).{0,30}(?:润色|改写|缩短|重写|更.{1,12})(?:[。！]?)$/u.test(prompt.trim());
-  const followup = /^(?:(?:把)?刚才那段)?(?:再短一点|再精简一点|再含蓄一点|再改写一下)[。！]?$/u.test(prompt.trim());
+  const text = prompt.trim().replace(/^请\s*/u, '');
+  const selected = /^(?:(?:把|将)?(?:选中的?文字|这段选区|选区|这段).{0,30}(?:润色|改写|缩短|重写|扩写|翻译|精简|更.{1,12})|(?:润色|改写|缩短|重写|扩写|翻译|精简)(?:一下)?(?:这段|选区|选中的?文字)).*$/u.test(text);
+  const followup = /^(?:(?:把)?刚才那段)?(?:再短一点|再精简一点|再含蓄一点|再改写一下)(?:[，,].*)?[。！]?$/u.test(prompt.trim());
   const described = /^(?:把|将)(?:写|提到|描述)?\s*[「“"]?(.{1,60}?)[」”"]?(?:的)?那(?:一)?段\s*(?:缩短|精简|改写|润色|写得|改得|写短|改短).*$/u.exec(prompt.trim());
   const namedAppend = /^(?:把|将)(.{1,120}?)写进(.{1,80}?)(?:的正文|设定|正文)[。！]?$/u.exec(prompt.trim());
   if (selected) return { kind: 'selection' as const };
   if (followup) return { kind: 'followup' as const };
-  if (described) return { kind: 'description' as const, phrase: described[1]!.trim() };
   if (namedAppend) return { kind: 'append' as const, name: namedAppend[2]!.trim() };
+  const namedParagraph = /^(?:把|将)(.+?)(?:里|中|内)(?:写|提到|描述)?(.+?)(?:的)?那(?:一)?段\s*(?:缩短|精简|改写|润色|扩写|翻译|写得|改得|写短|改短).*$/u.exec(text);
+  if (namedParagraph) return { kind: 'description' as const, name: naturalName(namedParagraph[1]!), phrase: naturalName(namedParagraph[2]!) };
+  if (described) return { kind: 'description' as const, phrase: described[1]!.trim() };
+  const whole = /^(?:润色|扩写|缩写|精简|改写|翻译|重写)(?:一下)?\s*(.+?)(?:的(?:正文|全文|内容))?[。！]?$/u.exec(text);
+  if (whole && !/\s|[，,]|到\d|成.{1,8}文/u.test(whole[1]!)) return { kind: 'named' as const, name: naturalName(whole[1]!) };
   return undefined;
+}
+
+export function writebackTaskInstructions(prompt: string, previous: readonly string[] = []): string[] {
+  const current = prompt.split(/(?<=[。！？\n])/u).filter(sentence => /保留|别改|不要|必须|禁止|不能|不得|不改|限制|口吻|语气|不超过|至少/u.test(sentence));
+  const prior = Array.isArray(previous) ? previous.filter(sentence => typeof sentence === 'string') : [];
+  const instructions = [...new Set([...prior, ...current].map(sentence => sentence.trim()).filter(Boolean))];
+  if (instructions.join('\n').length > 6_000) throw new Error('当前任务的明确约束超过可发送预算，请开始一个较短的新任务。');
+  return instructions;
 }
 
 export async function bindNaturalWriteback(context: PluginContext, intent: NonNullable<ReturnType<typeof naturalWritebackIntent>>, catalog: AIContextSource[], explicit: string[], previous: AIProposalRecord | undefined, signal: AbortSignal): Promise<AIPreparedContext['writebackTarget']> {
   const selection = await context.capabilities.request<EditorSelectionSnapshot | undefined>('editor.selection@1', undefined, signal).catch(() => undefined);
   if (signal.aborted) throw new DOMException('已取消', 'AbortError');
   const ref = explicit.length === 1 ? catalog.find(source => source.sourceId === explicit[0] || source.title === explicit[0]) : undefined;
+  const requestedName = 'name' in intent ? intent.name : undefined;
+  const namedSources = requestedName ? catalog.filter(source => source.kind === 'text' && source.automaticRetrieval !== false &&
+    source.title.normalize('NFKC').toLocaleLowerCase() === requestedName.normalize('NFKC').toLocaleLowerCase()) : [];
+  const named = ref ?? (namedSources.length === 1 ? namedSources[0] : undefined);
+  if (requestedName && !named) throw new Error(namedSources.length > 1 ? `「${requestedName}」有多个同名节点，请选定具体版本。` : `允许的画布范围内没有找到「${requestedName}」。`);
+  if (intent.kind === 'named') {
+    if (!named || !named.length) throw new Error('目标正文为空，请说明要创作的内容。');
+    return { nodeId: named.sourceId, expectedRevision: named.revision, start: 0, end: named.length, mode: 'replace' };
+  }
   if (intent.kind === 'append') {
     const named = catalog.filter(source => source.kind === 'text' && source.automaticRetrieval !== false && source.title.normalize('NFKC') === intent.name.normalize('NFKC'));
     const source = ref ?? (named.length === 1 ? named[0] : undefined);
@@ -41,7 +64,7 @@ export async function bindNaturalWriteback(context: PluginContext, intent: NonNu
     if (!source || !selection || selection.start === selection.end || (ref && ref.sourceId !== source.sourceId)) throw new Error('请先在正文编辑器中选中要修改的文字。');
     return { nodeId: source.sourceId, expectedRevision: source.revision, start: Math.min(selection.start, selection.end), end: Math.max(selection.start, selection.end), mode: 'replace' };
   }
-  const active = ref ?? (selection && catalog.find(source => source.sourceId === selection.id));
+  const active = named ?? ref ?? (selection && catalog.find(source => source.sourceId === selection.id));
   const canvasSelection = !active ? await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal).catch(() => undefined) : undefined;
   const scope = active ? [active] : canvasSelection?.ids.length === 1 ? catalog.filter(source => source.sourceId === canvasSelection.ids[0]) : [];
   if (!scope.length) throw new Error('请先选中一个正文节点，或用 @ 指定要改写的节点。');

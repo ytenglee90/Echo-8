@@ -7,7 +7,7 @@ import type {
   AIStatusSignal,
   AIProposalRecord,
 } from '../../protocols/ai.ts';
-import { explicitAtOperation } from './command-parser.ts';
+import { explicitAtOperation, inferAtOperation } from './command-parser.ts';
 import { canvasCommandText, naturalCanvasOperation, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
 import { naturalWritebackIntent } from './natural-writeback.ts';
 import {
@@ -86,7 +86,9 @@ export function registerAIRequestRuntime(
       if (payload.assistantId && !boundAssistant) throw new Error('当前 AI 助手窗口已经不存在');
       const normalizedPayload: PreparePayload = {
         ...payload,
-        operation: explicitAtOperation(payload.prompt) ?? (naturalCanvasOperation(payload.prompt) || needsCanvasSearchInterpretation(payload.prompt) ? 'canvas-control' : naturalWritebackIntent(canvasCommandText(payload.prompt).trim()) ? 'rewrite' : payload.operation),
+        operation: explicitAtOperation(payload.prompt) ?? (naturalCanvasOperation(payload.prompt) || needsCanvasSearchInterpretation(payload.prompt)
+          ? 'canvas-control' : payload.operation !== 'general' ? payload.operation
+            : naturalWritebackIntent(canvasCommandText(payload.prompt).trim()) ? 'rewrite' : inferAtOperation(payload.prompt)),
         ...(boundAssistant
           ? {
               memorySourceIds: boundAssistant.memorySourceIds ?? [],
@@ -155,11 +157,11 @@ export function registerAIRequestRuntime(
           } else {
             context.signals.emit('ai.status', {
               state: 'ready',
-              message: prepared.review?.message ?? prepared.contextIntent === 'conversation'
+              message: prepared.review?.message ?? (prepared.contextIntent === 'conversation'
                 ? '已保留当前对话；未自动检索历史记忆'
                 : prepared.contextMode === 'explicit-only'
                   ? `已准备 ${prepared.sources.length} 个明确来源；未自动检索`
-                  : `已准备 ${prepared.sources.length} 个来源`,
+                  : `已准备 ${prepared.sources.length} 个来源`),
               sessionId: session.id,
               preparationId: prepared.id,
             } satisfies AIStatusSignal);
@@ -203,13 +205,17 @@ export function registerAIRequestRuntime(
       const prepared = requirePreparedContext(options.preparations, payload.preparationId);
       const session = options.readSessions()[prepared.sessionId];
       if (!session) throw new Error('AI 对话已经不存在');
+      if (prepared.localMemoryDirective && prepared.transcriptRevisionAfterUser !== undefined) {
+        throw new Error('这条正式记忆已经确认。');
+      }
       await revalidatePreparedSources(context, prepared.sources);
       const transcriptSourceId = sessionTranscriptSourceId(session);
       const transcript = prepared.sources.find((source) =>
         source.sourceId === transcriptSourceId && source.reason === 'recent-conversation');
       const currentRevision = transcript?.revision ??
         await readContextSourceRevision(context, transcriptSourceId);
-      const userEntry = formatAITranscriptEntry('用户', prepared.prompt, prepared.operation, Date.now());
+      const userText = prepared.localMemoryDirective ? `${prepared.prompt}\n${prepared.localMemoryDirective}` : prepared.prompt;
+      const userEntry = formatAITranscriptEntry('用户', userText, prepared.operation, Date.now());
       const append = await planTranscriptAppend(
         context,
         session,

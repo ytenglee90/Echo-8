@@ -26,7 +26,7 @@ export function AIChatEmptyState() {
 export function AICommandHints() {
   return (
     <details className="ai-command-hints" aria-label="可用的 @ 指令提示">
-      <summary><strong>@ 指令与画布引用</strong><span>输入 @ 即可检索</span></summary>
+      <summary><strong>自然语言与 @ 指令</strong><span>直接说任务，也可输入 @ 指定对象</span></summary>
       <div>
         {AI_COMMAND_HINT_GROUPS.map((group) => (
           <p key={group.category}>

@@ -1,3 +1,5 @@
+import type { LocalSemanticModelId } from '../../protocols/local-semantic.ts';
+
 export const LOCAL_SEMANTIC_LOAD_MODEL_JOB = 'local-semantic-provider.model.load@1';
 export const LOCAL_SEMANTIC_EMBED_JOB = 'local-semantic-provider.embed@1';
 export const LOCAL_SEMANTIC_DISPOSE_MODEL_JOB = 'local-semantic-provider.model.dispose@1';
@@ -5,6 +7,7 @@ export const LOCAL_SEMANTIC_ENCODE_CACHE_JOB = 'local-semantic-provider.cache.en
 export const LOCAL_SEMANTIC_DECODE_CACHE_JOB = 'local-semantic-provider.cache.decode@1';
 
 export interface LocalSemanticLoadModelRequest {
+  modelId?: LocalSemanticModelId;
   model: ArrayBuffer;
   tokenizer: string;
   tokenizerConfig: string;
@@ -37,6 +40,7 @@ export interface LocalSemanticCacheSource {
 }
 
 export interface LocalSemanticEncodeCacheRequest {
+  modelId?: LocalSemanticModelId;
   sources: LocalSemanticCacheSource[];
 }
 
@@ -48,6 +52,7 @@ export interface LocalSemanticEncodeCacheResult {
 }
 
 export interface LocalSemanticDecodeCacheRequest {
+  modelId?: LocalSemanticModelId;
   text: string;
 }
 

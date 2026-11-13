@@ -39,6 +39,12 @@ export function AITranscriptView({
     <div className="ai-chat-transcript" role="log" aria-label="AI 对话记录" tabIndex={0}>
       {messages.map((message) => (
         <article className={`ai-chat-bubble ${message.role}`} key={message.key}>
+          {message.retrieval && <details className="ai-reasoning-block">
+            <summary>本轮检索方式</summary>
+            <p>关键词检索{message.retrieval.attempted.map(kind => kind === 'local' ? ' · 尝试本地语义' : ' · 尝试云端补查').join('')}</p>
+            <p>{message.retrieval.matched.length ? `语义命中来自${message.retrieval.matched.map(kind => kind === 'local' ? '本地模型' : '云端连接').join('、')}。引用可点击返回原文。` : '本轮语义检索没有返回候选。'}</p>
+            {message.retrieval.warnings.map(warning => <p key={warning}>{warning}</p>)}
+          </details>}
           {message.reasoning && <details className="ai-reasoning-block">
             <summary>思考过程</summary>
             <p>{message.reasoning}</p>

@@ -65,6 +65,7 @@ export interface CanvasControlConnectionRequest {
   nodes: ConnectionNodeGeometry[];
 }
 export interface CanvasControlReview {
+  replacement?: { count: number; nodeCount: number; from: string; to: string; examples: string[] };
   planVersion?: 1 | 2;
   id: string;
   sessionId: string;

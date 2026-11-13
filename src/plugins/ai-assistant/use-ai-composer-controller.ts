@@ -26,6 +26,7 @@ import {
   replaceAtQuery,
 } from './command-parser.ts';
 import { buildAIMentionSuggestions } from './mention-suggestions.ts';
+import { naturalMemoryDirective } from './memory-suggestion.ts';
 import {
   AI_COMPOSER_HEIGHT_MAX,
   normalizeAIComposerHeight,
@@ -49,6 +50,7 @@ export function useAIComposerController({
   setPrepared,
   onSubmitted,
   onError,
+  pendingWritebackId,
 }: {
   client: ViewClient;
   assistantId: string;
@@ -65,8 +67,11 @@ export function useAIComposerController({
   setPrepared: (prepared: AIPreparedContext | undefined) => void;
   onSubmitted: () => void;
   onError: (message: string) => void;
+  pendingWritebackId?: string;
 }) {
   const [prompt, setPrompt] = useState('');
+  const acceptsWriteback = Boolean(pendingWritebackId && /^(?:就用这版[，,]\s*)?(?:替换进去|用这版替换原文|应用这份草稿)[。！!]?$/u.test(prompt.trim()));
+  const canRunLocally = Boolean(acceptsWriteback || naturalCanvasOperation(prompt) || naturalMemoryDirective(prompt));
   const promptHistory = useLocalTextHistory(prompt, setPrompt);
   const {
     change: changePrompt,
@@ -191,10 +196,12 @@ export function useAIComposerController({
     await run(async () => {
       if (!activeSession) throw new Error('当前对话仍在初始化，请稍候');
       if (!prompt.trim()) throw new Error('请输入要求');
-      if (!selectedProviderConfigured && !naturalCanvasOperation(prompt)) throw new Error('当前助手的模型连接尚未配置，请点击 KEY 按钮完成配置');
+      if (!selectedProviderConfigured && !canRunLocally) throw new Error('当前助手的模型连接尚未配置，请点击 KEY 按钮完成配置');
       setPrepared(undefined);
       onSubmitted();
-      await client.dispatch('ai.context.prepare', {
+      if (acceptsWriteback && pendingWritebackId) {
+        await client.dispatch('ai.proposal.accept', { proposalId: pendingWritebackId });
+      } else await client.dispatch('ai.context.prepare', {
         assistantId,
         sessionId: activeSession.id,
         prompt: prompt.trim(),
@@ -211,6 +218,8 @@ export function useAIComposerController({
       setInlineReferences([]);
     });
   }, [
+    acceptsWriteback,
+    canRunLocally,
     activeSession,
     assistant,
     assistantId,
@@ -218,6 +227,7 @@ export function useAIComposerController({
     inlineReferences,
     onError,
     onSubmitted,
+    pendingWritebackId,
     prompt,
     run,
     resetPrompt,
@@ -285,7 +295,7 @@ export function useAIComposerController({
     dropReady,
     status,
     sendDisabled: !activeSession || !prompt.trim() || status === 'preparing' || status === 'indexing' ||
-        (!selectedProviderConfigured && !naturalCanvasOperation(prompt)),
+        (!selectedProviderConfigured && !canRunLocally),
     mentionMenuId,
     mentionMenuOpen,
     mentionSuggestions,

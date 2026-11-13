@@ -101,7 +101,7 @@ test('AI response citations keep stable node IDs while presenting current node t
 });
 
 test('AI context labels stay readable and hide internal enum names', () => {
-  assert.equal(contextSourceReasonText('explicit-reference'), '明确 @ 引用');
+  assert.equal(contextSourceReasonText('explicit-reference'), '明确指定的来源');
   assert.equal(contextSourceReasonText('conversation-memory'), '历史对话索引命中');
   assert.equal(evidenceBoundaryText('markdown-table'), '完整 Markdown 表格');
   assert.equal(evidenceBoundaryText(undefined), '连续范围');

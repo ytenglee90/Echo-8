@@ -8,6 +8,7 @@ import type {
   ContentAppendPlanRequest,
   ContentDeltaPlanRequest,
   ContentMutationPlan,
+  ContentCreatePlanRequest,
 } from '../../protocols/content.ts';
 import {
   isAcceptProposalPayload,
@@ -67,9 +68,13 @@ export function registerAIProposalRuntime(
         length,
         reason,
       }));
-      const suggestedTarget = await resolveProposalTarget(context, prepared);
-      const proposalId = suggestedTarget ? createId('ai-proposal') : undefined;
-      const proposal: AIProposalRecord | undefined = proposalId && suggestedTarget ? {
+      for (const { sourceId, title, revision, length } of prepared.fullSummary?.sources ?? []) {
+        sourceRefs.push({ sourceId, title, revision, start: 0, length, reason: 'explicit-reference' });
+      }
+      const suggestedTarget = !prepared.outputNodeTitle && payload.finishReason !== 'length' ? await resolveProposalTarget(context, prepared) : undefined;
+      const outputNodeTitle = payload.finishReason !== 'length' ? prepared.outputNodeTitle : undefined;
+      const proposalId = suggestedTarget || outputNodeTitle ? createId('ai-proposal') : undefined;
+      const proposal: AIProposalRecord | undefined = proposalId ? {
         id: proposalId,
         sessionId: session.id,
         operation: prepared.operation,
@@ -77,9 +82,11 @@ export function registerAIProposalRuntime(
         provider: payload.provider,
         model: payload.model,
         sourceRefs,
+        ...(prepared.taskInstructions?.length ? { taskInstructions: prepared.taskInstructions } : {}),
         status: 'pending',
         createdAt: Date.now(),
         suggestedTarget,
+        ...(outputNodeTitle ? { outputNodeTitle } : {}),
       } : undefined;
       const nextSession: AISessionRecord = {
         ...session,
@@ -98,13 +105,16 @@ export function registerAIProposalRuntime(
         revision: citation.sourceId === transcriptSourceId ? append.revision : citation.revision,
       }));
       const usage = normalizeTokenUsage(payload.usage);
-      const responseDetail: AIResponseDetail | undefined = reasoning || citations.length > 0 || usage ? {
+      const retrieval = prepared.retrievalDetails && { mode: prepared.retrievalDetails.mode, attempted: prepared.retrievalDetails.attempted,
+        matched: prepared.retrievalDetails.matched, warnings: prepared.retrievalDetails.warnings };
+      const responseDetail: AIResponseDetail | undefined = reasoning || citations.length > 0 || usage || retrieval ? {
         id: createId('ai-response-detail'),
         sessionId: session.id,
         turn: nextSession.turns,
         ...(reasoning ? { reasoning } : {}),
         ...(citations.length > 0 ? { citations } : {}),
         ...(usage ? { usage } : {}),
+        ...(retrieval ? { retrieval } : {}),
         createdAt: Date.now(),
       } : undefined;
       return {
@@ -148,6 +158,18 @@ export function registerAIProposalRuntime(
       const proposal = options.readProposals()[payload.proposalId];
       if (!proposal || proposal.status !== 'pending') throw new Error('AI 提案已经不存在或处理完毕');
       await revalidateSourceRefs(context, proposal.sourceRefs);
+      if (proposal.outputNodeTitle) {
+        if (payload.target) throw new Error('这个结果已指定保存为新节点。');
+        const plan = await context.capabilities.request<ContentMutationPlan>('content.createPlan@1', {
+          title: proposal.outputNodeTitle, body: proposal.text,
+        } satisfies ContentCreatePlanRequest);
+        return { result: { nodeId: plan.nodeId }, transaction: {
+          label: '将 AI 结果保存为新节点',
+          patches: [...plan.patches, { op: 'set', domain: 'document', namespace: AI_PROPOSAL_NAMESPACE, key: proposal.id,
+            value: { ...proposal, status: 'accepted', acceptedNodeId: plan.nodeId, acceptedRevision: plan.revision } }],
+          events: [...(plan.events ?? []), { type: 'ai.proposal.accepted', payload: { proposalId: proposal.id, nodeId: plan.nodeId } }],
+        } };
+      }
       const target = payload.target ?? (proposal.suggestedTarget ? {
         mode: proposal.suggestedTarget.mode ?? 'replace' as const,
         nodeId: proposal.suggestedTarget.nodeId,

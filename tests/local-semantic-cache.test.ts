@@ -69,3 +69,13 @@ test('local semantic cache rejects incompatible or non-finite vectors', () => {
     /分块无效/u,
   );
 });
+
+test('Base and legacy Small use independent cache identities', () => {
+  const small = encodeLocalSemanticCache({ sources: [] });
+  const base = encodeLocalSemanticCache({ modelId: 'base', sources: [] });
+  assert.match(small.text, /bge-small-zh-v1\.5:quantized/u);
+  assert.match(base.text, /bge-base-zh-v1\.5:quantized/u);
+  assert.throws(() => decodeLocalSemanticCache({ text: base.text }), /版本不兼容/u);
+  assert.throws(() => decodeLocalSemanticCache({ modelId: 'base', text: small.text }), /版本不兼容/u);
+  assert.deepEqual(decodeLocalSemanticCache({ modelId: 'base', text: base.text }).sources, []);
+});

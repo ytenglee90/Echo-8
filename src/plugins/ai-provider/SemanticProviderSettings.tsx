@@ -137,7 +137,8 @@ export function SemanticProviderSettings({ client }: { client: ViewClient }) {
           <em>{selected?.configured ? '已连接' : '未设置'}</em>
         </summary>
         <div className="semantic-provider-settings-content">
-          <p className="panel-copy">它和对话模型互相独立，只负责理解相近说法；连接和 KEY 会进入个人配置，不写入书籍文件。</p>
+          <p className="panel-copy">配置云端 Embedding 连接和独立授权。选择“允许云端补查”后，本地候选不足时才会自动调用。</p>
+          <p className="panel-copy">当前模型版本由下方模型名称决定。更换模型会重建临时索引，可能再次发送授权正文片段。索引和查询请求均可能产生平台费用，模型间命中率、延迟和内存对照尚未测量。</p>
           <div className="ai-provider-profile-toolbar">
         <select
           aria-label="当前语义检索连接"
@@ -258,7 +259,7 @@ export function SemanticProviderSettings({ client }: { client: ViewClient }) {
           checked={draft.allowRemoteContent}
           onChange={(event) => setDraft({ ...draft, allowRemoteContent: event.target.checked })}
         />
-        <span>允许检索时将有限的画布片段发送到该平台建立临时语义索引。关闭后只使用本地 BM25。</span>
+        <span>允许将查询词和本轮授权范围内的画布片段发送到该平台。关闭后继续使用本地检索。</span>
           </label>
           <div className="ai-provider-actions">
         <IconButton

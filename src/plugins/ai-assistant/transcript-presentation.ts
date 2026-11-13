@@ -6,6 +6,7 @@ import type {
 import type { AIResponseCitation, AIResponseDetail } from './types.ts';
 import { withTokenUsageEstimates } from '../../services/ai-token-usage.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
+import { isRecord } from '../../core/contracts.ts';
 
 export interface AITranscriptMessageView {
   key: string;
@@ -16,6 +17,7 @@ export interface AITranscriptMessageView {
   reasoning?: string;
   citations?: readonly AIResponseCitation[];
   usage?: AIResponseDetail['usage'];
+  retrieval?: AIResponseDetail['retrieval'];
 }
 
 export type AITranscriptTextSegment =
@@ -38,7 +40,7 @@ export type AITranscriptTextSegment =
 export function parseTranscriptMessages(
   text: string,
   totalTurns: number,
-  detailsByTurn: ReadonlyMap<number, Pick<AIResponseDetail, 'reasoning' | 'citations' | 'usage'>>,
+  detailsByTurn: ReadonlyMap<number, Pick<AIResponseDetail, 'reasoning' | 'citations' | 'usage' | 'retrieval'>>,
 ): AITranscriptMessageView[] {
   const header = /^\[(用户|助手)(?:\s*·\s*([^\]]+))?\]\s*$/gmu;
   const matches = [...text.matchAll(header)];
@@ -53,6 +55,7 @@ export function parseTranscriptMessages(
     const detail = match[1] === '助手'
       ? detailsByTurn.get(firstTurn + index + 1)
       : undefined;
+    const retrieval = normalizeResponseRetrieval(detail?.retrieval);
     return [{
       key: `${match.index ?? index}:${match[1]}`,
       turn: firstTurn + index + 1,
@@ -61,9 +64,19 @@ export function parseTranscriptMessages(
       meta: match[2]?.trim() ?? '',
       ...(detail?.reasoning ? { reasoning: detail.reasoning } : {}),
       ...(detail?.citations?.length ? { citations: detail.citations } : {}),
+      ...(retrieval ? { retrieval } : {}),
       ...(match[1] === '助手' ? { usage: withTokenUsageEstimates(detail?.usage, estimateAITokens(lastUserText), estimateAITokens(body + (detail?.reasoning ?? ''))) } : {}),
     }];
   });
+}
+
+/** Old or externally authored metadata remains optional and cannot break the transcript view. */
+function normalizeResponseRetrieval(value: unknown): AIResponseDetail['retrieval'] {
+  if (!isRecord(value) || !['keyword', 'local', 'cloud-fallback'].includes(String(value.mode))) return undefined;
+  const validKinds = (items: unknown): items is Array<'local' | 'cloud'> => Array.isArray(items) && items.length <= 2 && items.every(item => item === 'local' || item === 'cloud');
+  if (!validKinds(value.attempted) || !validKinds(value.matched) || !Array.isArray(value.warnings) || value.warnings.length > 4 ||
+    value.warnings.some(warning => typeof warning !== 'string' || warning.length > 500)) return undefined;
+  return { mode: value.mode as 'keyword' | 'local' | 'cloud-fallback', attempted: value.attempted, matched: value.matched, warnings: value.warnings as string[] };
 }
 
 /** Captures only citation ordinals that the model actually used in its answer. */
@@ -126,7 +139,7 @@ export function splitAIResponseCitations(
 
 export function contextSourceReasonText(reason: AIPreparedContext['sources'][number]['reason']): string {
   return reason === 'explicit-reference'
-    ? '明确 @ 引用'
+    ? '明确指定的来源'
     : reason === 'recent-conversation'
       ? '本对话原文'
       : reason === 'conversation-memory'

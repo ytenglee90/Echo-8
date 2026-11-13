@@ -6,6 +6,8 @@ import {
   LOCAL_SEMANTIC_PROVIDER_CHANGED_SIGNAL,
   LOCAL_SEMANTIC_PROVIDER_COMMANDS,
   LOCAL_SEMANTIC_PROVIDER_STATE_QUERY,
+  LOCAL_SEMANTIC_MODELS,
+  type LocalSemanticModelId,
   type LocalSemanticProviderPanelState,
 } from '../../protocols/local-semantic.ts';
 import { Icon } from '../../ui/Icon.tsx';
@@ -68,6 +70,8 @@ export function LocalSemanticProviderSettings({ client }: { client: ViewClient }
     }
   };
   const busy = state.cache.status === 'downloading' || state.cache.status === 'indexing';
+  const modelId = state.modelId ?? 'small';
+  const model = LOCAL_SEMANTIC_MODELS[modelId];
   // Rebuild/download commands return as soon as their managed task starts.
   // Surface asynchronous task failures from provider state as well as a
   // synchronous command rejection, otherwise users only see a vague fallback.
@@ -89,6 +93,12 @@ export function LocalSemanticProviderSettings({ client }: { client: ViewClient }
       <span><strong>{presentation.title}</strong><small>{presentation.detail}</small></span>
     </div>
     <div className="local-semantic-primary-actions">
+      {state.enabled && <button type="button" onClick={() => void run(
+        () => client.dispatch(LOCAL_SEMANTIC_PROVIDER_COMMANDS.setEnabled, { enabled: false }), '已关闭本地语义检索',
+      )}>关闭本地语义检索</button>}
+      {busy && <button type="button" onClick={() => void run(
+        () => client.dispatch(LOCAL_SEMANTIC_PROVIDER_COMMANDS.cancelIndex), '已取消当前准备任务',
+      )}>取消当前任务</button>}
       {!state.enabled && <button
         type="button"
         onClick={() => void run(
@@ -102,9 +112,20 @@ export function LocalSemanticProviderSettings({ client }: { client: ViewClient }
           () => client.dispatch(LOCAL_SEMANTIC_PROVIDER_COMMANDS.rebuild, { force: true }),
           '正在下载并准备本机模型',
         )}
-      ><Icon name={state.cache.status === 'error' ? 'reset' : 'download'} size={14} />{state.cache.status === 'error' ? '重试下载' : '下载模型（约 40 MB）'}</button>}
+      ><Icon name={state.cache.status === 'error' ? 'reset' : 'download'} size={14} />{state.cache.status === 'error' ? '重试下载' : `下载模型（约 ${model.downloadMB} MB）`}</button>}
       {state.enabled && state.cache.status === 'ready' && <span className="local-semantic-ready-note">已开启，无需操作</span>}
     </div>
+    <details><summary>本地模型版本、优点与代价</summary>
+      <label className="ai-field"><span>本地语义模型</span><select aria-label="本地语义模型" value={modelId} disabled={busy} onChange={event => {
+        const next = event.target.value as LocalSemanticModelId;
+        void run(() => client.dispatch(LOCAL_SEMANTIC_PROVIDER_COMMANDS.setModel, { modelId: next }), '已切换模型，首次使用时会准备对应索引。');
+      }}><option value="small">BGE Small 中文 v1.5（默认）</option><option value="base">BGE Base 中文 v1.5</option></select></label>
+      <p>当前模型 · {model.model} · {model.revision} · 量化 ONNX。运行时 · ONNX WASM 1.29.0。向量缓存 · {model.cacheKey}。</p>
+      <p>两款均在本机处理正文和查询，API Token 为 0。各自保存向量缓存。切换后首次需要下载模型并准备索引，切回可复用未变化的段落向量。</p>
+      <p>同设备对照（24 段、12 个中文问题）两款首位均命中 10/12，前五均命中 12/12，个别题目的排名不同。</p>
+      <p>Small 下载约 38 MB，向量 512 维，查询中位 9 毫秒。Base 下载约 117 MB，向量 768 维，查询中位 42 毫秒。完整应用峰值内存未测。超长来源仍按分段覆盖建立语义索引。</p>
+      {state.cache.partialSources > 0 && <p>当前有 {state.cache.partialSources} 个超长来源采用分段覆盖。</p>}
+    </details>
     {message && <p className="ai-message">{message}</p>}
     {(error || taskError) && <p className="ai-error" role="alert">{error || taskError}</p>}
   </section>;

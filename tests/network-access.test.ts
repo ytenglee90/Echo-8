@@ -142,7 +142,7 @@ test('local model downloads use only fixed public assets and enforce redirected-
 
   const asset = await service.downloadLocalModelAsset('local-semantic-provider', 'bge-small-zh-v1.5.model');
   assert.equal(asset.data.byteLength, 3);
-  assert.match(calls[0]?.url ?? '', /Xenova\/bge-small-zh-v1\.5\/resolve\/main\/onnx\/model_quantized\.onnx$/);
+  assert.match(calls[0]?.url ?? '', /Xenova\/bge-small-zh-v1\.5\/resolve\/75c43b069aac4d136ba6bc1122f995fedcfd2781\/onnx\/model_quantized\.onnx$/);
   assert.equal(calls[0]?.init?.method, 'GET');
   assert.equal(calls[0]?.init?.redirect, 'follow');
   assert.equal(calls[0]?.init?.credentials, 'omit');

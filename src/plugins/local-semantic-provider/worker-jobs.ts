@@ -8,6 +8,7 @@ import type {
   LocalSemanticEncodeCacheResult,
   LocalSemanticLoadModelRequest,
 } from './worker-protocol.ts';
+import { LOCAL_SEMANTIC_MODELS } from '../../protocols/local-semantic.ts';
 
 interface LocalSemanticRuntime {
   tokenizer: {
@@ -31,7 +32,6 @@ const MAX_INPUT_CHARACTERS = 2_000;
 const MAX_TOTAL_CHARACTERS = 24_000;
 const MAX_SEQUENCE_LENGTH = 512;
 const LOCAL_SEMANTIC_CACHE_SCHEMA_VERSION = 1;
-const LOCAL_SEMANTIC_CACHE_MODEL = 'Xenova/bge-small-zh-v1.5:quantized';
 const MAX_CACHE_TEXT_LENGTH = 15 * 1024 * 1024;
 const MAX_CACHE_SOURCES = 10_000;
 const MAX_CACHE_CHUNKS = 200_000;
@@ -162,7 +162,9 @@ export function encodeLocalSemanticCache(
   request: LocalSemanticEncodeCacheRequest,
 ): LocalSemanticEncodeCacheResult {
   assertCacheSources(request.sources);
-  const prefix = `{"schemaVersion":${LOCAL_SEMANTIC_CACHE_SCHEMA_VERSION},"model":${JSON.stringify(LOCAL_SEMANTIC_CACHE_MODEL)},"sources":[`;
+  const profile = LOCAL_SEMANTIC_MODELS[request.modelId ?? 'small'];
+  if (!profile) throw new Error('未知本地语义模型');
+  const prefix = `{"schemaVersion":${LOCAL_SEMANTIC_CACHE_SCHEMA_VERSION},"model":${JSON.stringify(profile.model + ':quantized')},"sources":[`;
   const suffix = ']}';
   const entries: string[] = [];
   let retainedChunks = 0;
@@ -207,7 +209,7 @@ export function decodeLocalSemanticCache(
   }
   const value = JSON.parse(request.text) as unknown;
   if (!isRecord(value) || value.schemaVersion !== LOCAL_SEMANTIC_CACHE_SCHEMA_VERSION ||
-    value.model !== LOCAL_SEMANTIC_CACHE_MODEL || !Array.isArray(value.sources)) {
+    value.model !== LOCAL_SEMANTIC_MODELS[request.modelId ?? 'small']?.model + ':quantized' || !Array.isArray(value.sources)) {
     throw new Error('本地语义缓存版本不兼容');
   }
   if (value.sources.length > MAX_CACHE_SOURCES) throw new Error('本地语义缓存来源过多');
@@ -284,7 +286,8 @@ function normalizeVector(value: Float32Array): Float32Array {
 }
 
 function assertLoadRequest(value: LocalSemanticLoadModelRequest): void {
-  if (!(value.model instanceof ArrayBuffer) || value.model.byteLength < 1 || value.model.byteLength > 32 * 1024 * 1024 ||
+  const profile = LOCAL_SEMANTIC_MODELS[value.modelId ?? 'small'];
+  if (!profile || !(value.model instanceof ArrayBuffer) || value.model.byteLength < 1 || value.model.byteLength > profile.maxModelMiB * 1024 * 1024 ||
     typeof value.tokenizer !== 'string' || value.tokenizer.length < 2 || value.tokenizer.length > 2 * 1024 * 1024 ||
     typeof value.tokenizerConfig !== 'string' || value.tokenizerConfig.length < 2 || value.tokenizerConfig.length > 256 * 1024 ||
     typeof value.runtimeModule !== 'string' || value.runtimeModule.length < 2 || value.runtimeModule.length > 128 * 1024 ||

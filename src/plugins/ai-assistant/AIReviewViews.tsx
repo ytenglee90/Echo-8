@@ -28,10 +28,14 @@ export function AIContextReview({
     <section className="ai-context-preview ai-review-dialog" role="dialog" aria-label="需要确认的上下文检查">
       <header>
         <div><strong>这次需要确认</strong><span>{prepared.review?.message}</span></div>
-        <em>{prepared.sources.length} 个来源</em>
+        <em>{prepared.fullSummary?.sources.length ?? prepared.sources.length} 个来源</em>
       </header>
       {prepared.memoryRetrieval && <MemoryRetrievalReport prepared={prepared} />}
-      {prepared.sources.length === 0 && <p>本次只发送你的要求，不附加画布正文。</p>}
+      {prepared.localMemoryDirective && <pre>{prepared.localMemoryDirective}</pre>}
+      {prepared.fullSummary && <ul>{prepared.fullSummary.sources.map(source => (
+        <li key={source.sourceId}>{source.title} · {source.length.toLocaleString()} 字符</li>
+      ))}</ul>}
+      {!prepared.fullSummary && !prepared.localMemoryDirective && prepared.sources.length === 0 && <p>本次只发送你的要求，不附加画布正文。</p>}
       <div className="ai-source-list">
         {prepared.sources.map((source) => (
           <article key={`${source.sourceId}:${source.start}`}>
@@ -76,7 +80,7 @@ export function AIContextReview({
           ))}
         </div>
       )}
-      {!providerConfigured && <p className="ai-hint">上下文仍停留在本机；配置当前助手的模型后才能继续。</p>}
+      {!providerConfigured && !prepared.localMemoryDirective && <p className="ai-hint">上下文仍停留在本机；配置当前助手的模型后才能继续。</p>}
       <div className="ai-review-actions">
         <button type="button" className="ai-review-primary" onClick={onConfirm}>确认并继续</button>
         <button type="button" onClick={onReturn}>返回修改</button>

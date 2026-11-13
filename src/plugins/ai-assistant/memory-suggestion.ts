@@ -1,6 +1,6 @@
 export interface MemorySuggestion {
   id: string;
-  kind: 'confirm' | 'modify' | 'deprecate';
+  kind: 'confirm' | 'modify' | 'deprecate' | 'branch';
   directive: string;
   explanation: string;
 }
@@ -33,7 +33,28 @@ export function inferMemorySuggestion(prompt: string): MemorySuggestion | undefi
 }
 
 export function memoryDirectiveLabel(kind: MemorySuggestion['kind']): string {
-  return ({ confirm: '确认', modify: '修改', deprecate: '废弃' })[kind];
+  return ({ confirm: '确认', modify: '修改', deprecate: '废弃', branch: '分支' })[kind];
+}
+
+/** Only explicit memory-management wording can enter the formal review path. */
+export function naturalMemoryDirective(prompt: string): string | undefined {
+  const text = prompt.trim().replace(/^请\s*/u, '').replace(/[。！!]$/u, '');
+  const field = (value: string) => value.trim();
+  const clean = (value: string | undefined) => Boolean(value && !/[\r\n@：:｜|→]/u.test(value));
+  let match: RegExpExecArray | null;
+  if ((match = /^(?:记住|正式确认|记为正式设定)[：:\s]*(.{1,120}?)[：:]\s*(.{1,500})$/u.exec(text)) && clean(match[1])) {
+    return `@确认 ${field(match[1]!)}：${field(match[2]!)}`;
+  }
+  if ((match = /^(?:把|将)已确认的(.{1,120}?)从(.{1,500}?)(?:改成|改为)(.{1,500})$/u.exec(text)) && clean(match[1]) && clean(match[2])) {
+    return `@修改 ${field(match[1]!)}：${field(match[2]!)} -> ${field(match[3]!)}`;
+  }
+  if ((match = /^废弃(?:已确认的|正式记忆中的)(.{1,120}?)(?:[：:]\s*(.{1,500}))?$/u.exec(text)) && clean(match[1])) {
+    return `@废弃 ${field(match[1]!)}${match[2] ? '：' + field(match[2]) : ''}`;
+  }
+  if ((match = /^(?:在|为)(.{1,80}?)(?:分支|方案)(?:中|里)?(?:记录|记住|保留)[：:\s]*(.{1,120}?)[：:]\s*(.{1,500})$/u.exec(text)) && clean(match[1]) && clean(match[2])) {
+    return `@分支 ${field(match[1]!)}｜${field(match[2]!)}：${field(match[3]!)}`;
+  }
+  return undefined;
 }
 
 function cleanSuggestionField(value: string): string {

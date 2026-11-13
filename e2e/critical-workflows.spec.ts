@@ -3716,6 +3716,7 @@ test('AI transcript copy keeps the native clipboard and paste stays inside the c
   await openApplication(page);
   await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
   await expect(page.getByText('Prompt：默认通用', { exact: true })).toBeVisible();
+  const copyText = await page.locator('.ai-command-hints summary span').innerText();
   await page.evaluate(() => {
     const target = document.querySelector<HTMLElement>('.ai-command-hints summary span');
     if (!target) throw new Error('AI copy fixture is missing');
@@ -3729,7 +3730,7 @@ test('AI transcript copy keeps the native clipboard and paste stays inside the c
   const composer = page.locator('.ai-composer textarea');
   await composer.focus();
   await page.keyboard.press('Control+v');
-  await expect(composer).toHaveValue(/输入 @ 即可检索/u);
+  await expect(composer).toHaveValue(copyText);
 
   await composer.fill('@润');
   const mentionMenu = page.getByRole('listbox', { name: '@ 命令和文字节点' });
@@ -3854,30 +3855,18 @@ test('AI connection form keeps the routine connection path clear', async ({ page
   await expect(settings).toBeVisible();
   const chatConnectionHeading = settings.getByRole('heading', { name: '连接模型', exact: true });
   await expect(chatConnectionHeading).toBeVisible();
-  const localSemantic = settings.getByRole('region', { name: '本机理解检索' });
-  await expect(localSemantic).toBeVisible();
-  const remoteSemantic = settings.getByRole('region', { name: '云端语义检索' });
-  await expect(remoteSemantic).toBeVisible();
   const chatConnectionPanel = settings.locator('.ai-provider-panel');
   const transferActions = settings.locator('.ai-provider-transfer-actions');
   await expect(transferActions.getByRole('button', { name: '导出配置' })).toBeVisible();
   await expect(transferActions.getByRole('button', { name: '从本地导入' })).toBeVisible();
-  const [settingsBox, transferActionsBox, chatConnectionBox, chatConnectionPanelBox, localSemanticBox, remoteSemanticBox] = await Promise.all([
+  const [settingsBox, transferActionsBox, chatConnectionBox, chatConnectionPanelBox] = await Promise.all([
     settings.boundingBox(),
     transferActions.boundingBox(),
     chatConnectionHeading.boundingBox(),
     chatConnectionPanel.boundingBox(),
-    localSemantic.boundingBox(),
-    remoteSemantic.boundingBox(),
   ]);
   expect(transferActionsBox?.y).toBeLessThan(chatConnectionBox?.y ?? Number.POSITIVE_INFINITY);
-  expect(chatConnectionBox?.y).toBeLessThan(localSemanticBox?.y ?? Number.POSITIVE_INFINITY);
-  expect(remoteSemanticBox?.y).toBeGreaterThan(localSemanticBox?.y ?? Number.NEGATIVE_INFINITY);
   expect(chatConnectionPanelBox?.width).toBeGreaterThanOrEqual((settingsBox?.width ?? 0) - 40);
-  await expect(localSemantic.getByText('尚未下载公开模型', { exact: true })).toBeVisible();
-  await expect(localSemantic.getByText(/下载约 40 MB/u)).toBeVisible();
-  await expect(localSemantic.getByRole('button', { name: '下载模型（约 40 MB）' })).toBeVisible();
-  await expect(localSemantic.locator('details')).toHaveCount(0);
   await expect(settings.getByLabel('选择平台', { exact: true })).toBeVisible();
   await expect(settings.getByText('平台名称', { exact: true })).toHaveCount(0);
   await expect(settings.getByText('连接名称', { exact: true })).toHaveCount(0);
@@ -3898,8 +3887,20 @@ test('AI connection form keeps the routine connection path clear', async ({ page
   await expect(memoryToolToggle).toBeDisabled();
 
   await expect(settings.getByRole('tab')).toHaveCount(0);
+  await settings.getByRole('button', { name: '打开检索设置', exact: true }).click();
+  const retrieval = page.getByRole('region', { name: '检索设置', exact: true });
+  await expect(retrieval).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '检索', exact: true })).toBeVisible();
+  await expect(retrieval.getByRole('combobox', { name: '检索方式', exact: true })).toHaveValue('local');
+  const localSemantic = retrieval.getByRole('region', { name: '本机理解检索' });
+  await expect(localSemantic.getByText('尚未下载公开模型', { exact: true })).toBeVisible();
+  await expect(localSemantic.getByRole('button', { name: '下载模型（约 38 MB）' })).toBeVisible();
+  await localSemantic.getByText('本地模型版本、优点与代价', { exact: true }).click();
+  await expect(localSemantic).toContainText('Xenova/bge-small-zh-v1.5');
+  await expect(localSemantic.getByRole('combobox', { name: '本地语义模型' })).toHaveValue('small');
+  const remoteSemantic = retrieval.getByRole('region', { name: '云端语义检索' });
   await remoteSemantic.locator(':scope > details > summary').click();
-  const semanticPreset = settings.getByLabel('快速选择语义平台');
+  const semanticPreset = retrieval.getByLabel('快速选择语义平台');
   await expect(semanticPreset).toBeVisible();
   await expect(semanticPreset.locator('option[value="openai"]')).toBeEnabled();
   await expect(semanticPreset.locator('option[value="qwen"]')).toBeEnabled();

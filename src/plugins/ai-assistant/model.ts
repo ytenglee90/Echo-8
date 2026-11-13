@@ -231,6 +231,7 @@ export function createAIAssistantPlugin(
         'entity.deletePlan@1',
       ],
       optionalCapabilities: [
+        'groups.list@1',
         'ai.provider.taskUsage@1',
         'ai.provider.requestTrace@1',
         'canvasControl.context@1',
@@ -240,6 +241,8 @@ export function createAIAssistantPlugin(
         'context.search@2',
         'context.search@3',
         'context.semanticSearch@1',
+        'context.semanticSearch@2',
+        'context.localSemanticSearch@1',
         PROJECT_RELATED_DIRECTORY_CAPABILITY,
         'ai.generate@1',
         'ai.generate.stream@1',
@@ -307,7 +310,7 @@ export function createAIAssistantPlugin(
       ],
       dispatches: [
         'canvasControl.offer@1', 'canvasControl.generate@1',
-        'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings',
+        'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings', 'retrieval.open@1',
         'ai.context.prepare',
         'aiProvider.profile.activate', 'ai.promptTemplate.restorePersonal', 'system.preferences.set',
         'ai.memory.importFiles.commit',

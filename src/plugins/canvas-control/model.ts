@@ -1,6 +1,7 @@
 import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
 import type { CanvasControlAdmission, CanvasControlOffer, CanvasControlReview, CanvasControlState } from '../../protocols/canvas-control.ts';
 import type { AppearanceEntityRef, AppearanceReadContribution, AppearanceUpdatePlan } from '../../protocols/appearance.ts';
+import type { ContentReplacePlan } from '../../protocols/search.ts';
 import { naturalCanvasOperation, needsCanvasSearchInterpretation, type NaturalCanvasOperation } from '../../services/ai-task-route.ts';
 import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
@@ -9,7 +10,7 @@ import { captureControlSnapshot, controlInstruction, controlContextV2, type Cont
 import { controlTaskState, readTaskMarkers, type StoredControlReview } from './task-state.ts';
 import { lineStyleFollowup, localLinePlan, localOperation, localPlan } from './local-operations.ts';
 import { discoverControlTargets } from './target-discovery.ts';
-import { resolveNaturalOperation, type NaturalControlResult, type NaturalControlState } from './natural-operations.ts';
+import { resolveNaturalOperation, shadeColor, type NaturalControlResult, type NaturalControlState } from './natural-operations.ts';
 import { planControlApplication, validateControlScope } from './planning.ts';
 
 export const CONTROL_UI_NAMESPACE = 'canvasControlUI';
@@ -19,7 +20,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       namespaces: [CONTROL_UI_NAMESPACE], namespaceDomains: { [CONTROL_UI_NAMESPACE]: 'workspace' },
       sessionOnlyWorkspace: { [CONTROL_UI_NAMESPACE]: true },
       requiresCapabilities: ['content.summaries@1', 'content.summariesById@1', 'selection.read@1', 'selection.resolve@1', 'selection.entities@1', 'canvasControl.nodesPlan@1'],
-      optionalCapabilities: ['context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1'],
+      optionalCapabilities: ['context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
       providesCapabilities: ['canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
       commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
       dispatches: ['canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.offer@1', 'selection.set', 'canvas.focusSelection', 'palette.setPreferences'],
@@ -70,6 +71,14 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           result = { plan: { version: 1, actions: [] }, pendingLine: { id: previous.pendingLine, line: operation.line } };
         } else {
           result = await resolveNaturalOperation(context, input, operation, previous, chosen, signal);
+          if (operation.kind === 'relative-color' && operation.names.join('') === '它们') {
+            const latest = [...reviews.values()].filter(draft => draft.review.sessionId === input.sessionId).at(-1);
+            const actions = latest?.review.actions ?? [];
+            if (latest?.review.status === 'pending' && latest.snapshot.expiresAt >= Date.now() && actions.length &&
+              actions.every(action => (action.type === 'update-node' || action.type === 'create-node') && action.color)) {
+              result = { plan: { version: 1, actions: [] }, pendingColor: { id: latest.review.id, direction: operation.direction } };
+            }
+          }
         }
         const snapshot = await captureControlSnapshot(context, { ...input, sourceIds: result.targets ?? [] }, 'selection', signal, undefined, true);
         snapshot.execution = 'review';
@@ -187,7 +196,8 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           choice = local.choice ? { input, ...local.choice, chosen: new Map(local.chosen) } : undefined;
           navigation = local.navigation;
           if (local.next) remember(input.sessionId, local.next);
-          if (local.focus) focus(local.focus);
+          if (local.focus && local.selectionMode) await context.commands.invoke('selection.set', { ids: local.focus, mode: local.selectionMode });
+          else if (local.focus) focus(local.focus);
           if (local.navigation) { openSurface(); publish(); }
           if (local.setting?.kind === 'theme') {
             await context.commands.invoke('palette.setPreferences', { themeId: local.setting.theme });
@@ -213,15 +223,32 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
             openSurface(); publish();
             return { result: { message: `已把待应用的连线预览改为${line.line === 'dashed' ? '虚线' : '实线'}。` }, transaction: showControl() };
           }
+          if (local.pendingColor) {
+            const pending = reviews.get(local.pendingColor.id);
+            if (!pending || pending.review.sessionId !== input.sessionId || pending.review.status !== 'pending' ||
+              pending.snapshot.expiresAt < Date.now()) return { result: { message: '上一份配色预览已失效，请重新指定目标。' } };
+            for (const action of pending.review.actions) {
+              if ((action.type === 'create-node' || action.type === 'update-node') && action.color) {
+                action.color = shadeColor(action.color, local.pendingColor.direction);
+              }
+            }
+            openSurface(); publish();
+            return { result: { message: '已调整待应用计划中的颜色。' }, transaction: showControl() };
+          }
         }
-        if (!plan.actions.length) return { result: { message: plan.answer?.trim() || '本次没有需要应用的画布操作。' }, ...(local?.navigation ? { transaction: showControl() } : {}) };
+        if (!plan.actions.length && !local?.replacement) return { result: { message: plan.answer?.trim() || '本次没有需要应用的画布操作。' }, ...(local?.navigation ? { transaction: showControl() } : {}) };
         const id = createId('canvas-plan');
         const titles = Object.fromEntries([...snapshot.nodes.map(node => [node.id, node.title]), ...snapshot.groups.map(group => [group.id, group.title]), ...snapshot.graph.connections.map(edge => [edge.id, edge.label || '连线']), ...plan.actions.flatMap(action => 'ref' in action ? [[action.ref, 'title' in action ? action.title : action.label || '连线']] : [])]);
         if (local) for (const edge of snapshot.graph.connections) {
           titles[edge.id] = `${titles[edge.from.nodeId] ?? edge.from.nodeId} → ${titles[edge.to.nodeId] ?? edge.to.nodeId}`;
         }
         const review: CanvasControlReview = { id, sessionId: input.sessionId, createdAt: Date.now(), status: 'pending', actions: plan.actions, titles, planVersion: plan.version };
-        reviews.set(id, { review, snapshot });
+        if (local?.replacement) {
+          const { hits, replacement } = local.replacement;
+          review.replacement = { count: hits.length, nodeCount: new Set(hits.map(hit => hit.nodeId)).size,
+            from: hits[0]!.matchedText, to: replacement, examples: hits.slice(0, 5).map(hit => `${hit.title} · ${hit.preview}`) };
+        }
+        reviews.set(id, { review, snapshot, replacement: local?.replacement });
         if (local && plan.actions.length === 1 && (plan.actions[0]?.type === 'create-connection' || plan.actions[0]?.type === 'update-connection')) remember(input.sessionId, { pendingLine: id });
         while (reviews.size > 8) reviews.delete(reviews.keys().next().value!);
         if (snapshot.execution === 'direct' && execution() === 'direct' && canGenerateDirectly(review, snapshot)) {
@@ -229,7 +256,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           return { result: { message: `已准备 ${plan.actions.length} 项操作，将直接生成到画布，无需点击应用。完成后可一次撤销。`, directPlanId: id } };
         }
         openSurface(); publish();
-        return { result: { message: `${review.error ? `直接生成未成功：${review.error}。` : ''}已生成 ${plan.actions.length} 项画布操作计划。请在“画布控制”中检查，点击底部固定的“应用整份计划”。` },
+        return { result: { message: review.replacement ? `已找到 ${review.replacement.nodeCount} 个节点中的 ${review.replacement.count} 处正文。请检查替换预览。` : `${review.error ? `直接生成未成功：${review.error}。` : ''}已生成 ${plan.actions.length} 项画布操作计划。请在“画布控制”中检查，点击底部固定的“应用整份计划”。` },
           transaction: { label: '显示 AI 画布操作计划', history: false, patches: [uiPatch('open', true)] } };
       } });
       context.commands.register({ type: 'canvasControl.generate@1', validate: isPlanId, handle: async input => {
@@ -279,6 +306,12 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       context.commands.register({ type: 'canvasControl.commit@1', validate: (input): input is { id: string; token: string } => isPlanId(input) && typeof (input as { token?: unknown }).token === 'string', handle: async input => {
         const draft = reviews.get(input.id);
         if (!draft || applying.get(input.id) !== input.token || draft.review.status !== 'pending') throw new Error('画布控制提交授权已失效');
+        if (draft.replacement) {
+          if (draft.replacement.hits.some(hit => !draft.snapshot.writable.has(hit.nodeId))) throw new Error('替换目标超出操作范围');
+          const replacement = await context.capabilities.request<ContentReplacePlan>('content.replacePlan@2', draft.replacement);
+          if (!reviews.has(input.id) || !replacement.patches.length) throw new Error('正文替换计划已失效');
+          return { result: { createdIds: [] }, transaction: { label: `替换 ${replacement.replaced} 处正文`, patches: replacement.patches, events: replacement.events } };
+        }
         const plan = await planControlApplication(context, draft.snapshot, { version: draft.review.planVersion ?? 1, actions: draft.review.actions });
         if (!reviews.has(input.id)) throw new Error('画布已经切换，请重新生成计划');
         if (!plan.patches.length) throw new Error('计划没有可应用的对象修改');

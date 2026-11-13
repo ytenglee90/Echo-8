@@ -14,6 +14,7 @@ import { assertNotAborted } from '../../services/async-control.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
 import { needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
 import { aggregateTokenUsage, withTokenUsageEstimates } from '../../services/ai-token-usage.ts';
+import { collectFullSourceSummary } from './full-source-summary.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
 import { buildGenerateRequest } from './generation-request.ts';
 import { executeMemorySearchToolCalls } from './memory-search-tool.ts';
@@ -162,6 +163,7 @@ export function registerAIGenerationRuntime(
       estimatedCost: 4,
       run: async (signal, report) => {
         report(0.1);
+        if (prepared.localMemoryDirective) return { text: '已确认并记入当前对话。', provider: 'local', model: '正式记忆', usage: { inputTokens: 0, outputTokens: 0 } };
         if (prepared.operation === 'canvas-control') {
           const local = await context.capabilities.request<{ handled: boolean; text?: string }>('canvasControl.localPlan@1', {
             preparationId: prepared.id, sessionId: prepared.sessionId, prompt: prepared.prompt,
@@ -170,7 +172,7 @@ export function registerAIGenerationRuntime(
           if (local.handled && 'text' in local && local.text) return { text: local.text, provider: 'local', model: '确定性操作', usage: { inputTokens: 0, outputTokens: 0 } };
         }
         const interpretSearch = prepared.operation === 'canvas-control' && needsCanvasSearchInterpretation(prepared.prompt);
-        const request: AIGenerateRequest = interpretSearch ? {
+        let request: AIGenerateRequest = interpretSearch ? {
           providerId: prepared.providerProfileId,
           temperature: 0,
           maxOutputTokens: 512,
@@ -199,7 +201,7 @@ export function registerAIGenerationRuntime(
           3 + activeRequest.messages.reduce((total, message) => total + 4 + estimateAITokens(message.content) + (message.toolCalls ? estimateAITokens(JSON.stringify(message.toolCalls)) : 0), 0) + (activeRequest.tools ? estimateAITokens(JSON.stringify(activeRequest.tools)) : 0),
           estimateAITokens(completed.text + (completed.reasoning ?? '') + (completed.toolCalls ? JSON.stringify(completed.toolCalls) : '')),
         ));
-        const generateOnce = async (activeRequest: AIGenerateRequest): Promise<AIGenerateResult> => {
+        const generateOnce = async (activeRequest: AIGenerateRequest, visible = true): Promise<AIGenerateResult> => {
           const inspectedRequest = { ...activeRequest, inspection: { sessionId: prepared.sessionId, userTurn: prepared.userTurn ?? options.readSessions()[prepared.sessionId]?.turns ?? 1 } };
           try {
             const stream = await context.capabilities.request<AIGenerateStream>(
@@ -209,7 +211,7 @@ export function registerAIGenerationRuntime(
             );
             const result = await consumeAIGenerationStream(stream, signal, {
               onDelta: (event) => {
-                if (prepared.operation === 'canvas-control') return;
+                if (!visible || prepared.operation === 'canvas-control') return;
                 emittedSequence += 1;
                 const current = options.stateBySession.get(prepared.sessionId);
                 const text = event.channel === 'answer'
@@ -234,7 +236,7 @@ export function registerAIGenerationRuntime(
                   channel: event.channel,
                 } satisfies AIGenerationDeltaSignal);
               },
-              report,
+              report: visible ? report : () => undefined,
             });
             const completed = inferLengthTermination(result, activeRequest);
             recordUsage(completed, activeRequest);
@@ -268,6 +270,10 @@ export function registerAIGenerationRuntime(
           }
         };
 
+        if (prepared.fullSummary) {
+          request = await collectFullSourceSummary(context, prepared, request, signal,
+            stage => generateOnce(forPurpose(stage, 'answer'), false), report);
+        }
         let result = await generateWithToolFallback(request);
         if (interpretSearch) {
           let raw: unknown;
@@ -368,11 +374,16 @@ export function registerAIGenerationRuntime(
         const directResult = directPlanId ? await context.commands.dispatch('canvasControl.generate@1', { id: directPlanId }) : undefined;
         prepared.expiresAt = Date.now() + AI_GENERATION_ACTION_TTL_MS;
         options.stateBySession.delete(prepared.sessionId);
-        options.actionBySession.set(prepared.sessionId, {
-          kind: 'repeat',
-          preparationId: prepared.id,
-          expiresAt: prepared.expiresAt,
-        });
+        if (prepared.localMemoryDirective) {
+          void context.commands.dispatch('ai.session.save', { sessionId: prepared.sessionId, automatic: true })
+            .catch(error => context.diagnostics.warn('建立正式记忆索引失败', error));
+        } else {
+          options.actionBySession.set(prepared.sessionId, {
+            kind: 'repeat',
+            preparationId: prepared.id,
+            expiresAt: prepared.expiresAt,
+          });
+        }
         context.signals.emit('ai.state.invalidated');
         context.signals.emit('ai.status', {
           state: 'complete',
@@ -387,7 +398,7 @@ export function registerAIGenerationRuntime(
           preparationId: prepared.id,
           ...(recorded.proposalId ? { proposalId: recorded.proposalId } : {}),
         } satisfies AIStatusSignal);
-        if (prepared.operation !== 'canvas-control' && prepared.contextIntent !== 'conversation' && prepared.assistantId && prepared.followupAction !== 'repeat' &&
+        if (!prepared.localMemoryDirective && prepared.operation !== 'canvas-control' && prepared.contextIntent !== 'conversation' && prepared.assistantId && prepared.followupAction !== 'repeat' &&
           options.shouldAutoExtractMemoryCandidates(prepared)) {
           void context.commands.dispatch('ai.memory.candidates.extract', {
             assistantId: prepared.assistantId,

@@ -54,7 +54,7 @@ const DEFAULT_POLICIES: Record<AINetworkKind, AINetworkPolicy> = {
 
 const LOCAL_MODEL_ASSETS: Record<LocalModelAsset, LocalModelAssetDefinition> = {
   'bge-small-zh-v1.5.model': {
-    url: 'https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/main/onnx/model_quantized.onnx',
+    url: 'https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/onnx/model_quantized.onnx',
     maxBytes: 32 * 1024 * 1024,
     allowedFinalOrigins: [
       'https://huggingface.co',
@@ -64,13 +64,31 @@ const LOCAL_MODEL_ASSETS: Record<LocalModelAsset, LocalModelAssetDefinition> = {
     allowedFinalHostSuffixes: ['hf.co'],
   },
   'bge-small-zh-v1.5.tokenizer': {
-    url: 'https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/main/tokenizer.json',
+    url: 'https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/tokenizer.json',
     maxBytes: 2 * 1024 * 1024,
     allowedFinalOrigins: ['https://huggingface.co'],
     allowedFinalHostSuffixes: ['hf.co'],
   },
   'bge-small-zh-v1.5.tokenizer-config': {
-    url: 'https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/main/tokenizer_config.json',
+    url: 'https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/tokenizer_config.json',
+    maxBytes: 256 * 1024,
+    allowedFinalOrigins: ['https://huggingface.co'],
+    allowedFinalHostSuffixes: ['hf.co'],
+  },
+  'bge-base-zh-v1.5.model': {
+    url: 'https://huggingface.co/Xenova/bge-base-zh-v1.5/resolve/71e50dc531959f9e04ebf190ea25b00261a0a186/onnx/model_quantized.onnx',
+    maxBytes: 110 * 1024 * 1024,
+    allowedFinalOrigins: ['https://huggingface.co', 'https://cdn-lfs.huggingface.co', 'https://cas-bridge.xethub.hf.co'],
+    allowedFinalHostSuffixes: ['hf.co'],
+  },
+  'bge-base-zh-v1.5.tokenizer': {
+    url: 'https://huggingface.co/Xenova/bge-base-zh-v1.5/resolve/71e50dc531959f9e04ebf190ea25b00261a0a186/tokenizer.json',
+    maxBytes: 2 * 1024 * 1024,
+    allowedFinalOrigins: ['https://huggingface.co'],
+    allowedFinalHostSuffixes: ['hf.co'],
+  },
+  'bge-base-zh-v1.5.tokenizer-config': {
+    url: 'https://huggingface.co/Xenova/bge-base-zh-v1.5/resolve/71e50dc531959f9e04ebf190ea25b00261a0a186/tokenizer_config.json',
     maxBytes: 256 * 1024,
     allowedFinalOrigins: ['https://huggingface.co'],
     allowedFinalHostSuffixes: ['hf.co'],

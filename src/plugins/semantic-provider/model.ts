@@ -69,6 +69,7 @@ export function createSemanticProviderPlugin(): PluginDefinition {
   let cacheBySource = new Map<string, CachedChunk[]>();
   let cacheProfile = '';
   let indexTask: TaskHandle<void> | undefined;
+  let indexScope = '';
   let cacheState: SemanticProviderPanelState['cache'] = {
     status: 'idle', indexedSources: 0, indexedChunks: 0, totalSources: 0, partialSources: 0,
   };
@@ -127,8 +128,13 @@ export function createSemanticProviderPlugin(): PluginDefinition {
         },
       });
 
-      const scheduleIndex = (force = false): TaskHandle<void> => {
-        if (indexTask) return indexTask;
+      const scheduleIndex = (force = false, sourceIds?: string[]): TaskHandle<void> => {
+        const requestedScope = sourceIds ? [...sourceIds].sort().join('\n') : '*';
+        if (indexTask) {
+          if (indexScope !== requestedScope) throw new Error('另一个授权范围正在建立索引，请稍后补查。');
+          return indexTask;
+        }
+        indexScope = requestedScope;
         const profile = activeProfile();
         const hasKey = profile ? Boolean(sessionApiKeys.get(profile.id)) : false;
         if (!profile || !isConfigured(profile, hasKey)) {
@@ -147,6 +153,7 @@ export function createSemanticProviderPlugin(): PluginDefinition {
             try {
               await buildIndex(context, profile, sessionApiKeys.get(profile.id) ?? '', {
                 force,
+                sourceIds,
                 signal,
                 report,
                 waitIfPaused: control.waitIfPaused,
@@ -324,8 +331,8 @@ export function createSemanticProviderPlugin(): PluginDefinition {
         }),
       });
 
-      context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
-        key: 'context.semanticSearch@1',
+      for (const key of ['context.semanticSearch@1', 'context.remoteSemanticSearch@1'] as const) context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
+        key,
         priority: 20,
         invoke: async (input, signal) => {
           validateAIContextSearchRequest(input);
@@ -333,7 +340,8 @@ export function createSemanticProviderPlugin(): PluginDefinition {
           const hasKey = profile ? Boolean(sessionApiKeys.get(profile.id)) : false;
           if (!profile || !isConfigured(profile, hasKey)) return emptyContribution();
           try {
-            await scheduleIndex(false).result;
+            if (input.sourceIds?.length === 0) return emptyContribution();
+            await scheduleIndex(false, input.sourceIds).result;
             assertNotAborted(signal);
             const query = input.query?.trim() || input.terms.join(' ');
             const [vector] = await requestEmbeddings(
@@ -401,6 +409,7 @@ async function buildIndex(
   apiKey: string,
   options: {
     force: boolean;
+    sourceIds?: string[];
     signal: AbortSignal;
     report(progress: number): void;
     waitIfPaused(): Promise<void>;
@@ -411,7 +420,8 @@ async function buildIndex(
     updateState(next: Partial<SemanticProviderPanelState['cache']>): void;
   },
 ): Promise<void> {
-  const catalog = await readCatalog(context, options.signal);
+  const allowed = options.sourceIds && new Set(options.sourceIds);
+  const catalog = (await readCatalog(context, options.signal)).filter(source => !allowed || allowed.has(source.sourceId));
   if (catalog.length > MAX_SOURCES) {
     throw new Error(`当前画布有 ${catalog.length} 个可检索来源，超过单次语义索引上限 ${MAX_SOURCES}`);
   }

@@ -6,6 +6,7 @@ import { readControlOwners, type ControlSnapshot } from './context.ts';
 export interface StoredControlReview {
   review: CanvasControlReview;
   snapshot: ControlSnapshot;
+  replacement?: import('../../protocols/search.ts').ContentReplaceRequest;
   createdIds?: string[];
   before?: Record<string, string>;
   after?: Record<string, string>;

@@ -147,6 +147,7 @@ export async function buildGenerateRequest(
   // Stable mode rules above; changing evidence, history and user input below.
   const contextText = renderContext(Boolean(taskState?.plans?.length));
   if (contextText) push('references', 'user', '画布原文证据：\n' + contextText);
+  if (prepared.outputNodeTitle) push('taskState', 'user', `结果将作为「${prepared.outputNodeTitle}」节点的正文。只输出适合写入节点的内容。`);
   if (controlContext?.objectDirectory) push('objectDirectory', 'user', controlContext.objectDirectory);
   if (taskState?.plans?.length) push('taskState', 'user', '当前任务状态（正文片段仅用于定位，需原文时重新引用；以实际状态区分计划和执行）：\n' + JSON.stringify(taskState));
   if (prepared.writebackTarget) {
@@ -155,6 +156,8 @@ export async function buildGenerateRequest(
     push('taskState', 'user', '本轮正文目标（UTF-16 偏移）：' + JSON.stringify(prepared.writebackTarget) + relative + '。仅输出新增或替换正文；画布操作则返回 version:2 的 edit 范围，不要复述未修改正文。');
   }
   if (prepared.previousWritebackDraft) push('taskState', 'user', '上一版待应用草稿。按本轮要求调整这版草稿，写回同一范围。\n<untrusted-canvas-content>\n' + prepared.previousWritebackDraft + '\n</untrusted-canvas-content>');
+  const carriedInstructions = prepared.taskInstructions?.filter(instruction => !prepared.prompt.includes(instruction));
+  if (carriedInstructions?.length) push('taskState', 'user', '同一正文任务中用户明确提出的要求（原话）。本轮明确修改的要求优先，其余继续沿用。\n' + carriedInstructions.join('\n'));
   if (retrievalText) push('references', 'user', '记忆检索覆盖报告：\n' + retrievalText);
   if (conflictText) push('references', 'user', '记忆冲突目录：\n' + conflictText);
   if (historyIndex >= 0) for (const message of nativeConversation(prepared.sources[historyIndex]!.text, prepared.prompt, Boolean(taskState?.plans?.length))) push('history', message.role, message.content);
@@ -265,7 +268,7 @@ export function isPromptPolicyContribution(value: unknown): value is AIPromptPol
 
 function reasonLabel(reason: AIPreparedSource['reason']): string {
   return reason === 'explicit-reference'
-    ? '用户明确 @ 引用'
+    ? '用户明确指定的来源'
     : reason === 'recent-conversation'
       ? '本次对话原文记忆'
       : reason === 'conversation-memory'

@@ -1,4 +1,26 @@
 /* Retrieval contribution layout. */
+.retrieval-settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  padding: 16px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  color: var(--ink);
+  background: var(--panel);
+}
+.retrieval-settings-panel p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.retrieval-settings-panel details { flex: 0 0 auto; }
+.retrieval-settings-panel > details,
+.retrieval-settings-panel .local-semantic-provider-settings {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.retrieval-settings-panel summary { cursor: pointer; font-size: 13px; }
+.retrieval-settings-panel details[open] > p { margin-top: 10px; }
+.retrieval-settings-panel > .ui-contribution-root { flex: 0 0 auto; min-width: 0; }
 /* Retrieval cards are separate plugin contributions. Let the common settings
    host own one vertical scroll area so expanding the cloud card never leaves
    the model connection below it with a zero-height, overlapping viewport. */

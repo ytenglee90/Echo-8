@@ -197,6 +197,7 @@ function AIAssistantWindow({
     setPrepared,
     onSubmitted: handleSubmitted,
     onError: setError,
+    pendingWritebackId: sessionProposals.find(proposal => proposal.suggestedTarget?.mode === 'replace')?.id,
   });
   const memorySuggestion = useMemo(() => inferMemorySuggestion(prompt), [prompt]);
 
@@ -368,6 +369,16 @@ function AIAssistantWindow({
               )}
 
               {sessionProposals.map((proposal) => {
+                if (proposal.outputNodeTitle) return (
+                  <aside className="ai-proposal ai-writeback-review" key={proposal.id} role="dialog" aria-label="新建结果节点确认">
+                    <header><strong>新建节点 · {proposal.outputNodeTitle}</strong></header>
+                    <p>{proposal.text}</p>
+                    <div className="ai-proposal-actions">
+                      <button type="button" onClick={() => void run(() => client.dispatch('ai.proposal.accept', { proposalId: proposal.id }))}>创建节点</button>
+                      <button type="button" onClick={() => void run(() => client.dispatch('ai.proposal.dismiss', { proposalId: proposal.id }))}>放弃</button>
+                    </div>
+                  </aside>
+                );
                 const proposalOutputMode: AIWritebackMode = outputProposalId === proposal.id ? outputMode : proposal.suggestedTarget?.mode ?? 'replace';
                 const proposalOutputNodeId = outputProposalId === proposal.id
                   ? outputNodeId
@@ -452,8 +463,9 @@ function AIAssistantWindow({
       ) : (
         <section className="ai-provider-settings-host" aria-label="AI 模型与连接">
           {renderSlot?.('ai.settings')}
-          <section className="ai-provider-retrieval-module" aria-label="检索方式">
-            {renderSlot?.('ai.retrieval')}
+          <section className="ai-provider-retrieval-link" aria-label="检索方式">
+            <button type="button" disabled={!client.isCommandAvailable('retrieval.open@1')}
+              onClick={() => void client.dispatch('retrieval.open@1').catch(reason => setError(errorMessage(reason)))}>打开检索设置</button>
           </section>
           <p className="ai-provider-settings-unavailable">模型连接插件当前不可用。</p>
         </section>

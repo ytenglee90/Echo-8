@@ -24,7 +24,7 @@ export const semanticProviderManifest = defineManifest('semantic-provider', '远
   signals: [SEMANTIC_PROVIDER_CHANGED_SIGNAL],
   queries: [SEMANTIC_PROVIDER_STATE_QUERY, SEMANTIC_PROVIDER_PERSONAL_QUERY],
   optionalCapabilities: ['context.catalog@1', 'context.read@1'],
-  providesCapabilities: ['context.semanticSearch@1'],
+  providesCapabilities: ['context.semanticSearch@1', 'context.remoteSemanticSearch@1'],
   permissions: [
     'store.own.read',
     'store.own.write',

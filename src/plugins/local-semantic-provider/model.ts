@@ -18,6 +18,8 @@ import {
   LOCAL_SEMANTIC_PROVIDER_CHANGED_SIGNAL,
   LOCAL_SEMANTIC_PROVIDER_COMMANDS,
   LOCAL_SEMANTIC_PROVIDER_STATE_QUERY,
+  LOCAL_SEMANTIC_MODELS,
+  type LocalSemanticModelId,
   type LocalSemanticProviderConfiguration,
   type LocalSemanticProviderPanelState,
 } from '../../protocols/local-semantic.ts';
@@ -49,12 +51,8 @@ export { LOCAL_SEMANTIC_PROVIDER_NAMESPACE } from './manifest.ts';
 
 const MAX_SOURCES = 10_000;
 const EMBED_BATCH_SIZE = 8;
-const PERSISTED_CACHE_ASSET_KEY = 'bge-small-zh-v1.5-index@1';
 const PERSISTED_CACHE_PAYLOAD_BUDGET = 14 * 1024 * 1024;
 const LOCAL_MODEL_DOWNLOAD_STEPS: ReadonlyArray<{ asset: LocalModelAsset; label: string }> = [
-  { asset: 'bge-small-zh-v1.5.model', label: '中文语义模型' },
-  { asset: 'bge-small-zh-v1.5.tokenizer', label: '中文分词器' },
-  { asset: 'bge-small-zh-v1.5.tokenizer-config', label: '分词配置' },
   { asset: 'onnxruntime-web.wasm-runtime', label: 'ONNX 运行时入口' },
   { asset: 'onnxruntime-web.wasm-backend', label: 'ONNX Web 后端' },
   { asset: 'onnxruntime-web.wasm-binary', label: 'ONNX WASM 引擎' },
@@ -87,8 +85,10 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
         context.signals.emit(LOCAL_SEMANTIC_PROVIDER_CHANGED_SIGNAL, { reason, ...detail });
       };
       const enabled = () => readConfiguration(context).enabled;
+      const activeModel = () => readConfiguration(context).modelId ?? 'small';
       const readState = (): LocalSemanticProviderPanelState => ({
         enabled: enabled(),
+        modelId: activeModel(),
         modelLoaded,
         cache: { ...cacheState },
       });
@@ -106,33 +106,40 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
           context.diagnostics.warn('释放本地语义模型失败', error);
         }
       };
-      const ensureModel = async (signal: AbortSignal, report: (progress: number) => void) => {
+      const ensureModel = async (modelId: LocalSemanticModelId, signal: AbortSignal, report: (progress: number) => void) => {
         if (modelLoaded) return;
         if (!context.workers.available()) throw new Error('当前环境无法启动本地语义 Worker');
+        const modelAsset = `bge-${modelId}-zh-v1.5` as const;
+        const steps: typeof LOCAL_MODEL_DOWNLOAD_STEPS = [
+          { asset: `${modelAsset}.model`, label: '中文语义模型' },
+          { asset: `${modelAsset}.tokenizer`, label: '中文分词器' },
+          { asset: `${modelAsset}.tokenizer-config`, label: '分词配置' },
+          ...LOCAL_MODEL_DOWNLOAD_STEPS,
+        ];
         const download = async (asset: LocalModelAsset) => {
-          const current = LOCAL_MODEL_DOWNLOAD_STEPS.findIndex((step) => step.asset === asset) + 1;
-          const step = LOCAL_MODEL_DOWNLOAD_STEPS[current - 1];
+          const current = steps.findIndex((step) => step.asset === asset) + 1;
+          const step = steps[current - 1];
           cacheState = {
             ...cacheState,
             status: 'downloading',
             error: undefined,
-            download: { current, total: LOCAL_MODEL_DOWNLOAD_STEPS.length, label: step.label },
+            download: { current, total: steps.length, label: step.label },
           };
-          notify('model-download-progress', { asset, current, total: LOCAL_MODEL_DOWNLOAD_STEPS.length });
+          notify('model-download-progress', { asset, current, total: steps.length });
           const result = await context.network.downloadLocalModelAsset(asset, signal);
-          report(0.12 * current / LOCAL_MODEL_DOWNLOAD_STEPS.length);
+          report(0.12 * current / steps.length);
           return result;
         };
         cacheState = {
           ...cacheState,
           status: 'downloading',
           error: undefined,
-          download: { current: 1, total: LOCAL_MODEL_DOWNLOAD_STEPS.length, label: LOCAL_MODEL_DOWNLOAD_STEPS[0].label },
+          download: { current: 1, total: steps.length, label: steps[0].label },
         };
         notify('model-downloading');
-        const model = await download('bge-small-zh-v1.5.model');
-        const tokenizer = await download('bge-small-zh-v1.5.tokenizer');
-        const tokenizerConfig = await download('bge-small-zh-v1.5.tokenizer-config');
+        const model = await download(`${modelAsset}.model`);
+        const tokenizer = await download(`${modelAsset}.tokenizer`);
+        const tokenizerConfig = await download(`${modelAsset}.tokenizer-config`);
         const runtimeModule = await download('onnxruntime-web.wasm-runtime');
         const runtimeBackend = await download('onnxruntime-web.wasm-backend');
         const runtimeWasm = await download('onnxruntime-web.wasm-binary');
@@ -140,6 +147,7 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
         await context.workers.run(
           LOCAL_SEMANTIC_LOAD_MODEL_JOB,
           {
+            modelId,
             model: model.data,
             tokenizer: decoder.decode(tokenizer.data),
             tokenizerConfig: decoder.decode(tokenizerConfig.data),
@@ -150,6 +158,7 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
           signal,
           [model.data, tokenizer.data, tokenizerConfig.data, runtimeModule.data, runtimeBackend.data, runtimeWasm.data],
         );
+        assertNotAborted(signal);
         modelLoaded = true;
         cacheState = { ...cacheState, status: 'indexing', download: undefined };
         notify('model-ready');
@@ -157,6 +166,7 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
       const scheduleIndex = (force = false): TaskHandle<void> => {
         if (indexTask) return indexTask;
         if (!enabled()) throw new Error('本地语义检索已关闭');
+        const modelId = activeModel();
         cacheState = { ...cacheState, status: 'indexing', error: undefined };
         notify('indexing');
         const task = context.tasks.schedule<void>({
@@ -170,12 +180,13 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
             try {
               await buildIndex(context, {
                 force,
+                modelId,
                 signal,
                 report,
                 waitIfPaused: control.waitIfPaused,
-                ensureModel,
+                ensureModel: (signal, report) => ensureModel(modelId, signal, report),
                 readCache: () => cacheBySource,
-                writeCache: (next) => { cacheBySource = next; },
+                writeCache: (next) => { assertNotAborted(signal); cacheBySource = next; },
                 updateState: (next) => {
                   cacheState = { ...cacheState, ...next };
                   notify('index-progress');
@@ -239,13 +250,31 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
               history: false,
               patches: [{
                 op: 'set', domain: 'workspace', namespace: LOCAL_SEMANTIC_PROVIDER_NAMESPACE,
-                key: 'configuration', value: { enabled: nextEnabled } satisfies LocalSemanticProviderConfiguration,
+                key: 'configuration', value: { ...readConfiguration(context), enabled: nextEnabled } satisfies LocalSemanticProviderConfiguration,
               }],
               events: [{ type: 'local.semantic.provider.configuration.changed', payload: { enabled: nextEnabled } }],
             },
           };
         },
       });
+      context.commands.register<{ modelId: LocalSemanticModelId }>({
+        type: LOCAL_SEMANTIC_PROVIDER_COMMANDS.setModel,
+        validate: (value): value is { modelId: LocalSemanticModelId } => isRecord(value) && (value.modelId === 'small' || value.modelId === 'base'),
+        handle: async ({ modelId }) => {
+          if (modelId === activeModel()) return { result: { modelId } };
+          if (indexTask) throw new Error('请等待本地索引完成，或先取消当前任务。');
+          await disposeModel();
+          clearCache(enabled() ? 'idle' : 'disabled');
+          return { result: { modelId }, transaction: {
+            label: '切换本地语义模型',
+            history: false,
+            patches: [{ op: 'set', domain: 'workspace', namespace: LOCAL_SEMANTIC_PROVIDER_NAMESPACE,
+              key: 'configuration', value: { ...readConfiguration(context), modelId } satisfies LocalSemanticProviderConfiguration }],
+            events: [{ type: 'local.semantic.provider.configuration.changed', payload: { modelId } }],
+          } };
+        },
+      });
+      context.events.subscribe('local.semantic.provider.configuration.changed', () => notify('configuration'));
       context.commands.register<{ force?: boolean }>({
         type: LOCAL_SEMANTIC_PROVIDER_COMMANDS.rebuild,
         validate: (value): value is { force?: boolean } => value === undefined ||
@@ -280,29 +309,31 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
         },
       });
       context.queries.register({ type: LOCAL_SEMANTIC_PROVIDER_STATE_QUERY, handle: readState });
-      context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
-        key: 'context.semanticSearch@1',
+      for (const key of ['context.semanticSearch@1', 'context.localSemanticSearch@1'] as const) context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
+        key,
         priority: 24,
         invoke: async (input, signal) => {
           validateAIContextSearchRequest(input);
           if (!enabled()) return emptyContribution();
+          const modelId = activeModel();
           try {
             await scheduleIndex(false).result;
             assertNotAborted(signal);
+            if (!enabled() || activeModel() !== modelId || !modelLoaded) return emptyContribution(modelId);
             const query = input.query?.trim() || input.terms.join(' ');
             const [vector] = await embedTexts(context, [query], signal);
-            return vector
+            return vector && enabled() && activeModel() === modelId
               ? searchSemanticVectorCache(
                   cacheBySource.values(),
                   vector,
                   input,
-                  'local-bge-small-zh-v1.5',
+                  `local-bge-${modelId}-zh-v1.5`,
                 )
-              : emptyContribution();
+              : emptyContribution(modelId);
           } catch (error) {
             if (isAbortError(error)) throw error;
             context.diagnostics.warn('本地语义检索不可用，已保留 BM25 结果', error);
-            return emptyContribution();
+            return emptyContribution(modelId);
           }
         },
       });
@@ -346,6 +377,7 @@ async function buildIndex(
   context: PluginContext,
   options: {
     force: boolean;
+    modelId: LocalSemanticModelId;
     signal: AbortSignal;
     report(progress: number): void;
     waitIfPaused(): Promise<void>;
@@ -357,7 +389,7 @@ async function buildIndex(
 ): Promise<void> {
   const catalog = await readSemanticCatalog(context, options.signal);
   if (catalog.length > MAX_SOURCES) throw new Error(`当前画布有 ${catalog.length} 个可检索来源，超过单次本地语义索引上限 ${MAX_SOURCES}`);
-  const persistent = await readPersistentCache(context, options.signal, options.force);
+  const persistent = await readPersistentCache(context, options.modelId, options.signal, options.force);
   const liveIds = new Set(catalog.map((source) => source.sourceId));
   const currentCache = options.readCache();
   const staged = new Map([...currentCache].filter(([sourceId]) => liveIds.has(sourceId)));
@@ -367,7 +399,7 @@ async function buildIndex(
   });
   options.updateState({ totalSources: catalog.length });
   if (stale.length === 0) {
-    if (staged.size !== currentCache.size) await persistCache(context, staged, persistent.available, options.signal);
+    if (staged.size !== currentCache.size) await persistCache(context, options.modelId, staged, persistent.available, options.signal);
     options.writeCache(staged);
     options.report(1);
     return;
@@ -450,20 +482,21 @@ async function buildIndex(
   }
   for (const source of stale) staged.delete(source.sourceId);
   for (const [sourceId, chunks] of nextChunks) staged.set(sourceId, chunks);
-  await persistCache(context, staged, persistent.available, options.signal);
+  await persistCache(context, options.modelId, staged, persistent.available, options.signal);
   options.writeCache(staged);
   options.report(1);
 }
 
 async function readPersistentCache(
   context: PluginContext,
+  modelId: LocalSemanticModelId,
   signal: AbortSignal,
   ignoreStored: boolean,
 ): Promise<PersistentCacheSnapshot> {
   let asset: PersonalTextAssetRecord | undefined;
   try {
     asset = await context.queries.ask<PersonalTextAssetRecord | undefined>('system.personalAssets.get', {
-      key: PERSISTED_CACHE_ASSET_KEY,
+      key: LOCAL_SEMANTIC_MODELS[modelId].cacheKey,
     });
   } catch {
     return { available: false, sources: new Map() };
@@ -473,7 +506,7 @@ async function readPersistentCache(
   try {
     const decoded = await context.workers.run<LocalSemanticDecodeCacheResult>(
       LOCAL_SEMANTIC_DECODE_CACHE_JOB,
-      { text: asset.text },
+      { text: asset.text, modelId },
       signal,
     );
     return {
@@ -489,6 +522,7 @@ async function readPersistentCache(
 
 async function persistCache(
   context: PluginContext,
+  modelId: LocalSemanticModelId,
   cache: Map<string, CachedChunk[]>,
   available: boolean,
   signal: AbortSignal,
@@ -499,12 +533,12 @@ async function persistCache(
     const selected = selectPersistentSources(cache);
     const encoded = await context.workers.run<LocalSemanticEncodeCacheResult>(
       LOCAL_SEMANTIC_ENCODE_CACHE_JOB,
-      { sources: selected.sources },
+      { sources: selected.sources, modelId },
       signal,
     );
     assertNotAborted(signal);
     await context.commands.dispatch('system.personalAssets.set', {
-      key: PERSISTED_CACHE_ASSET_KEY,
+      key: LOCAL_SEMANTIC_MODELS[modelId].cacheKey,
       asset: {
         schemaVersion: 1,
         text: encoded.text,
@@ -564,13 +598,15 @@ async function embedTexts(context: PluginContext, texts: string[], signal?: Abor
 
 function readConfiguration(context: PluginContext): LocalSemanticProviderConfiguration {
   const value = context.store.readValue(LOCAL_SEMANTIC_PROVIDER_NAMESPACE, 'configuration');
-  return isRecord(value) && typeof value.enabled === 'boolean' ? { enabled: value.enabled } : { enabled: true };
+  return isRecord(value) && typeof value.enabled === 'boolean'
+    ? { enabled: value.enabled, modelId: value.modelId === 'base' ? 'base' : 'small' }
+    : { enabled: true };
 }
 
 function emptyCache(status: LocalSemanticProviderPanelState['cache']['status']): LocalSemanticProviderPanelState['cache'] {
   return { status, indexedSources: 0, indexedChunks: 0, totalSources: 0, partialSources: 0 };
 }
 
-function emptyContribution(): AIContextSearchContribution {
-  return { provider: 'local-bge-small-zh-v1.5', hits: [], scanned: 0 };
+function emptyContribution(modelId: LocalSemanticModelId = 'small'): AIContextSearchContribution {
+  return { provider: `local-bge-${modelId}-zh-v1.5`, hits: [], scanned: 0 };
 }

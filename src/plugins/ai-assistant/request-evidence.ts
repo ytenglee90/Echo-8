@@ -1,7 +1,11 @@
 import type { AIChatMessage, AIPreparedSource } from '../../protocols/ai.ts';
 import { extractTerms } from './memory-terms.ts';
 
-/** Bounded selection from already range-read originals; no summary replaces evidence. */
+const RECENT_MESSAGES = 6;
+const EARLIER_MESSAGE_LIMIT = 10;
+const EARLIER_CHARACTER_LIMIT = 1_800;
+
+/** Bounded selection of verbatim messages from already range-read originals. */
 export function nativeConversation(text: string, prompt: string, omitCanvasStatus = false): Array<AIChatMessage & { role: 'user' | 'assistant' }> {
   const headers = [...text.matchAll(/^\[(用户|助手)(?:\s*·\s*[^\]]+)?\]\s*$/gmu)];
   const messages = headers.map((header, index) => ({
@@ -9,11 +13,26 @@ export function nativeConversation(text: string, prompt: string, omitCanvasStatu
     content: text.slice(header.index! + header[0].length, headers[index + 1]?.index ?? text.length).trim(),
   })).filter((item, index) => item.content && !(omitCanvasStatus && item.role === 'assistant' &&
     /·\s*画布操作\]/u.test(headers[index]![0]) && /^(?:已准备\s*\d+\s*项|已生成\s*\d+\s*项|本次没有需要应用的画布操作)/u.test(item.content)));
-  const terms = extractTerms(prompt);
-  return messages.filter((message, index) => index >= messages.length - 6 ||
-    (message.role === 'user' && /必须|禁止|不能|不得|确认|决定|限制/u.test(message.content)) ||
-    terms.some(term => message.content.toLocaleLowerCase().includes(term.toLocaleLowerCase())))
-    .slice(-16);
+  const recent = messages.slice(-RECENT_MESSAGES);
+  const older = messages.slice(0, -RECENT_MESSAGES);
+  const terms = extractTerms(prompt).map(term => term.toLocaleLowerCase());
+  const preserved = new Set<number>();
+  let remaining = EARLIER_CHARACTER_LIMIT;
+  const keep = (index: number) => {
+    const message = older[index]!;
+    if (preserved.has(index) || preserved.size >= EARLIER_MESSAGE_LIMIT || message.content.length > remaining) return;
+    remaining -= message.content.length;
+    preserved.add(index);
+  };
+  for (let index = older.length - 1; index >= 0; index--) {
+    const message = older[index]!;
+    if (message.role === 'user' && /必须|禁止|不能|不得|确认|决定|限制|不要|保留/u.test(message.content)) keep(index);
+  }
+  for (let index = older.length - 1; index >= 0; index--) {
+    const body = older[index]!.content.toLocaleLowerCase();
+    if (terms.some(term => body.includes(term))) keep(index);
+  }
+  return [...older.filter((_message, index) => preserved.has(index)), ...recent];
 }
 
 /** Keep every citation/source identity, but send identical verified bodies once. */

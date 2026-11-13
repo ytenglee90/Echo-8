@@ -12,6 +12,83 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('formal natural memory is reviewed and recorded offline', async ({ page }) => {
+    await page.goto(url);
+    await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+    await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('记住主角年龄：29');
+    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
+    const review = ai.getByRole('dialog', { name: '需要确认的上下文检查' });
+    await expect(review).toContainText('@确认 主角年龄：29');
+    await review.getByRole('button', { name: '确认并继续' }).click();
+    await expect(ai).toContainText('已确认并记入当前对话。');
+    await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
+  });
+
+  test('named comparison sends both sources and saves the result only after confirmation', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      calls += 1;
+      const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
+      if (calls === 2) {
+        const wire = request.messages.map(message => message.content).join('\n');
+        expect(wire).toContain('出生于渡口。');
+        expect(wire).toContain('出生于港城。');
+      }
+      const content = calls === 1 ? JSON.stringify({ version: 1, actions: [
+        { type: 'create-node', ref: 'draft-a', title: '初稿', text: '出生于渡口。' },
+        { type: 'create-node', ref: 'draft-b', title: '终稿', text: '出生于港城。' },
+      ] }) : '两稿的出生地不同。';
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const send = async (prompt: string) => {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
+    };
+    await send('@画布操作 新建两个测试节点');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 2 项');
+    await send('对比初稿和终稿，并把冲突整理成名为「人物冲突」的新节点');
+    const card = page.getByRole('article', { name: '文本节点：人物冲突' });
+    const review = ai.getByRole('dialog', { name: '新建结果节点确认' });
+    await expect(review).toContainText('两稿的出生地不同。');
+    await expect(card).toHaveCount(0);
+    await review.getByRole('button', { name: '创建节点' }).click();
+    await expect(card).toContainText('两稿的出生地不同。');
+    expect(calls).toBe(2);
+  });
+
+  test('retrieval settings are governed, show honest versions and retain mode without a model connection', async ({ page }, info) => {
+    await page.goto(url);
+    await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+    await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
+    await ai.getByRole('button', { name: '打开检索设置', exact: true }).click();
+    const settings = page.getByRole('region', { name: '检索设置', exact: true });
+    const mode = settings.getByRole('combobox', { name: '检索方式', exact: true });
+    await expect(mode).toHaveValue('local');
+    await mode.selectOption('keyword');
+    await expect(settings).toContainText('本轮自动检索跳过语义模型');
+    await settings.getByText('关键词索引版本与更新', { exact: true }).click();
+    await settings.getByText('本地模型版本、优点与代价', { exact: true }).click();
+    await expect(settings).toContainText('Xenova/bge-small-zh-v1.5');
+    const model = settings.getByRole('combobox', { name: '本地语义模型' });
+    await expect(model).toHaveValue('small');
+    await model.selectOption('base');
+    await expect(settings).toContainText('Xenova/bge-base-zh-v1.5');
+    await model.selectOption('small');
+    await expect(settings).toContainText('前五均命中 12/12');
+    await settings.screenshot({ path: info.outputPath('retrieval-settings.png') });
+    await settings.getByRole('button', { name: '关闭检索设置' }).click();
+    await ai.getByRole('button', { name: '打开检索设置', exact: true }).click();
+    await expect(mode).toHaveValue('keyword');
+    await mode.selectOption('cloud-fallback');
+    await expect(settings).toContainText('云端连接仍需独立授权');
+  });
   test('semantic filter sends only the request, resolves candidates locally, then moves the same result set without another call', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => {
@@ -59,6 +136,7 @@ export function canvasControlScenarios(url: string): void {
         const wire = request.messages.map(message => message.content).join('\n');
         expect(wire).toContain(calls === 2 ? '左腕有一道旧伤，阴天时会痛。' : '旧伤遇潮便痛。');
         expect(wire).not.toContain('远处绝不应发送');
+        if (calls === 3) expect(wire).toContain('不要修改人物年龄');
       }
       const content = calls === 1 ? JSON.stringify({ version: 1, actions: [{ type: 'create-node', ref: 'hero', title: '旧伤验收', text: '前文保留。\n\n左腕有一道旧伤，阴天时会痛。\n\n后文保留。' + '隔'.repeat(400) + '远处绝不应发送' }] })
         : calls === 2 ? '旧伤遇潮便痛。' : '旧伤畏潮。';
@@ -72,11 +150,12 @@ export function canvasControlScenarios(url: string): void {
     };
     await send('@画布操作 新建旧伤验收节点');
     await expect(ai.getByRole('status')).toContainText('已直接完成 1 项');
-    await send('把写旧伤的那段缩短一点');
-    await ai.getByRole('button', { name: '接受提案', exact: true }).click();
+    await send('把旧伤验收里写旧伤的那段缩短一点，保留我的口吻，不要修改人物年龄。');
+    await expect(ai.getByRole('button', { name: '接受提案', exact: true })).toBeVisible();
+    await send('替换进去');
     const card = page.getByRole('article', { name: /文本节点：旧伤验收$/u });
     await expect(card).toContainText('旧伤遇潮便痛。');
-    await send('再短一点');
+    await send('再短一点，保留我的口吻。');
     await ai.getByRole('button', { name: '接受提案', exact: true }).click();
     await expect(card).toContainText('旧伤畏潮。');
     await expect(card).toContainText('前文保留。');
