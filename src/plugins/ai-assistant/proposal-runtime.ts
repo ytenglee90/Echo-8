@@ -30,6 +30,7 @@ import {
 import { collectAIResponseCitations } from './transcript-presentation.ts';
 import type { PreparedGeneration } from './request-runtime.ts';
 import type { AIResponseDetail } from './types.ts';
+import { normalizeTokenUsage } from '../../services/ai-token-usage.ts';
 
 export const AI_PROPOSAL_NAMESPACE = 'aiProposals';
 export const AI_RESPONSE_NAMESPACE = 'aiResponseDetails';
@@ -94,12 +95,14 @@ export function registerAIProposalRuntime(
         ...citation,
         revision: citation.sourceId === transcriptSourceId ? append.revision : citation.revision,
       }));
-      const responseDetail: AIResponseDetail | undefined = reasoning || citations.length > 0 ? {
+      const usage = normalizeTokenUsage(payload.usage);
+      const responseDetail: AIResponseDetail | undefined = reasoning || citations.length > 0 || usage ? {
         id: createId('ai-response-detail'),
         sessionId: session.id,
         turn: nextSession.turns,
         ...(reasoning ? { reasoning } : {}),
         ...(citations.length > 0 ? { citations } : {}),
+        ...(usage ? { usage } : {}),
         createdAt: Date.now(),
       } : undefined;
       return {

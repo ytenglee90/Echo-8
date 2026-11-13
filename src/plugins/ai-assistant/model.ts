@@ -29,6 +29,7 @@ import {
 import { canReusePersistedFileHandle } from '../../services/native-file-permission.ts';
 import { isRecord as isPlainRecord, removeOwnKeysInPlace } from '../../services/retired-data.ts';
 import { defineManifest } from '../manifest.ts';
+import { registerAIRequestInspection } from './request-inspection-runtime.ts';
 import { buildMemoryIndexDraft } from './memory-indexing.ts';
 import {
   AI_MEMORY_FILE_INDEX_SUFFIX,
@@ -158,6 +159,7 @@ export function createAIAssistantPlugin(
   panel?: unknown,
   toolbar?: unknown,
   memoryDeleteDialog?: unknown,
+  requestInspectionDialog?: unknown,
 ): PluginDefinition {
   const preparations = new Map<string, PreparedGeneration>();
   const preparationTasks = new Map<string, TaskHandle<AIPreparedContext>>();
@@ -227,6 +229,7 @@ export function createAIAssistantPlugin(
         'entity.deletePlan@1',
       ],
       optionalCapabilities: [
+        'ai.provider.requestTrace@1',
         'canvasControl.context@1',
         'context.search@1',
         'context.search@2',
@@ -276,6 +279,7 @@ export function createAIAssistantPlugin(
         'ai.generation.retry',
         'ai.generation.cancel',
         'ai.generation.record',
+        'ai.request.inspect@1', 'ai.request.closeInspection@1',
         'ai.proposal.accept',
         'ai.proposal.dismiss',
         'ai.memory.setEnabled',
@@ -324,10 +328,12 @@ export function createAIAssistantPlugin(
         'ai.prompt.configuration.changed',
       ],
       queries: [
+        'ai.request.inspection@1',
         'ai.state', 'ai.catalog', 'ai.transcript', 'ai.pendingPreparation',
         'ai.memoryIndexes', 'ai.memoryCatalog', 'ai.memory.deleteConfirmation', 'ai.promptTemplates',
       ],
       asks: [
+        'ai.request.inspection@1',
         'ai.state',
         'ai.catalog',
         'ai.transcript',
@@ -340,6 +346,7 @@ export function createAIAssistantPlugin(
         'system.preferences.get',
       ],
       signals: [
+        'ai.request.inspection.changed@1',
         'ai.status',
         'ai.context.ready',
         'ai.generation.delta',
@@ -359,7 +366,7 @@ export function createAIAssistantPlugin(
         'content.reference.drop',
         'bookLibrary.updated',
       ],
-      ui: ['ai.open-button', 'ai.panel', 'ai.memory.deleteConfirm'],
+      ui: ['ai.open-button', 'ai.panel', 'ai.memory.deleteConfirm', 'ai.request-inspection'],
       actions: ['ai.open-action', 'ai.open-new-assistant-action', 'ai.open-provider-settings-action', 'ai.save-session-action'],
       shortcuts: [
         'ai.open-shortcut',
@@ -383,6 +390,7 @@ export function createAIAssistantPlugin(
     }),
 
     start(context) {
+      registerAIRequestInspection(context, requestInspectionDialog);
       const generation = ++lifecycleGeneration;
       // A memory save plans content-node titles and then commits those plans.
       // Keep that planning/commit window exclusive so concurrent sessions do

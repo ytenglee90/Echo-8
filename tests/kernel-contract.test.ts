@@ -7910,7 +7910,7 @@ test('AI provider parses OpenAI-compatible SSE without waiting for one JSON resp
     assert.equal(outputTokens, 4);
     assert.equal(finishReason, 'length');
     assert.equal(requestBody?.stream, true);
-    assert.equal(requestBody?.stream_options, undefined);
+    assert.deepEqual(requestBody?.stream_options, { include_usage: true });
     await harness.plugins.stop('ai-provider');
     assert.equal(harness.resources.count('ai-provider'), 0);
   } finally {

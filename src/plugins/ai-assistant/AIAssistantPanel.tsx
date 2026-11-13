@@ -320,6 +320,7 @@ function AIAssistantWindow({
                   responseDetails={state.responseDetails}
                   currentSources={catalog.sources}
                   onOpenSource={(sourceId) => void run(() => client.dispatch('editor.open', { id: sourceId }))}
+                  onInspectRequest={(turn) => void run(() => client.dispatch('ai.request.inspect@1', { sessionId: activeSession.id, turn }))}
                 />
               ) : <AICommandHints />}
               <div className="ai-status-row">

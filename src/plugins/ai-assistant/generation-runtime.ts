@@ -12,6 +12,8 @@ import type {
 } from '../../protocols/ai.ts';
 import { assertNotAborted } from '../../services/async-control.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
+import { aggregateTokenUsage, withTokenUsageEstimates } from '../../services/ai-token-usage.ts';
+import { estimateAITokens } from './evidence-boundaries.ts';
 import { buildGenerateRequest } from './generation-request.ts';
 import { executeMemorySearchToolCalls } from './memory-search-tool.ts';
 import { operationCreatesWriteback } from './operations.ts';
@@ -57,7 +59,7 @@ export async function consumeAIGenerationStream(
   for await (const event of stream.events) {
     assertNotAborted(signal);
     if (event.type === 'complete') {
-      usage = event.usage;
+      if (event.usage) usage = event.usage;
       finishReason = event.finishReason;
       continue;
     }
@@ -164,11 +166,18 @@ export function registerAIGenerationRuntime(
           signal,
         );
         let emittedSequence = 0;
+        const requestUsages: Array<AIGenerateResult['usage']> = [];
+        const recordUsage = (completed: AIGenerateResult, activeRequest: AIGenerateRequest) => requestUsages.push(withTokenUsageEstimates(
+          completed.usage,
+          3 + activeRequest.messages.reduce((total, message) => total + 4 + estimateAITokens(message.content) + (message.toolCalls ? estimateAITokens(JSON.stringify(message.toolCalls)) : 0), 0) + (activeRequest.tools ? estimateAITokens(JSON.stringify(activeRequest.tools)) : 0),
+          estimateAITokens(completed.text + (completed.reasoning ?? '') + (completed.toolCalls ? JSON.stringify(completed.toolCalls) : '')),
+        ));
         const generateOnce = async (activeRequest: AIGenerateRequest): Promise<AIGenerateResult> => {
+          const inspectedRequest = { ...activeRequest, inspection: { sessionId: prepared.sessionId, userTurn: prepared.userTurn ?? options.readSessions()[prepared.sessionId]?.turns ?? 1 } };
           try {
             const stream = await context.capabilities.request<AIGenerateStream>(
               'ai.generate.stream@1',
-              activeRequest,
+              inspectedRequest,
               signal,
             );
             const result = await consumeAIGenerationStream(stream, signal, {
@@ -200,15 +209,19 @@ export function registerAIGenerationRuntime(
               },
               report,
             });
-            return inferLengthTermination(result, activeRequest);
+            const completed = inferLengthTermination(result, activeRequest);
+            recordUsage(completed, activeRequest);
+            return completed;
           } catch (error) {
             if (!isCapabilityUnavailable(error, 'ai.generate.stream@1')) throw error;
-            return inferLengthTermination(
+            const completed = inferLengthTermination(
               normalizeAIGenerateResult(
-                await context.capabilities.request<AIGenerateResult>('ai.generate@1', activeRequest, signal),
+                await context.capabilities.request<AIGenerateResult>('ai.generate@1', inspectedRequest, signal),
               ),
               activeRequest,
             );
+            recordUsage(completed, activeRequest);
+            return completed;
           }
         };
 
@@ -292,7 +305,7 @@ export function registerAIGenerationRuntime(
             if (result.finishReason !== 'length') parseCanvasControlPlan(result.text);
           }
         }
-        return result;
+        return { ...result, usage: aggregateTokenUsage(requestUsages) };
       },
     });
     options.tasks.set(prepared.sessionId, task);

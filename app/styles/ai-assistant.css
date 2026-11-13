@@ -257,6 +257,18 @@ button.ai-source-citation:focus-visible {
   font-size: 12px;
   opacity: .62;
 }
+.ai-token-usage { font-variant-numeric: tabular-nums; }
+.ai-request-inspect-button { display: block; margin-top: 6px; padding: 0; border: 0; background: transparent; color: inherit; font-size: 12px; opacity: .72; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.ai-request-inspect-button:hover { opacity: 1; }
+.ai-request-inspection-dialog { display: flex; flex-direction: column; width: min(860px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); border: 1px solid var(--border); border-radius: var(--panel-radius, 14px); background: var(--panel); color: var(--text); box-shadow: var(--panel-shadow); overflow: hidden; }
+.ai-request-inspection-dialog > header { display: flex; align-items: flex-start; gap: 16px; padding: 16px; border-bottom: 1px solid var(--border); }
+.ai-request-inspection-dialog > header > div { flex: 1; }
+.ai-request-inspection-dialog p { margin: 6px 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.ai-request-inspection-dialog > header p { color: var(--muted); }
+.ai-request-inspection-body { padding: 16px; overflow: auto; }
+.ai-request-inspection-body > section + section { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--border); }
+.ai-request-inspection-body h3 { margin: 0 0 8px; font-size: 13px; }
+.ai-request-inspection-body pre { padding: 10px; border-radius: 8px; background: var(--panel-soft, var(--canvas)); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ai-reasoning-block {
   margin: 0 0 8px;
   padding: 6px 8px;

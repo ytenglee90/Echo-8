@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+AI replies expose per-round input/output usage across providers with independently labelled estimates for missing counts. Multi-request rounds aggregate usage once; reply metadata persists without polluting transcript evidence. Actual request bodies remain in a bounded, redacted, provider-owned current-open-session cache, exposed through a versioned capability to an AI-owned governed modal (ADR-0140).
+
 Non-awaitable deferred commands can also be queued from owned background callbacks while retaining manifest admission, serial ordering and diagnostics; ordinary nested dispatch remains rejected. AI canvas plans receive at most one bounded format correction through the same model connection, and failed admission releases completed task state so retries remain available (ADR-0139).
 
 The optional canvas-control plugin accepts plans only from explicit @画布操作 turns. It captures bounded object metadata through public capabilities, stages untrusted model data for review, and obtains owner-produced text/group/connection patches. A token-bound inline commit applies the accepted batch in one document transaction. Review state remains transient, body edits retain chunk/format/annotation handling, and stale revisions or overlapping storage targets reject the batch (ADR-0138).

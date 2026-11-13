@@ -4,14 +4,18 @@ import type {
   AIPreparedSource,
 } from '../../protocols/ai.ts';
 import type { AIResponseCitation, AIResponseDetail } from './types.ts';
+import { withTokenUsageEstimates } from '../../services/ai-token-usage.ts';
+import { estimateAITokens } from './evidence-boundaries.ts';
 
 export interface AITranscriptMessageView {
   key: string;
+  turn: number;
   role: 'user' | 'assistant';
   text: string;
   meta: string;
   reasoning?: string;
   citations?: readonly AIResponseCitation[];
+  usage?: AIResponseDetail['usage'];
 }
 
 export type AITranscriptTextSegment =
@@ -34,26 +38,30 @@ export type AITranscriptTextSegment =
 export function parseTranscriptMessages(
   text: string,
   totalTurns: number,
-  detailsByTurn: ReadonlyMap<number, Pick<AIResponseDetail, 'reasoning' | 'citations'>>,
+  detailsByTurn: ReadonlyMap<number, Pick<AIResponseDetail, 'reasoning' | 'citations' | 'usage'>>,
 ): AITranscriptMessageView[] {
   const header = /^\[(用户|助手)(?:\s*·\s*([^\]]+))?\]\s*$/gmu;
   const matches = [...text.matchAll(header)];
   const firstTurn = Math.max(0, totalTurns - matches.length);
+  let lastUserText = '';
   return matches.flatMap((match, index) => {
     const start = (match.index ?? 0) + match[0].length;
     const end = matches[index + 1]?.index ?? text.length;
     const body = text.slice(start, end).trim();
     if (!body) return [];
+    if (match[1] === '用户') lastUserText = body;
     const detail = match[1] === '助手'
       ? detailsByTurn.get(firstTurn + index + 1)
       : undefined;
     return [{
       key: `${match.index ?? index}:${match[1]}`,
+      turn: firstTurn + index + 1,
       role: match[1] === '用户' ? 'user' as const : 'assistant' as const,
       text: body,
       meta: match[2]?.trim() ?? '',
       ...(detail?.reasoning ? { reasoning: detail.reasoning } : {}),
       ...(detail?.citations?.length ? { citations: detail.citations } : {}),
+      ...(match[1] === '助手' ? { usage: withTokenUsageEstimates(detail?.usage, estimateAITokens(lastUserText), estimateAITokens(body + (detail?.reasoning ?? ''))) } : {}),
     }];
   });
 }

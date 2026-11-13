@@ -88,6 +88,7 @@ export interface AIResponseDetail {
   reasoning?: string;
   /** Stable provenance for every numbered canvas citation used by this answer. */
   citations?: AIResponseCitation[];
+  usage?: import('../../protocols/ai.ts').AITokenUsage;
   createdAt: number;
 }
 

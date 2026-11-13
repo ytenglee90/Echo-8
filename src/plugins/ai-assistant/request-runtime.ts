@@ -42,6 +42,7 @@ export type PreparedGeneration = AIPreparedContext & {
   followupAction?: 'retry' | 'repeat';
   userEntryStart?: number;
   userEntryLength?: number;
+  userTurn?: number;
 };
 
 export interface AIRequestRuntimeOptions {
@@ -213,6 +214,7 @@ export function registerAIRequestRuntime(
       prepared.followupAction = undefined;
       prepared.userEntryStart = append.start;
       prepared.userEntryLength = userEntry.length;
+      prepared.userTurn = session.turns + 1;
       const nextSession: AISessionRecord = {
         ...session,
         transcriptRevision: append.revision,
@@ -292,6 +294,7 @@ export function registerAIRequestRuntime(
       prepared.transcriptRevisionAfterUser = append.revision;
       prepared.transcriptRevisionAfterAssistant = undefined;
       prepared.followupAction = action.kind;
+      prepared.userTurn = session.turns + 1;
       prepared.expiresAt = Date.now() + AI_GENERATION_ACTION_TTL_MS;
       options.generationActionBySession.delete(session.id);
       options.generationStateBySession.delete(session.id);

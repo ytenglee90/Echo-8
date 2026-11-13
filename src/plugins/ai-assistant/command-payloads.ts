@@ -12,6 +12,7 @@ import type {
 import type { FileDirectoryTarget, FileReadWriteTarget, FileSaveTarget } from '../../protocols/files.ts';
 import type { FloatingPanelRect } from '../../protocols/floating.ts';
 import { isAIOperation } from './operations.ts';
+import { tokenCount } from '../../services/ai-token-usage.ts';
 import {
   AI_COMPOSER_HEIGHT_MAX,
   AI_COMPOSER_HEIGHT_MIN,
@@ -354,6 +355,11 @@ export function isGenerationRecordPayload(payload: unknown): payload is Generati
     payload.text.length <= 100_000 &&
     (payload.reasoning === undefined || (typeof payload.reasoning === 'string' && payload.reasoning.length <= 100_000)) &&
     typeof payload.provider === 'string' && typeof payload.model === 'string' &&
+    (payload.usage === undefined || isRecord(payload.usage) &&
+      (payload.usage.inputTokens === undefined || tokenCount(payload.usage.inputTokens) !== undefined) &&
+      (payload.usage.outputTokens === undefined || tokenCount(payload.usage.outputTokens) !== undefined) &&
+      (payload.usage.inputEstimated === undefined || typeof payload.usage.inputEstimated === 'boolean') &&
+      (payload.usage.outputEstimated === undefined || typeof payload.usage.outputEstimated === 'boolean')) &&
     (payload.finishReason === undefined || finishReasons.has(String(payload.finishReason)));
 }
 

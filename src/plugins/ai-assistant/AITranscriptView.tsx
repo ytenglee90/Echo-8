@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { AIContextSource } from '../../protocols/ai.ts';
 import type { AIResponseCitation, AIResponseDetail } from './types.ts';
+import { formatTokenUsage } from '../../services/ai-token-usage.ts';
 import {
   parseTranscriptMessages,
   splitAIResponseCitations,
@@ -13,6 +14,7 @@ export function AITranscriptView({
   responseDetails,
   currentSources,
   onOpenSource,
+  onInspectRequest,
 }: {
   text: string;
   turns: number;
@@ -20,6 +22,7 @@ export function AITranscriptView({
   responseDetails: readonly AIResponseDetail[];
   currentSources: readonly AIContextSource[];
   onOpenSource: (sourceId: string) => void;
+  onInspectRequest: (turn: number) => void;
 }) {
   const messages = useMemo(
     () => parseTranscriptMessages(
@@ -46,6 +49,8 @@ export function AITranscriptView({
             onOpenSource={onOpenSource}
           />
           {message.meta && <small>{message.meta}</small>}
+          {message.role === 'user' && <button type="button" className="ai-request-inspect-button" onClick={() => onInspectRequest(message.turn)}>查看发送内容</button>}
+          {message.role === 'assistant' && <small className="ai-token-usage" aria-label="本轮 Token 用量" title="优先显示平台返回的用量；缺失项按实际请求与回复估算，历史缺失记录按可见对话估算。估算与平台账单可能不同。">{formatTokenUsage(message.usage)}</small>}
         </article>
       ))}
     </div>

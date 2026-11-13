@@ -16,6 +16,8 @@ import {
   type SessionKeyPayload,
 } from '../../services/provider-profile-payloads.ts';
 import { defineManifest } from '../manifest.ts';
+import { AIRequestTraceBuffer } from './request-trace.ts';
+import type { AIRequestIdentity, AIRequestSnapshot } from '../../protocols/ai-request-inspection.ts';
 import {
   SEMANTIC_PROVIDER_CHANGED_SIGNAL,
   SEMANTIC_PROVIDER_COMMANDS,
@@ -92,7 +94,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         'aiProvider.restorePersonal',
         'system.preferences.set',
       ],
-      events: ['ai.provider.configuration.changed'],
+      events: ['ai.provider.configuration.changed', 'document.replaced'],
       signals: ['ai.provider.changed', SEMANTIC_PROVIDER_CHANGED_SIGNAL],
       queries: ['aiProvider.state'],
       asks: [
@@ -101,7 +103,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         SEMANTIC_PROVIDER_PERSONAL_QUERY,
         'system.preferences.get',
       ],
-      providesCapabilities: ['ai.generate@1', 'ai.generate.stream@1', 'ai.provider.info@1', 'ai.provider.catalog@1'],
+      providesCapabilities: ['ai.generate@1', 'ai.generate.stream@1', 'ai.provider.info@1', 'ai.provider.catalog@1', 'ai.provider.requestTrace@1'],
       ui: ['ai-provider.settings', 'ai-provider.semantic-settings'],
       permissions: [
         'store.own.read',
@@ -114,6 +116,12 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
     }),
 
     start(context) {
+      const requestTrace = new AIRequestTraceBuffer();
+      context.events.subscribe('document.replaced', () => requestTrace.clear());
+      context.capabilities.provide<AIRequestIdentity, AIRequestSnapshot[]>({ key: 'ai.provider.requestTrace@1', invoke: input => {
+        if (!isRecord(input) || typeof input.sessionId !== 'string' || !Number.isSafeInteger(input.userTurn) || input.userTurn < 1) throw new Error('请求记录标识无效');
+        return requestTrace.read(input);
+      } });
       sessionApiKeys.clear();
       lastSemanticConnections = undefined;
       backupWriteTail = Promise.resolve();
@@ -449,6 +457,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
               request.endpoint,
               { ...request.init, signal: controller.signal },
               controller.signal,
+              (endpoint, init) => requestTrace.capture(input.inspection, endpoint, init, apiKey),
             );
             const payload = await readLimitedJson(response);
             const parsed = profile.apiStyle === 'gemini'
@@ -487,6 +496,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
               request.endpoint,
               { ...request.init, signal: controller.signal },
               controller.signal,
+              (endpoint, init) => requestTrace.capture(input.inspection, endpoint, init, apiKey),
             );
             return {
               provider: profile.id,

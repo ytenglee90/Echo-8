@@ -9,6 +9,7 @@ import type {
 import type { AIProviderPreferences, AIProviderProfile } from './types.ts';
 import { abortableDelay, assertNotAborted } from '../../services/async-control.ts';
 import { EmbeddedReasoningStream } from './reasoning-stream.ts';
+import { tokenCount } from '../../services/ai-token-usage.ts';
 
 const MAX_AI_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_AI_STREAM_LINE_CHARACTERS = 1024 * 1024;
@@ -18,6 +19,7 @@ export function validateGenerateRequest(input: AIGenerateRequest): void {
   if (!input || !Array.isArray(input.messages) || input.messages.length < 1 || input.messages.length > 64 ||
     input.messages.some((message) => !isValidChatMessage(message)) ||
     (input.providerId !== undefined && (typeof input.providerId !== 'string' || input.providerId.length > 200)) ||
+    (input.inspection !== undefined && (!isRecord(input.inspection) || typeof input.inspection.sessionId !== 'string' || input.inspection.sessionId.length > 200 || !Number.isSafeInteger(input.inspection.userTurn) || input.inspection.userTurn < 1)) ||
     (input.webSearch !== undefined && typeof input.webSearch !== 'boolean') ||
     (input.tools !== undefined && (!Array.isArray(input.tools) || input.tools.length > 4 ||
       input.tools.some((tool) => !isValidToolDefinition(tool)))) ||
@@ -121,7 +123,7 @@ export function buildProviderRequest(
           ? { web_search_options: { search_context_size: 'medium' } }
           : {}),
         ...(input.tools?.length ? { tools: input.tools, tool_choice: 'auto' } : {}),
-        ...(stream ? { stream: true } : {}),
+        ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
       }),
     },
   };
@@ -179,17 +181,29 @@ export async function fetchWithInitialRetry(
   endpoint: string,
   init: RequestInit,
   signal: AbortSignal,
+  onRequest?: (endpoint: string, init: RequestInit) => void,
 ): Promise<Response> {
   let lastError: unknown;
+  let requestInit = init;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await fetcher(endpoint, init);
+      onRequest?.(endpoint, requestInit);
+      const response = await fetcher(endpoint, requestInit);
       if (response.ok) return response;
       if (attempt === 0 && [408, 425, 429, 500, 502, 503, 504].includes(response.status)) {
         await abortableDelay(450, signal);
         continue;
       }
       const detail = await describeProviderHttpError(response);
+      if (attempt === 0 && [400, 422].includes(response.status) && /stream_options|include_usage/iu.test(detail) && typeof requestInit.body === 'string') {
+        const body: unknown = JSON.parse(requestInit.body);
+        if (isRecord(body) && body.stream === true && isRecord(body.stream_options) && body.stream_options.include_usage === true) {
+          const compatibleBody = { ...body };
+          delete compatibleBody.stream_options;
+          requestInit = { ...requestInit, body: JSON.stringify(compatibleBody) };
+          continue;
+        }
+      }
       const hint = response.status === 404 && new URL(resolveEndpoint(endpoint)).hostname === 'generativelanguage.googleapis.com'
         ? '；Gemini 模型不可用或不支持此接口，请在“模型设置”选择账号当前可用的模型并保存连接。'
         : '';
@@ -267,8 +281,8 @@ export function parseCompletion(payload: unknown): Omit<AIGenerateResult, 'provi
   if (text.length > 100_000) throw new Error('模型返回内容超过当前提案上限');
   const usage = isRecord(payload.usage)
     ? {
-        inputTokens: typeof payload.usage.prompt_tokens === 'number' ? payload.usage.prompt_tokens : undefined,
-        outputTokens: typeof payload.usage.completion_tokens === 'number' ? payload.usage.completion_tokens : undefined,
+        inputTokens: tokenCount(payload.usage.prompt_tokens ?? payload.usage.input_tokens),
+        outputTokens: tokenCount(payload.usage.completion_tokens ?? payload.usage.output_tokens),
       }
     : undefined;
   const finishReason = normalizeFinishReason(payload.choices[0].finish_reason);
@@ -297,10 +311,7 @@ export function parseGeminiCompletion(payload: unknown): Omit<AIGenerateResult, 
   return {
     text,
     ...(finalized.reasoning ? { reasoning: finalized.reasoning } : {}),
-    usage: usageRecord ? {
-      inputTokens: typeof usageRecord.promptTokenCount === 'number' ? usageRecord.promptTokenCount : undefined,
-      outputTokens: typeof usageRecord.candidatesTokenCount === 'number' ? usageRecord.candidatesTokenCount : undefined,
-    } : undefined,
+    usage: geminiTokenUsage(usageRecord),
     ...(finishReason ? { finishReason } : {}),
   };
 }
@@ -517,8 +528,8 @@ function parseStreamPayload(
   const toolCallDeltas = readToolCallDeltas(deltaRecord?.tool_calls);
   const usage = isRecord(payload.usage)
     ? {
-        inputTokens: typeof payload.usage.prompt_tokens === 'number' ? payload.usage.prompt_tokens : undefined,
-        outputTokens: typeof payload.usage.completion_tokens === 'number' ? payload.usage.completion_tokens : undefined,
+        inputTokens: tokenCount(payload.usage.prompt_tokens ?? payload.usage.input_tokens),
+        outputTokens: tokenCount(payload.usage.completion_tokens ?? payload.usage.output_tokens),
       }
     : undefined;
   return {
@@ -587,11 +598,17 @@ function parseGeminiStreamPayload(payload: Record<string, unknown>): {
   return {
     answerDelta: content.text || undefined,
     reasoningDelta: content.reasoning || undefined,
-    usage: usageRecord ? {
-      inputTokens: typeof usageRecord.promptTokenCount === 'number' ? usageRecord.promptTokenCount : undefined,
-      outputTokens: typeof usageRecord.candidatesTokenCount === 'number' ? usageRecord.candidatesTokenCount : undefined,
-    } : undefined,
+    usage: geminiTokenUsage(usageRecord),
     finishReason: normalizeFinishReason(candidate?.finishReason),
+  };
+}
+
+function geminiTokenUsage(usage: Record<string, unknown> | undefined): AIGenerateResult['usage'] {
+  if (!usage) return undefined;
+  const input = tokenCount(usage.promptTokenCount), output = tokenCount(usage.candidatesTokenCount);
+  return {
+    inputTokens: input === undefined ? undefined : tokenCount(input + (tokenCount(usage.toolUsePromptTokenCount) ?? 0)),
+    outputTokens: output === undefined ? undefined : tokenCount(output + (tokenCount(usage.thoughtsTokenCount) ?? 0)),
   };
 }
 

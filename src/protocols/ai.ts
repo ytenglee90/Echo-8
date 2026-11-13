@@ -233,6 +233,8 @@ export interface AIChatMessage {
 }
 
 export interface AIGenerateRequest {
+  /** Local inspection metadata; never serialized to the model API. */
+  inspection?: import('./ai-request-inspection.ts').AIRequestIdentity;
   messages: AIChatMessage[];
   temperature: number;
   maxOutputTokens: number;
@@ -246,13 +248,16 @@ export interface AIGenerateRequest {
 
 export type AIFinishReason = 'stop' | 'length' | 'content-filter' | 'tool-calls' | 'other';
 
+/** Each missing provider count can be estimated independently and explicitly labelled. */
+export interface AITokenUsage { inputTokens?: number; outputTokens?: number; inputEstimated?: boolean; outputEstimated?: boolean }
+
 export interface AIGenerateResult {
   text: string;
   /** Optional provider-returned reasoning. It is displayed separately and is not treated as answer evidence. */
   reasoning?: string;
   provider: string;
   model: string;
-  usage?: { inputTokens?: number; outputTokens?: number };
+  usage?: AITokenUsage;
   /** Normalized provider termination reason. `length` means the answer may be incomplete. */
   finishReason?: AIFinishReason;
   /** A completed local-tool request. It is never persisted as a document command. */
@@ -273,7 +278,7 @@ export type AIGenerateStreamEvent =
     }
   | {
       type: 'complete';
-      usage?: { inputTokens?: number; outputTokens?: number };
+      usage?: AITokenUsage;
       finishReason?: AIFinishReason;
     };
 
