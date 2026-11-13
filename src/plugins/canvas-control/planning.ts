@@ -50,7 +50,7 @@ export async function planControlApplication(context: PluginContext, snapshot: C
   });
   let plannedNodes: ContentSummary[] = [];
   if (nodeActions.length) {
-    const part = await context.capabilities.request<CanvasControlNodePlan>('canvasControl.nodesPlan@1', { actions: nodeActions, expected: snapshot.nodes }, signal);
+    const part = await context.capabilities.request<CanvasControlNodePlan>(nodeActions.some(action => action.edit) ? 'canvasControl.nodesPlan@2' : 'canvasControl.nodesPlan@1', { actions: nodeActions, expected: snapshot.nodes }, signal);
     parts.push(part); plannedNodes = part.nodes;
     for (const [ref, id] of Object.entries(part.created)) aliases.set(ref, id);
   }

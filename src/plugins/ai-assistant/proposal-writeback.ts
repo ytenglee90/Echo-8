@@ -24,13 +24,14 @@ export function resolveAIWritebackTarget(
       length: proposal.suggestedTarget.length,
     } : undefined);
   if (!source) return undefined;
+  const bound = proposal.suggestedTarget?.nodeId === nodeId ? proposal.suggestedTarget : undefined;
   return mode === 'append'
-    ? { mode: 'append', nodeId: source.sourceId, expectedRevision: source.revision }
+    ? { mode: 'append', nodeId: source.sourceId, expectedRevision: bound?.expectedRevision ?? source.revision }
     : {
         mode: 'replace',
         nodeId: source.sourceId,
-        expectedRevision: source.revision,
-        start: 0,
-        end: source.length,
+        expectedRevision: bound?.expectedRevision ?? source.revision,
+        start: bound?.range?.start ?? 0,
+        end: bound?.range?.end ?? source.length,
       };
 }

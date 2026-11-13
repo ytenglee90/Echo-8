@@ -32,6 +32,7 @@ const CANDIDATE_SOURCE_WINDOW = 7_200;
 const MAX_CANDIDATES_PER_EXTRACTION = 8;
 
 export interface AIMemoryCandidateRuntimeOptions {
+  taskForSession?(sessionId: string): string;
   tasks: Map<string, TaskHandle<MemoryCandidateCommitPayload>>;
   readSessions(): Record<string, AISessionRecord>;
   readCandidates(): Record<string, AIMemoryCandidateRecord>;
@@ -49,6 +50,8 @@ export function registerAIMemoryCandidateRuntime(
   context: PluginContext,
   options: AIMemoryCandidateRuntimeOptions,
 ): void {
+  const processed = new Set<string>();
+  context.events.subscribe('document.replaced', () => processed.clear());
   context.commands.register<MemoryCandidateExtractPayload, { taskId: string }>({
     type: 'ai.memory.candidates.extract',
     validate: isMemoryCandidateExtractPayload,
@@ -57,6 +60,7 @@ export function registerAIMemoryCandidateRuntime(
       if (!assistant) throw new Error('AI 助手窗口已经关闭');
       const session = options.readSessions()[assistant.sessionId];
       if (!session) throw new Error('当前 AI 对话已经不存在');
+      const usageTaskId = payload.usageTaskId ?? options.taskForSession?.(session.id) ?? session.id;
       options.tasks.get(session.id)?.cancel();
       context.signals.emit('ai.status', {
         state: 'preparing',
@@ -81,6 +85,9 @@ export function registerAIMemoryCandidateRuntime(
             ? metadata.source.length - start
             : Math.min(payload.sourceLength, CANDIDATE_SOURCE_WINDOW, metadata.source.length - start);
           if (length <= 0) throw new Error('本轮用户原文已经不可读取，未提炼候选');
+          const extractionKey = `${sourceId}:${metadata.source.revision}:${start}:${length}`;
+          if (processed.has(extractionKey)) return { sessionId: session.id, sourceId, sourceRevision: metadata.source.revision,
+            sourceStart: start, sourceLength: length, extractor: { provider: 'local', model: 'already-processed' }, candidates: [] };
           const evidence = await readContextSource(context, {
             sourceId,
             start,
@@ -95,9 +102,12 @@ export function registerAIMemoryCandidateRuntime(
             temperature: 0,
             maxOutputTokens: 1_200,
             messages: buildCandidateExtractionMessages(evidence.text ?? ''),
+            usageContext: { taskId: usageTaskId, sessionId: session.id, purpose: 'memory-extraction' },
+            inspection: { sessionId: session.id, userTurn: Math.max(1, session.turns - (session.turns % 2 === 0 ? 1 : 0)) },
           } satisfies AIGenerateRequest, signal);
           report(0.85);
           const candidates = parseMemoryCandidateResponse(generated.text, evidence.text ?? '');
+          processed.add(extractionKey);
           report(1);
           return {
             sessionId: session.id,

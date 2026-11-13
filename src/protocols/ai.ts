@@ -144,6 +144,7 @@ export interface AIInlineReference {
 }
 
 export interface AIPreparedContext {
+  writebackTarget?: { nodeId: string; expectedRevision: number; start: number; end: number; mode: 'append' | 'replace' };
   id: string;
   sessionId: string;
   /** Window identity captured for assistant-local policies such as opt-in candidate extraction. */
@@ -233,6 +234,9 @@ export interface AIChatMessage {
 }
 
 export interface AIGenerateRequest {
+  usageContext?: import('./ai-usage.ts').AIUsageContext;
+  /** Optional JSON Schema, enabled only by providers advertising support. */
+  responseSchema?: Record<string, unknown>;
   /** Local inspection metadata; never serialized to the model API. */
   inspection?: import('./ai-request-inspection.ts').AIRequestIdentity;
   messages: AIChatMessage[];
@@ -249,7 +253,7 @@ export interface AIGenerateRequest {
 export type AIFinishReason = 'stop' | 'length' | 'content-filter' | 'tool-calls' | 'other';
 
 /** Each missing provider count can be estimated independently and explicitly labelled. */
-export interface AITokenUsage { inputTokens?: number; outputTokens?: number; inputEstimated?: boolean; outputEstimated?: boolean }
+export interface AITokenUsage { inputTokens?: number; outputTokens?: number; inputEstimated?: boolean; outputEstimated?: boolean; reasoningTokens?: number; cachedInputTokens?: number; cacheMissInputTokens?: number }
 
 export interface AIGenerateResult {
   text: string;
@@ -342,6 +346,7 @@ export interface AIProviderInfo {
 }
 
 export interface AIProviderOption {
+  structuredOutputSupported?: boolean;
   id: string;
   label: string;
   platform: string;
@@ -524,6 +529,8 @@ export interface AIProposalRecord {
   createdAt: number;
   /** Present only when the request explicitly edits one referenced text node. */
   suggestedTarget?: {
+    range?: { start: number; end: number };
+    mode?: 'append' | 'replace';
     nodeId: string;
     title: string;
     expectedRevision: number;

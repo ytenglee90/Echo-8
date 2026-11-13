@@ -26,7 +26,7 @@ test('provider parsing accepts compatible usage aliases and counts Gemini thinki
   assert.deepEqual(parseCompletion({ choices: [{ message: { content: '回答' } }], usage: { input_tokens: 7, output_tokens: 3 } }).usage, { inputTokens: 7, outputTokens: 3 });
   assert.deepEqual(parseGeminiCompletion({ candidates: [{ content: { parts: [{ text: '回答' }] } }], usageMetadata: {
     promptTokenCount: 100, toolUsePromptTokenCount: 5, candidatesTokenCount: 40, thoughtsTokenCount: 10,
-  } }).usage, { inputTokens: 105, outputTokens: 50 });
+  } }).usage, { inputTokens: 105, outputTokens: 50, reasoningTokens: 10 });
 });
 
 test('OpenAI-style streams request final usage and retain the usage-only terminal chunk', async () => {

@@ -10,10 +10,11 @@ import type { TextContentRecord } from './content-storage.ts';
 
 export function registerTextControlPlans(runtime: TextNodeCapabilityRuntime): void {
   const { context, buildCreateTransaction } = runtime;
+  for (const version of [1, 2] as const) {
   context.capabilities.provide<CanvasControlNodeRequest, CanvasControlNodePlan>({
-    key: 'canvasControl.nodesPlan@1',
+    key: `canvasControl.nodesPlan@${version}`,
     invoke: async (input, signal) => {
-      validateCanvasControlActions(input?.actions);
+      validateCanvasControlActions(input?.actions, false, version);
       if (input.actions.some(action => action.type !== 'create-node' && action.type !== 'update-node') || !Array.isArray(input.expected)) throw new Error('文字对象计划无效');
       const patches: PatchOperation[] = [];
       const events: EventDeclaration[] = [];
@@ -51,8 +52,9 @@ export function registerTextControlPlans(runtime: TextNodeCapabilityRuntime): vo
             local.push(...plan.patches);
             events.push(...(plan.events ?? []));
           }
-          if (action.text !== undefined || action.append !== undefined) {
-            const plan = await context.capabilities.request<ContentMutationPlan>('content.deltaPlan@1', { nodeId: node.id, expectedRevision: content.revision, start: action.append === undefined ? 0 : content.length, deleteCount: action.append === undefined ? content.length : 0, insert: action.text ?? action.append ?? '' }, signal);
+          if (action.edit && (action.edit.expectedRevision !== content.revision || action.edit.start + action.edit.deleteCount > content.length)) throw new Error('局部修改范围或修订已失效');
+          if (action.text !== undefined || action.append !== undefined || action.edit !== undefined) {
+            const plan = await context.capabilities.request<ContentMutationPlan>('content.deltaPlan@1', { nodeId: node.id, expectedRevision: content.revision, start: action.edit?.start ?? (action.append === undefined ? 0 : content.length), deleteCount: action.edit?.deleteCount ?? (action.append === undefined ? content.length : 0), insert: action.edit?.insert ?? action.text ?? action.append ?? '' }, signal);
             revision = plan.revision;
             length = plan.length;
             local.push(...plan.patches);
@@ -91,6 +93,7 @@ export function registerTextControlPlans(runtime: TextNodeCapabilityRuntime): vo
       return { patches, events, created, nodes };
     },
   });
+  }
 }
 function localNode(patches: PatchOperation[], id: string): TextNodeRecord {
   const node = patches.find(patch => patch.namespace === NODE_NAMESPACE && patch.key === id)?.value;

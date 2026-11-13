@@ -21,7 +21,7 @@ const proposal: AIProposalRecord = {
   },
 };
 
-test('AI writeback resolves the latest catalog revision before dispatch', () => {
+test('AI writeback retains the original revision so newer edits cannot be silently overwritten', () => {
   const sources: AIContextSource[] = [{
     sourceId: 'node-1',
     provider: 'text-node',
@@ -34,14 +34,14 @@ test('AI writeback resolves the latest catalog revision before dispatch', () => 
   assert.deepEqual(resolveAIWritebackTarget(proposal, sources, 'replace', 'node-1'), {
     mode: 'replace',
     nodeId: 'node-1',
-    expectedRevision: 4,
+    expectedRevision: 2,
     start: 0,
     end: 24,
   });
   assert.deepEqual(resolveAIWritebackTarget(proposal, sources, 'append', 'node-1'), {
     mode: 'append',
     nodeId: 'node-1',
-    expectedRevision: 4,
+    expectedRevision: 2,
   });
 });
 

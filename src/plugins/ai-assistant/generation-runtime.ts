@@ -27,6 +27,7 @@ import {
 type GenerationState = AIAssistantState['generationRuntimeBySession'][string];
 
 export interface AIGenerationRuntimeOptions {
+  taskForSession?(sessionId: string): string;
   preparations: Map<string, PreparedGeneration>;
   tasks: Map<string, TaskHandle<AIGenerateResult>>;
   stateBySession: Map<string, GenerationState>;
@@ -131,6 +132,7 @@ export function registerAIGenerationRuntime(
   context.events.subscribe<{ preparationId: string }>('ai.generation.requested', (message) => {
     const prepared = options.preparations.get(message.payload.preparationId);
     if (!prepared) return;
+    prepared.usageTaskId ??= options.taskForSession?.(prepared.sessionId) ?? prepared.sessionId;
     options.tasks.get(prepared.sessionId)?.cancel();
     options.actionBySession.delete(prepared.sessionId);
     const generationMessage = prepared.operation === 'canvas-control' ? '正在规划画布对象操作' : operationCreatesWriteback(prepared.operation)
@@ -159,12 +161,26 @@ export function registerAIGenerationRuntime(
       estimatedCost: 4,
       run: async (signal, report) => {
         report(0.1);
+        if (prepared.operation === 'canvas-control') {
+          const local = await context.capabilities.request<{ handled: boolean; text?: string }>('canvasControl.localPlan@1', {
+            preparationId: prepared.id, sessionId: prepared.sessionId, prompt: prepared.prompt,
+            sourceIds: prepared.sources.filter(source => source.reason === 'explicit-reference').map(source => source.sourceId),
+          }, signal).catch(error => { if (isCapabilityUnavailable(error, 'canvasControl.localPlan@1')) return { handled: false }; throw error; });
+          if (local.handled && 'text' in local && local.text) return { text: local.text, provider: 'local', model: '确定性操作', usage: { inputTokens: 0, outputTokens: 0 } };
+        }
         const request = await buildGenerateRequest(
           context,
           prepared,
           options.readPromptTemplates(),
           signal,
         );
+        if (request.usageContext) {
+          request.usageContext.taskId = prepared.usageTaskId!;
+          if (prepared.followupAction) request.usageContext.purpose = prepared.followupAction;
+        }
+        const forPurpose = (active: AIGenerateRequest, purpose: NonNullable<AIGenerateRequest['usageContext']>['purpose']): AIGenerateRequest => ({
+          ...active, usageContext: { ...active.usageContext!, taskId: prepared.usageTaskId!, sessionId: prepared.sessionId, purpose },
+        });
         let emittedSequence = 0;
         const requestUsages: Array<AIGenerateResult['usage']> = [];
         const recordUsage = (completed: AIGenerateResult, activeRequest: AIGenerateRequest) => requestUsages.push(withTokenUsageEstimates(
@@ -237,7 +253,7 @@ export function registerAIGenerationRuntime(
               sessionId: prepared.sessionId,
               preparationId: prepared.id,
             } satisfies AIStatusSignal);
-            return generateOnce({ ...activeRequest, tools: undefined });
+            return generateOnce(forPurpose({ ...activeRequest, tools: undefined }, 'compatibility-retry'));
           }
         };
 
@@ -273,7 +289,7 @@ export function registerAIGenerationRuntime(
             ],
           };
           result = {
-            ...(await generateOnce(followUp)),
+            ...(await generateOnce(forPurpose(followUp, 'tool-roundtrip'))),
             memorySearchUsed: true,
           };
           if (result.toolCalls?.length) {
@@ -290,7 +306,7 @@ export function registerAIGenerationRuntime(
             sessionId: prepared.sessionId,
             preparationId: prepared.id,
           } satisfies AIStatusSignal);
-          const continued = await generateOnce(continuationRequest(request, result.text));
+          const continued = await generateOnce(forPurpose(continuationRequest(request, result.text), 'continuation'));
           result = mergeContinuedGeneration(result, continued);
         }
         if (prepared.operation === 'canvas-control' && result.finishReason !== 'length') {
@@ -298,10 +314,10 @@ export function registerAIGenerationRuntime(
           catch (error) {
             if (request.messages.length > 62) throw error;
             context.signals.emit('ai.status', { state: 'generating', message: '正在修正画布操作计划格式', sessionId: prepared.sessionId, preparationId: prepared.id } satisfies AIStatusSignal);
-            result = await generateOnce({ ...request, temperature: 0.1, tools: undefined, messages: [
+            result = await generateOnce(forPurpose({ ...request, temperature: 0.1, tools: undefined, messages: [
               ...request.messages, { role: 'assistant', content: result.text },
-              { role: 'user', content: `计划校验未通过：${error instanceof Error ? error.message : '格式错误'}。请仅修正数据格式，保留本次要求与已有对象 ID，不增加权限或操作。根对象必须是 {"version":1,"actions":[...]}，version 是数字 1，actions 中每项有 type。只输出完整 JSON，不要输出书籍文件、节点清单、Markdown 说明或代码脚本。` },
-            ] });
+              { role: 'user', content: `计划校验未通过：${error instanceof Error ? error.message : '格式错误'}。请仅修正数据格式，保留本次要求与已有对象 ID，不增加权限或操作。根对象必须有数字 version 和 actions 数组；保留原计划版本，普通操作可用 1，局部 edit 必须用 2，actions 中每项有 type。只输出完整 JSON，不要输出书籍文件、节点清单、Markdown 说明或代码脚本。` },
+            ] }, 'format-correction'));
             if (result.finishReason !== 'length') parseCanvasControlPlan(result.text);
           }
         }
@@ -350,10 +366,11 @@ export function registerAIGenerationRuntime(
           preparationId: prepared.id,
           ...(recorded.proposalId ? { proposalId: recorded.proposalId } : {}),
         } satisfies AIStatusSignal);
-        if (prepared.operation !== 'canvas-control' && prepared.assistantId && prepared.followupAction !== 'repeat' &&
+        if (prepared.operation !== 'canvas-control' && prepared.contextIntent !== 'conversation' && prepared.assistantId && prepared.followupAction !== 'repeat' &&
           options.shouldAutoExtractMemoryCandidates(prepared)) {
           void context.commands.dispatch('ai.memory.candidates.extract', {
             assistantId: prepared.assistantId,
+            usageTaskId: prepared.usageTaskId,
             ...(prepared.userEntryStart !== undefined && prepared.userEntryLength !== undefined
               ? { sourceStart: prepared.userEntryStart, sourceLength: prepared.userEntryLength }
               : {}),

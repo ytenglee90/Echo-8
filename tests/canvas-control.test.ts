@@ -6,7 +6,7 @@ import { createSelectionPlugin } from '../src/plugins/selection/model.ts';
 import { createGroupsPlugin } from '../src/plugins/groups/model.ts';
 import { createConnectionsPlugin } from '../src/plugins/connections/model.ts';
 import { createCanvasControlPlugin } from '../src/plugins/canvas-control/model.ts';
-import type { CanvasControlAction, CanvasControlAdmission, CanvasControlState, CanvasControlGroupPlan } from '../src/protocols/canvas-control.ts';
+import type { CanvasControlAction, CanvasControlAdmission, CanvasControlState, CanvasControlGroupPlan, CanvasControlTaskState, CanvasControlContextV2 } from '../src/protocols/canvas-control.ts';
 import type { ContentSummary } from '../src/protocols/content.ts';
 import type { GroupRecord } from '../src/protocols/groups.ts';
 import type { ConnectionGraphSnapshot } from '../src/protocols/connections.ts';
@@ -24,6 +24,72 @@ async function harness(execution: 'direct' | 'review' = 'review') {
   return kernel;
 }
 let sequence = 0;
+
+test('local recolor/move plans use the reviewed transaction path and task state follows apply undo redo and discard', async () => {
+  const kernel = await harness();
+  try {
+    const id = await kernel.router.dispatch<{ id: string }>('node.create', { title: '本地操作', body: '不应发送的正文', x: 100, y: 80 }, 'core.test');
+    await kernel.router.dispatch('selection.set', { ids: [id.id], mode: 'replace' }, 'core.test');
+    const admission = { preparationId: 'local:1', sessionId: 'task:test', prompt: '@画布操作 把选中节点设为 #336699' };
+    const result = await kernel.capabilities.request<{ handled: boolean; text?: string }>('canvasControl.localPlan@1', admission);
+    assert.equal(result.handled, true); assert.doesNotMatch(result.text!, /不应发送的正文|"x"|"y"/u);
+    await kernel.router.dispatch('canvasControl.offer@1', { ...admission, text: result.text!, complete: true }, 'core.test');
+    const read = () => kernel.capabilities.request<CanvasControlTaskState>('canvasControl.taskState@1', { sessionId: 'task:test' });
+    assert.equal((await read()).plans[0]?.status, 'pending');
+    const planId = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!.id;
+    await kernel.router.dispatch('canvasControl.apply@1', { id: planId }, 'core.test');
+    assert.equal((await read()).plans[0]?.status, 'applied');
+    await kernel.router.dispatch('history.undo', undefined, 'core.test'); assert.equal((await read()).plans[0]?.status, 'undone');
+    await kernel.router.dispatch('history.redo', undefined, 'core.test'); assert.equal((await read()).plans[0]?.status, 'applied');
+    const next = { ...admission, preparationId: 'local:2', prompt: '把选中节点向右移动 100' };
+    const move = await kernel.capabilities.request<{ handled: boolean; text?: string }>('canvasControl.localPlan@1', next);
+    await kernel.router.dispatch('canvasControl.offer@1', { ...next, text: move.text!, complete: true }, 'core.test');
+    const pending = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;
+    await kernel.router.dispatch('canvasControl.dismiss@1', { id: pending.id }, 'core.test');
+    assert.equal((await read()).plans.at(-1)?.status, 'dismissed');
+  } finally { await kernel.plugins.stop('canvas-control'); }
+});
+
+test('context v2 sends only operation-specific fields while v1 remains available and bounded', async () => {
+  const kernel = await harness();
+  try {
+    const created = await kernel.router.dispatch<{ id: string }>('node.create', { title: '目标', body: '完整正文不应出现在目录' }, 'core.test');
+    await kernel.router.dispatch('selection.set', { ids: [created.id], mode: 'replace' }, 'core.test');
+    const result = await kernel.capabilities.request<CanvasControlContextV2>('canvasControl.context@2', { preparationId: 'fields:1', sessionId: 's', prompt: '改色', purpose: 'appearance' });
+    assert.ok(result.responseSchema); assert.match(result.objectDirectory, /"id"|"color"/u);
+    assert.doesNotMatch(result.objectDirectory, /"x"|"y"|textLength|完整正文/u);
+    assert.doesNotMatch(result.instruction, /text 替换全文|create-group:/u);
+  } finally { await kernel.plugins.stop('canvas-control'); }
+});
+
+test('v2 local edits change only the stated range, round-trip and undo; v1 refuses the new field and stale revisions fail atomically', async () => {
+  const kernel = await harness();
+  try {
+    const created = await kernel.router.dispatch<{ id: string }>('node.create', { title: '局部修改', body: '前文🙂。目标段。后文。' }, 'core.test');
+    await kernel.router.dispatch('selection.set', { ids: [created.id], mode: 'replace' }, 'core.test');
+    const summary = (await nodes(kernel)).find(node => node.id === created.id)!;
+    const action = { type: 'update-node' as const, id: created.id, edit: { start: 5, deleteCount: 4, insert: '新段。', expectedRevision: summary.revision } };
+    assert.throws(() => parseCanvasControlPlan(JSON.stringify({ version: 1, actions: [action] })), /字段/u);
+    const admission = { preparationId: 'edit:1', sessionId: 'edit:test', prompt: '修改指定范围' };
+    await kernel.capabilities.request('canvasControl.context@2', admission);
+    await kernel.router.dispatch('canvasControl.offer@1', { ...admission, text: JSON.stringify({ version: 2, actions: [action] }), complete: true }, 'core.test');
+    const review = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;
+    await kernel.router.dispatch('canvasControl.apply@1', { id: review.id }, 'core.test');
+    const body = async () => {
+      const values = await kernel.capabilities.requestAll<{ handled: boolean; text?: string }>('context.read@1', { sourceId: created.id, start: 0, length: 100 });
+      return values.find(value => value.handled)?.text;
+    };
+    assert.equal(await body(), '前文🙂。新段。后文。');
+    await kernel.router.dispatch('history.undo', undefined, 'core.test'); assert.equal(await body(), '前文🙂。目标段。后文。');
+    await kernel.router.dispatch('history.redo', undefined, 'core.test'); assert.equal(await body(), '前文🙂。新段。后文。');
+    const next = { ...admission, preparationId: 'edit:2' };
+    await kernel.capabilities.request('canvasControl.context@2', next);
+    await kernel.router.dispatch('canvasControl.offer@1', { ...next, text: JSON.stringify({ version: 2, actions: [action] }), complete: true }, 'core.test');
+    const stale = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;
+    await assert.rejects(() => kernel.router.dispatch('canvasControl.apply@1', { id: stale.id }, 'core.test'), /修订/u);
+    assert.equal(await body(), '前文🙂。新段。后文。');
+  } finally { await kernel.plugins.stop('canvas-control'); }
+});
 
 test('direct generation defaults on, commits new objects once and never directly edits existing content', async () => {
   const kernel = await harness('direct');
@@ -163,7 +229,7 @@ test('failed persistence admission keeps a proposal retryable and concurrent acc
 test('control schema rejects executable commands, extra fields, invalid refs and incomplete data', () => {
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":['), /完整/u);
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":[{"type":"eval","code":"alert(1)"}]}'), /未知/u);
-  assert.throws(() => parseCanvasControlPlan('{"version":2,"actions":[]}'), /版本/u);
+  assert.throws(() => parseCanvasControlPlan('{"version":3,"actions":[]}'), /版本/u);
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":[{"type":"create-node","ref":"a","title":"A","url":"secret"}]}'), /字段/u);
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":[{"type":"update-node","id":"a","text":"x","append":"y"}]}'), /同时/u);
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":[{"type":"create-node","ref":"__proto__","title":"A"}]}'), /代号/u);

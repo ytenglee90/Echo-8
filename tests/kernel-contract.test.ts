@@ -8490,8 +8490,8 @@ test('AI assistant streams ordinary answers without creating a write-back propos
     [{ ordinal: 1, sourceId: source.id, title: '结构资料', kind: 'text', revision: 1 }],
   );
   assert.match(capturedRequest?.messages[0]?.content ?? '', /回答必须先给核心结论或直接成品/);
-  assert.match(capturedRequest?.messages[1]?.content ?? '', /结构审查员处理 总结；来源类型=text/);
-  assert.match(capturedRequest?.messages[2]?.content ?? '', /本次共有 1 个来源/);
+  assert.match(capturedRequest?.messages.filter(message => message.role === 'system').map(message => message.content).join('\n') ?? '', /结构审查员处理 总结；来源类型=text/);
+  assert.match(capturedRequest?.messages.filter(message => message.role === 'user').map(message => message.content).join('\n') ?? '', /本次共有 1 个来源/);
   assert.match(
     (await harness.router.ask<{ text: string }>('ai.transcript', { sessionId: state.activeSessionId }, 'core.test')).text,
     /逐字生成完成/,

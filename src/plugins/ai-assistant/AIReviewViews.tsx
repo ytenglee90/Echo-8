@@ -174,7 +174,7 @@ export function AIWritebackReview({
             value={mode}
             onChange={(event) => onSelectionChange(event.target.value as AIWritebackMode, nodeId)}
           >
-            <option value="replace">替换已有节点全文</option>
+             <option value="replace">{proposal.suggestedTarget?.range ? '替换已定位范围' : '替换已有节点全文'}</option>
             <option value="append">追加到已有节点</option>
           </select>
           <select

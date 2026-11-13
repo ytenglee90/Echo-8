@@ -37,6 +37,7 @@ import {
 } from './types.ts';
 
 export type PreparedGeneration = AIPreparedContext & {
+  usageTaskId?: string;
   transcriptRevisionAfterUser?: number;
   transcriptRevisionAfterAssistant?: number;
   followupAction?: 'retry' | 'repeat';

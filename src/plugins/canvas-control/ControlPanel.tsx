@@ -52,7 +52,7 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
       <p>在 AI 助手输入 <strong>@画布操作</strong> 后描述要求，例如“新建三个人物节点，按类目分组，并连接关系”。</p>
       <label>生成方式
         <select aria-label="画布生成方式" value={state.execution} disabled={busy} onChange={event => void client.dispatch('canvasControl.execution@1', { execution: event.target.value as 'direct' | 'review' }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason)))}>
-          <option value="direct">直接生成新对象</option>
+          <option value="direct">直接生成新对象和空白正文</option>
           <option value="review">先预览，再应用</option>
         </select>
       </label>
@@ -62,7 +62,7 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
           <option value="canvas">整个画布，最多 80 个对象</option>
         </select>
       </label>
-      <p className="canvas-control-note">新节点、群组和连线默认直接生成，修改或删除已有内容仍需确认。修改正文时可 @ 引用节点。待应用计划十分钟内有效，整批操作可一次撤销。</p>
+      <p className="canvas-control-note">新对象和空白节点正文默认直接生成。覆盖已有内容或删除对象需确认。修改正文时可 @ 引用节点。待应用计划十分钟内有效，整批操作可一次撤销。</p>
       {!state.reviews.length && <p className="canvas-control-empty">操作计划将在这里显示。</p>}
       {[...state.reviews].reverse().map(review => <section className="canvas-control-review" key={review.id} aria-label="画布操作计划">
         <header><strong>{review.actions.length} 项操作</strong><span>{review.status === 'applied' ? '已应用' : review.status === 'dismissed' ? '已放弃' : '等待确认'}</span></header>
@@ -96,6 +96,7 @@ function ActionDetails({ action, titles }: { action: CanvasControlAction; titles
     {('from' in action || 'to' in action) && <p>连接 · {action.from ? name(action.from) : '原起点'} → {action.to ? name(action.to) : '原终点'}</p>}
     {'line' in action && action.line && <p>线型 · {action.line === 'dashed' ? '虚线' : '实线'}</p>}
     {'label' in action && action.label !== undefined && <p>标签 · {action.label || '清空'}</p>}
+    {'edit' in action && action.edit && <details open><summary>局部替换 · 修订 {action.edit.expectedRevision} · 位置 {action.edit.start} · 删除 {action.edit.deleteCount} 字符</summary><pre>{action.edit.insert}</pre></details>}
     {('text' in action || 'append' in action) && (action.text !== undefined || action.append !== undefined) && <details open>
       <summary>{action.append === undefined ? '正文全文' : '追加正文'}</summary><pre>{action.text ?? action.append}</pre>
     </details>}

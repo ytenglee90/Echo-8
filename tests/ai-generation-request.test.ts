@@ -117,9 +117,12 @@ test('AI prompt variables and policy validation stay bounded', () => {
 });
 
 test('generation request exposes only the bounded local memory tool to compatible providers', async () => {
+  const prepared = preparedContext();
+  prepared.memoryRetrieval!.deferredMemories = 1;
+  prepared.memoryRetrieval!.evidenceCoveredBranches = 0;
   const request = await buildGenerateRequest(
     contextWithPolicies([], [], true),
-    preparedContext(),
+    prepared,
     promptCatalog(),
   );
   assert.deepEqual(request.tools?.map((tool) => tool.function.name), ['search_memory']);
@@ -142,15 +145,15 @@ test('generation request applies the selected template and governed policy witho
   assert.equal(request.maxOutputTokens, 64);
   assert.equal(request.messages[0]?.role, 'system');
   assert.match(request.messages[0]!.content, /回答必须先给核心结论或直接成品/u);
-  assert.equal(request.messages[1]?.role, 'system');
-  assert.match(request.messages[1]!.content, /本次请求已启用当前模型平台的原生联网搜索/u);
-  assert.equal(request.messages[2]?.role, 'system');
-  assert.match(request.messages[2]!.content, /处理方式：总结；来源：conversation/u);
-  assert.match(request.messages[2]!.content, /保持术语一致/u);
-  assert.equal(request.messages[3]?.role, 'user');
-  assert.match(request.messages[3]!.content, /总来源数：1/u);
-  assert.match(request.messages[3]!.content, /<untrusted-canvas-content>\n发布窗口确定为十月。\n<\/untrusted-canvas-content>/u);
-  assert.match(request.messages[3]!.content, /用户明确选择了 1 份记忆/u);
+  const systems = request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
+  const evidence = request.messages.filter(message => message.role === 'user').map(message => message.content).join('\n');
+  assert.match(systems, /本次请求已启用当前模型平台的原生联网搜索/u);
+  assert.match(systems, /处理方式：总结；来源：conversation/u);
+  assert.match(systems, /保持术语一致/u);
+  assert.match(systems, /记忆执行协议/u);
+  assert.match(evidence, /总来源数：1/u);
+  assert.match(evidence, /<untrusted-canvas-content>\n发布窗口确定为十月。\n<\/untrusted-canvas-content>/u);
+  assert.match(evidence, /用户明确选择了 1 份记忆/u);
 });
 
 test('generation request degrades to the active template when optional prompt policy is unavailable', async () => {
@@ -165,8 +168,6 @@ test('generation request degrades to the active template when optional prompt po
   assert.equal(request.temperature, 0.35);
   assert.equal(request.maxOutputTokens, 2400);
   assert.match(request.messages[0]!.content, /回答必须先给核心结论或直接成品/u);
-  assert.equal(request.messages[1]?.role, 'system');
-  assert.match(request.messages[1]!.content, /本次请求已启用当前模型平台的原生联网搜索/u);
-  assert.equal(request.messages[2]?.role, 'system');
-  assert.match(request.messages[2]!.content, /处理方式：总结/u);
+  assert.match(request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n'), /本次请求已启用当前模型平台的原生联网搜索/u);
+  assert.match(request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n'), /处理方式：总结/u);
 });

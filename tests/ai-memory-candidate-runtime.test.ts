@@ -101,6 +101,7 @@ test('accepting a candidate appends an explicit user directive after re-reading 
     id: 'chunk:1', sessionId: session.id, sequence: 0, start: 0, text: body,
   };
   const context = {
+    events: { subscribe() {} },
     commands: { register(definition: { type: string; handle(payload: unknown): Promise<unknown> | unknown }) {
       handlers.set(definition.type, definition);
     } },

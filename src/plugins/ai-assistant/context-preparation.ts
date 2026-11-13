@@ -32,6 +32,9 @@ import {
 } from './memory-retrieval.ts';
 import { extractTerms } from './memory-terms.ts';
 import { sessionTranscriptSourceId } from './transcript-storage.ts';
+import { canvasCommandText, canvasControlPurpose } from '../../services/ai-task-route.ts';
+import { readParagraphTarget } from './paragraph-target.ts';
+import { operationCreatesWriteback } from './operations.ts';
 
 export interface AIContextBudget {
   characterLimit: number;
@@ -60,7 +63,6 @@ export async function prepareAIContext(
     ? { budget: budgetOverride, modelContextWindowTokens: undefined }
     : await resolveAIContextBudget(context, payload.providerProfileId, signal);
   const budget = resolvedBudget.budget;
-  const contextMode = payload.operation === 'canvas-control' ? 'explicit-only' : payload.contextMode ?? 'automatic';
   const selectedMemorySourceIds = [...new Set(payload.memorySourceIds ?? [])];
   const selectedMemorySet = new Set(selectedMemorySourceIds);
   const memoryArtifactOwner = new Map<string, string>();
@@ -76,6 +78,12 @@ export async function prepareAIContext(
     ...boundReferences.map((reference) => reference.sourceId),
     ...parseExplicitReferences(unboundPrompt),
   ])];
+  const command = canvasCommandText(payload.prompt);
+  const paragraph = /(?:改写|修改|重写|润色)[\s\S]{0,30}?第\s*(\d+)\s*段/u.exec(command) ?? /第\s*(\d+)\s*段[\s\S]{0,30}?(?:改写|修改|重写|润色)/u.exec(command);
+  const continuation = /续写|接着写|继续写|从末尾/u.test(command);
+  const boundedEdit = explicit.length === 1 && (paragraph || continuation) && operationCreatesWriteback(payload.operation) &&
+    !selectedMemorySet.size && !/历史|上次|之前|结合|设定|参考|查找/u.test(command);
+  const contextMode = payload.operation === 'canvas-control' || boundedEdit ? 'explicit-only' : payload.contextMode ?? 'automatic';
   const contextIntent: AIContextIntent = classifyAIContextIntent(payload.prompt, payload.operation, {
     hasExplicitSource: explicit.length > 0,
     hasSelectedMemory: selectedMemorySet.size > 0,
@@ -110,11 +118,32 @@ export async function prepareAIContext(
     .map((source) => [source.sourceId, source])).values()];
   report(0.15);
   const sources: AIPreparedSource[] = [];
+  let writebackTarget: AIPreparedContext['writebackTarget'];
   let remainingCharacters = Math.max(0, budget.characterLimit - payload.prompt.length);
   let remainingTokens = Math.max(0, budget.tokenLimit - estimateAITokens(payload.prompt));
   const add = (source: AIPreparedSource) => {
-    if (remainingCharacters <= 0 || remainingTokens <= 0 || sources.some((item) =>
-      item.sourceId === source.sourceId && Math.abs(item.start - source.start) < 160)) return false;
+    const existingIndex = sources.findIndex(item => item.sourceId === source.sourceId && item.revision === source.revision &&
+      item.start <= source.start + source.text.length && source.start <= item.start + item.text.length);
+    if (existingIndex >= 0) {
+      const previous = sources[existingIndex]!;
+      const overlapStart = Math.max(previous.start, source.start);
+      const overlapEnd = Math.min(previous.start + previous.text.length, source.start + source.text.length);
+      if (previous.text.slice(overlapStart - previous.start, overlapEnd - previous.start) !==
+        source.text.slice(overlapStart - source.start, overlapEnd - source.start)) return false;
+      const first = previous.start <= source.start ? previous : source;
+      const last = previous.start + previous.text.length >= source.start + source.text.length ? previous : source;
+      const text = first.text + last.text.slice(Math.max(0, first.start + first.text.length - last.start));
+      const addedCharacters = text.length - previous.text.length;
+      const estimatedTokens = estimateAITokens(text);
+      const addedTokens = estimatedTokens - (previous.estimatedTokens ?? estimateAITokens(previous.text));
+      if (addedCharacters > remainingCharacters || addedTokens > remainingTokens) return false;
+      sources[existingIndex] = { ...previous, start: first.start, length: text.length, text, estimatedTokens,
+        complete: previous.complete !== false && source.complete !== false, boundary: 'range' };
+      remainingCharacters -= addedCharacters;
+      remainingTokens -= addedTokens;
+      return true;
+    }
+    if (remainingCharacters <= 0 || remainingTokens <= 0) return false;
     const estimatedTokens = estimateAITokens(source.text);
     if (!source.text || source.text.length > remainingCharacters || estimatedTokens > remainingTokens) return false;
     sources.push({ ...source, length: source.text.length, estimatedTokens });
@@ -127,7 +156,21 @@ export async function prepareAIContext(
     const source = catalog.find((candidate) => candidate.sourceId === reference ||
       candidate.title.toLocaleLowerCase('zh-CN') === reference.toLocaleLowerCase('zh-CN'));
     if (!source) throw new Error(`没有找到 @ 引用：“${reference}”`);
-    const block = await readHeadEvidenceBlock(
+    if (explicit.length === 1 && paragraph && (operationCreatesWriteback(payload.operation) || payload.operation === 'canvas-control')) {
+      const target = await readParagraphTarget(context, source, Number(paragraph[1]), signal);
+      if (!add({ ...source, start: target.contextStart, length: target.text.length, text: target.text, reason: 'explicit-reference', boundary: 'range', complete: true })) throw new Error('目标段落超过本轮正文预算，请缩小修改范围');
+      writebackTarget = { nodeId: source.sourceId, expectedRevision: source.revision, start: target.start, end: target.end, mode: 'replace' };
+      continue;
+    }
+    const purpose = canvasControlPurpose(payload.prompt);
+    const omitBody = purpose === 'move' || (purpose === 'appearance' && !/设计|方案|主题|根据|协调|参考|推荐|想法/u.test(canvasCommandText(payload.prompt)));
+    if (payload.operation === 'canvas-control' && (omitBody || source.length === 0)) {
+      sources.push({ ...source, start: 0, length: 0, text: '', reason: 'explicit-reference', complete: true });
+      continue;
+    }
+    if (continuation && explicit.length === 1) writebackTarget = { nodeId: source.sourceId, expectedRevision: source.revision, start: source.length, end: source.length, mode: 'append' };
+    const readBlock = continuation ? readTailEvidenceBlock : readHeadEvidenceBlock;
+    const block = await readBlock(
       context,
       source,
       Math.min(3_500, remainingCharacters),
@@ -334,12 +377,13 @@ export async function prepareAIContext(
     ...(payload.assistantId ? { assistantId: payload.assistantId } : {}),
     prompt: payload.prompt,
     operation: payload.operation,
+    ...(writebackTarget ? { writebackTarget } : {}),
     ...(payload.providerProfileId ? { providerProfileId: payload.providerProfileId } : {}),
     ...(payload.webSearchEnabled ? { webSearchEnabled: true } : {}),
     ...(payload.promptTemplateId ? { promptTemplateId: payload.promptTemplateId } : {}),
     ...(selectedMemorySourceIds.length > 0 ? { selectedMemorySourceIds } : {}),
     ...(contextMode === 'explicit-only' ? { contextMode } : {}),
-    ...(contextIntent === 'conversation' ? { contextIntent } : {}),
+    contextIntent,
     createdAt,
     expiresAt: createdAt + 10 * 60_000,
     totalCharacters,

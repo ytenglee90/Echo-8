@@ -113,6 +113,7 @@ export interface AssistantAutoMemoryCandidatesPayload {
 }
 
 export interface MemoryCandidateExtractPayload {
+  usageTaskId?: string;
   assistantId: string;
   sourceStart?: number;
   sourceLength?: number;
@@ -244,6 +245,7 @@ export function isAssistantAutoMemoryCandidatesPayload(value: unknown): value is
 
 export function isMemoryCandidateExtractPayload(value: unknown): value is MemoryCandidateExtractPayload {
   return isRecord(value) && typeof value.assistantId === 'string' && value.assistantId.length > 0 &&
+    (value.usageTaskId === undefined || (typeof value.usageTaskId === 'string' && value.usageTaskId.length <= 200)) &&
     (value.sourceStart === undefined || (Number.isInteger(value.sourceStart) && Number(value.sourceStart) >= 0)) &&
     (value.sourceLength === undefined || (Number.isInteger(value.sourceLength) && Number(value.sourceLength) > 0 &&
       Number(value.sourceLength) <= 100_000));

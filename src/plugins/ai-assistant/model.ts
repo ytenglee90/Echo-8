@@ -30,6 +30,8 @@ import { canReusePersistedFileHandle } from '../../services/native-file-permissi
 import { isRecord as isPlainRecord, removeOwnKeysInPlace } from '../../services/retired-data.ts';
 import { defineManifest } from '../manifest.ts';
 import { registerAIRequestInspection } from './request-inspection-runtime.ts';
+import { registerAITaskUsage } from './task-usage-runtime.ts';
+import { AI_USAGE_CHANGED } from '../../protocols/ai-usage.ts';
 import { buildMemoryIndexDraft } from './memory-indexing.ts';
 import {
   AI_MEMORY_FILE_INDEX_SUFFIX,
@@ -229,8 +231,10 @@ export function createAIAssistantPlugin(
         'entity.deletePlan@1',
       ],
       optionalCapabilities: [
+        'ai.provider.taskUsage@1',
         'ai.provider.requestTrace@1',
         'canvasControl.context@1',
+        'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1',
         'context.search@1',
         'context.search@2',
         'context.search@3',
@@ -243,6 +247,7 @@ export function createAIAssistantPlugin(
         'ai.promptPolicy@1',
       ],
       commands: [
+        'ai.task.new@1',
         'ai.open',
         'ai.assistant.openNew',
         'ai.assistant.attach',
@@ -328,11 +333,13 @@ export function createAIAssistantPlugin(
         'ai.prompt.configuration.changed',
       ],
       queries: [
+        'ai.task.usage@1',
         'ai.request.inspection@1',
         'ai.state', 'ai.catalog', 'ai.transcript', 'ai.pendingPreparation',
         'ai.memoryIndexes', 'ai.memoryCatalog', 'ai.memory.deleteConfirmation', 'ai.promptTemplates',
       ],
       asks: [
+        'ai.task.usage@1',
         'ai.request.inspection@1',
         'ai.state',
         'ai.catalog',
@@ -346,6 +353,7 @@ export function createAIAssistantPlugin(
         'system.preferences.get',
       ],
       signals: [
+        AI_USAGE_CHANGED,
         'ai.request.inspection.changed@1',
         'ai.status',
         'ai.context.ready',
@@ -390,6 +398,7 @@ export function createAIAssistantPlugin(
     }),
 
     start(context) {
+      const taskUsage = registerAITaskUsage(context);
       registerAIRequestInspection(context, requestInspectionDialog);
       const generation = ++lifecycleGeneration;
       // A memory save plans content-node titles and then commits those plans.
@@ -1376,6 +1385,7 @@ export function createAIAssistantPlugin(
         readAssistantInstances,
       });
       registerAIMemoryCandidateRuntime(context, {
+        taskForSession: taskUsage.taskFor,
         tasks: memoryCandidateTasks,
         readSessions,
         readCandidates: readMemoryCandidates,
@@ -1417,6 +1427,7 @@ export function createAIAssistantPlugin(
       });
 
       registerAIGenerationRuntime(context, {
+        taskForSession: taskUsage.taskFor,
         preparations,
         tasks: generationTasks,
         stateBySession: generationRuntimeBySession,

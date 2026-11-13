@@ -75,6 +75,26 @@ function memory(sourceId: string, title: string, keywords: string[] = []): AIMem
   };
 }
 
+test('appearance commands omit body reads while creative palette requests retain explicitly referenced theme evidence', async () => {
+  const texts = { 'node:transcript': { title: '当前对话', text: '' }, 'node:theme': { title: '主题', text: '主题为冬夜海港，禁止使用暖红色。' } };
+  const context = preparationContext(texts);
+  const prepare = (prompt: string) => prepareAIContext(context, session(), {}, { sessionId: 'session:1', prompt, operation: 'canvas-control' }, new AbortController().signal, () => undefined);
+  const color = await prepare('@画布操作 @[主题](node:theme) 把选中节点设为 #336699');
+  assert.equal(color.sources.find(source => source.sourceId === 'node:theme')?.text, '');
+  const creative = await prepare('@画布操作 根据 @[主题](node:theme) 设计协调的配色方案');
+  assert.match(creative.sources.find(source => source.sourceId === 'node:theme')?.text ?? '', /禁止使用暖红色/u);
+});
+
+test('explicit/recent overlapping originals merge only verified same-revision text and continuation reads the necessary tail', async () => {
+  const text = '早期正文。\n\n'.repeat(400) + '最终尾部必须保留的限制。';
+  const context = preparationContext({ 'node:transcript': { title: '当前对话', text }, 'node:body': { title: '正文', text } });
+  const prepared = await prepareAIContext(context, session(), {}, { sessionId: 'session:1', prompt: '总结 @[当前对话](node:transcript)', operation: 'summarize', contextMode: 'explicit-only' }, new AbortController().signal, () => undefined);
+  assert.equal(prepared.sources.filter(source => source.sourceId === 'node:transcript').length, 1);
+  const continued = await prepareAIContext(context, session(), {}, { sessionId: 'session:1', prompt: '@扩写 @[正文](node:body) 接着续写', operation: 'expand', contextMode: 'explicit-only' }, new AbortController().signal, () => undefined);
+  assert.match(continued.sources.find(source => source.sourceId === 'node:body')?.text ?? '', /最终尾部必须保留的限制/u);
+  assert.equal(continued.writebackTarget?.mode, 'append'); assert.equal(continued.writebackTarget?.start, text.length);
+});
+
 test('explicit AI references parse linked IDs, bracketed titles and direct IDs once', () => {
   assert.deepEqual(
     parseExplicitReferences('@[需求](node:1) 对照 @[发布计划] 和 @node:2，再看 @[需求](node:1)'),

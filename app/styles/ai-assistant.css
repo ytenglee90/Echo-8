@@ -258,6 +258,10 @@ button.ai-source-citation:focus-visible {
   opacity: .62;
 }
 .ai-token-usage { font-variant-numeric: tabular-nums; }
+.ai-task-usage { margin: 10px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 11px; overflow-wrap: anywhere; }
+.ai-task-usage summary { cursor: pointer; }
+.ai-task-usage p { margin: 5px 0; }
+.ai-task-usage select, .ai-task-usage button { font: inherit; margin: 5px; }
 .ai-request-inspect-button { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-top: 5px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: inherit; opacity: .72; cursor: pointer; }
 .ai-request-inspect-button:hover { opacity: 1; }
 .ai-request-inspection-dialog { display: flex; flex-direction: column; width: min(860px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); border: 1px solid var(--border); border-radius: var(--panel-radius, 14px); background: var(--panel); color: var(--text); box-shadow: var(--panel-shadow); overflow: hidden; }

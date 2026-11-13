@@ -17,6 +17,9 @@ import {
 } from '../../services/provider-profile-payloads.ts';
 import { defineManifest } from '../manifest.ts';
 import { AIRequestTraceBuffer } from './request-trace.ts';
+import { AIUsageLedger } from './usage-ledger.ts';
+import { observeProviderUsage } from './usage-observer.ts';
+import { AI_USAGE_CHANGED } from '../../protocols/ai-usage.ts';
 import type { AIRequestIdentity, AIRequestSnapshot } from '../../protocols/ai-request-inspection.ts';
 import {
   SEMANTIC_PROVIDER_CHANGED_SIGNAL,
@@ -41,6 +44,7 @@ import {
   fetchWithInitialRetry,
   parseCompletion,
   parseGeminiCompletion,
+  providerTokenUsage,
   readCompletionEvents,
   readLimitedJson,
   validateGenerateRequest,
@@ -95,7 +99,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         'system.preferences.set',
       ],
       events: ['ai.provider.configuration.changed', 'document.replaced'],
-      signals: ['ai.provider.changed', SEMANTIC_PROVIDER_CHANGED_SIGNAL],
+      signals: ['ai.provider.changed', SEMANTIC_PROVIDER_CHANGED_SIGNAL, AI_USAGE_CHANGED],
       queries: ['aiProvider.state'],
       asks: [
         'aiProvider.state',
@@ -103,7 +107,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         SEMANTIC_PROVIDER_PERSONAL_QUERY,
         'system.preferences.get',
       ],
-      providesCapabilities: ['ai.generate@1', 'ai.generate.stream@1', 'ai.provider.info@1', 'ai.provider.catalog@1', 'ai.provider.requestTrace@1'],
+      providesCapabilities: ['ai.generate@1', 'ai.generate.stream@1', 'ai.provider.info@1', 'ai.provider.catalog@1', 'ai.provider.requestTrace@1', 'ai.provider.taskUsage@1'],
       ui: ['ai-provider.settings', 'ai-provider.semantic-settings'],
       permissions: [
         'store.own.read',
@@ -117,6 +121,12 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
 
     start(context) {
       const requestTrace = new AIRequestTraceBuffer();
+      const usageLedger = new AIUsageLedger(() => context.signals.emit(AI_USAGE_CHANGED));
+      context.events.subscribe('document.replaced', () => usageLedger.clear());
+      context.capabilities.provide({ key: 'ai.provider.taskUsage@1', invoke: (input: { taskId: string }) => {
+        if (!isRecord(input) || typeof input.taskId !== 'string' || input.taskId.length > 200) throw new Error('任务标识无效');
+        return usageLedger.read(input.taskId);
+      } });
       context.events.subscribe('document.replaced', () => requestTrace.clear());
       context.capabilities.provide<AIRequestIdentity, AIRequestSnapshot[]>({ key: 'ai.provider.requestTrace@1', invoke: input => {
         if (!isRecord(input) || typeof input.sessionId !== 'string' || !Number.isSafeInteger(input.userTurn) || input.userTurn < 1) throw new Error('请求记录标识无效');
@@ -431,6 +441,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
               contextWindowTokens: profile.contextWindowTokens,
               configured: profile.configured,
               toolCallingSupported: profile.apiStyle === 'openai' && profile.memoryToolEnabled === true,
+              structuredOutputSupported: profile.apiStyle === 'gemini',
             })),
           };
         },
@@ -446,6 +457,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
             throw new Error('AI 模型连接尚未配置');
           }
           const apiKey = sessionApiKeys.get(profile.id) ?? '';
+          const accounting = observeProviderUsage(usageLedger, input, profile.id, profile.model, context.network.fetch);
           const controller = new AbortController();
           activeRequests.add(controller);
           const abort = () => controller.abort();
@@ -453,17 +465,22 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
           try {
             const request = buildProviderRequest(profile, apiKey, input, false);
             const response = await fetchWithInitialRetry(
-              context.network.fetch,
+              accounting.fetch,
               request.endpoint,
               { ...request.init, signal: controller.signal },
               controller.signal,
               (endpoint, init) => requestTrace.capture(input.inspection, endpoint, init, apiKey),
             );
             const payload = await readLimitedJson(response);
+            accounting.receivedUsage(providerTokenUsage(payload));
             const parsed = profile.apiStyle === 'gemini'
               ? parseGeminiCompletion(payload)
               : parseCompletion(payload);
+            accounting.finish('complete', parsed.usage, parsed.text + (parsed.reasoning ?? '') + (parsed.toolCalls ? JSON.stringify(parsed.toolCalls) : ''));
             return { ...parsed, provider: profile.id, model: profile.model };
+          } catch (error) {
+            accounting.finish(controller.signal.aborted ? 'cancelled' : 'failed');
+            throw error;
           } finally {
             signal?.removeEventListener('abort', abort);
             activeRequests.delete(controller);
@@ -481,6 +498,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
             throw new Error('AI 模型连接尚未配置');
           }
           const apiKey = sessionApiKeys.get(profile.id) ?? '';
+          const accounting = observeProviderUsage(usageLedger, input, profile.id, profile.model, context.network.fetch);
           const controller = new AbortController();
           activeRequests.add(controller);
           const abort = () => controller.abort();
@@ -492,7 +510,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
           try {
             const request = buildProviderRequest(profile, apiKey, input, true);
             const response = await fetchWithInitialRetry(
-              context.network.fetch,
+              accounting.fetch,
               request.endpoint,
               { ...request.init, signal: controller.signal },
               controller.signal,
@@ -501,9 +519,10 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
             return {
               provider: profile.id,
               model: profile.model,
-              events: readCompletionEvents(response, release, profile.apiStyle),
+              events: accounting.events(readCompletionEvents(response, release, profile.apiStyle)),
             };
           } catch (error) {
+            accounting.finish(controller.signal.aborted ? 'cancelled' : 'failed');
             release();
             throw error;
           }

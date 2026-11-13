@@ -146,11 +146,11 @@ export function registerAIProposalRuntime(
       if (!proposal || proposal.status !== 'pending') throw new Error('AI 提案已经不存在或处理完毕');
       await revalidateSourceRefs(context, proposal.sourceRefs);
       const target = payload.target ?? (proposal.suggestedTarget ? {
-        mode: 'replace' as const,
+        mode: proposal.suggestedTarget.mode ?? 'replace' as const,
         nodeId: proposal.suggestedTarget.nodeId,
         expectedRevision: proposal.suggestedTarget.expectedRevision,
-        start: 0,
-        end: proposal.suggestedTarget.length,
+        start: proposal.suggestedTarget.range?.start ?? 0,
+        end: proposal.suggestedTarget.range?.end ?? proposal.suggestedTarget.length,
       } : undefined);
       if (!target) throw new Error('这条回答没有明确的正文写回目标');
       const plan = target.mode === 'append'
@@ -237,7 +237,8 @@ export async function resolveProposalTarget(
   return {
     nodeId: current.source.sourceId,
     title: current.source.title,
-    expectedRevision: current.source.revision,
+    expectedRevision: selected.revision,
     length: current.source.length,
+    ...(prepared.writebackTarget?.nodeId === selected.sourceId ? { range: { start: prepared.writebackTarget.start, end: prepared.writebackTarget.end }, mode: prepared.writebackTarget.mode } : {}),
   };
 }

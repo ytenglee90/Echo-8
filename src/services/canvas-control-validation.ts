@@ -21,7 +21,7 @@ function requireInput(condition: unknown, message: string): asserts condition {
 function id(value: unknown): value is string {
   return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,199}$/u.test(value);
 }
-export function validateCanvasControlActions(value: unknown, allowEmpty = false): asserts value is CanvasControlAction[] {
+export function validateCanvasControlActions(value: unknown, allowEmpty = false, version: 1 | 2 = 1): asserts value is CanvasControlAction[] {
   requireInput(Array.isArray(value) && (allowEmpty || value.length > 0) && value.length <= CANVAS_CONTROL_MAX_ACTIONS, '画布计划须包含最多 100 项操作');
   const refs = new Set<string>();
   const changed = new Set<string>();
@@ -29,7 +29,7 @@ export function validateCanvasControlActions(value: unknown, allowEmpty = false)
   for (const action of value) {
     requireInput(record(action) && typeof action.type === 'string' && Object.hasOwn(FIELDS, action.type), '画布计划包含未知操作');
     const type = action.type as CanvasControlAction['type'];
-    requireInput(Object.keys(action).every(key => FIELDS[type].includes(key)), '画布计划包含不支持的字段');
+    requireInput(Object.keys(action).every(key => FIELDS[type].includes(key) || (version === 2 && type === 'update-node' && key === 'edit')), '画布计划包含不支持的字段');
     if (type.startsWith('create-')) {
       requireInput(id(action.ref) && !refs.has(action.ref), '新对象代号无效或重复');
       refs.add(action.ref);
@@ -45,6 +45,14 @@ export function validateCanvasControlActions(value: unknown, allowEmpty = false)
       textLength += action[key].length;
     }
     requireInput(action.text === undefined || action.append === undefined, '不能同时替换和追加同一正文');
+    if (action.edit !== undefined) {
+      const edit = action.edit;
+      requireInput(version === 2 && type === 'update-node' && record(edit) && Object.keys(edit).every(key => ['start', 'deleteCount', 'insert', 'expectedRevision'].includes(key)) &&
+        Number.isSafeInteger(edit.start) && Number(edit.start) >= 0 && Number.isSafeInteger(edit.deleteCount) && Number(edit.deleteCount) >= 0 &&
+        Number.isSafeInteger(edit.expectedRevision) && Number(edit.expectedRevision) >= 1 && typeof edit.insert === 'string', '局部修改范围或修订无效');
+      requireInput(action.text === undefined && action.append === undefined, '局部修改不能同时替换全文或追加');
+      textLength += edit.insert.length;
+    }
     for (const key of ['x', 'y', 'width', 'height'] as const) if (action[key] !== undefined) {
       requireInput(typeof action[key] === 'number' && Number.isFinite(action[key]) && Math.abs(action[key]) <= 1_000_000, '节点位置或尺寸无效');
       if (key === 'width' || key === 'height') requireInput(Number(action[key]) > 0, '节点尺寸必须大于零');
@@ -72,13 +80,13 @@ export function validateCanvasControlActions(value: unknown, allowEmpty = false)
 }
 export function parseCanvasControlPlan(text: string): CanvasControlPlan {
   requireInput(text.length <= CANVAS_CONTROL_MAX_TEXT + 30_000, '画布计划过长，请分批生成');
-  const trimmed = text.trim();
-  const fenced = /^```(?:json|e8-control)?\s*\n([\s\S]*?)\n```$/u.exec(trimmed);
+  const trimmed = text.replace(/^\uFEFF/u, '').trim();
+  const fenced = /^```(?:json|e8-control)?\s*\r?\n([\s\S]*?)\r?\n```$/iu.exec(trimmed);
   let value: unknown;
   try { value = JSON.parse(fenced?.[1] ?? trimmed) as unknown; }
   catch { throw new Error('AI 未返回完整的画布操作计划，请重新生成'); }
-  requireInput(record(value) && value.version === 1 && Object.keys(value).every(key => key === 'version' || key === 'actions' || key === 'answer'), '画布操作计划版本或字段不正确');
+  requireInput(record(value) && (value.version === 1 || value.version === 2) && Object.keys(value).every(key => key === 'version' || key === 'actions' || key === 'answer'), '画布操作计划版本或字段不正确');
   requireInput(value.answer === undefined || (typeof value.answer === 'string' && value.answer.length <= 4000), '画布答复过长');
-  validateCanvasControlActions(value.actions, true);
-  return { version: 1, actions: value.actions, ...(typeof value.answer === 'string' ? { answer: value.answer } : {}) };
+  validateCanvasControlActions(value.actions, true, value.version);
+  return { version: value.version, actions: value.actions, ...(typeof value.answer === 'string' ? { answer: value.answer } : {}) };
 }

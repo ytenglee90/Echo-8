@@ -45,7 +45,7 @@ function contextFor(current: AIContextSource): PluginContext {
   } as unknown as PluginContext;
 }
 
-test('AI proposal target refreshes the current content revision before offering write-back', async () => {
+test('AI proposal target retains the original revision even if content changed while generating', async () => {
   const current: AIContextSource = {
     sourceId: 'node:1',
     provider: 'text-node',
@@ -58,7 +58,7 @@ test('AI proposal target refreshes the current content revision before offering 
   assert.deepEqual(await resolveProposalTarget(contextFor(current), prepared('rewrite')), {
     nodeId: 'node:1',
     title: '当前标题',
-    expectedRevision: 7,
+    expectedRevision: 2,
     length: 42,
   });
 });

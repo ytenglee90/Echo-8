@@ -4,6 +4,8 @@ import type { ConnectionNodeGeometry, ConnectionRecord } from './connections.ts'
 import type { GroupRecord } from './groups.ts';
 
 export interface ControlNodeFields {
+  /** Plan v2 only; offsets are UTF-16 indices into the expected content revision. */
+  edit?: { start: number; deleteCount: number; insert: string; expectedRevision: number };
   title?: string;
   text?: string;
   append?: string;
@@ -24,7 +26,7 @@ export type ControlConnectionAction =
   | { type: 'create-connection'; ref: string; from: string; to: string; line: 'solid' | 'dashed'; label?: string; color?: string }
   | { type: 'update-connection'; id: string; from?: string; to?: string; line?: 'solid' | 'dashed'; label?: string; color?: string };
 export type CanvasControlAction = ControlNodeAction | ControlGroupAction | ControlConnectionAction | { type: 'delete'; ids: string[] };
-export interface CanvasControlPlan { version: 1; actions: CanvasControlAction[]; answer?: string }
+export interface CanvasControlPlan { version: 1 | 2; actions: CanvasControlAction[]; answer?: string }
 
 /** Bounded metadata captured only for an explicitly requested canvas-control turn. */
 export interface CanvasControlAdmission {
@@ -34,6 +36,13 @@ export interface CanvasControlAdmission {
   sourceIds?: string[];
 }
 export interface CanvasControlOffer extends CanvasControlAdmission { text: string; complete: boolean }
+export type CanvasControlPurpose = 'appearance' | 'move' | 'creation' | 'structure' | 'content' | 'general';
+export interface CanvasControlContextV2 { instruction: string; objectDirectory: string; targetIds?: string[]; responseSchema?: Record<string, unknown> }
+export interface CanvasControlTaskState {
+  version: 1;
+  plans: Array<{ id: string; goal: string; status: 'pending' | 'applied' | 'undone' | 'changed' | 'failed' | 'dismissed' | 'expired';
+    actions: unknown[]; actionCount: number; omittedActions: number; targets: Array<{ id: string; title: string; revision: number }>; error?: string }>;
+}
 export interface CanvasControlPatchPlan {
   patches: PatchOperation[];
   events?: EventDeclaration[];
@@ -56,6 +65,7 @@ export interface CanvasControlConnectionRequest {
   nodes: ConnectionNodeGeometry[];
 }
 export interface CanvasControlReview {
+  planVersion?: 1 | 2;
   id: string;
   sessionId: string;
   createdAt: number;
@@ -85,8 +95,12 @@ declare module './commands.ts' {
 }
 declare module './messages.ts' {
   interface ApplicationCapabilityMap {
+    'canvasControl.context@2': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
+    'canvasControl.localPlan@1': MessageContract<CanvasControlAdmission, { handled: boolean; text?: string }>;
+    'canvasControl.taskState@1': MessageContract<{ sessionId: string; targetIds?: string[] }, CanvasControlTaskState>;
     'canvasControl.context@1': MessageContract<CanvasControlAdmission, { instruction: string }>;
     'canvasControl.nodesPlan@1': MessageContract<CanvasControlNodeRequest, CanvasControlNodePlan>;
+    'canvasControl.nodesPlan@2': MessageContract<CanvasControlNodeRequest, CanvasControlNodePlan>;
     'canvasControl.groupsPlan@1': MessageContract<CanvasControlGroupRequest, CanvasControlGroupPlan>;
     'canvasControl.connectionsPlan@1': MessageContract<CanvasControlConnectionRequest, CanvasControlPatchPlan>;
   }

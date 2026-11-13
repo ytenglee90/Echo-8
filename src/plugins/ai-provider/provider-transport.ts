@@ -17,6 +17,11 @@ const MAX_AI_SSE_EVENT_CHARACTERS = 2 * 1024 * 1024;
 
 export function validateGenerateRequest(input: AIGenerateRequest): void {
   if (!input || !Array.isArray(input.messages) || input.messages.length < 1 || input.messages.length > 64 ||
+    (input.responseSchema !== undefined && (!isRecord(input.responseSchema) || JSON.stringify(input.responseSchema).length > 24_000)) ||
+    (input.usageContext !== undefined && (!isRecord(input.usageContext) || typeof input.usageContext.taskId !== 'string' || input.usageContext.taskId.length > 200 || typeof input.usageContext.sessionId !== 'string' || input.usageContext.sessionId.length > 200 ||
+      !['answer', 'plan', 'tool-roundtrip', 'format-correction', 'continuation', 'memory-extraction', 'compatibility-retry', 'retry', 'repeat'].includes(input.usageContext.purpose) ||
+      (input.usageContext.outputKind !== undefined && !['answer', 'plan', 'memory'].includes(input.usageContext.outputKind)) ||
+      (input.usageContext.inputBreakdown !== undefined && (!isRecord(input.usageContext.inputBreakdown) || Object.entries(input.usageContext.inputBreakdown).some(([key, value]) => !['baseRules', 'operationProtocol', 'history', 'references', 'objectDirectory', 'tools', 'userRequest', 'taskState'].includes(key) || tokenCount(value) === undefined))))) ||
     input.messages.some((message) => !isValidChatMessage(message)) ||
     (input.providerId !== undefined && (typeof input.providerId !== 'string' || input.providerId.length > 200)) ||
     (input.inspection !== undefined && (!isRecord(input.inspection) || typeof input.inspection.sessionId !== 'string' || input.inspection.sessionId.length > 200 || !Number.isSafeInteger(input.inspection.userTurn) || input.inspection.userTurn < 1)) ||
@@ -102,6 +107,7 @@ export function buildProviderRequest(
           generationConfig: {
             temperature: input.temperature,
             maxOutputTokens: input.maxOutputTokens,
+            ...(input.responseSchema ? { responseMimeType: 'application/json', responseJsonSchema: input.responseSchema } : {}),
           },
           ...(input.webSearch ? { tools: [{ google_search: {} }] } : {}),
         }),
@@ -279,12 +285,7 @@ export function parseCompletion(payload: unknown): Omit<AIGenerateResult, 'provi
     throw new Error('模型返回了空内容');
   }
   if (text.length > 100_000) throw new Error('模型返回内容超过当前提案上限');
-  const usage = isRecord(payload.usage)
-    ? {
-        inputTokens: tokenCount(payload.usage.prompt_tokens ?? payload.usage.input_tokens),
-        outputTokens: tokenCount(payload.usage.completion_tokens ?? payload.usage.output_tokens),
-      }
-    : undefined;
+  const usage = providerTokenUsage(payload);
   const finishReason = normalizeFinishReason(payload.choices[0].finish_reason);
   return {
     text,
@@ -526,12 +527,7 @@ function parseStreamPayload(
       ? deltaRecord.reasoning
       : undefined;
   const toolCallDeltas = readToolCallDeltas(deltaRecord?.tool_calls);
-  const usage = isRecord(payload.usage)
-    ? {
-        inputTokens: tokenCount(payload.usage.prompt_tokens ?? payload.usage.input_tokens),
-        outputTokens: tokenCount(payload.usage.completion_tokens ?? payload.usage.output_tokens),
-      }
-    : undefined;
+  const usage = providerTokenUsage(payload);
   return {
     answerDelta,
     reasoningDelta,
@@ -609,6 +605,8 @@ function geminiTokenUsage(usage: Record<string, unknown> | undefined): AIGenerat
   return {
     inputTokens: input === undefined ? undefined : tokenCount(input + (tokenCount(usage.toolUsePromptTokenCount) ?? 0)),
     outputTokens: output === undefined ? undefined : tokenCount(output + (tokenCount(usage.thoughtsTokenCount) ?? 0)),
+    ...(tokenCount(usage.thoughtsTokenCount) === undefined ? {} : { reasoningTokens: tokenCount(usage.thoughtsTokenCount) }),
+    ...(tokenCount(usage.cachedContentTokenCount) === undefined ? {} : { cachedInputTokens: tokenCount(usage.cachedContentTokenCount) }),
   };
 }
 
@@ -679,4 +677,19 @@ function finalizeReasonedContent(content: { text: string; reasoning: string }): 
   const text = content.text.trim();
   const reasoning = content.reasoning.trim();
   return { text, reasoning };
+}
+
+/** Provider totals are cumulative snapshots; details are subsets, never added twice. */
+export function providerTokenUsage(payload: unknown): AIGenerateResult['usage'] {
+  if (!isRecord(payload)) return undefined;
+  if (isRecord(payload.usageMetadata)) return geminiTokenUsage(payload.usageMetadata);
+  if (!isRecord(payload.usage)) return undefined;
+  const usage = payload.usage;
+  const completion = isRecord(usage.completion_tokens_details) ? usage.completion_tokens_details : {};
+  const prompt = isRecord(usage.prompt_tokens_details) ? usage.prompt_tokens_details : {};
+  return { inputTokens: tokenCount(usage.prompt_tokens ?? usage.input_tokens), outputTokens: tokenCount(usage.completion_tokens ?? usage.output_tokens),
+    ...(tokenCount(completion.reasoning_tokens) === undefined ? {} : { reasoningTokens: tokenCount(completion.reasoning_tokens) }),
+    ...(tokenCount(usage.prompt_cache_hit_tokens ?? prompt.cached_tokens) === undefined ? {} : { cachedInputTokens: tokenCount(usage.prompt_cache_hit_tokens ?? prompt.cached_tokens) }),
+    ...(tokenCount(usage.prompt_cache_miss_tokens) === undefined ? {} : { cacheMissInputTokens: tokenCount(usage.prompt_cache_miss_tokens) }),
+  };
 }

@@ -32,6 +32,7 @@ import {
   AIWritebackReview,
 } from './AIReviewViews.tsx';
 import { AITranscriptView } from './AITranscriptView.tsx';
+import { AITaskUsageView } from './AITaskUsageView.tsx';
 import { chooseAIMemoryDirectory } from './memory-directory-picker.ts';
 import { inferMemorySuggestion } from './memory-suggestion.ts';
 import { AI_UI_NAMESPACE } from './model.ts';
@@ -323,6 +324,7 @@ function AIAssistantWindow({
                   onInspectRequest={(turn) => void run(() => client.dispatch('ai.request.inspect@1', { sessionId: activeSession.id, turn }))}
                 />
               ) : <AICommandHints />}
+              <AITaskUsageView client={client} sessionId={activeSession.id} />
               <div className="ai-status-row">
                 <div className={`ai-status ai-status-${status.state}`} role="status">
                   {status.state === 'preparing' || status.state === 'indexing' || status.state === 'generating'
@@ -366,7 +368,7 @@ function AIAssistantWindow({
               )}
 
               {sessionProposals.map((proposal) => {
-                const proposalOutputMode: AIWritebackMode = outputProposalId === proposal.id ? outputMode : 'replace';
+                const proposalOutputMode: AIWritebackMode = outputProposalId === proposal.id ? outputMode : proposal.suggestedTarget?.mode ?? 'replace';
                 const proposalOutputNodeId = outputProposalId === proposal.id
                   ? outputNodeId
                   : (proposal.suggestedTarget?.nodeId ?? '');

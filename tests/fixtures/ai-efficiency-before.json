@@ -1,0 +1,50 @@
+{
+  "measurement": "local estimate of fixed request inputs; excludes unknown model outputs and paid billing",
+  "scenarios": [
+    {
+      "scenario": "问候",
+      "calls": 1,
+      "estimatedInput": 1080
+    },
+    {
+      "scenario": "连续追问",
+      "calls": 2,
+      "estimatedInput": 2353
+    },
+    {
+      "scenario": "历史事实",
+      "calls": 1,
+      "estimatedInput": 1151
+    },
+    {
+      "scenario": "冲突记忆",
+      "calls": 1,
+      "estimatedInput": 1156
+    },
+    {
+      "scenario": "人物设计",
+      "calls": 1,
+      "estimatedInput": 1148
+    },
+    {
+      "scenario": "续写",
+      "calls": 1,
+      "estimatedInput": 1153
+    },
+    {
+      "scenario": "改色",
+      "calls": 1,
+      "estimatedInput": 1125
+    },
+    {
+      "scenario": "分组连线",
+      "calls": 1,
+      "estimatedInput": 1132
+    },
+    {
+      "scenario": "生成中修改",
+      "calls": 1,
+      "estimatedInput": 1143
+    }
+  ]
+}

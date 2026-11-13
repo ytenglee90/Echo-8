@@ -1,6 +1,8 @@
 # Echo-8 Architecture
 
-Canvas control defaults to direct creation-only generation. The assistant records its reply before invoking the controller's guarded generate command, leaving the generated batch as one undoable document change. Existing edits/deletes and optional preview mode retain confirmation. Review content scrolls within its bounded floating panel while a separate action footer stays visible (ADR-0141).
+AI efficiency is measured across an explicitly bounded task, including transport retries, tool rounds, corrections, continuations and memory extraction. Provider-returned counts, estimated supplements and unknown failed directions remain separate. The assistant assembles stable demand-loaded rules, verified deduplicated evidence and native role history. Versioned controller capabilities provide relevant execution state, field-limited directories and conservative local plans; range edit v2 retains v1 compatibility and owner revision/transaction checks. Runtime accounting and request bodies never enter book files (ADR-0142).
+
+Canvas control defaults to directly creating new objects and filling the body of writable empty nodes. The assistant records its reply before invoking the controller's guarded generate command, leaving the generated batch as one undoable document change. Other edits, deletes and optional preview mode retain confirmation. Review content scrolls within its bounded floating panel while a separate action footer stays visible (ADR-0141, ADR-0142).
 
 AI replies expose per-round input/output usage across providers with independently labelled estimates for missing counts. Multi-request rounds aggregate usage once; reply metadata persists without polluting transcript evidence. Actual request bodies remain in a bounded, redacted, provider-owned current-open-session cache, exposed through a versioned capability to an AI-owned governed modal (ADR-0140).
 

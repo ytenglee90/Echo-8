@@ -161,6 +161,7 @@ export function createTextNodePlugin(canvasLayer?: unknown, emptyState?: unknown
     queries: ['textNode.count'],
     providesCapabilities: [
       'canvasControl.nodesPlan@1',
+        'canvasControl.nodesPlan@2',
       'content.summaries@1',
       'content.catalog@2',
       'content.metrics@1',
