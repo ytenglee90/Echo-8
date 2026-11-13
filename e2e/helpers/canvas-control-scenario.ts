@@ -12,6 +12,33 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('natural character creation corrects an empty plan that misreports the text-node capability', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      calls++;
+      const { messages } = route.request().postDataJSON() as { messages: Array<{ role: string; content: string }> };
+      expect(messages.filter(message => message.role === 'system').map(message => message.content).join('\n')).toContain('文字节点已启用，支持 create-node 和 update-node');
+      if (calls === 2) expect(messages.at(-1)?.content).toContain('返回计划没有 create-node');
+      const content = JSON.stringify(calls === 1
+        ? { version: 1, actions: [], answer: '节点插件未启用。' }
+        : { version: 1, actions: [{ type: 'create-node', ref: 'character', title: '角色｜沈砚', text: '夜班测绘员。' }] });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
+        body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('新建角色节点');
+    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
+    const card = page.getByRole('article', { name: '文本节点：角色｜沈砚' });
+    await expect(card).toContainText('夜班测绘员。');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项');
+    await expect(ai).not.toContainText('节点插件未启用');
+    expect(calls).toBe(2);
+    await page.getByRole('button', { name: /^撤销/u }).click();
+    await expect(card).toHaveCount(0);
+  });
+
   test('formal natural memory is reviewed and recorded offline', async ({ page }) => {
     await page.goto(url);
     await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
@@ -189,7 +216,7 @@ export function canvasControlScenarios(url: string): void {
       await expect(control).toContainText('1 项待应用');
       await apply();
     }
-    await send(`把${first}、${second}编成一组，叫第一章线索`);
+    await send('麻烦把林渊和旧枪组成一个群组，名为第一章线索');
     await expect(control).toContainText('新建群组 · 第一章线索');
     await apply();
     await send(`把${third}也加进去`);
@@ -199,7 +226,7 @@ export function canvasControlScenarios(url: string): void {
     await expect(control).toContainText('3 项待应用');
     await apply();
     await expect(page.getByRole('article', { name: /文本框：分类\d｜(?:林渊|旧枪|记者)$/u })).toHaveCount(3);
-    await send('画布背景换成暖灰');
+    await send('把背景色改成暖灰');
     await expect(control.getByLabel('画布背景预览')).toContainText('#b8afa4');
     await control.getByRole('button', { name: '应用背景', exact: true }).click();
     await expect(control.getByLabel('画布背景预览')).toHaveCount(0);
@@ -226,7 +253,9 @@ export function canvasControlScenarios(url: string): void {
       await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     };
     await page.context().setOffline(true);
-    await send(`把${weapon}连到${hero}`);
+    await send('帮我找到林渊');
+    await expect(ai).toContainText(`找到「${hero}」，已在画布定位。`);
+    await send('帮我把旧枪连到林渊');
     await expect(reviews).toHaveCount(1);
     await expect(reviews.first()).toContainText(`连接 · ${weapon} → ${hero}`);
     await expect(reviews.first()).toContainText('线型 · 实线');
@@ -245,7 +274,7 @@ export function canvasControlScenarios(url: string): void {
     await control.getByRole('button', { name: '应用整份计划' }).click();
     await expect(page.locator('.connection-path.title-connection')).toHaveCount(0);
     await expect(page.locator('.connection-path:not(.draft)')).toHaveCount(1);
-    await expect(ai.getByLabel('本轮 Token 用量')).toHaveText(Array(3).fill('本轮 Token：输入 0 · 输出 0'));
+    await expect(ai.getByLabel('本轮 Token 用量')).toHaveText(Array(4).fill('本轮 Token：输入 0 · 输出 0'));
   });
   test('offline duplicate-name choices resume the requested direction and keep the chosen endpoint', async ({ page }) => {
     const body = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '同名点选验收' }),

@@ -29,6 +29,21 @@ test('natural operation catalog covers every content task without treating quote
   for (const [prompt, expected] of cases) assert.equal(inferAtOperation(prompt!), expected, prompt);
   assert.equal(inferAtOperation('@总结 润色主角'), 'summarize');
   assert.equal(inferAtOperation('先别润色主角'), 'general');
+  assert.equal(inferAtOperation('新建角色节点'), 'canvas-control');
+  assert.equal(inferAtOperation('请帮我创建一张角色卡片，并写上人物设定'), 'canvas-control');
+  assert.equal(inferAtOperation('新建角色节点怎么做？'), 'general');
+  assert.equal(inferAtOperation('新建角色节点的方法有哪些'), 'general');
+  assert.equal(inferAtOperation('先别新建角色节点'), 'general');
+  assert.equal(naturalCanvasOperation('新建角色节点'), undefined);
+  for (const [prompt, kind] of [
+    ['帮我找到主角', 'find'], ['帮我给主角和武器连线', 'connect'], ['请用虚线把主角和武器连接起来', 'connect'],
+    ['把这两个连接起来', 'connect'], ['帮我把主角标题栏改红色', 'color'], ['把背景色改成暖灰', 'background'],
+    ['主题改成深色', 'theme'], ['麻烦把主角和武器组成一个群组，名为角色组', 'group'],
+    ['把主角正文的「旧枪」替换为「新枪」，全部', 'replace'],
+  ]) assert.equal(naturalCanvasOperation(prompt!)?.kind, kind, prompt);
+  assert.equal(inferAtOperation('把画布背景调整得更护眼'), 'canvas-control');
+  assert.equal(inferAtOperation('把选中节点的正文改成第一人称'), 'rewrite');
+  assert.equal(inferAtOperation('画布背景怎么改色？'), 'general');
   assert.equal(inferAtOperation('找到『删除地图』'), 'canvas-control');
   assert.deepEqual(naturalNames('『调查和取证』和武器'), ['调查和取证', '武器']);
   assert.equal(naturalCanvasOperation('把主角改名为旧版？'), undefined);
@@ -113,6 +128,10 @@ test('expanded local operations use owner plans, preserve links and reject stale
   await run('在主角右边新建一张叫线索的卡片'); await apply();
   const note = (await nodes()).find(node => node.title === '线索')!;
   assert.ok(note.x > (await nodes()).find(node => node.id === hero.id)!.x);
+  const qualified = await create('人物｜沈砚', 1500);
+  await run('帮我把沈砚标题栏改红色');
+  await apply();
+  assert.equal((await nodes()).find(node => node.id === qualified.id)?.titleColor, '#c43d49');
   await run('在主角右边新建一张叫灯塔的卡片，再从主角拉条虚线到灯塔');
   assert.deepEqual((await state()).reviews.at(-1)?.actions.map(action => action.type), ['create-node', 'create-connection']);
   await apply();

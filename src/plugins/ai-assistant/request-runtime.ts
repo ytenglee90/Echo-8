@@ -8,7 +8,7 @@ import type {
   AIProposalRecord,
 } from '../../protocols/ai.ts';
 import { explicitAtOperation, inferAtOperation } from './command-parser.ts';
-import { canvasCommandText, naturalCanvasOperation, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
+import { canvasCommandText } from '../../services/ai-task-route.ts';
 import { naturalWritebackIntent } from './natural-writeback.ts';
 import {
   isGenerationCancelPayload,
@@ -84,11 +84,13 @@ export function registerAIRequestRuntime(
             assistant.id === payload.assistantId && assistant.sessionId === payload.sessionId)
         : undefined;
       if (payload.assistantId && !boundAssistant) throw new Error('当前 AI 助手窗口已经不存在');
+      const inferredOperation = inferAtOperation(payload.prompt);
       const normalizedPayload: PreparePayload = {
         ...payload,
-        operation: explicitAtOperation(payload.prompt) ?? (naturalCanvasOperation(payload.prompt) || needsCanvasSearchInterpretation(payload.prompt)
+        operation: explicitAtOperation(payload.prompt) ?? (inferredOperation === 'canvas-control'
           ? 'canvas-control' : payload.operation !== 'general' ? payload.operation
-            : naturalWritebackIntent(canvasCommandText(payload.prompt).trim()) ? 'rewrite' : inferAtOperation(payload.prompt)),
+            : inferredOperation !== 'general' ? inferredOperation
+              : naturalWritebackIntent(canvasCommandText(payload.prompt).trim()) ? 'rewrite' : 'general'),
         ...(boundAssistant
           ? {
               memorySourceIds: boundAssistant.memorySourceIds ?? [],

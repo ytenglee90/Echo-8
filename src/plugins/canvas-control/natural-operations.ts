@@ -49,7 +49,9 @@ export async function resolveNaturalOperation(
     const key = normalize(source.title);
     // The canvas owner numbers duplicate titles. Include that family when the
     // user says the base name, and keep the full title independently searchable.
-    for (const alias of new Set([key, key.replace(/\s+\d+$/u, '')])) {
+    const base = key.replace(/\s+\d+$/u, '');
+    const qualifiedParts = base.split('|').map(part => part.trim()).filter(Boolean);
+    for (const alias of new Set([key, base, ...(qualifiedParts.length > 1 ? qualifiedParts : [])])) {
       const list = nodeTitles.get(alias) ?? [];
       list.push(source.sourceId);
       nodeTitles.set(alias, list);
@@ -106,7 +108,7 @@ export async function resolveNaturalOperation(
       const selectedIds = (useSelection ? selected.ids : previous.ids.length ? previous.ids : selected.ids);
       const drafts = new Set(previous.draftTitles?.values());
       const ids = [...new Set(selectedIds.flatMap(id => groups.find(group => group.id === id)?.memberIds ?? [id]))]
-        .filter(id => drafts.has(id) || (sources.has(id) && sources.get(id)?.automaticRetrieval !== false));
+        .filter(id => drafts.has(id) || (sources.has(id) && (useSelection || sources.get(id)?.automaticRetrieval !== false)));
       if (name === '这两个' && ids.length !== 2) return answer('请选中两个节点，再继续连线。');
       return ids.length ? ids : answer('当前没有可沿用的节点。请说出节点名称或先选中节点。');
     }

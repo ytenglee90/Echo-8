@@ -59,8 +59,12 @@ const fromConnection = new RegExp(`^从\\s*${connectionOperand}\\s*拉(?:一)?�
 const pointingConnection = new RegExp(`^让\\s*${connectionOperand}\\s*指向\\s*${connectionOperand}${connectionStyle}$`, 'u');
 const lineStyle = (value: string) => value === '实线' ? 'solid' as const : 'dashed' as const;
 
+function canvasIntentText(prompt: string): string {
+  return prompt.trim().replace(/^@画布操作(?=\s|$)\s*/u, '').replace(/^(?:请\s*)?(?:帮我\s*|麻烦\s*|给我\s*)?/u, '');
+}
+
 export function naturalCanvasOperation(prompt: string): NaturalCanvasOperation | undefined {
-  const command = prompt.trim().replace(/^@画布操作\s*/u, '').replace(/^请\s*/u, '');
+  const command = canvasIntentText(prompt);
   const literals = new RegExp(NATURAL_QUOTED_NAME, 'gu');
   const masked = command.replace(literals, match => '□'.repeat(match.length));
   const separators = [...masked.matchAll(/[，,；;。]\s*(?:再把|再将|然后把|然后将|再从|然后从|然后|再)|\s*(?:并且|并)\s*(?=把|将|改成|改为|切成|向|往)/gu)];
@@ -99,11 +103,22 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
     if (pair.length === 2) return { kind: 'relations', names: pair };
   }
   if (/[？?]$/u.test(command) || /(?:吗|么|会怎样|怎么样)$/u.test(text)) return undefined;
+  if ((match = /^(?:用|拉(?:一)?条)\s*(实线|虚线)\s*(?:把|将)\s*(.+?)\s*(?:连起来|连接起来|连上)$/u.exec(text))) {
+    const pair = names(match[2]!);
+    if (pair.length === 2) return { kind: 'connect', names: pair, line: lineStyle(match[1]!), chooseDirection: true };
+  }
+  if ((match = /^(?:给|把|将)\s*(.+?)\s*(?:连线|接线)$/u.exec(text))) {
+    const pair = names(match[1]!);
+    if (pair.length === 2 || /^(?:这两个|选中的?节点)$/u.test(pair[0] ?? '')) return { kind: 'connect', names: pair, chooseDirection: true };
+  }
   if ((match = /^([^，,；;。]+?)(?:除外|排除在外)$/u.exec(text)) && !/^(?:找出|筛选|高亮)/u.test(text)) return { kind: 'narrow', names: names(match[1]!) };
   if ((match = /^(?:(?:把|将)?(.+?)(?:的(?:颜色|标题栏))?)?(?:颜色)?再(浅|深)(?:一)?点$/u.exec(text))) {
     return { kind: 'relative-color', names: [match[1] ? name(match[1]) : '它们'], direction: match[2] === '浅' ? 'lighter' : 'darker' };
   }
   if (/^(?:切换|换|更换)(?:一)?(?:个|种)?(?:应用)?主题$/u.test(text)) return { kind: 'choose-theme', names: [] };
+  if (/^(?:把|将)?(?:画布背景|背景色)(?:调整|调|改)得?(?:更|稍微)?(?:护眼|舒服|柔和)(?:一点)?$/u.test(text)) {
+    return { kind: 'choose-color', names: [], background: true };
+  }
   if ((match = /^(?:(?:把|将|给)\s*)?(.+?)(?:的标题栏)?(?:换|改)(?:一)?(?:个|种)?颜色$/u.exec(text))) {
     const target = name(match[1]!);
     return { kind: 'choose-color', names: target === '画布背景' ? [] : names(match[1]!), background: target === '画布背景' };
@@ -123,28 +138,29 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
   if ((match = /^(?:带我去|聚焦)\s*(.+)$/u.exec(text))) return { kind: 'find', names: names(match[1]!) };
   if ((match = directedConnection.exec(text) ?? pointingConnection.exec(text))) return { kind: 'connect', names: [name(match[1]!), name(match[2]!)], line: match[3] ? lineStyle(match[3]) : undefined };
   if ((match = fromConnection.exec(text))) return { kind: 'connect', names: [name(match[1]!), name(match[3]!)], line: match[2] === '线' ? undefined : lineStyle(match[2]!) };
-  if ((match = /^(?:把|将)\s*(.+?)\s*连起来(?:[，,\s]*(?:用|使用)\s*(实线|虚线))?$/u.exec(text))) {
+  if ((match = /^(?:把|将)\s*(.+?)\s*(?:连起来|连接起来|连上)(?:[，,\s]*(?:用|使用)\s*(实线|虚线))?$/u.exec(text))) {
     const pair = names(match[1]!);
-    if (pair.length === 2) return { kind: 'connect', names: pair, line: match[2] ? lineStyle(match[2]) : undefined, chooseDirection: true };
+    if (pair.length === 2 || /^(?:这两个|选中的?节点)$/u.test(pair[0] ?? '')) return { kind: 'connect', names: pair, line: match[2] ? lineStyle(match[2]) : undefined, chooseDirection: true };
   }
   if ((match = /^(?:(?:把|将)?\s*(刚才的|刚才那条|上一条|这条)(?:连线|线)?)?\s*(?:改为|改成|改回|设为|用|使用)\s*(实线|虚线)$/u.exec(text))) return { kind: 'line', names: [], line: lineStyle(match[2]!), reference: match[1] === '这条' ? 'selection' : match[1] ? 'previous' : undefined };
   if ((match = /^(?:把|将)?(.+?)的连线\s*(?:改为|改成|改回|设为)\s*(实线|虚线)$/u.exec(text))) return { kind: 'line', names: names(match[1]!), line: lineStyle(match[2]!) };
-  if ((match = /^(?:把|将)?\s*(.+?)(?:的标题栏|的颜色)?\s*(?:统一)?(?:改成|改为|设为|换成|改色为)\s*(#[\da-f]{6}|[\p{Script=Han}]{1,5})$/iu.exec(text))) {
+  if ((match = /^(?:把|将|给)?\s*(.+?)(?:的?标题栏|的?颜色)?\s*(?:统一)?(?:改成|改为|设为|设置为|换成|改色为|改)\s*(#[\da-f]{6}|[\p{Script=Han}]{1,5})$/iu.exec(text))) {
     const color = naturalColor(match[2]!);
     if (color) {
       const target = name(match[1]!);
-      if (target === '画布背景') return { kind: 'background', names: [], color };
+      if (/^(?:画布背景|背景色|背景)$/u.test(target)) return { kind: 'background', names: [], color };
       const group = /^(.*?)组?(?:里|内|中)的(?:文字)?节点$/u.exec(target);
       if (naturalTargetFilter(target)) return { kind: 'color', names: [target], color };
       return { kind: 'color', names: group ? [target.replace(/(?:里|内|中)的(?:文字)?节点$/u, '')] : names(match[1]!), color, members: Boolean(group) };
     }
   }
-  if ((match = /^(?:切到|切换到|换成|启用)\s*(深色|浅色|亮色|暗色)(?:应用)?主题$/u.exec(text))) return { kind: 'theme', names: [], theme: /深|暗/u.test(match[1]!) ? 'dark' : 'light' };
+  if ((match = /^(?:把|将)?(?:应用)?主题\s*(?:切到|切换到|改成|改为|换成)\s*(深色|浅色|亮色|暗色)(?:模式|主题)?$/u.exec(text) ??
+    /^(?:切到|切换到|换成|启用|打开)\s*(深色|浅色|亮色|暗色)(?:应用)?(?:主题|模式)$/u.exec(text))) return { kind: 'theme', names: [], theme: /深|暗/u.test(match[1]!) ? 'dark' : 'light' };
   if ((match = /^(?:把|将)?\s*(.+?)\s*(?:切成|切换为|切换成|转为|转换成|改成)\s*(文本框|卡片|文字节点)$/u.exec(text))) {
     const group = /^(.*?)(?:里|内|中)的(?:文字)?节点$/u.exec(match[1]!);
     return { kind: 'presentation', names: [naturalTargetFilter(match[1]!) ? match[1]!.trim() : name(group?.[1] ?? match[1]!)], presentation: match[2] === '文本框' ? 'text-box' : 'card', members: Boolean(group) && !naturalTargetFilter(match[1]!) };
   }
-  if ((match = /^(?:把|将)?(.+?)(?:编成|分成|建成|组成)(?:一|一个)?组[，,\s]*(?:叫|命名为|名称为)\s*(.+)$/u.exec(text))) return { kind: 'group', names: names(match[1]!), title: name(match[2]!) };
+  if ((match = /^(?:把|将)?(.+?)(?:编成|分成|建成|组成|归成|放进)(?:一|一个)?(?:群)?组[，,\s]*(?:叫|名为|命名为|名称为)\s*(.+)$/u.exec(text))) return { kind: 'group', names: names(match[1]!), title: name(match[2]!) };
   if ((match = /^(?:把|将)?(.+?)(?:也)?(?:加入|加进)(?:去)?\s*(.*)$/u.exec(text))) return { kind: 'group-add', names: [name(match[1]!)], title: name(match[2]!) || undefined };
   if ((match = /^(?:把|将)?(.+?)(?:移出|移除出)\s*(.*)$/u.exec(text))) return { kind: 'group-remove', names: [name(match[1]!)], title: name(match[2]!) || undefined };
   if ((match = /^(?:把|将)?(.+?)(?:改组名为|重命名为)\s*(.+)$/u.exec(text))) return { kind: 'group-rename', names: [name(match[1]!)], title: name(match[2]!) };
@@ -164,4 +180,19 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
 /** Open-ended searches are interpreted by a model, then resolved against the local index. */
 export function needsCanvasSearchInterpretation(prompt: string): boolean {
   return /^(?:请\s*)?(?:把|将|找出|筛选|查找).*(?:有关|相关).*(?:整理出来|找出来|筛出来|列出来)[。！]?$/u.test(prompt.trim());
+}
+
+/** Creation without a literal title may require generated content, so it uses the plan path. */
+export function needsCanvasCreationPlanning(prompt: string): boolean {
+  const text = canvasIntentText(canvasCommandText(prompt));
+  if (/[？?]\s*$/u.test(text) || /(?:吗|么|怎么做|如何做)[。！!]?$/u.test(text)) return false;
+  return /^(?:新建|创建|新增|生成|做)\s*[^，。；!?！？\r\n]{0,60}?(?:节点|卡片|文本框)(?=$|[\s，。；,;！!：:]|(?:并|然后|再|用于|用来))/u.test(text);
+}
+
+/** Identify requests to act on the canvas even when a local rule needs more detail. */
+export function needsCanvasActionPlanning(prompt: string): boolean {
+  const text = canvasIntentText(canvasCommandText(prompt));
+  if (/[？?]\s*$/u.test(text) || /^(?:如何|怎么|怎样|能否|能不能|可以|如果|先别|不要|别)/u.test(text)) return false;
+  return /^(?:(?:把|将|给)\s*)?(?:选中的?(?:文字)?节点|画布(?:背景)?|(?:应用)?主题).{0,120}?(?:移动|对齐|排列|改色|颜色|改成|改为|换成|调整|切换|分组|连线|连接|文本框|删除)/u.test(text) ||
+    /^(?:给|把|将)\s*.{1,90}?(?:的连线|的背景色|的标题栏|分成(?:一|一个)组|连接起来)(?:[，,。；;：:\s]|改|换|设|用|$)/u.test(text);
 }

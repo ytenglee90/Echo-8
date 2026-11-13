@@ -12,9 +12,10 @@ import type {
 } from '../../protocols/ai.ts';
 import { assertNotAborted } from '../../services/async-control.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
-import { needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
+import { needsCanvasCreationPlanning, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
 import { aggregateTokenUsage, withTokenUsageEstimates } from '../../services/ai-token-usage.ts';
 import { collectFullSourceSummary } from './full-source-summary.ts';
+import { stripOperationCommands } from './command-parser.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
 import { buildGenerateRequest } from './generation-request.ts';
 import { executeMemorySearchToolCalls } from './memory-search-tool.ts';
@@ -337,15 +338,22 @@ export function registerAIGenerationRuntime(
           result = mergeContinuedGeneration(result, continued);
         }
         if (prepared.operation === 'canvas-control' && result.finishReason !== 'length') {
-          try { parseCanvasControlPlan(result.text); }
+          const creationRequested = needsCanvasCreationPlanning(stripOperationCommands(prepared.prompt));
+          const validatePlan = (text: string) => {
+            const plan = parseCanvasControlPlan(text);
+            if (creationRequested && !plan.actions.some(action => action.type === 'create-node')) {
+              throw new Error('当前文字节点能力已启用，但返回计划没有 create-node。请根据本轮要求生成新节点。');
+            }
+          };
+          try { validatePlan(result.text); }
           catch (error) {
             if (request.messages.length > 62) throw error;
             context.signals.emit('ai.status', { state: 'generating', message: '正在修正画布操作计划格式', sessionId: prepared.sessionId, preparationId: prepared.id } satisfies AIStatusSignal);
             result = await generateOnce(forPurpose({ ...request, temperature: 0.1, tools: undefined, messages: [
               ...request.messages, { role: 'assistant', content: result.text },
-              { role: 'user', content: `计划校验未通过：${error instanceof Error ? error.message : '格式错误'}。请仅修正数据格式，保留本次要求与已有对象 ID，不增加权限或操作。根对象必须有数字 version 和 actions 数组；保留原计划版本，普通操作可用 1，局部 edit 必须用 2，actions 中每项有 type。只输出完整 JSON，不要输出书籍文件、节点清单、Markdown 说明或代码脚本。` },
+              { role: 'user', content: `计划校验未通过：${error instanceof Error ? error.message : '格式错误'}。${creationRequested ? '按原请求返回创建动作，使用应用确认的能力。' : '请仅修正数据格式。'}保留本次要求与已有对象 ID，不增加权限或无关操作。根对象必须有数字 version 和 actions 数组；保留原计划版本，普通操作可用 1，局部 edit 必须用 2，actions 中每项有 type。只输出完整 JSON，不要输出书籍文件、节点清单、Markdown 说明或代码脚本。` },
             ] }, 'format-correction'));
-            if (result.finishReason !== 'length') parseCanvasControlPlan(result.text);
+            if (result.finishReason !== 'length') validatePlan(result.text);
           }
         }
         return { ...result, usage: aggregateTokenUsage(requestUsages) };

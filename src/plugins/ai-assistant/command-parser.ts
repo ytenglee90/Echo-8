@@ -1,6 +1,6 @@
 import type { AIInlineReference, AIOperation } from '../../protocols/ai.ts';
 import { AI_OPERATION_DEFINITIONS, naturalAIOperation, type AIOperationCategory } from './operations.ts';
-import { naturalCanvasOperation, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
+import { naturalCanvasOperation, needsCanvasActionPlanning, needsCanvasCreationPlanning, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
 
 export const AI_OPERATION_COMMANDS: ReadonlyArray<{
   label: string;
@@ -24,7 +24,8 @@ export function explicitAtOperation(prompt: string): AIOperation | undefined {
 }
 
 export function inferAtOperation(prompt: string): AIOperation {
-  return explicitAtOperation(prompt) ?? (naturalCanvasOperation(prompt) || needsCanvasSearchInterpretation(prompt) ? 'canvas-control' : naturalAIOperation(prompt) ?? 'general');
+  return explicitAtOperation(prompt) ?? (naturalCanvasOperation(prompt) || needsCanvasSearchInterpretation(prompt) || needsCanvasCreationPlanning(prompt)
+    ? 'canvas-control' : naturalAIOperation(prompt) ?? (needsCanvasActionPlanning(prompt) ? 'canvas-control' : 'general'));
 }
 
 export function stripOperationCommands(prompt: string): string {
