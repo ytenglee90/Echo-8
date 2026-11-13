@@ -270,7 +270,7 @@ export interface PluginContext {
     dispatch: CommandDispatcher;
     /** Explicitly expands a child command inside the current command turn. Never use from UI or events. */
     invoke: CommandDispatcher;
-    /** Queues a child command after the current turn without exposing an awaitable promise. */
+    /** Queues declared follow-up work after the current turn, also from owned background callbacks; not awaitable. */
     defer: CommandDeferrer;
   };
   readonly events: {

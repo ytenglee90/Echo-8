@@ -11,6 +11,7 @@ import type {
   AISessionRecord,
 } from '../../protocols/ai.ts';
 import { assertNotAborted } from '../../services/async-control.ts';
+import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
 import { buildGenerateRequest } from './generation-request.ts';
 import { executeMemorySearchToolCalls } from './memory-search-tool.ts';
 import { operationCreatesWriteback } from './operations.ts';
@@ -279,6 +280,18 @@ export function registerAIGenerationRuntime(
           const continued = await generateOnce(continuationRequest(request, result.text));
           result = mergeContinuedGeneration(result, continued);
         }
+        if (prepared.operation === 'canvas-control' && result.finishReason !== 'length') {
+          try { parseCanvasControlPlan(result.text); }
+          catch (error) {
+            if (request.messages.length > 62) throw error;
+            context.signals.emit('ai.status', { state: 'generating', message: '正在修正画布操作计划格式', sessionId: prepared.sessionId, preparationId: prepared.id } satisfies AIStatusSignal);
+            result = await generateOnce({ ...request, temperature: 0.1, tools: undefined, messages: [
+              ...request.messages, { role: 'assistant', content: result.text },
+              { role: 'user', content: `计划校验未通过：${error instanceof Error ? error.message : '格式错误'}。请仅修正数据格式，保留本次要求与已有对象 ID，不增加权限或操作。根对象必须是 {"version":1,"actions":[...]}，version 是数字 1，actions 中每项有 type。只输出完整 JSON，不要输出书籍文件、节点清单、Markdown 说明或代码脚本。` },
+            ] });
+            if (result.finishReason !== 'length') parseCanvasControlPlan(result.text);
+          }
+        }
         return result;
       },
     });
@@ -344,6 +357,9 @@ export function registerAIGenerationRuntime(
       // The network task may succeed while the transcript transaction loses a
       // revision race. Scope that failure to this assistant and keep the other
       // concurrent sessions alive.
+      const currentTask = options.tasks.get(prepared.sessionId);
+      if (currentTask && currentTask !== task) return;
+      if (currentTask === task) options.tasks.delete(prepared.sessionId);
       if (isAbortError(error)) return;
       recordGenerationError(context, options.stateBySession, options.actionBySession, prepared, error);
     });

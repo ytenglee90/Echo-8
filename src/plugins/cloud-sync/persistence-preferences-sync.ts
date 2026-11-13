@@ -110,7 +110,7 @@ export function registerPersistencePreferenceSync(context: PluginContext, option
     cancel?.();
     cancel = context.resources.timeout(() => {
       cancel = undefined;
-      void context.commands.dispatch('cloudSync.syncPersistencePreferences').catch(() => undefined);
+      context.commands.defer('cloudSync.syncPersistencePreferences');
     }, 1_000);
   });
   return () => { stopped = true; cancel?.(); };

@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+Non-awaitable deferred commands can also be queued from owned background callbacks while retaining manifest admission, serial ordering and diagnostics; ordinary nested dispatch remains rejected. AI canvas plans receive at most one bounded format correction through the same model connection, and failed admission releases completed task state so retries remain available (ADR-0139).
+
 The optional canvas-control plugin accepts plans only from explicit @画布操作 turns. It captures bounded object metadata through public capabilities, stages untrusted model data for review, and obtains owner-produced text/group/connection patches. A token-bound inline commit applies the accepted batch in one document transaction. Review state remains transient, body edits retain chunk/format/annotation handling, and stale revisions or overlapping storage targets reject the batch (ADR-0138).
 
 The import/export owner accepts versioned `echo-8-ai-book` v1 NDJSON as an explicitly checksum-free authored input. AI can supply literal nodes, appended text parts and semantic links in a TXT attachment that users rename to `.e8`; bounded parsing stages existing text/group/connection records through the unchanged document-replacement route. Category sections, title boxes, colors and layout are materialized in staging. Normal saves migrate to native CRC32/gzip project v2; native v1/v2 integrity checks and unknown-plugin preservation remain unchanged (ADR-0136).

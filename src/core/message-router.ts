@@ -190,18 +190,14 @@ export class MessageRouter {
     return this.executeCommand<TResult>(envelope).finally(() => this.lineage.delete(envelope.id));
   }
 
-  /** Queues a declared child command after the active turn; callers cannot accidentally await it. */
+  /** Queues declared follow-up work, including owned background callbacks, without waiting. */
   defer(
     type: string,
     payload: unknown,
     sourcePlugin: string,
     parent?: MessageParent,
   ): void {
-    if (!parent || !this.executingCommandIds.has(parent.id)) {
-      this.diagnostics.increment('rejectedMessages');
-      throw new Error(`Deferred command is only available inside an active command: ${type}`);
-    }
-    if (parent.depth + 1 > MAX_MESSAGE_DEPTH) {
+    if (parent && parent.depth + 1 > MAX_MESSAGE_DEPTH) {
       this.diagnostics.increment('rejectedMessages');
       throw new Error(`Message propagation depth exceeded at ${type}`);
     }

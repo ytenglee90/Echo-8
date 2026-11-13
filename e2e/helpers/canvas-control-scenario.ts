@@ -12,6 +12,72 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('Gemini 404 keeps the selected model and a deliberate model change makes retry use the new endpoint', async ({ page }) => {
+    let requests = 0;
+    await page.route('https://generativelanguage.googleapis.com/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      requests += 1;
+      if (route.request().url().includes('/gemini-2.5-flash:')) return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, json: { error: { message: 'Model unavailable', status: 'NOT_FOUND' } } });
+      expect(route.request().url()).toContain('/gemini-3.5-flash-lite:streamGenerateContent');
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(plan) }] }, finishReason: 'STOP' }] })}\n\n` });
+    });
+    await configure(page, url, 'gemini', 'gemini-2.5-flash');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('@画布操作 新建人物与章节并分组连线。');
+    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
+    await expect(ai).toContainText('HTTP 404');
+    await expect(ai).toContainText('账号当前可用的模型');
+    expect(requests).toBe(1);
+    await ai.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
+    const provider = page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
+    await expect(provider.getByLabel('模型', { exact: true })).toHaveValue('gemini-2.5-flash');
+    await provider.getByLabel('模型', { exact: true }).fill('gemini-3.5-flash-lite');
+    await provider.getByRole('button', { name: '保存连接', exact: true }).click();
+    await expect(provider.getByText('当前连接已就绪', { exact: true })).toBeVisible();
+    await ai.getByRole('button', { name: 'AI 对话', exact: true }).click();
+    await ai.getByRole('button', { name: '重试上一次发送', exact: true }).click();
+    await expect(page.getByRole('region', { name: '画布控制', exact: true }).getByText('6 项操作', { exact: true })).toBeVisible();
+    expect(requests).toBe(2);
+  });
+  test('AI canvas plans get one bounded format repair before review', async ({ page }) => {
+    let requests = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      requests += 1;
+      const content = requests === 1 ? { version: '1', nodes: [] } : plan;
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(content) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('@画布操作 新建人物与章节并分组连线。');
+    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
+    await expect(page.getByRole('region', { name: '画布控制', exact: true }).getByText('6 项操作', { exact: true })).toBeVisible();
+    expect(requests).toBe(2);
+    await expect(ai).not.toContainText('"nodes"');
+  });
+  for (const failure of ['format', 'scope'] as const) test(`AI ${failure} failure releases the completed task and allows retry`, async ({ page }) => {
+    let requests = 0;
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      requests += 1;
+      const bad = failure === 'format' ? { version: '1', nodes: [] }
+        : { version: 1, actions: [{ type: 'update-node', id: 'outside:node', text: '不得写入' }] };
+      const content = requests <= (failure === 'format' ? 2 : 1) ? bad : plan;
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(content) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('@画布操作 新建人物与章节并分组连线。');
+    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
+    await expect(ai).toContainText(failure === 'format' ? '版本或字段不正确' : '控制范围外');
+    await ai.getByRole('button', { name: '重试上一次发送', exact: true }).click();
+    await expect(page.getByRole('region', { name: '画布控制', exact: true }).getByText('6 项操作', { exact: true })).toBeVisible();
+    expect(requests).toBe(failure === 'format' ? 3 : 2);
+    await expect(ai).not.toContainText('当前内容仍在处理中');
+    expect(errors).toEqual([]);
+  });
   test('AI node editing binds the selected object and refuses a review after the user edits it', async ({ page }) => {
     test.setTimeout(60_000);
     let targetId = '';
@@ -114,17 +180,18 @@ export function canvasControlScenarios(url: string): void {
   });
 }
 
-async function configure(page: Page, url: string): Promise<void> {
+async function configure(page: Page, url: string, preset: 'openai' | 'gemini' = 'openai', model?: string): Promise<void> {
   await page.goto(url);
   await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
   const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
   await ai.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
   const provider = page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
-  await provider.getByRole('combobox', { name: '选择平台', exact: true }).selectOption('openai');
+  await provider.getByRole('combobox', { name: '选择平台', exact: true }).selectOption(preset);
+  if (model) await provider.getByLabel('模型', { exact: true }).fill(model);
   await provider.getByLabel('API KEY', { exact: true }).fill('test-key-not-real');
   await provider.getByText('自定义地址（可选）', { exact: true }).click();
-  await provider.getByLabel('完整接口地址', { exact: true }).fill('https://canvas-control.test/v1/chat/completions');
+  await provider.getByLabel('完整接口地址', { exact: true }).fill(preset === 'gemini' ? 'https://generativelanguage.googleapis.com' : 'https://canvas-control.test/v1/chat/completions');
   await provider.getByRole('button', { name: '保存连接', exact: true }).click();
   await expect(provider.getByText('当前连接已就绪', { exact: true })).toBeVisible();
   await ai.getByRole('button', { name: 'AI 对话', exact: true }).click();

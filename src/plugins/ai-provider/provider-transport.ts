@@ -161,16 +161,16 @@ export function webSearchCatalogFields(profile: AIProviderProfile): {
 function resolveGeminiEndpoint(endpoint: string, model: string, stream: boolean): string {
   const url = new URL(resolveEndpoint(endpoint));
   const method = stream ? ':streamGenerateContent' : ':generateContent';
-  if (/:generateContent$|:streamGenerateContent$/u.test(url.pathname)) {
-    url.pathname = url.pathname.replace(/:(?:stream)?generateContent$/u, method);
-  } else if (/\/models\/[^/]+$/u.test(url.pathname)) {
-    url.pathname = `${url.pathname}${method}`;
+  const modelId = encodeURIComponent(model.replace(/^models\//u, ''));
+  if (/\/models\/[^/]+$/u.test(url.pathname)) {
+    url.pathname = url.pathname.replace(/\/models\/[^/]+$/u, `/models/${modelId}${method}`);
   } else {
-    const prefix = url.pathname.replace(/\/$/u, '');
+    const prefix = url.pathname.replace(/\/$/u, '').replace(/\/models$/u, '');
     const versioned = /\/v1(?:beta)?$/u.test(prefix) ? prefix : `${prefix}/v1beta`;
-    url.pathname = `${versioned}/models/${encodeURIComponent(model)}${method}`;
+    url.pathname = `${versioned}/models/${modelId}${method}`;
   }
   if (stream) url.searchParams.set('alt', 'sse');
+  else if (url.searchParams.get('alt') === 'sse') url.searchParams.delete('alt');
   return url.toString();
 }
 
@@ -189,7 +189,11 @@ export async function fetchWithInitialRetry(
         await abortableDelay(450, signal);
         continue;
       }
-      throw new Error(await describeProviderHttpError(response));
+      const detail = await describeProviderHttpError(response);
+      const hint = response.status === 404 && new URL(resolveEndpoint(endpoint)).hostname === 'generativelanguage.googleapis.com'
+        ? '；Gemini 模型不可用或不支持此接口，请在“模型设置”选择账号当前可用的模型并保存连接。'
+        : '';
+      throw new Error(`${detail}${hint}`);
     } catch (error) {
       assertNotAborted(signal);
       lastError = error;

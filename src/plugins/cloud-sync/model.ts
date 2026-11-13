@@ -306,7 +306,7 @@ export function createCloudSyncPlugin(
         if(applyingShortcuts||!state.user||!hasBookStorage())return;
         if(accountSettings)accountSettings={...accountSettings,dirty:true};
         cancelShortcutSync?.();cancelShortcutSync=context.resources.timeout(()=>{
-          cancelShortcutSync=undefined;context.commands.dispatch('cloudSync.syncShortcuts').catch(()=>undefined);
+          cancelShortcutSync=undefined;context.commands.defer('cloudSync.syncShortcuts');
         },1_000);
       });
       const runSync = async (forceCheckpoint = false, parent?: MessageEnvelope, includePending = true) => {

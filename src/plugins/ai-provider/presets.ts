@@ -76,12 +76,12 @@ export const AI_PROVIDER_PRESETS: readonly AIProviderPreset[] = [
     label: 'Google Gemini',
     draft: {
       platform: 'Google Gemini', label: 'Gemini 对话',
-      endpoint: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-flash',
+      endpoint: 'https://generativelanguage.googleapis.com', model: 'gemini-3.5-flash-lite',
       authentication: 'api-key', apiStyle: 'gemini',
     },
-    suggestedModels: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'],
+    suggestedModels: ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash-lite'],
     modelHint: '填写 Google AI Studio 当前开放的 Gemini 模型名称',
-    note: '使用 Google AI Studio API Key；系统会自动拼接原生模型路径。',
+    note: '使用 Google AI Studio API Key；系统会自动拼接原生模型路径。2.5 Flash/Pro 已限制旧用户访问，模型以账号当前权限为准。',
   },
 ] as const;
 

@@ -162,3 +162,32 @@ test('custom shortcuts restore from the account and edits update a single accoun
  await command(page,'打开快捷键中心');await page.getByRole('region',{name:'快捷键中心'}).getByPlaceholder('搜索操作或分类…').fill('聚焦选中项');
  await expect(page.getByRole('textbox',{name:'修改聚焦选中项的快捷键'})).toHaveValue(/Ctrl.*Alt.*8/u);
 });
+
+test('shortcut debounce queues behind a held cloud refresh without an uncaught nested-dispatch error', async ({ page }) => {
+  const backend = await cloud(page);
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await backend.fetch('/v2/shortcuts', 'PUT', { expectedRevision: 0, overrides: [{ targetOwner: 'canvas', targetId: 'canvas.focus-selection-shortcut', chord: 'mod+alt+9' }] });
+  await page.goto('/');
+  await page.getByRole('button', { name: '打开书籍：分块保存测试', exact: true }).click();
+  await command(page, '打开快捷键中心');
+  const panel = page.getByRole('region', { name: '快捷键中心' });
+  await panel.getByPlaceholder('搜索操作或分类…').fill('聚焦选中项');
+  const binding = panel.getByRole('textbox', { name: '修改聚焦选中项的快捷键' });
+  await expect(binding).toHaveValue(/Ctrl.*Alt.*9/u);
+  let held = false;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/cloud/status', async route => {
+    held = true; await gate; await route.fallback();
+  });
+  await binding.focus(); await page.keyboard.press('Control+Alt+8');
+  try {
+    await command(page, '云同步设置');
+    await page.getByRole('button', { name: '刷新云端书籍', exact: true }).click();
+    await expect.poll(() => held).toBe(true);
+    await page.waitForTimeout(1_250);
+  } finally { release(); }
+  await expect.poll(() => Number(backend.db.sqlite.prepare('SELECT revision FROM account_shortcuts').get()!.revision)).toBe(2);
+  expect(errors).toEqual([]);
+});
