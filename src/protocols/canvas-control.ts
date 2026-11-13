@@ -62,10 +62,12 @@ export interface CanvasControlReview {
   status: 'pending' | 'applied' | 'dismissed';
   actions: CanvasControlAction[];
   titles: Record<string, string>;
+  error?: string;
 }
 export interface CanvasControlState {
   open: boolean;
   scope: 'selection' | 'canvas';
+  execution: 'direct' | 'review';
   reviews: CanvasControlReview[];
 }
 declare module './commands.ts' {
@@ -73,7 +75,9 @@ declare module './commands.ts' {
     'canvasControl.open@1': CommandContract;
     'canvasControl.close@1': CommandContract;
     'canvasControl.scope@1': CommandContract<{ scope: 'selection' | 'canvas' }>;
-    'canvasControl.offer@1': CommandContract<CanvasControlOffer, { message: string }>;
+    'canvasControl.execution@1': CommandContract<{ execution: 'direct' | 'review' }>;
+    'canvasControl.offer@1': CommandContract<CanvasControlOffer, { message: string; directPlanId?: string }>;
+    'canvasControl.generate@1': CommandContract<{ id: string }, { message: string }>;
     'canvasControl.apply@1': CommandContract<{ id: string }, { createdIds: string[] }>;
     'canvasControl.commit@1': CommandContract<{ id: string; token: string }, { createdIds: string[] }>;
     'canvasControl.dismiss@1': CommandContract<{ id: string }>;

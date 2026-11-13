@@ -300,7 +300,7 @@ export function createAIAssistantPlugin(
         'ai.memory.candidate.dismiss',
       ],
       dispatches: [
-        'canvasControl.offer@1',
+        'canvasControl.offer@1', 'canvasControl.generate@1',
         'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings',
         'ai.context.prepare',
         'aiProvider.profile.activate', 'ai.promptTemplate.restorePersonal', 'system.preferences.set',

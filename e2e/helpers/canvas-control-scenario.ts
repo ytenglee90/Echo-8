@@ -12,6 +12,47 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('new objects generate directly by default and one undo reverses the whole generated batch', async ({ page }) => {
+    await page.route('https://canvas-control.test/**', route => route.request().method() === 'OPTIONS'
+      ? route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } })
+      : route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(plan) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` }));
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('@画布操作 新建人物与章节并分组连线。');
+    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
+    await expect(ai.getByRole('status')).toContainText('已直接完成 6 项');
+    await expect(page.getByRole('region', { name: '画布控制', exact: true })).toHaveCount(0);
+    await ai.getByRole('button', { name: '关闭AI 助手' }).click();
+    const hero = page.getByRole('article', { name: /文本节点：主角｜林渊$/u });
+    await expect(hero).toBeVisible();
+    await expect(page.locator('.group-frame')).toHaveCount(1);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(hero).toHaveCount(0); await expect(page.locator('.group-frame')).toHaveCount(0);
+    await page.getByRole('button', { name: '重做', exact: true }).click(); await expect(hero).toBeVisible();
+  });
+  test('a 17-operation review scrolls inside a short viewport with apply always visible', async ({ page }, info) => {
+    const largePlan: CanvasControlPlan = { version: 1, actions: Array.from({ length: 17 }, (_, index) => ({ type: 'create-node' as const, ref: `long-${index}`, title: `长计划节点 ${index + 1}`, text: '长计划正文。'.repeat(80) })) };
+    await page.route('https://canvas-control.test/**', route => route.request().method() === 'OPTIONS'
+      ? route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } })
+      : route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(largePlan) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` }));
+    await configure(page, url);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('@画布操作 生成17个独立对象。');
+    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await expect(control.getByText('17 项操作', { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 900, height: 540 });
+    const content = control.getByRole('region', { name: '画布控制内容', exact: true });
+    await expect.poll(() => content.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    const apply = control.getByRole('button', { name: '应用整份计划', exact: true });
+    const box = (await apply.boundingBox())!;
+    expect(box.y).toBeGreaterThan(0); expect(box.y + box.height).toBeLessThanOrEqual(540);
+    await content.hover(); await page.mouse.wheel(0, 900);
+    await expect.poll(() => content.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    await expect(apply).toBeVisible();
+    await control.screenshot({ path: info.outputPath('long-review-fixed-actions.png') });
+    await apply.click(); await expect(control.getByText('已应用', { exact: true })).toBeVisible();
+  });
   test('Gemini 404 keeps the selected model and a deliberate model change makes retry use the new endpoint', async ({ page }) => {
     let requests = 0;
     await page.route('https://generativelanguage.googleapis.com/**', route => {
@@ -152,7 +193,11 @@ export function canvasControlScenarios(url: string): void {
     await expect(ai.getByLabel('本轮 Token 用量')).toHaveText('本轮 Token：输入 1,234 · 输出 56');
     await control.getByRole('button', { name: '关闭画布控制' }).click();
     await ai.screenshot({ path: info.outputPath('token-footer.png') });
-    await ai.getByRole('button', { name: '查看发送内容', exact: true }).click();
+    const inspectRequest = ai.getByRole('button', { name: '查看发送内容', exact: true });
+    await expect(inspectRequest).toHaveAttribute('title', '查看发送内容');
+    await expect(inspectRequest).toHaveText('');
+    await expect(inspectRequest.locator('svg')).toHaveCount(1);
+    await inspectRequest.click();
     const inspection = page.getByRole('dialog', { name: '本轮发送内容', exact: true });
     await expect(inspection).toBeVisible();
     expect(JSON.parse((await inspection.getByLabel('实际请求正文').textContent())!)).toEqual(JSON.parse(requestText));
@@ -206,7 +251,7 @@ export function canvasControlScenarios(url: string): void {
   });
 }
 
-async function configure(page: Page, url: string, preset: 'openai' | 'gemini' = 'openai', model?: string): Promise<void> {
+async function configure(page: Page, url: string, preset: 'openai' | 'gemini' = 'openai', model?: string, execution: 'direct' | 'review' = 'review'): Promise<void> {
   await page.goto(url);
   await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
@@ -221,4 +266,13 @@ async function configure(page: Page, url: string, preset: 'openai' | 'gemini' = 
   await provider.getByRole('button', { name: '保存连接', exact: true }).click();
   await expect(provider.getByText('当前连接已就绪', { exact: true })).toBeVisible();
   await ai.getByRole('button', { name: 'AI 对话', exact: true }).click();
+  if (execution === 'review') {
+    await page.getByRole('button', { name: '命令面板', exact: true }).click();
+    const palette = page.getByRole('dialog', { name: '命令面板' });
+    await palette.getByRole('textbox', { name: '搜索命令' }).fill('画布控制');
+    await palette.getByRole('option', { name: /^画布控制/u }).click();
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await control.getByRole('combobox', { name: '画布生成方式', exact: true }).selectOption('review');
+    await control.getByRole('button', { name: '关闭画布控制', exact: true }).click();
+  }
 }

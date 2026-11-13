@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { AIContextSource } from '../../protocols/ai.ts';
 import type { AIResponseCitation, AIResponseDetail } from './types.ts';
 import { formatTokenUsage } from '../../services/ai-token-usage.ts';
+import { IconButton } from '../../ui/Icon.tsx';
 import {
   parseTranscriptMessages,
   splitAIResponseCitations,
@@ -49,7 +50,7 @@ export function AITranscriptView({
             onOpenSource={onOpenSource}
           />
           {message.meta && <small>{message.meta}</small>}
-          {message.role === 'user' && <button type="button" className="ai-request-inspect-button" onClick={() => onInspectRequest(message.turn)}>查看发送内容</button>}
+          {message.role === 'user' && <IconButton icon="file" label="查看发送内容" className="ai-request-inspect-button" onClick={() => onInspectRequest(message.turn)} />}
           {message.role === 'assistant' && <small className="ai-token-usage" aria-label="本轮 Token 用量" title="优先显示平台返回的用量；缺失项按实际请求与回复估算，历史缺失记录按可见对话估算。估算与平台账单可能不同。">{formatTokenUsage(message.usage)}</small>}
         </article>
       ))}

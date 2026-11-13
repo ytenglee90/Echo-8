@@ -258,7 +258,7 @@ button.ai-source-citation:focus-visible {
   opacity: .62;
 }
 .ai-token-usage { font-variant-numeric: tabular-nums; }
-.ai-request-inspect-button { display: block; margin-top: 6px; padding: 0; border: 0; background: transparent; color: inherit; font-size: 12px; opacity: .72; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.ai-request-inspect-button { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-top: 5px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: inherit; opacity: .72; cursor: pointer; }
 .ai-request-inspect-button:hover { opacity: 1; }
 .ai-request-inspection-dialog { display: flex; flex-direction: column; width: min(860px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); border: 1px solid var(--border); border-radius: var(--panel-radius, 14px); background: var(--panel); color: var(--text); box-shadow: var(--panel-shadow); overflow: hidden; }
 .ai-request-inspection-dialog > header { display: flex; align-items: flex-start; gap: 16px; padding: 16px; border-bottom: 1px solid var(--border); }

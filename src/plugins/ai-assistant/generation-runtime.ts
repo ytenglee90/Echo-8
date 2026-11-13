@@ -311,6 +311,7 @@ export function registerAIGenerationRuntime(
     options.tasks.set(prepared.sessionId, task);
     void task.result.then(
       async (result) => {
+        let directPlanId: string | undefined;
         if (prepared.operation === 'canvas-control') {
           if (options.tasks.get(prepared.sessionId) !== task) return;
           const offer = await context.commands.dispatch('canvasControl.offer@1', {
@@ -318,6 +319,7 @@ export function registerAIGenerationRuntime(
             text: result.text, complete: result.finishReason !== 'length',
           });
           result = { ...result, text: offer.message, reasoning: undefined };
+          directPlanId = offer.directPlanId;
         }
         if (options.tasks.get(prepared.sessionId) === task) options.tasks.delete(prepared.sessionId);
         const recorded = await context.commands.dispatch('ai.generation.record', {
@@ -326,6 +328,7 @@ export function registerAIGenerationRuntime(
         });
         const completedSession = options.readSessions()[prepared.sessionId];
         prepared.transcriptRevisionAfterAssistant = completedSession?.transcriptRevision;
+        const directResult = directPlanId ? await context.commands.dispatch('canvasControl.generate@1', { id: directPlanId }) : undefined;
         prepared.expiresAt = Date.now() + AI_GENERATION_ACTION_TTL_MS;
         options.stateBySession.delete(prepared.sessionId);
         options.actionBySession.set(prepared.sessionId, {
@@ -336,18 +339,18 @@ export function registerAIGenerationRuntime(
         context.signals.emit('ai.state.invalidated');
         context.signals.emit('ai.status', {
           state: 'complete',
-          message: result.finishReason === 'length'
+          message: directResult?.message ?? (result.finishReason === 'length'
             ? '回答再次达到平台输出上限；已保留全部返回内容，可以继续追问“继续”'
             : recorded.proposalId
             ? '回答完成；检测到明确的节点修改要求，请审查后写回正文'
             : result.memorySearchUsed
             ? '回答完成；已按需查询本地记忆'
-            : '回答完成',
+            : '回答完成'),
           sessionId: prepared.sessionId,
           preparationId: prepared.id,
           ...(recorded.proposalId ? { proposalId: recorded.proposalId } : {}),
         } satisfies AIStatusSignal);
-        if (prepared.assistantId && prepared.followupAction !== 'repeat' &&
+        if (prepared.operation !== 'canvas-control' && prepared.assistantId && prepared.followupAction !== 'repeat' &&
           options.shouldAutoExtractMemoryCandidates(prepared)) {
           void context.commands.dispatch('ai.memory.candidates.extract', {
             assistantId: prepared.assistantId,

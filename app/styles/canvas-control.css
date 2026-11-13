@@ -1,4 +1,13 @@
-.canvas-control-panel .canvas-control-content { padding: 16px; overflow: auto; display: grid; gap: 14px; font-size: 13px; }
+.canvas-control-layout { height: 100%; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; font-size: 13px; }
+.canvas-control-panel .canvas-control-content { min-height: 0; padding: 16px; overflow-x: hidden; overflow-y: scroll; scrollbar-gutter: stable; scrollbar-color: var(--border-strong) transparent; display: grid; align-content: start; gap: 14px; }
+.canvas-control-content::-webkit-scrollbar { width: 10px; }
+.canvas-control-content::-webkit-scrollbar-thumb { background: var(--border-strong); border: 2px solid var(--panel); border-radius: 8px; }
+.canvas-control-actions { padding: 12px 16px 16px; border-top: 1px solid var(--border); background: var(--panel); display: grid; gap: 8px; }
+.canvas-control-actions p { margin: 0; overflow-wrap: anywhere; }
+.canvas-control-actions [role="alert"] { color: var(--danger); }
+.canvas-control-actions label { display: grid; gap: 5px; }
+.canvas-control-action-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.canvas-control-action-row > span { margin-right: auto; color: var(--muted); font-size: 12px; }
 .canvas-control-content > p { margin: 0; line-height: 1.65; }
 .canvas-control-content label { display: grid; gap: 7px; font-weight: 600; }
 .canvas-control-note, .canvas-control-empty { color: var(--muted); }

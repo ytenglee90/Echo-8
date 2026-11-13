@@ -16,13 +16,50 @@ import type { ProjectSource } from '../src/protocols/files.ts';
 import { createAIProviderPlugin } from '../src/plugins/ai-provider/model.ts';
 import { buildProviderRequest } from '../src/plugins/ai-provider/provider-transport.ts';
 
-async function harness() {
+async function harness(execution: 'direct' | 'review' = 'review') {
   const kernel = new ApplicationKernel([createTextNodePlugin(), createSelectionPlugin(), createConnectionsPlugin(), createGroupsPlugin(), createCanvasControlPlugin()]);
   await kernel.start();
   assert.equal(kernel.plugins.isActive('canvas-control'), true);
+  if (execution === 'review') await kernel.router.dispatch('canvasControl.execution@1', { execution }, 'core.test');
   return kernel;
 }
 let sequence = 0;
+
+test('direct generation defaults on, commits new objects once and never directly edits existing content', async () => {
+  const kernel = await harness('direct');
+  const before = (await nodes(kernel)).length;
+  assert.equal((await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).execution, 'direct');
+  const id = await offer(kernel, creations);
+  assert.equal((await nodes(kernel)).length, before);
+  await kernel.router.dispatch('canvasControl.generate@1', { id }, 'core.test');
+  assert.equal((await nodes(kernel)).length, before + 3);
+  await assert.rejects(() => kernel.router.dispatch('canvasControl.generate@1', { id }, 'core.test'), /已处理/u);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.equal((await nodes(kernel)).length, before);
+  await kernel.router.dispatch('history.redo', undefined, 'core.test');
+  const hero = (await nodes(kernel)).find(node => node.title === '主角｜林渊')!;
+  await kernel.router.dispatch('selection.set', { ids: [hero.id], mode: 'replace' }, 'core.test');
+  const mixed = await offer(kernel, [{ type: 'create-node', ref: 'new', title: '仍需确认的新对象' }, { type: 'update-node', id: hero.id, text: '不能直接覆盖' }]);
+  await kernel.router.dispatch('canvasControl.generate@1', { id: mixed }, 'core.test');
+  assert.equal((await nodes(kernel)).some(node => node.title === '仍需确认的新对象'), false);
+  assert.equal((await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)?.status, 'pending');
+});
+
+test('switching to preview revokes pending direct generation and invalid creations remain atomic and reviewable', async () => {
+  const kernel = await harness('direct');
+  const before = (await nodes(kernel)).length;
+  const id = await offer(kernel, [{ type: 'create-node', ref: 'new', title: '不应自动生成' }]);
+  await kernel.router.dispatch('canvasControl.execution@1', { execution: 'review' }, 'core.test');
+  await kernel.router.dispatch('canvasControl.generate@1', { id }, 'core.test');
+  assert.equal((await nodes(kernel)).length, before);
+  await kernel.router.dispatch('canvasControl.execution@1', { execution: 'direct' }, 'core.test');
+  const invalid = await offer(kernel, [{ type: 'create-node', ref: 'bad', title: '尺寸错误', width: 20 }]);
+  const result = await kernel.router.dispatch<{ message: string }>('canvasControl.generate@1', { id: invalid }, 'core.test');
+  assert.match(result.message, /未成功/u);
+  assert.equal((await nodes(kernel)).length, before);
+  const state = await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test');
+  assert.equal(state.open, true); assert.equal(state.reviews.at(-1)?.status, 'pending'); assert.match(state.reviews.at(-1)?.error ?? '', /尺寸/u);
+});
 
 test('offline opaque origins can configure and request an absolute AI endpoint', async () => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'location');
