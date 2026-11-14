@@ -56,7 +56,8 @@ export function canvasControlScenarios(url: string): void {
       expect(nodes).toHaveLength(1);
       expect(nodes[0]!.title).toBe('资料｜角色卡');
       expect(request.messages.some(message => message.role === 'system' && message.content.includes('当前应用已经提供真实画布操作通道'))).toBe(true);
-      const content = JSON.stringify({ version: 1, actions: [{ type: 'update-node', id: nodes[0]!.id, text: '姓名：沈无咎\n任务：了结祖父最后一笔未还的愿。' }] });
+      const content = JSON.stringify(calls === 1 ? { version: 1, actions: [], answer: '我没有画布写入能力，请自行粘贴。' } :
+        { version: 1, actions: [{ type: 'update-node', id: nodes[0]!.id, text: '姓名：沈无咎\n任务：了结祖父最后一笔未还的愿。' }] });
       return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
         body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
     });
@@ -83,13 +84,13 @@ export function canvasControlScenarios(url: string): void {
     const control = page.getByRole('region', { name: '画布控制', exact: true });
     const candidates = control.getByRole('region', { name: '选择「角色节点」', exact: true });
     await expect(candidates.getByRole('button')).toHaveCount(1);
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     await candidates.getByRole('button').click();
     await expect(control.getByRole('button', { name: '应用整份计划' })).toBeVisible();
     await control.getByRole('button', { name: '应用整份计划' }).click();
     await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('已应用');
     await control.getByRole('button', { name: '关闭画布控制' }).click();
-    expect(calls).toBe(3);
+    expect(calls).toBe(4);
     await ai.getByRole('button', { name: '关闭AI 助手', exact: true }).click();
     await expect(page.getByRole('article', { name: /文本节点：资料｜角色卡$/u })).toContainText('沈无咎');
     await expect(page.getByRole('article', { name: /文本节点：地点｜地图$/u })).toContainText('不改动地图正文');
