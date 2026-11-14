@@ -30,9 +30,11 @@ export interface NaturalControlResult {
   pendingColor?: { id: string; direction: 'lighter' | 'darker' };
   selectionMode?: 'replace' | 'add';
   replacement?: ContentReplaceRequest;
+  unresolvedTarget?: boolean;
 }
 
 const answer = (message: string): NaturalControlResult => ({ plan: { version: 1, actions: [], answer: message } });
+const unresolvedTarget = (message: string): NaturalControlResult => ({ ...answer(message), unresolvedTarget: true });
 const CHARACTER_CARD_BODY = ['姓名：', '身份：', '外貌：', '性格：', '目标：', '人物关系：'].join('\n');
 const recentCreation = /^(?:新节点|刚(?:才)?(?:新建|创建|建)(?:的)?(?:那(?:一)?(?:个|张))?(?:节点|卡片|角色卡|人物卡|文本框))$/u;
 const pronoun = /^(?:它|新节点|刚建的节点|刚才(?:那个|找到的|选中的|创建的)(?:节点|卡片)?|这个|这一个|这两个|这几个|这些|它们|这批|刚才的|刚才那批|刚才筛出的(?:空白)?节点|(?:当前)?选中(?:的)?(?:(?:两|2)个)?(?:节点|卡片)?|选区)$/u;
@@ -154,7 +156,7 @@ export async function resolveNaturalOperation(
     if (group) return validMembers(group.memberIds) ? group.memberIds : answer('群组包含未授权自动检索的节点，请明确指定范围。');
     if (partial.length > 80) return answer('相近的节点超过 80 个，请补充标题或群组名。');
     if (partial.length) return chooseNode(name, partial, '找到了标题相近的节点，请点选后继续原操作。');
-    return answer(`本轮允许查找的画布范围内，没有找到名为「${name}」的节点。`);
+    return unresolvedTarget(`本轮允许查找的画布范围内，没有找到名为「${name}」的节点。`);
   };
   const chooseNode = (name: string, ids: string[], message: string): string[] | NaturalControlResult => {
     const resolved = chosen.get(name);
@@ -239,8 +241,22 @@ export async function resolveNaturalOperation(
     return makePlan(group.memberIds.map(id => ({ type: 'update-node', id, color: operation.color, presentation })), group.memberIds, { ids: group.memberIds, groupId: group.id });
   }
   if (operation.kind === 'ungroup' || operation.kind === 'group-rename') {
-    const group = lookupGroup(operation.names[0]);
-    if (!group) return answer('请说出要处理的唯一群组名称。');
+    const name = operation.names[0];
+    let group = operation.kind === 'ungroup' && operation.byMembers ? undefined : lookupGroup(name);
+    if (operation.kind === 'ungroup' && (!name || /^(?:这组|这一组|选中(?:的)?群组)$/u.test(name))) {
+      const selected = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
+      const selectedGroups = groups.filter(item => selected.ids.includes(item.id));
+      if (selectedGroups.length > 1) return answer('选中了多个群组，请点选一个群组，或说出要解开的群组名称。');
+      group = selectedGroups[0] ?? group;
+    }
+    if (operation.kind === 'ungroup' && operation.byMembers) {
+      const members = operation.names.map(value => lookup(value).exact);
+      if (members.length > 1 && members.every(ids => ids.length === 1)) {
+        const matching = groups.filter(item => members.every(ids => item.memberIds.includes(ids[0]!)));
+        if (matching.length === 1) group = matching[0];
+      }
+    }
+    if (!group) return name ? unresolvedTarget('请说出要处理的唯一群组名称。') : answer('现在没有唯一的群组可解开，请点选群组。');
     const action: CanvasControlAction = operation.kind === 'group-rename' ? { type: 'update-group', id: group.id, title: operation.title } : { type: 'delete', ids: [group.id] };
     return makePlan([action], [group.id, ...group.memberIds], { groupId: group.id });
   }
@@ -362,8 +378,10 @@ export async function resolveNaturalOperation(
   }
   if (operation.kind === 'group') {
     if (unique.length < 2) return answer('建组至少需要两个不同节点。');
+    const sameGroup = groups.find(group => group.memberIds.length === unique.length && unique.every(id => group.memberIds.includes(id)));
+    if (sameGroup && !operation.title) return { ...answer(`这些节点已在「${sameGroup.title}」里。`), next: { groupId: sameGroup.id, ids: unique } };
     if (groups.some(group => group.memberIds.some(id => unique.includes(id)))) return answer('有节点已属于其他群组。请先移出这些节点，再创建新组。');
-    return makePlan([{ type: 'create-group', ref: 'natural-group', title: operation.title!, members: unique }], unique, { ids: unique });
+    return makePlan([{ type: 'create-group', ref: 'natural-group', title: operation.title ?? '新群组', members: unique }], unique, { ids: unique });
   }
   if (operation.kind === 'group-add' || operation.kind === 'group-remove') {
     const choiceName = '\u0000group';

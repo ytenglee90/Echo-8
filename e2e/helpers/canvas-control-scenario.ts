@@ -12,6 +12,51 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('DeepSeek accepts the two-tool follow-up for a natural card-writing request and writes into the existing card', async ({ page }) => {
+    const fixture = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '模型协议回归' }),
+      JSON.stringify({ type: 'node', id: 'weapon', category: '资料', name: '武器卡', text: '旧设定：来自钟楼。' }),
+      JSON.stringify({ type: 'node', id: 'other', category: '资料', name: '角色卡', text: '另一张卡。' }), JSON.stringify({ type: 'end' })].join('\n');
+    let rounds = 0;
+    let target = '';
+    await page.route('https://api.deepseek.com/chat/completions', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      rounds++;
+      const body = route.request().postDataJSON() as { model: string; thinking?: { type: string }; messages: Array<{ role: string; content: string | null; tool_calls?: unknown[]; tool_call_id?: string }> };
+      expect(body.model).toBe('deepseek-flash');
+      expect(body.thinking?.type).toBe('disabled');
+      let calls: Array<{ id: string; name: string; args: unknown }>;
+      if (rounds === 1) {
+        const dir = body.messages.find(message => message.content?.startsWith('<untrusted-canvas-objects>'))?.content ?? '';
+        const parsed = JSON.parse(dir.split('\n')[1]!) as { nodes: Array<{ id: string; title: string }> };
+        target = parsed.nodes.find(node => node.title.endsWith('武器卡'))!.id;
+        calls = [{ id: 'call_state', name: 'query_canvas', args: { mode: 'state' } }, { id: 'call_body', name: 'read_canvas', args: { id: target } }];
+      } else {
+        const [assistant, first, second] = body.messages.slice(-3);
+        const expected = [{ id: 'call_state', type: 'function', function: { name: 'query_canvas', arguments: '{"mode":"state"}' } },
+          { id: 'call_body', type: 'function', function: { name: 'read_canvas', arguments: JSON.stringify({ id: target }) } }];
+        if (JSON.stringify(assistant?.tool_calls) !== JSON.stringify(expected) || first?.tool_call_id !== 'call_state' || second?.tool_call_id !== 'call_body') {
+          return route.fulfill({ status: 422, headers: { 'access-control-allow-origin': '*' }, json: { error: { message: 'Invalid tool message' } } });
+        }
+        expect(second?.content).toContain('旧设定：来自钟楼');
+        calls = [{ id: 'call_plan', name: 'propose_canvas_plan', args: { plan: { version: 1, actions: [{ type: 'update-node', id: target, append: '\n新设定：用钟楼铜片铸成。' }] } } }];
+      }
+      const tool_calls = calls.map(({ id, name, args }, index) => ({ index, id, type: 'function', function: { name, arguments: JSON.stringify(args) } }));
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { tool_calls }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await page.goto(url);
+    await page.getByRole('region', { name: 'Echo-8 书库' }).locator('input[type=file]').setInputFiles({ name: '模型协议.e8', mimeType: 'text/plain', buffer: Buffer.from(fixture) });
+    await configure(page, url, 'deepseek', 'deepseek-flash', 'review', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('武器卡内设计武器内容');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await expect(control).toContainText('1 项操作');
+    await control.getByRole('button', { name: '应用整份计划' }).click();
+    await expect(control).toContainText('已回读核对 1 项操作');
+    await expect(page.getByRole('article', { name: /文本节点：资料｜武器卡$/u })).toContainText('新设定：用钟楼铜片铸成。');
+    expect(rounds).toBe(2);
+  });
+
   test('semantic tools complete an unfamiliar no-mention task, then edit discovered bodies and relationships with verified undo', async ({ page }) => {
     let stage = 0;
     let hero = '';
@@ -104,6 +149,48 @@ export function canvasControlScenarios(url: string): void {
     expect(calls).toBe(4);
     await ai.getByRole('button', { name: '打开实时操作日志', exact: true }).click();
     await expect(page.getByRole('region', { name: '实时操作日志', exact: true })).toContainText('回读核对画布结果');
+  });
+
+  test('a rejected native tool continuation recovers once without asking the user to rephrase', async ({ page }) => {
+    let rounds = 0;
+    let resolvedTarget = '';
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ role: string; content: string | null; tool_call_id?: string }> };
+      rounds++;
+      if (rounds === 2) {
+        const last = request.messages.at(-1)!;
+        expect(last.tool_call_id).toBe('discover-target');
+        const data = JSON.parse(last.content!.split('\n')[1]!) as { nodes: Array<{ id: string }> };
+        resolvedTarget = data.nodes[0]!.id;
+        return route.fulfill({ status: 422, headers: { 'access-control-allow-origin': '*' }, json: { detail: 'Unprocessable Entity' } });
+      }
+      let delta: Record<string, unknown>;
+      if (rounds === 1) {
+        expect(request.messages.some(message => message.content?.includes('本地规则未能按原词唯一定位对象'))).toBe(true);
+        delta = { tool_calls: [{ index: 0, id: 'discover-target', type: 'function', function: { name: 'query_canvas', arguments: '{"mode":"search","query":"倾听者"}' } }] };
+      } else {
+        expect(request.tools).toBeUndefined();
+        expect(request.messages.some(message => message.role === 'tool')).toBe(false);
+        expect(request.messages.some(message => message.content?.includes(resolvedTarget))).toBe(true);
+        delta = { content: JSON.stringify({ canvas_tool: { name: 'propose_canvas_plan', arguments: { plan: { version: 1, actions: [{ type: 'update-node', id: resolvedTarget, title: '聆听者' }] } } } }) };
+      }
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta, finish_reason: rounds === 1 ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    const fixture = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '检索退路' }),
+      JSON.stringify({ type: 'node', id: 'listener', category: '资料', name: '倾听者', text: '站在钟楼下偷听消息。' }), JSON.stringify({ type: 'end' })].join('\n');
+    await page.goto(url);
+    await page.getByRole('region', { name: 'Echo-8 书库' }).locator('input[type=file]').setInputFiles({ name: '检索退路.e8', mimeType: 'text/plain', buffer: Buffer.from(fixture) });
+    await configure(page, url, 'openai', undefined, 'review', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('把钟楼下偷听的那张卡改名为聆听者');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await expect(control).toContainText('1 项操作');
+    await control.getByRole('button', { name: '应用整份计划' }).click();
+    await expect(control).toContainText('已回读核对 1 项操作');
+    await expect(page.getByRole('article', { name: /文本节点：聆听者$/u })).toHaveCount(1);
+    expect(rounds).toBe(3);
   });
 
   test('reported all-node layouts run offline without selection and log scope, counts and commit states', async ({ page }) => {
@@ -1109,7 +1196,7 @@ export function canvasControlScenarios(url: string): void {
   });
 }
 
-async function configure(page: Page, url: string, preset: 'openai' | 'gemini' = 'openai', model?: string, execution: 'direct' | 'review' = 'review', openCanvas = true): Promise<void> {
+async function configure(page: Page, url: string, preset: 'openai' | 'gemini' | 'deepseek' = 'openai', model?: string, execution: 'direct' | 'review' = 'review', openCanvas = true): Promise<void> {
   if (openCanvas) {
     await page.goto(url);
     await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
@@ -1122,7 +1209,7 @@ async function configure(page: Page, url: string, preset: 'openai' | 'gemini' = 
   if (model) await provider.getByLabel('模型', { exact: true }).fill(model);
   await provider.getByLabel('API KEY', { exact: true }).fill('test-key-not-real');
   await provider.getByText('自定义地址（可选）', { exact: true }).click();
-  await provider.getByLabel('完整接口地址', { exact: true }).fill(preset === 'gemini' ? 'https://generativelanguage.googleapis.com' : 'https://canvas-control.test/v1/chat/completions');
+  await provider.getByLabel('完整接口地址', { exact: true }).fill(preset === 'gemini' ? 'https://generativelanguage.googleapis.com' : preset === 'deepseek' ? 'https://api.deepseek.com/chat/completions' : 'https://canvas-control.test/v1/chat/completions');
   await provider.getByRole('button', { name: '保存连接', exact: true }).click();
   await expect(provider.getByText('当前连接已就绪', { exact: true })).toBeVisible();
   await ai.getByRole('button', { name: 'AI 对话', exact: true }).click();

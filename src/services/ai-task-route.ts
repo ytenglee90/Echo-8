@@ -33,7 +33,7 @@ export type NaturalCanvasOperation =
   | { kind: 'relative-color'; names: string[]; direction: 'lighter' | 'darker' }
   | { kind: 'choose-color'; names: string[]; background?: boolean }
   | { kind: 'choose-theme'; names: string[] }
-  | { kind: 'find' | 'ungroup'; names: string[] }
+  | { kind: 'find' | 'ungroup'; names: string[]; byMembers?: boolean }
   | { kind: 'relations'; names: string[]; direction?: 'in' | 'out' }
   | { kind: 'presentation'; names: string[]; presentation: 'card' | 'text-box'; color?: string; members?: boolean }
   | { kind: 'connect'; names: string[]; line?: 'solid' | 'dashed'; eitherDirection?: boolean; continueFromPrevious?: boolean }
@@ -59,6 +59,16 @@ function names(value: string): string[] {
   }
   return parts.map(name).filter(Boolean);
 }
+function numberedOperands(value: string): string[] {
+  const literal = name(value);
+  if (literal !== value.trim()) return [literal];
+  const match = /^(.+?\p{Script=Han})\s*(\d+(?:[\s、，,]+\d+)+)$/u.exec(literal);
+  return match ? match[2]!.split(/[\s、，,]+/u).map(number => `${match[1]} ${number}`) : [literal];
+}
+function ungroupTarget(value: string): NaturalCanvasOperation {
+  const targets = names(value);
+  return { kind: 'ungroup', names: targets, ...(targets.length > 1 ? { byMembers: true } : {}) };
+}
 const connectionOperand = `(${quotedName}|[^「」『』“”"，,？?\r\n]+?)`;
 const connectionStyle = String.raw`(?:(?:[，,\s]*(?:使用|用)\s*|[，,\s]+)(实线|虚线))?`;
 const directedConnection = new RegExp(`^(?:把|将)?\\s*${connectionOperand}\\s*(?:连接到|连到|连向|连接至|接到)\\s*${connectionOperand}${connectionStyle}$`, 'u');
@@ -78,8 +88,13 @@ function parseConnection(text: string): NaturalCanvasOperation | undefined {
   const continueFromPrevious = /^(?:连到|接到|连向|指向)/u.test(text);
   if (continueFromPrevious) text = '它' + text.replace(/^指向/u, '连向');
   let match = directedConnection.exec(text) ?? pointingConnection.exec(text) ?? betweenConnection.exec(text);
-  if (match) return { kind: 'connect', names: [name(match[1]!), name(match[2]!)], line: match[3] === '实线' || match[3] === '虚线' ? lineStyle(match[3]) : undefined,
-    ...(continueFromPrevious ? { continueFromPrevious } : {}) };
+  if (match) {
+    const destination = name(match[2]!);
+    const heading = match[2]!.trim() === destination ? /^(.*?)(?:的)?标题(?:栏)?$/u.exec(destination) : null;
+    const line = match[3] === '实线' || match[3] === '虚线' ? lineStyle(match[3]) : heading ? 'dashed' : undefined;
+    return { kind: 'connect', names: [name(match[1]!), heading?.[1]?.trim() || destination], line,
+      ...(continueFromPrevious ? { continueFromPrevious } : {}) };
+  }
   match = fromConnection.exec(text);
   if (match) return { kind: 'connect', names: [name(match[1]!), name(match[3]!)], line: /实线|虚线/u.test(match[2]!) ? lineStyle(match[2]!) : undefined };
   const trailing = pairedConnection.exec(text);
@@ -95,7 +110,10 @@ function parseConnection(text: string): NaturalCanvasOperation | undefined {
   if (/(?:并且?|然后)(?:新建|创建|分组|删除|改)|(?:分组|删除)并且?\s*$/u.test(unquoted)) return undefined;
   const pair = names(operands);
   const styles = (trailing ? [trailing[1], trailing[3], trailing[4], trailing[5]] : [leading?.[1], leading?.[3]]).filter(style => style === '实线' || style === '虚线');
-  if (new Set(styles).size > 1 || pair.length < 1 || pair.length > 2) return undefined;
+  if (new Set(styles).size > 1) return undefined;
+  const numbered = /^(.+?\p{Script=Han}\s*\d+(?:[\s、，,]+\d+)+)\s*(?:和|与|跟|以及)\s*(.+)$/u.exec(operands);
+  if (numbered) return { kind: 'connect-many', names: [name(numbered[2]!), ...numberedOperands(numbered[1]!)], topology: 'fan', line: styles[0] ? lineStyle(styles[0]) : 'solid' };
+  if (pair.length < 1 || pair.length > 2) return undefined;
   const selection = pair.length === 1 && selectedConnection.test(pair[0]!);
   if (pair.length === 1 && !selection && !/^(?:把|将|给|连接|连上|连线)/u.test(text)) return undefined;
   return { kind: 'connect', names: selection && pair[0] !== '它们' ? ['这两个'] : pair, line: styles[0] ? lineStyle(styles[0]) : undefined, eitherDirection: true };
@@ -115,6 +133,9 @@ export function canvasContentTarget(prompt: string): { names: string[] } | undef
   if (/^(?:不要|先别|先不要|别|如果|如何|怎么)/u.test(text) || /[？?]$/u.test(text)) return undefined;
   let match = /^(?:在|往|向|给)\s*(.+?)(?:里|内|中|上)[，,\s]*(?:设计|创作|写|填|生成|补充|续写|完善)/u.exec(text);
   if (match) return /^(?:当前)?(?:画布|全画布)$/u.test(name(match[1]!)) ? undefined : { names: [name(match[1]!)] };
+  match = /^(.+?(?:卡|卡片|节点|文本框))(?:里|内|中)[，,\s]*(?:设计|创作|写|填|生成|补充|续写|完善)/u.exec(text)
+    ?? /^(?:设计|创作|写|生成|补充).+?[，,；;]\s*(?:再|然后)?(?:填入|写入|写进|放进)\s*(.+?(?:卡|卡片|节点|文本框))(?:里|内|中)?$/u.exec(text);
+  if (match) return { names: [name(match[1]!)] };
   match = /^(?:填入|填充|补全|完善|填好)\s*(.{1,120}?)(?:[，,].*)?$/u.exec(text);
   if (match) return { names: [name(match[1]!)] };
   if (/^(?:填进去|写进去|填进刚才的卡|填入刚才的节点)$/u.test(text)) return { names: ['刚才创建的节点'] };
@@ -229,12 +250,18 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
     const filter = naturalTargetFilter(match[1]!);
     return { kind: 'presentation', names: filter ? [match[1]!.trim()] : group ? [name(group[1]!)] : names(match[1]!), presentation: /文本框|文字框/u.test(match[2]!) ? 'text-box' : 'card', members: Boolean(group) && !filter };
   }
+  if ((match = /^(?:解组|取消(?:分组|群组))\s*(.*)$/u.exec(text))) return ungroupTarget(match[1]!);
+  if ((match = /^取消\s*(.+?)\s*(?:的)?(?:分组|群组)$/u.exec(text))) return ungroupTarget(match[1]!);
+  if ((match = /^(?:把|将)?\s*(.+?)\s*(?:解组|取消群组|取消分组)$/u.exec(text))) return ungroupTarget(match[1]!);
   if ((match = /^(?:(?:把|将)?(.+?))?(?:编成|分成|建成|组成|归成|放进|编|分|组)(?:一|一个)?(?:群)?组[，,\s]*(?:叫|名为|命名为|名称为)\s*(.+)$/u.exec(text))) return { kind: 'group', names: match[1] ? names(match[1]) : ['它们'], title: name(match[2]!) };
+  if ((match = /^(?:把|将)?\s*(.+?)\s*(?:编为一组|归成一组|组成一组|放在同一组|分组|编组|群组)$/u.exec(text))) {
+    const targets = naturalTargetFilter(match[1]!) ? [match[1]!] : names(match[1]!);
+    if (targets.length > 1 || naturalTargetFilter(match[1]!) || /^(?:选中(?:的)?(?:节点|卡片)?|选区|它们|这几个|这两个)$/u.test(targets[0] ?? '')) return { kind: 'group', names: targets };
+  }
   if ((match = /^(?:把|将)?(.+?)(?:也)?(?:加入|加进)(?:去)?\s*(.*)$/u.exec(text))) return { kind: 'group-add', names: names(match[1]!), title: name(match[2]!) || undefined };
   if ((match = /^(?:(?:把|将)?(.+?))?(?:归到|放到|移入|收进|放进)\s*(.+?组)(?:里|内|中)?$/u.exec(text))) return { kind: 'group-add', names: match[1] ? names(match[1]) : ['它们'], title: name(match[2]!) };
   if ((match = /^(?:把|将)?(.+?)(?:移出|移除出)\s*(.*)$/u.exec(text))) return { kind: 'group-remove', names: [name(match[1]!)], title: name(match[2]!) || undefined };
   if ((match = /^(?:把|将)?(.+?)(?:改组名为|重命名为)\s*(.+)$/u.exec(text))) return { kind: 'group-rename', names: [name(match[1]!)], title: name(match[2]!) };
-  if ((match = /^(?:解组|取消群组)\s*(.+)$/u.exec(text))) return { kind: 'ungroup', names: [name(match[1]!)] };
   if ((match = /^(?:把|将)(.+?)的(.{0,12}?)从\s*[「“"]?([^「」“”"，,]+?)[」”"]?\s*改(?:成|为)\s*[「“"]?([^「」“”"]+?)[」”"]?$/u.exec(text))) return { kind: 'replace', names: [name(match[1]!)], old: match[3]!.trim(), text: match[4]!.trim() };
   if ((match = /^(?:在|给)(.+?)(?:的?正文)?(?:末尾|结尾|最后)\s*(?:追加|加上|补上|加一句|补一句)[：:\s]*([\s\S]+)$/u.exec(command))) return { kind: 'append', names: [name(match[1]!)], text: name(match[2]!.replace(/([」”"])[。！!]$/u, '$1')) };
   if ((match = /^找出\s*(?:(.+?)(?:里|内|中)(?:的)?)?\s*((?:没(?:有)?连线的?)?(?:空白)?(?:没(?:有)?连线的?)?)节点$/u.exec(text)) && match[2]) return { kind: 'filter', names: match[1] ? [name(match[1])] : [], empty: match[2].includes('空白'), disconnected: match[2].includes('连线') };

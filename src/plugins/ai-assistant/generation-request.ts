@@ -155,7 +155,8 @@ export async function buildGenerateRequest(
   if (canvasState) push('operationProtocol', 'system', `应用实时确认：文字节点已启用，支持 create-node 和 update-node；群组${canvasState.available.groups ? '已启用' : '未启用'}；连线${canvasState.available.connections ? '已启用' : '未启用'}。目录为空也可以创建节点。`);
   push('operationProtocol', 'system', '任务：' + operationInstruction(prepared.operation));
   // Stable mode rules above; changing evidence, history and user input below.
-  const contextText = renderContext(Boolean(taskState?.plans?.length));
+  const omitStaleCanvasStatus = Boolean(canvasState) || prepared.operation === 'canvas-control' || Boolean(taskState?.plans?.length);
+  const contextText = renderContext(omitStaleCanvasStatus);
   if (contextText) push('references', 'user', '画布原文证据：\n' + contextText);
   if (prepared.outputNodeTitle) push('taskState', 'user', `结果将作为「${prepared.outputNodeTitle}」节点的正文。只输出适合写入节点的内容。`);
   if (controlContext?.objectDirectory) push('objectDirectory', 'user', controlContext.objectDirectory);
@@ -171,7 +172,7 @@ export async function buildGenerateRequest(
   if (carriedInstructions?.length) push('taskState', 'user', '同一正文任务中用户明确提出的要求（原话）。本轮明确修改的要求优先，其余继续沿用。\n' + carriedInstructions.join('\n'));
   if (retrievalText) push('references', 'user', '记忆检索覆盖报告：\n' + retrievalText);
   if (conflictText) push('references', 'user', '记忆冲突目录：\n' + conflictText);
-  if (historyIndex >= 0) for (const message of nativeConversation(prepared.sources[historyIndex]!.text, prepared.prompt, Boolean(canvasState) || prepared.operation === 'canvas-control' || Boolean(taskState?.plans?.length))) push('history', message.role, message.content);
+  if (historyIndex >= 0) for (const message of nativeConversation(prepared.sources[historyIndex]!.text, prepared.prompt, omitStaleCanvasStatus)) push('history', message.role, message.content);
   if (controlContext) push('operationProtocol', 'system', canvasState
     ? '当前应用已经提供真实画布操作通道。优先使用画布工具查找、读取并提交计划。目录仅覆盖本轮已定位对象，未列出的对象可继续查询。能力及操作进度以本轮应用返回为准。用户要求写入时提交实际操作，不能只口头提供粘贴建议。'
     : '当前应用已经提供真实画布操作通道。只输出完整 JSON 计划，应用会验证和提交。历史回复对工具、插件、节点是否存在的判断可能过时，能力以本轮协议和目录为准。用户明确要求写入且目录提供唯一目标时返回实际 update-node，不要只口头提供粘贴建议。');

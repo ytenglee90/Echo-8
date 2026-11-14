@@ -114,21 +114,34 @@ export function buildProviderRequest(
       },
     };
   }
+  const endpoint = resolveEndpoint(profile.endpoint);
+  const deepSeek = new URL(endpoint).hostname === 'api.deepseek.com';
+  const toolConversation = Boolean(input.tools?.length || input.canvasAgentTransport || input.messages.some(message => message.toolCalls?.length || message.role === 'tool'));
   return {
-    endpoint: resolveEndpoint(profile.endpoint),
+    endpoint,
     init: {
       method: 'POST',
       headers,
       body: JSON.stringify({
         model: profile.model,
-        messages: input.messages,
+        messages: input.messages.map(message => ({
+          role: message.role,
+          content: message.toolCalls?.length && !message.content ? null : message.content,
+          ...(message.toolCalls?.length ? { tool_calls: message.toolCalls.map(call => ({
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: call.arguments },
+          })) } : {}),
+          ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
+        })),
+        ...(deepSeek && toolConversation ? { thinking: { type: 'disabled' } } : {}),
         temperature: input.temperature,
         max_tokens: input.maxOutputTokens,
         ...(input.webSearch && webSearchMode === 'qwen' ? { enable_search: true } : {}),
         ...(input.webSearch && webSearchMode === 'openai-web-search'
           ? { web_search_options: { search_context_size: 'medium' } }
           : {}),
-        ...(input.tools?.length ? { tools: input.tools, tool_choice: 'auto' } : {}),
+        ...(input.tools?.length ? { tools: input.tools, ...(deepSeek ? {} : { tool_choice: 'auto' }) } : {}),
         ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
       }),
     },

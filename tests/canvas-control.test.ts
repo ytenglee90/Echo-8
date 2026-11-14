@@ -26,6 +26,43 @@ async function harness(execution: 'direct' | 'review' = 'review') {
 }
 let sequence = 0;
 
+test('ordinary abbreviated canvas requests resolve numbered cards, title links and unnamed groups without a model', async () => {
+  const kernel = await harness();
+  const create = (title: string) => kernel.router.dispatch<{ id: string }>('node.create', { title }, 'core.test');
+  const weapon = await create('武器卡');
+  const role = await create('角色卡');
+  const numbered = await Promise.all([1, 2, 3].map(index => create(`空白节点 ${index}`)));
+  const readState = () => kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test');
+  const apply = async (prompt: string) => {
+    const input = { preparationId: `natural:${++sequence}`, sessionId: 'short-commands', prompt };
+    const local = await kernel.capabilities.request<{ handled: boolean; text?: string }>('canvasControl.localPlan@1', input);
+    assert.equal(local.handled, true, prompt);
+    await kernel.router.dispatch('canvasControl.offer@1', { ...input, text: local.text, complete: true }, 'core.test');
+    const review = (await readState()).reviews.at(-1)!;
+    assert.equal(review.status, 'pending', prompt);
+    await kernel.router.dispatch('canvasControl.apply@1', { id: review.id }, 'core.test');
+  };
+  await apply('武器卡连接到角色卡标题');
+  await apply('空白节点1 2 3 与武器卡连接');
+  const graph = await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
+  assert.equal(graph.connections.length, 4);
+  assert.ok(graph.connections.some(edge => edge.from.nodeId === weapon.id && edge.to.nodeId === role.id && edge.titleRoute));
+  for (const node of numbered) assert.ok(graph.connections.some(edge => edge.from.nodeId === weapon.id && edge.to.nodeId === node.id));
+  const groups = () => kernel.capabilities.request<GroupRecord[]>('groups.list@1');
+  await apply('角色卡和武器卡群组');
+  assert.equal((await groups())[0]?.title, '新群组');
+  await apply('取消武器卡和角色卡群组');
+  assert.equal((await groups()).length, 0);
+  await apply('所有节点群组');
+  assert.equal((await groups())[0]?.memberIds.length, 5);
+  await apply('取消群组');
+  assert.equal((await groups()).length, 0);
+  const existingIds = new Set((await nodes(kernel)).map(node => node.id));
+  assert.ok([weapon, role, ...numbered].every(item => existingIds.has(item.id)));
+  assert.deepEqual(naturalCanvasOperation('设计武器，填入武器卡中'), { kind: 'content', names: ['武器卡'] });
+  await kernel.plugins.stop('canvas-control');
+});
+
 test('local canvas routing distinguishes relationship questions, literal titles, and directed operations', () => {
   assert.deepEqual(naturalCanvasOperation('『调查和取证』和武器连着吗？'), { kind: 'relations', names: ['调查和取证', '武器'] });
   assert.deepEqual(naturalCanvasOperation('从『写着连到武器的纸条』拉一条虚线到主角'), { kind: 'connect', names: ['写着连到武器的纸条', '主角'], line: 'dashed' });

@@ -191,7 +191,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         localResults.set(input.preparationId, { ...result, chosen });
         while (localResults.size > 8) localResults.delete(localResults.keys().next().value!);
         while (snapshots.size > 8) snapshots.delete(snapshots.keys().next().value!);
-        return { handled: true as const, text: JSON.stringify(result.plan) };
+        return { handled: true as const, text: JSON.stringify(result.plan), ...(result.unresolvedTarget ? { unresolvedTarget: true } : {}) };
       };
       context.capabilities.provide({ key: 'canvasControl.bindContent@1', invoke: async (input: CanvasControlAdmission, signal) => {
         if (!isAdmission(input)) throw new Error('画布控制请求无效');

@@ -103,8 +103,10 @@ export async function queryAgentCanvas(
     const partial = catalog.filter(source => canvasTitleAliases(source.title).some(alias => alias.includes(query) || query.includes(alias) && alias.length >= 2)).map(source => source.sourceId);
     const terms = [...new Set(query.split(/[，,、\s]+/u).filter(Boolean))].slice(0, 8).map(term => term.slice(0, 48));
     const search = { query: input.query.query, terms: terms.length ? terms : [query.slice(0, 48)], maxResults: 12, sourceIds: [...allowed].length <= 100 ? [...allowed] : undefined };
-    const lexical = await context.capabilities.requestAll<AIContextSearchContribution>('context.search@3', search, signal)
+    let lexical = await context.capabilities.requestAll<AIContextSearchContribution>('context.search@3', search, signal)
       .catch(error => { if (signal?.aborted) throw error; return [] as AIContextSearchContribution[]; });
+    if (!lexical.length) lexical = await context.capabilities.requestAll<AIContextSearchContribution>('context.search@1',
+      { terms: search.terms, maxResults: search.maxResults }, signal);
     const lexicalIds = lexical.flatMap(part => part.hits).filter(hit => allowed.has(hit.source.sourceId)).sort((a, b) => b.score - a.score).map(hit => hit.source.sourceId);
     let semanticIds: string[] = [];
     if (new Set([...exact, ...partial, ...lexicalIds]).size < 3) {

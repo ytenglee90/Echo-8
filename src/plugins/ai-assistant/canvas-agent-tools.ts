@@ -30,7 +30,9 @@ export const CANVAS_AGENT_TOOLS: AIToolDefinition[] = [
 
 export const CANVAS_AGENT_INSTRUCTIONS = [
   '画布工具协议 v1。你可主动理解自然语言并调用画布工具，无需用户输入 @。先结合当前对话、选区、最近和刚创建对象理解目标，不强求固定措辞。',
-  '需要操作对象但目标不在当前状态时，先 query_canvas 搜索。没有结果可换关键词、查关系或分页查询。读正文前先定位节点。同名无法区分时只问缺少的信息，保留已知目标，不猜 ID。',
+  '需要操作对象但目标不在当前状态时，先 query_canvas 搜索。用简短对象名或识别线索查询，可换关键词查关系或分页。同名无法区分时只问缺少的信息。保留已知目标，不猜 ID。',
+  '用户要求把内容写进现有卡片、移动、连线、分组或更改外观时，提交画布计划，不要只把建议写在聊天里。“卡内写”“把两张卡接起来”“这组拆开”等口语也可表达实际修改。只问方法、讨论或分析时直接回答。',
+  '同一条消息可依次完成多个动作。无标题的单组可用简短默认名称。解组使用 delete 并只传群组 ID，保留成员节点。已有目标的正文先读再写，用户未要求重写时优先追加或局部编辑。',
   'query_canvas 参数 mode 为 state/selection/recent/search/all/relations，可附 query、ids、cursor。read_canvas 参数为 id、start?、length?。',
   'propose_canvas_plan 参数为 {plan:{version:1或2,actions:[],answer?},focusIds?,setting?,clarification?}。新建节点用 {type:"create-node",ref,title,text?,x?,y?,width?,height?,color?,presentation?}。更新用 {type:"update-node",id,title?,text?,append?,x?,y?,width?,height?,color?,presentation?,edit?}。',
   '群组用 create-group {ref,title,members,color?} 或 update-group {id,title?,members?,color?}。连线用 create-connection {ref,from,to,line,label?,color?} 或 update-connection {id,from?,to?,line?,label?,color?}。删除用 {type:"delete",ids:[]}。只按用户明确要求删除。',
@@ -91,6 +93,7 @@ export async function runCanvasAgentLoop(
   let memoryUsed = false;
   let toolCharacters = 0;
   let capabilityCorrection = false;
+  let missingPlanCorrection = false;
   const failures = new Set<string>();
   for (let round = 0; round < 8; round += 1) {
     assertNotAborted(signal);
@@ -109,12 +112,23 @@ export async function runCanvasAgentLoop(
         }
         if (current.available.nodes) result = { ...result, text: '当前画布读写通道已启用，本轮还没有形成可执行计划。请补充要操作的对象和修改要求。' };
       }
-      if ((prepared.operation === 'canvas-control' || /^\s*[{`]/u.test(result.text)) && result.finishReason !== 'length') {
+      if ((prepared.operation === 'canvas-control' || (usedCanvasRead && /^\s*[{`]/u.test(result.text))) && result.finishReason !== 'length') {
         let input: CanvasAgentSubmission | undefined;
         try { input = { plan: parseCanvasControlPlan(result.text) }; }
         catch (error) {
           if (prepared.operation === 'canvas-control' && usedCanvasRead && /^\s*[{`]/u.test(result.text)) throw error;
-          if (prepared.operation === 'canvas-control' && !/^\s*[{`]/u.test(result.text)) input = { plan: { version: 1, actions: [], answer: result.text.slice(0, 2000) }, clarification: true };
+          if (prepared.operation === 'canvas-control' && !/^\s*[{`]/u.test(result.text)) {
+            if (!missingPlanCorrection && !/[？?]\s*$/u.test(result.text)) {
+              missingPlanCorrection = true;
+              request = { ...request, responseSchema: undefined, messages: [...request.messages,
+                { role: 'assistant', content: result.text.slice(0, 4000) },
+                { role: 'system', content: '上一条回复没有提交可执行计划。请继续原任务，使用工具查找并提交真实动作。如果用户确实只在提问，请直接回答。如果目标不唯一，请提交 clarification 并提出一个具体问题。' }] };
+              result = await generate(request);
+              continue;
+            }
+            const asksQuestion = /[？?]\s*$/u.test(result.text);
+            input = { plan: { version: 1, actions: [], answer: asksQuestion ? result.text.slice(0, 2000) : '这轮没有生成可执行的画布计划，画布没有修改。' }, clarification: asksQuestion };
+          }
         }
         if (input) calls = [{ id: 'canvas-plan-' + round, name: 'propose_canvas_plan', arguments: JSON.stringify(input) }];
       }

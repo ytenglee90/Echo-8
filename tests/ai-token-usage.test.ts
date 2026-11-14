@@ -2,6 +2,27 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { aggregateTokenUsage, formatTokenUsage, normalizeTokenUsage, withTokenUsageEstimates } from '../src/services/ai-token-usage.ts';
 import { buildProviderRequest, fetchWithInitialRetry, parseCompletion, parseGeminiCompletion, readCompletionEvents } from '../src/plugins/ai-provider/provider-transport.ts';
+
+test('OpenAI-compatible wire turns serialize parallel tool calls and match their results by provider field names', () => {
+  const profile = { ...applyAIProviderPreset('deepseek')!, id: 'test', model: 'deepseek-flash' };
+  const messages = [
+    { role: 'user' as const, content: '武器卡内设计武器内容' },
+    { role: 'assistant' as const, content: '', toolCalls: [{ id: 'call-state', name: 'query_canvas', arguments: '{"mode":"state"}' },
+      { id: 'call-body', name: 'read_canvas', arguments: '{"id":"node:fixture"}' }] },
+    { role: 'tool' as const, content: '目录', toolCallId: 'call-state' }, { role: 'tool' as const, content: '原文', toolCallId: 'call-body' },
+  ];
+  const wire = buildProviderRequest(profile, 'fake', { messages, temperature: 0.2, maxOutputTokens: 1024, canvasAgentTransport: 'native' }, true);
+  const body = JSON.parse(String(wire.init.body));
+  assert.deepEqual(body.messages.slice(1), [
+    { role: 'assistant', content: null, tool_calls: [{ id: 'call-state', type: 'function', function: { name: 'query_canvas', arguments: '{"mode":"state"}' } },
+      { id: 'call-body', type: 'function', function: { name: 'read_canvas', arguments: '{"id":"node:fixture"}' } }] },
+    { role: 'tool', content: '目录', tool_call_id: 'call-state' }, { role: 'tool', content: '原文', tool_call_id: 'call-body' },
+  ]);
+  assert.deepEqual(body.thinking, { type: 'disabled' });
+  assert.equal(body.tool_choice, undefined);
+  const ordinary = buildProviderRequest(profile, 'fake', { messages: [messages[0]!], temperature: 0.2, maxOutputTokens: 1024 }, false);
+  assert.equal(JSON.parse(String(ordinary.init.body)).thinking, undefined);
+});
 import { applyAIProviderPreset } from '../src/plugins/ai-provider/presets.ts';
 import { parseTranscriptMessages } from '../src/plugins/ai-assistant/transcript-presentation.ts';
 

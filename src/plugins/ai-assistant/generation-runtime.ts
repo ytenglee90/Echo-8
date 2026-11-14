@@ -8,6 +8,7 @@ import type {
   AIMemoryIndexRecord,
   AIPreparedContext,
   AIPromptTemplateCatalog,
+  AIProviderCatalog,
   AIStatusSignal,
   AISessionRecord,
 } from '../../protocols/ai.ts';
@@ -176,12 +177,21 @@ export function registerAIGenerationRuntime(
       run: async (signal, report) => {
         report(0.1);
         if (prepared.localMemoryDirective) return { text: '已确认并记入当前对话。', provider: 'local', model: '正式记忆', usage: { inputTokens: 0, outputTokens: 0 } };
+        let localTargetUnresolved = false;
         if (prepared.operation === 'canvas-control') {
-          const local = await context.capabilities.request<{ handled: boolean; text?: string }>('canvasControl.localPlan@1', {
+          const local = await context.capabilities.request<{ handled: boolean; text?: string; unresolvedTarget?: boolean }>('canvasControl.localPlan@1', {
             preparationId: prepared.id, sessionId: prepared.sessionId, prompt: prepared.prompt,
             sourceIds: prepared.sources.filter(source => source.reason === 'explicit-reference').map(source => source.sourceId),
           }, signal).catch(error => { if (isCapabilityUnavailable(error, 'canvasControl.localPlan@1')) return { handled: false }; throw error; });
-          if (local.handled && 'text' in local && local.text) return { text: local.text, provider: 'local', model: '确定性操作', usage: { inputTokens: 0, outputTokens: 0 } };
+          if (local.handled && 'text' in local && local.text) {
+            if (local.unresolvedTarget) {
+              const catalog = await context.capabilities.request<AIProviderCatalog>('ai.provider.catalog@1', undefined, signal)
+                .catch(error => { if (isAbortError(error)) throw error; return undefined; });
+              const provider = catalog?.options.find(option => option.id === (prepared.providerProfileId ?? catalog.activeId));
+              localTargetUnresolved = provider?.configured === true;
+            }
+            if (!localTargetUnresolved) return { text: local.text, provider: 'local', model: '确定性操作', usage: { inputTokens: 0, outputTokens: 0 } };
+          }
         }
         const interpretSearch = prepared.operation === 'canvas-control' && needsCanvasSearchInterpretation(prepared.prompt);
         let request: AIGenerateRequest = interpretSearch ? {
@@ -199,6 +209,9 @@ export function registerAIGenerationRuntime(
           options.readPromptTemplates(),
           signal,
         );
+        if (localTargetUnresolved && request.canvasAgentTransport) request.messages.splice(-1, 0, {
+          role: 'system', content: '本地规则未能按原词唯一定位对象。请用 query_canvas 试查名称变体、描述或关系，找到真实对象后继续原任务。仅在确实无法区分时询问用户。',
+        });
         if (request.usageContext) {
           request.usageContext.taskId = prepared.usageTaskId!;
           if (prepared.followupAction) request.usageContext.purpose = prepared.followupAction;
@@ -295,7 +308,9 @@ export function registerAIGenerationRuntime(
           try {
             return await generateOnce(activeRequest);
           } catch (error) {
-            if (!activeRequest.tools?.length || !isToolRequestCompatibilityError(error)) throw error;
+            const rejectedToolRound = activeRequest.canvasAgentTransport === 'native' && activeRequest.messages.some(message => message.role === 'tool') &&
+              error instanceof Error && /HTTP\s+422\b/u.test(error.message);
+            if (!activeRequest.tools?.length || (!rejectedToolRound && !isToolRequestCompatibilityError(error))) throw error;
             context.diagnostics.warn('当前模型连接不接受原生工具，正在使用兼容方式', error);
             context.signals.emit('ai.status', {
               state: 'generating',
@@ -307,9 +322,11 @@ export function registerAIGenerationRuntime(
               activeRequest.canvasAgentTransport = 'json';
               activeRequest.tools = undefined;
               activeRequest.responseSchema = undefined;
-              activeRequest.messages = activeRequest.messages.map(message => message.role === 'tool'
-                ? { role: 'user' as const, content: message.content }
-                : { ...message, toolCalls: undefined, toolCallId: undefined });
+              activeRequest.messages = activeRequest.messages.map(message => {
+                if (message.role === 'tool') return { role: 'user' as const, content: `画布工具返回（${message.toolCallId}）：\n${message.content}` };
+                if (!message.toolCalls?.length) return message;
+                return { role: 'assistant' as const, content: [message.content, JSON.stringify({ canvas_tool_calls: message.toolCalls })].filter(Boolean).join('\n') };
+              });
               activeRequest.messages.push({ role: 'system', content: '当前连接使用 canvas_tool 结构化信封调用画布工具。请先查询再提交计划。普通聊天仍可直接回答。' });
               return generateOnce(forPurpose(activeRequest, 'compatibility-retry'));
             }

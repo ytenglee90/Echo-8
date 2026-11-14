@@ -110,7 +110,7 @@ declare module './messages.ts' {
     'canvasControl.bindContent@1': MessageContract<CanvasControlAdmission, { ids: string[]; needsChoice: boolean }>;
     'canvasControl.searchPlan@1': MessageContract<CanvasControlAdmission & { terms: string[]; ungrouped: boolean }, { text: string }>;
     'canvasControl.context@2': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
-    'canvasControl.localPlan@1': MessageContract<CanvasControlAdmission, { handled: boolean; text?: string }>;
+    'canvasControl.localPlan@1': MessageContract<CanvasControlAdmission, { handled: boolean; text?: string; unresolvedTarget?: boolean }>;
     'canvasControl.taskState@1': MessageContract<{ sessionId: string; targetIds?: string[] }, CanvasControlTaskState>;
     'canvasControl.context@1': MessageContract<CanvasControlAdmission, { instruction: string }>;
     'canvasControl.nodesPlan@1': MessageContract<CanvasControlNodeRequest, CanvasControlNodePlan>;
