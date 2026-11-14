@@ -78,7 +78,12 @@ export async function prepareAIContext(
       review: { reason: 'memory-state-change', message: '确认后将这条变更记入当前对话的正式记忆。' },
     };
   }
-  if (payload.operation === 'canvas-control' && (naturalCanvasOperation(payload.prompt) || needsCanvasSearchInterpretation(payload.prompt)) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length) {
+  const contentTarget = payload.operation === 'canvas-control' && naturalCanvasOperation(payload.prompt)?.kind === 'content';
+  const contentBinding = contentTarget ? await context.capabilities.request<{ ids: string[]; needsChoice: boolean }>('canvasControl.bindContent@1', {
+    preparationId, sessionId: session.id, prompt: payload.prompt,
+    sourceIds: payload.references?.filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
+  }, signal) : undefined;
+  if (payload.operation === 'canvas-control' && (!contentTarget || contentBinding?.needsChoice) && (naturalCanvasOperation(payload.prompt) || needsCanvasSearchInterpretation(payload.prompt)) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length) {
     const createdAt = Date.now();
     report(1);
     return { id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
@@ -103,6 +108,7 @@ export async function prepareAIContext(
   const explicit = [...new Set([
     ...boundReferences.map((reference) => reference.sourceId),
     ...parseExplicitReferences(unboundPrompt),
+    ...(contentBinding?.ids ?? []),
   ])];
   const destination = naturalResultDestination(canvasCommandText(stripOperationCommands(payload.prompt)), payload.operation);
   const command = destination.input;

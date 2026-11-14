@@ -27,7 +27,10 @@ export interface NaturalTargetFilter {
 
 /** Parse only conjunctions with deterministic meaning. Unknown conditions remain ordinary operands. */
 export function naturalTargetFilter(value: string): NaturalTargetFilter | undefined {
-  let text = value.trim();
+  const original = value.trim();
+  let text = original.replace(/^(?:当前)?(?:画布(?:上|中)?|全画布)(?:的)?(?=所有|全部|节点|卡片|文本框|空白|未|没|正文)/u, '')
+    .replace(/^(节点|卡片|文本框)(?:全部|所有)$/u, '所有$1');
+  if (text !== original && /^(?:节点|卡片|文本框)$/u.test(text)) text = '所有' + text;
   const excluded: string[] = [];
   const inside = /^(.*?(?:里|内|中))除了(.+?)(?:以外|之外)[，,]?\s*(.*)$/u.exec(text);
   if (inside) { excluded.push(...naturalNames(inside[2]!)); text = inside[1]! + inside[3]!; }

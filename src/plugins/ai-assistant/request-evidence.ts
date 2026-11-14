@@ -12,7 +12,8 @@ export function nativeConversation(text: string, prompt: string, omitCanvasStatu
     role: header[1] === '用户' ? 'user' as const : 'assistant' as const,
     content: text.slice(header.index! + header[0].length, headers[index + 1]?.index ?? text.length).trim(),
   })).filter((item, index) => item.content && !(omitCanvasStatus && item.role === 'assistant' &&
-    /·\s*画布操作\]/u.test(headers[index]![0]) && /^(?:已准备\s*\d+\s*项|已生成\s*\d+\s*项|本次没有需要应用的画布操作)/u.test(item.content)));
+    ((/·\s*画布操作\]/u.test(headers[index]![0]) && /^(?:已准备\s*\d+\s*项|已生成\s*\d+\s*项|本次没有需要应用的画布操作)/u.test(item.content)) ||
+      /(?:没有|无法|不具备|不直接).{0,15}画布.{0,8}(?:写入|写|读写|工具)|(?:没有|无法).{0,10}(?:写入工具|画布写入能力)/u.test(item.content))));
   const recent = messages.slice(-RECENT_MESSAGES);
   const older = messages.slice(0, -RECENT_MESSAGES);
   const terms = extractTerms(prompt).map(term => term.toLocaleLowerCase());

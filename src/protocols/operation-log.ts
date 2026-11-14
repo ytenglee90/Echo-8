@@ -1,11 +1,13 @@
 export const OPERATION_LOG_QUERY = 'system.operationLog@1';
 export const OPERATION_LOG_CHANGED = 'system.operationLog.changed@1';
 export const OPERATION_LOG_STAGE = 'system.operationLog.stage@1';
+export const OPERATION_LOG_QUERY_V2 = 'system.operationLog@2';
+export const OPERATION_LOG_STAGE_V2 = 'system.operationLog.stage@2';
 
 export type OperationStatus = 'queued' | 'running' | 'paused' | 'retrying' | 'waiting' | 'completed' |
   'pending' | 'applied' | 'failed' | 'timed-out' | 'cancelled' | 'dismissed' | 'expired';
 
-export type OperationPhase = 'ai-context-review' | 'ai-model-response' | 'ai-answer' | 'ai-writeback' | 'canvas-plan' | 'canvas-background';
+export type OperationPhase = 'ai-routing' | 'ai-context-review' | 'ai-model-response' | 'ai-answer' | 'ai-writeback' | 'canvas-targets' | 'canvas-validation' | 'canvas-plan' | 'canvas-background';
 
 export interface OperationStageUpdate {
   id: string;
@@ -43,9 +45,32 @@ export interface OperationLogSnapshot {
   entries: OperationLogEntry[];
 }
 
+export type OperationStep = 'route' | 'targets' | 'model' | 'validate' | 'review' | 'commit' | 'done';
+export type OperationReason = 'local-rule' | 'model-plan' | 'needs-target' | 'ambiguous-target' | 'empty-targets' |
+  'review-existing' | 'review-preference' | 'ready-direct' | 'invalid-plan' | 'stale-target' |
+  'plugin-unavailable' | 'scope-limit' | 'commit-failed' | 'model-http-error' | 'model-timeout' | 'no-change' | 'cancelled' | 'expired' | 'applied';
+export interface OperationDetail {
+  step?: OperationStep;
+  route?: 'local' | 'model' | 'conversation';
+  intent?: 'create' | 'content' | 'connect' | 'arrange' | 'move' | 'color' | 'presentation' | 'group' | 'find' | 'other';
+  scope?: 'canvas' | 'selection' | 'named' | 'conversation';
+  reason?: OperationReason;
+  matched?: number;
+  candidates?: number;
+  httpStatus?: number;
+  actions?: Array<{ type: 'create-node' | 'update-node' | 'create-group' | 'update-group' | 'create-connection' | 'update-connection' | 'delete'; count: number }>;
+}
+export interface OperationStageUpdateV2 extends OperationStageUpdate { detail?: OperationDetail }
+export interface OperationLogEntryV2 extends OperationLogEntry {
+  detail?: OperationDetail;
+  steps?: Array<{ at: number; status: OperationStatus; detail?: OperationDetail }>;
+}
+export interface OperationLogSnapshotV2 { generatedAt: number; entries: OperationLogEntryV2[] }
+
 declare module './messages.ts' {
   interface ApplicationQueryMap {
     'system.operationLog@1': MessageContract<undefined, OperationLogSnapshot>;
+    'system.operationLog@2': MessageContract<undefined, OperationLogSnapshotV2>;
   }
 }
 

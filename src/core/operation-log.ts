@@ -1,18 +1,37 @@
-import type { OperationLogEntry, OperationLogSnapshot, OperationStageUpdate, OperationStatus } from '../protocols/operation-log.ts';
+import type { OperationDetail, OperationLogEntry, OperationLogEntryV2, OperationLogSnapshot, OperationLogSnapshotV2, OperationStageUpdateV2, OperationStatus } from '../protocols/operation-log.ts';
 import { isAbortError } from '../services/abort.ts';
 
 const HISTORY_LIMIT = 240;
 const OPEN_STAGE_LIMIT = 120;
-const STAGES = new Set(['ai-context-review', 'ai-model-response', 'ai-answer', 'ai-writeback', 'canvas-plan', 'canvas-background']);
+const STAGES = new Set(['ai-routing', 'ai-context-review', 'ai-model-response', 'ai-answer', 'ai-writeback', 'canvas-targets', 'canvas-validation', 'canvas-plan', 'canvas-background']);
 const STAGE_STATES = new Set<OperationStatus>(['waiting', 'running', 'pending', 'completed', 'applied', 'failed', 'timed-out', 'cancelled', 'dismissed', 'expired']);
 const TERMINAL = new Set<OperationStatus>(['completed', 'applied', 'failed', 'timed-out', 'cancelled', 'dismissed', 'expired']);
 const safeCode = (value: unknown): value is string => typeof value === 'string' && /^[a-z\d][a-z\d:@._-]{0,199}$/iu.test(value);
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+const DETAIL_ENUMS = {
+  step: ['route', 'targets', 'model', 'validate', 'review', 'commit', 'done'],
+  route: ['local', 'model', 'conversation'],
+  intent: ['create', 'content', 'connect', 'arrange', 'move', 'color', 'presentation', 'group', 'find', 'other'],
+  scope: ['canvas', 'selection', 'named', 'conversation'],
+  reason: ['local-rule', 'model-plan', 'needs-target', 'ambiguous-target', 'empty-targets', 'review-existing', 'review-preference', 'ready-direct', 'invalid-plan', 'stale-target', 'plugin-unavailable', 'scope-limit', 'commit-failed', 'model-http-error', 'model-timeout', 'no-change', 'cancelled', 'expired', 'applied'],
+} as const;
+const ACTIONS = ['create-node', 'update-node', 'create-group', 'update-group', 'create-connection', 'update-connection', 'delete'];
+
+function safeDetail(value: unknown): OperationDetail | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const input = value as Record<string, unknown>;
+  const detail: Record<string, unknown> = {};
+  for (const [key, values] of Object.entries(DETAIL_ENUMS)) if ((values as readonly unknown[]).includes(input[key])) detail[key] = input[key];
+  for (const key of ['matched', 'candidates']) if (finite(input[key]) && Number.isSafeInteger(input[key]) && input[key] <= 1_000_000) detail[key] = input[key];
+  if (finite(input.httpStatus) && Number.isSafeInteger(input.httpStatus) && input.httpStatus >= 100 && input.httpStatus <= 599) detail.httpStatus = input.httpStatus;
+  if (Array.isArray(input.actions)) detail.actions = input.actions.slice(0, 7).flatMap(item => item && ACTIONS.includes(item.type) && finite(item.count) && Number.isSafeInteger(item.count) && item.count <= 100 ? [{ type: item.type, count: item.count }] : []);
+  return Object.keys(detail).length ? detail as OperationDetail : undefined;
+}
 
 /** Session-only metadata. No message bodies, labels, errors, or patch values are retained here. */
 export class OperationLog {
-  private readonly active = new Map<string, OperationLogEntry>();
-  private readonly history = new Map<string, OperationLogEntry>();
+  private readonly active = new Map<string, OperationLogEntryV2>();
+  private readonly history = new Map<string, OperationLogEntryV2>();
   private sequence = 0;
   private readonly changed: () => void;
 
@@ -46,13 +65,15 @@ export class OperationLog {
 
   stage(owner: string, update: unknown): void {
     if (!update || typeof update !== 'object') return;
-    const { id, phase, state, relatedId, elapsedMs, expiresAt, count } = update as OperationStageUpdate;
+    const { id, phase, state, relatedId, elapsedMs, expiresAt, count, detail: rawDetail } = update as OperationStageUpdateV2;
     if (!safeCode(id) || !STAGES.has(phase) || !STAGE_STATES.has(state)) return;
     if (phase.startsWith('ai-') ? owner !== 'ai-assistant' : owner !== 'canvas-control') return;
     const key = `stage:${owner}:${phase}:${id}`;
     const existing = this.active.get(key) ?? this.history.get(key);
-    if (existing?.finishedAt !== undefined && !(['failed', 'timed-out'].includes(existing.status) && ['running', 'applied', 'dismissed', 'expired'].includes(state))) return;
+    if (existing?.finishedAt !== undefined && !(['failed', 'timed-out'].includes(existing.status) && ['running', 'completed', 'applied', 'dismissed', 'expired'].includes(state))) return;
     const now = Date.now();
+    const detail = safeDetail(rawDetail);
+    const steps = [...existing?.steps ?? [], { at: now, status: state, ...(detail ? { detail } : {}) }].slice(-24);
     this.record({
       id: key, kind: 'stage', owner, code: phase, status: state,
       createdAt: existing?.createdAt ?? now, updatedAt: now,
@@ -60,8 +81,9 @@ export class OperationLog {
       ...(finite(elapsedMs) ? { elapsedMs } : existing?.elapsedMs !== undefined ? { elapsedMs: existing.elapsedMs } : {}),
       ...(finite(expiresAt) ? { expiresAt } : existing?.expiresAt !== undefined ? { expiresAt: existing.expiresAt } : {}),
       ...(finite(count) ? { count } : existing?.count !== undefined ? { count: existing.count } : {}),
+      ...((detail || existing?.detail) ? { detail: { ...existing?.detail, ...detail }, steps } : {}),
       ...(TERMINAL.has(state) ? { finishedAt: now } : {}),
-    });
+    } as OperationLogEntryV2);
     let openStages = 0;
     for (const [activeKey, entry] of [...this.active].reverse()) {
       if (entry.kind === 'stage' && ++openStages > OPEN_STAGE_LIMIT) this.active.delete(activeKey);
@@ -76,11 +98,21 @@ export class OperationLog {
   }
 
   snapshot(): OperationLogSnapshot {
+    const result = this.snapshotDetailed();
+    return { ...result, entries: result.entries.map(entry => {
+      const copy = { ...entry };
+      delete copy.detail;
+      delete copy.steps;
+      return copy;
+    }) };
+  }
+
+  snapshotDetailed(): OperationLogSnapshotV2 {
     const now = Date.now();
     return { generatedAt: now, entries: [...this.active.values(), ...this.history.values()].map(entry => (
       (entry.status === 'pending' || entry.status === 'waiting') && entry.expiresAt !== undefined && entry.expiresAt <= now
-        ? { ...entry, status: 'expired' as const, finishedAt: entry.expiresAt, updatedAt: entry.expiresAt }
-        : { ...entry }
+        ? { ...structuredClone(entry), status: 'expired' as const, finishedAt: entry.expiresAt, updatedAt: entry.expiresAt }
+        : structuredClone(entry)
     )).sort((a, b) => Number(a.finishedAt !== undefined) - Number(b.finishedAt !== undefined) || b.updatedAt - a.updatedAt) };
   }
 }

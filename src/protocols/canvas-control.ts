@@ -36,6 +36,10 @@ export interface CanvasControlAdmission {
   sourceIds?: string[];
 }
 export interface CanvasControlOffer extends CanvasControlAdmission { text: string; complete: boolean }
+export const CANVAS_CONTROL_RESUME = 'canvasControl.resume@1';
+export const CANVAS_CONTROL_RESULT = 'canvasControl.result@1';
+export interface CanvasControlResume extends CanvasControlAdmission { sourceIds: string[] }
+export interface CanvasControlResult extends CanvasControlAdmission { status: 'applied' | 'failed' | 'dismissed'; count: number }
 export type CanvasControlPurpose = 'appearance' | 'move' | 'creation' | 'structure' | 'content' | 'general';
 export interface CanvasControlContextV2 { instruction: string; objectDirectory: string; targetIds?: string[]; responseSchema?: Record<string, unknown> }
 export interface CanvasControlTaskState {
@@ -101,6 +105,7 @@ declare module './commands.ts' {
 }
 declare module './messages.ts' {
   interface ApplicationCapabilityMap {
+    'canvasControl.bindContent@1': MessageContract<CanvasControlAdmission, { ids: string[]; needsChoice: boolean }>;
     'canvasControl.searchPlan@1': MessageContract<CanvasControlAdmission & { terms: string[]; ungrouped: boolean }, { text: string }>;
     'canvasControl.context@2': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
     'canvasControl.localPlan@1': MessageContract<CanvasControlAdmission, { handled: boolean; text?: string }>;

@@ -6,7 +6,7 @@ import {
 } from './contracts.ts';
 import { DiagnosticsService } from './diagnostics.ts';
 import { TransactionManager } from './transaction-manager.ts';
-import { OPERATION_LOG_STAGE } from '../protocols/operation-log.ts';
+import { OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2 } from '../protocols/operation-log.ts';
 import { operationFailure, type OperationLog } from './operation-log.ts';
 import type { TransactionCommitRecord } from '../protocols/state.ts';
 
@@ -238,7 +238,7 @@ export class MessageRouter {
   }
 
   emitSignal(type: string, payload: unknown, sourcePlugin: string, parent?: MessageParent): void {
-    if (type === OPERATION_LOG_STAGE) {
+    if (type === OPERATION_LOG_STAGE || type === OPERATION_LOG_STAGE_V2) {
       if (this.admission(sourcePlugin)) this.operationLog?.stage(sourcePlugin, payload);
       return;
     }

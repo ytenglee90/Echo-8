@@ -1,5 +1,5 @@
 import { createId, isRecord, type PluginContext, type TaskHandle } from '../../core/contracts.ts';
-import { OPERATION_LOG_STAGE, type OperationStageUpdate, type OperationStatus } from '../../protocols/operation-log.ts';
+import { OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2, type OperationStageUpdate, type OperationStageUpdateV2, type OperationStatus } from '../../protocols/operation-log.ts';
 import type {
   AIGenerateResult,
   AIGenerateRequest,
@@ -13,7 +13,7 @@ import type {
 } from '../../protocols/ai.ts';
 import { assertNotAborted } from '../../services/async-control.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
-import { needsCanvasCreationPlanning, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
+import { canvasContentTarget, needsCanvasCreationPlanning, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
 import { aggregateTokenUsage, withTokenUsageEstimates } from '../../services/ai-token-usage.ts';
 import { collectFullSourceSummary } from './full-source-summary.ts';
 import { stripOperationCommands } from './command-parser.ts';
@@ -214,9 +214,12 @@ export function registerAIGenerationRuntime(
           const inspectedRequest = { ...activeRequest, inspection: { sessionId: prepared.sessionId, userTurn: prepared.userTurn ?? options.readSessions()[prepared.sessionId]?.turns ?? 1 } };
           const responseId = createId('ai-response');
           const requestedAt = performance.now();
-          const logResponse = (state: OperationStatus, elapsedMs?: number) => context.signals.emit(OPERATION_LOG_STAGE, {
+          const logResponse = (state: OperationStatus, elapsedMs?: number, failure?: unknown) => context.signals.emit(OPERATION_LOG_STAGE_V2, {
             id: responseId, phase: 'ai-model-response', state, relatedId: prepared.id, elapsedMs,
-          } satisfies OperationStageUpdate);
+            detail: { step: 'model', route: 'model',
+              reason: state === 'timed-out' ? 'model-timeout' : state === 'cancelled' ? 'cancelled' : state === 'failed' ? 'model-http-error' : undefined,
+              httpStatus: failure instanceof Error ? Number(/\bHTTP\s+(\d{3})\b/iu.exec(failure.message)?.[1]) || undefined : undefined },
+          } satisfies OperationStageUpdateV2);
           let received = false;
           const receivedResponse = () => {
             if (received || signal.aborted) return;
@@ -277,7 +280,7 @@ export function registerAIGenerationRuntime(
               recordUsage(completed, activeRequest);
               return completed;
             } catch (reason) {
-              if (!received) logResponse(generationFailure(signal.aborted ? signal.reason : reason));
+              if (!received) logResponse(generationFailure(signal.aborted ? signal.reason : reason), performance.now() - requestedAt, reason);
               throw reason;
             }
           } finally {
@@ -369,14 +372,20 @@ export function registerAIGenerationRuntime(
         }
         if (prepared.operation === 'canvas-control' && result.finishReason !== 'length') {
           const creationRequested = needsCanvasCreationPlanning(stripOperationCommands(prepared.prompt));
+          const contentRequested = Boolean(canvasContentTarget(prepared.prompt) && prepared.sources.some(source => source.reason === 'explicit-reference'));
           const validatePlan = (text: string) => {
             const plan = parseCanvasControlPlan(text);
             if (creationRequested && !plan.actions.some(action => action.type === 'create-node')) {
               throw new Error('当前文字节点能力已启用，但返回计划没有 create-node。请根据本轮要求生成新节点。');
             }
+            if (contentRequested && !plan.actions.some(action => action.type === 'update-node')) throw new Error('本轮已定位可写正文目标，请返回 update-node 填入用户要求的内容。');
+            context.signals.emit(OPERATION_LOG_STAGE_V2, { id: prepared.id, relatedId: prepared.id, phase: 'canvas-validation', state: 'completed',
+              count: plan.actions.length, detail: { step: 'validate', route: 'model', reason: plan.actions.length ? 'model-plan' : 'no-change' } } satisfies OperationStageUpdateV2);
           };
           try { validatePlan(result.text); }
           catch (error) {
+            context.signals.emit(OPERATION_LOG_STAGE_V2, { id: prepared.id, relatedId: prepared.id, phase: 'canvas-validation', state: 'failed',
+              detail: { step: 'validate', route: 'model', reason: 'invalid-plan' } } satisfies OperationStageUpdateV2);
             if (request.messages.length > 62) throw error;
             context.signals.emit('ai.status', { state: 'generating', message: '正在修正画布操作计划格式', sessionId: prepared.sessionId, preparationId: prepared.id } satisfies AIStatusSignal);
             result = await generateOnce(forPurpose({ ...request, temperature: 0.1, tools: undefined, messages: [

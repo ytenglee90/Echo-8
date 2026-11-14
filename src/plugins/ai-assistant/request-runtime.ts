@@ -1,5 +1,5 @@
 import { createId, type PluginContext, type TaskHandle } from '../../core/contracts.ts';
-import { OPERATION_LOG_STAGE, type OperationStageUpdate } from '../../protocols/operation-log.ts';
+import { OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2, type OperationStageUpdate, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
 import type {
   AIGenerateResult,
   AIMemoryIndexRecord,
@@ -9,8 +9,9 @@ import type {
   AIProposalRecord,
 } from '../../protocols/ai.ts';
 import { explicitAtOperation, inferAtOperation } from './command-parser.ts';
-import { canvasCommandText } from '../../services/ai-task-route.ts';
+import { canvasCommandText, naturalCanvasOperation } from '../../services/ai-task-route.ts';
 import { naturalWritebackIntent } from './natural-writeback.ts';
+import { CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, type CanvasControlResume, type CanvasControlResult } from '../../protocols/canvas-control.ts';
 import {
   isGenerationCancelPayload,
   isGenerationRetryPayload,
@@ -74,6 +75,24 @@ export function registerAIRequestRuntime(
   context: PluginContext,
   options: AIRequestRuntimeOptions,
 ): void {
+  context.signals.subscribe<CanvasControlResult>(CANVAS_CONTROL_RESULT, message => {
+    if (message.sourcePlugin !== 'canvas-control') return;
+    const result = message.payload;
+    const previous = options.lastPrepareRequestBySession.get(result.sessionId);
+    if (!previous || previous.prompt !== result.prompt || options.generationTasks.has(result.sessionId)) return;
+    context.signals.emit('ai.status', { sessionId: result.sessionId, state: result.status === 'failed' ? 'error' : 'complete',
+      message: result.status === 'applied' ? `已在画布应用 ${result.count} 项操作，可一次撤销。` :
+        result.status === 'dismissed' ? '已放弃这份画布计划。' : '画布提交失败，请查看实时操作日志。' } satisfies AIStatusSignal);
+  });
+  context.signals.subscribe<CanvasControlResume>(CANVAS_CONTROL_RESUME, message => {
+    if (message.sourcePlugin !== 'canvas-control') return;
+    const input = message.payload;
+    const previous = options.lastPrepareRequestBySession.get(input.sessionId);
+    if (!previous || previous.prompt !== input.prompt || !options.readSessions()[input.sessionId]) return;
+    if (!input.sourceIds.length || input.sourceIds.length > 32) return;
+    context.commands.defer('ai.context.prepare', { ...previous, autoStart: true,
+      references: input.sourceIds.map(sourceId => ({ sourceId, token: input.prompt })) });
+  });
   context.commands.register<PreparePayload, { taskId: string }>({
     type: 'ai.context.prepare',
     validate: isPreparePayload,
@@ -111,6 +130,13 @@ export function registerAIRequestRuntime(
         sessionId: session.id,
       } satisfies AIStatusSignal);
       const preparationId = createId('ai-context');
+      const localOperation = naturalCanvasOperation(normalizedPayload.prompt);
+      context.signals.emit(OPERATION_LOG_STAGE_V2, {
+        id: preparationId, relatedId: preparationId, phase: 'ai-routing', state: 'completed',
+        detail: { step: 'route', route: normalizedPayload.operation !== 'canvas-control' ? 'conversation' :
+          localOperation && localOperation.kind !== 'content' ? 'local' : 'model',
+          reason: normalizedPayload.operation === 'canvas-control' ? localOperation && localOperation.kind !== 'content' ? 'local-rule' : 'model-plan' : undefined },
+      } satisfies OperationStageUpdateV2);
       const task = context.tasks.schedule<AIPreparedContext>({
         category: 'ai-context-retrieval',
         operationLogRelatedId: preparationId,

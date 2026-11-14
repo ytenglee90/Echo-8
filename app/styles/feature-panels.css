@@ -533,6 +533,9 @@
 .operation-log-row-title [data-status="failed"], .operation-log-row-title [data-status="timed-out"] { color: var(--danger); }
 .operation-log-row-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .diagnostic-operation-log progress { width: 100%; height: 5px; accent-color: var(--ink); }
+.diagnostic-operation-log details { font-size: 12px; }
+.diagnostic-operation-log summary { cursor: pointer; padding: 3px 0; }
+.diagnostic-operation-log details ol { margin-top: 5px; }
 .diagnostic-cards > div { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--control-surface); }
 .diagnostic-cards span { color: var(--muted); font-size: 12px; }
 .diagnostic-cards strong { font-size: 16px; letter-spacing: -0.03em; }

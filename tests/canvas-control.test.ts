@@ -216,6 +216,15 @@ test('context v2 sends only operation-specific fields while v1 remains available
     assert.ok(result.responseSchema); assert.match(result.objectDirectory, /"id"|"color"/u);
     assert.doesNotMatch(result.objectDirectory, /"x"|"y"|textLength|完整正文/u);
     assert.doesNotMatch(result.instruction, /text 替换全文|create-group:/u);
+    const extra = await kernel.router.dispatch<{ id: string }>('node.create', { title: '另一个目标', body: '不发送的正文' }, 'core.test');
+    await kernel.router.dispatch('selection.clear', undefined, 'core.test');
+    const all = await kernel.capabilities.request<CanvasControlContextV2>('canvasControl.context@2', {
+      preparationId: 'fields:all', sessionId: 's', prompt: '把所有节点分散摆放，留出足够空隙', purpose: 'move',
+    });
+    const allNodes = await nodes(kernel);
+    assert.deepEqual(new Set(all.targetIds), new Set(allNodes.map(node => node.id)));
+    assert.ok(all.targetIds?.includes(created.id) && all.targetIds.includes(extra.id));
+    assert.doesNotMatch(all.objectDirectory, /不发送的正文/u);
   } finally { await kernel.plugins.stop('canvas-control'); }
 });
 

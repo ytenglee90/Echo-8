@@ -1,5 +1,5 @@
 import { defineManifest } from '../manifest.ts';
-import { OPERATION_LOG_CHANGED, OPERATION_LOG_QUERY } from '../../protocols/operation-log.ts';
+import { OPERATION_LOG_CHANGED, OPERATION_LOG_QUERY_V2 } from '../../protocols/operation-log.ts';
 
 export const DIAGNOSTIC_CENTER_NAMESPACE = 'diagnosticCenter';
 
@@ -11,7 +11,7 @@ export const diagnosticCenterManifest = defineManifest('diagnostic-center', '诊
   optionalCapabilities: ['search.index.status@1'],
   commands: ['diagnostics.open', 'diagnostics.close', 'diagnostics.operationLog.open@1'],
   queries: ['diagnostics.state'],
-  asks: ['diagnostics.state', 'system.runtime', OPERATION_LOG_QUERY],
+  asks: ['diagnostics.state', 'system.runtime', OPERATION_LOG_QUERY_V2],
   signals: [OPERATION_LOG_CHANGED],
   actions: ['diagnostic-center.operation-log'],
   ui: ['diagnostic-center.panel'],

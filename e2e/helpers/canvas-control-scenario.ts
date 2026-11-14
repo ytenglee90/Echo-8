@@ -12,6 +12,89 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('reported all-node layouts run offline without selection and log scope, counts and commit states', async ({ page }) => {
+    const book = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '全画布排列验收' }),
+      ...Array.from({ length: 6 }, (_, index) => JSON.stringify({ type: 'node', id: 'layout-' + index, category: '对象', name: '节点' + (index + 1), text: '' })),
+      JSON.stringify({ type: 'end' })].join('\n');
+    await page.goto(url);
+    const library = page.getByRole('region', { name: 'Echo-8 书库' });
+    await library.locator('input[type=file]').setInputFiles({ name: '全画布排列.e8', mimeType: 'text/plain', buffer: Buffer.from(book) });
+    await expect(library).toHaveCount(0);
+    await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    await page.context().setOffline(true);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    for (const prompt of ['垂直排列所有节点', '@画布操作 宫格排列所有节点', '水平排列节点']) {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('7 项操作');
+      await expect(ai.getByRole('status')).toContainText('应用整份计划');
+      await control.getByRole('button', { name: '应用整份计划' }).click();
+      await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('已应用');
+      await expect(ai.getByRole('status')).toContainText('已在画布应用 7 项操作');
+      await control.getByRole('button', { name: '关闭画布控制' }).click();
+    }
+    await ai.getByRole('button', { name: '打开实时操作日志', exact: true }).click();
+    const log = page.getByRole('region', { name: '实时操作日志', exact: true });
+    await expect(log).toContainText('本地执行规则');
+    await expect(log).toContainText('命中 7 个对象');
+    await expect(log).toContainText('更新节点 7 项');
+    await expect(log).toContainText('修改已提交到画布，可撤销');
+    await log.getByText('步骤与执行详情', { exact: true }).first().click();
+    await expect(log).toContainText('提交修改');
+    await expect(ai.getByLabel('本轮 Token 用量')).toHaveText(Array(3).fill('本轮 Token：输入 0 · 输出 0'));
+  });
+
+  test('reported character-card writing binds the actual node and puts generated content into its reviewed plan', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls += 1;
+      const request = route.request().postDataJSON() as { messages: Array<{ role: string; content: string }> };
+      const directory = request.messages.find(message => message.content.startsWith('<untrusted-canvas-objects>'))?.content ?? '';
+      const nodes = (JSON.parse(/<untrusted-canvas-objects>\n(.+)\n<\/untrusted-canvas-objects>/u.exec(directory)![1]!) as { nodes: Array<{ id: string; title: string }> }).nodes;
+      expect(nodes).toHaveLength(1);
+      expect(nodes[0]!.title).toBe('资料｜角色卡');
+      expect(request.messages.some(message => message.role === 'system' && message.content.includes('当前应用已经提供真实画布操作通道'))).toBe(true);
+      const content = JSON.stringify({ version: 1, actions: [{ type: 'update-node', id: nodes[0]!.id, text: '姓名：沈无咎\n任务：了结祖父最后一笔未还的愿。' }] });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
+        body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    const book = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '角色卡写入验收' }),
+      JSON.stringify({ type: 'node', id: 'role', category: '资料', name: '角色卡', text: '姓名：\n任务：' }),
+      JSON.stringify({ type: 'node', id: 'other', category: '地点', name: '地图', text: '不改动地图正文' }), JSON.stringify({ type: 'end' })].join('\n');
+    await page.goto(url);
+    const library = page.getByRole('region', { name: 'Echo-8 书库' });
+    await library.locator('input[type=file]').setInputFiles({ name: '角色卡写入.e8', mimeType: 'text/plain', buffer: Buffer.from(book) });
+    await expect(library).toHaveCount(0);
+    await configure(page, url, 'openai', undefined, 'review', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    for (const prompt of ['填入角色卡', '@画布操作 在角色卡节点里，设计人物']) {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.locator('.ai-composer textarea').press('Enter');
+      const control = page.getByRole('region', { name: '画布控制', exact: true });
+      await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('资料｜角色卡');
+      await control.getByRole('button', { name: '应用整份计划' }).click();
+      await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('已应用');
+      await control.getByRole('button', { name: '关闭画布控制' }).click();
+    }
+    await ai.locator('.ai-composer textarea').fill('在角色节点里，设计任务');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    const candidates = control.getByRole('region', { name: '选择「角色节点」', exact: true });
+    await expect(candidates.getByRole('button')).toHaveCount(1);
+    expect(calls).toBe(2);
+    await candidates.getByRole('button').click();
+    await expect(control.getByRole('button', { name: '应用整份计划' })).toBeVisible();
+    await control.getByRole('button', { name: '应用整份计划' }).click();
+    await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('已应用');
+    await control.getByRole('button', { name: '关闭画布控制' }).click();
+    expect(calls).toBe(3);
+    await ai.getByRole('button', { name: '关闭AI 助手', exact: true }).click();
+    await expect(page.getByRole('article', { name: /文本节点：资料｜角色卡$/u })).toContainText('沈无咎');
+    await expect(page.getByRole('article', { name: /文本节点：地点｜地图$/u })).toContainText('不改动地图正文');
+  });
+
   test('creating a character card uses the canvas offline and respects review mode', async ({ page }) => {
     await page.goto(url);
     await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');

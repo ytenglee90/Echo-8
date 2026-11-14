@@ -109,6 +109,9 @@ test('fixed inputs improve without deleting evidence or adding classifier calls;
 test('native role history retains explicit constraints and evidence dedup preserves source identity and revisions', () => {
   const text = '[用户 · 1]\n禁止复活。\n\n[助手 · 1]\n已记住。';
   assert.deepEqual(nativeConversation(text, '继续'), [{ role: 'user', content: '禁止复活。' }, { role: 'assistant', content: '已记住。' }]);
+  const staleCapability = text + '\n\n[助手 · 2]\n我这轮没有画布写入能力，请自行粘贴。\n\n[用户 · 3]\n在角色卡节点里设计人物';
+  assert.doesNotMatch(JSON.stringify(nativeConversation(staleCapability, '设计人物', true)), /没有画布写入能力/u);
+  assert.match(JSON.stringify(nativeConversation(staleCapability, '设计人物', false)), /没有画布写入能力/u);
   const first = efficiencyScenarios[4]!.rounds[0]!.sources[0]!;
   const sources = [first, { ...first, sourceId: 'other' }, { ...first, revision: 2 }];
   const bodies = evidenceBodies(sources, -1);

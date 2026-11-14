@@ -41,7 +41,7 @@ import type {
 import { CapabilityRegistry } from './capability-registry.ts';
 import { DiagnosticsService } from './diagnostics.ts';
 import { OperationLog } from './operation-log.ts';
-import { OPERATION_LOG_CHANGED, OPERATION_LOG_QUERY } from '../protocols/operation-log.ts';
+import { OPERATION_LOG_CHANGED, OPERATION_LOG_QUERY, OPERATION_LOG_QUERY_V2 } from '../protocols/operation-log.ts';
 import { HistoryService } from './history.ts';
 import { InteractionStateMachine } from './interaction-machine.ts';
 import {
@@ -453,6 +453,7 @@ export class ApplicationKernel {
       type: OPERATION_LOG_QUERY,
       handle: () => this.operationLog.snapshot(),
     });
+      this.router.registerQuery('core.diagnostics', { type: OPERATION_LOG_QUERY_V2, handle: () => this.operationLog.snapshotDetailed() });
     this.router.registerQuery<undefined, RuntimeSnapshot>('core.diagnostics', {
       type: 'system.runtime',
       handle: () => ({

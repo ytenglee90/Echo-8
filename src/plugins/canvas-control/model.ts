@@ -1,9 +1,9 @@
 import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
-import type { CanvasControlAdmission, CanvasControlOffer, CanvasControlReview, CanvasControlState } from '../../protocols/canvas-control.ts';
+import { CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, type CanvasControlAdmission, type CanvasControlOffer, type CanvasControlReview, type CanvasControlState } from '../../protocols/canvas-control.ts';
 import type { AppearanceEntityRef, AppearanceReadContribution, AppearanceUpdatePlan } from '../../protocols/appearance.ts';
 import type { ContentReplacePlan } from '../../protocols/search.ts';
-import { OPERATION_LOG_STAGE, type OperationStatus, type OperationStageUpdate } from '../../protocols/operation-log.ts';
-import { naturalCanvasOperation, needsCanvasSearchInterpretation, type NaturalCanvasOperation } from '../../services/ai-task-route.ts';
+import { OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2, type OperationStatus, type OperationStageUpdate, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
+import { canvasRequestsAllNodes, naturalCanvasOperation, needsCanvasSearchInterpretation, type NaturalCanvasOperation } from '../../services/ai-task-route.ts';
 import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
 import { defineManifest } from '../manifest.ts';
@@ -13,6 +13,7 @@ import { lineStyleFollowup, localLinePlan, localOperation, localPlan } from './l
 import { discoverControlTargets } from './target-discovery.ts';
 import { resolveNaturalOperation, shadeColor, type NaturalControlResult, type NaturalControlState } from './natural-operations.ts';
 import { planControlApplication, validateControlScope } from './planning.ts';
+import { actionCounts, controlFailureReason, localOperationDetail } from './operation-details.ts';
 
 export const CONTROL_UI_NAMESPACE = 'canvasControlUI';
 export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): PluginDefinition {
@@ -22,11 +23,11 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       sessionOnlyWorkspace: { [CONTROL_UI_NAMESPACE]: true },
       requiresCapabilities: ['content.summaries@1', 'content.summariesById@1', 'selection.read@1', 'selection.resolve@1', 'selection.entities@1', 'canvasControl.nodesPlan@1'],
       optionalCapabilities: ['context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
-      providesCapabilities: ['canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
+      providesCapabilities: ['canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
       commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
       dispatches: ['canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'selection.set', 'canvas.focusSelection', 'palette.setPreferences'],
       queries: ['canvasControl.state@1'],
-      events: ['document.replaced', 'history.changed', 'canvas.appearance.changed', 'canvasControl.background.applied@1'], signals: ['canvasControl.updated@1', 'appearance.color.preview', OPERATION_LOG_STAGE],
+      events: ['document.replaced', 'history.changed', 'canvas.appearance.changed', 'canvasControl.background.applied@1'], signals: [CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, 'canvasControl.updated@1', 'appearance.color.preview', OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2],
       ui: ['canvas-control.panel', 'canvas-control.toolbar'], actions: ['canvas-control.open-action'],
       shortcuts: ['canvas-control.open-shortcut'],
       permissions: ['store.own.read', 'store.own.write', 'content.context.read', 'ui.top.contribute', 'ui.overlay.contribute', 'ui.action.register', 'ui.shortcut.register'],
@@ -35,6 +36,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       const snapshots = new Map<string, ControlSnapshot>();
       const reviews = new Map<string, StoredControlReview>();
       const applying = new Map<string, string>();
+      const generating = new Set<string>();
       const lastNatural = new Map<string, NaturalControlState>();
       const localResults = new Map<string, NaturalControlResult>();
       let navigation: CanvasControlState['navigation'];
@@ -43,10 +45,21 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       const logPlan = (id: string, state: OperationStatus) => {
         const draft = reviews.get(id);
         if (!draft) return;
-        context.signals.emit(OPERATION_LOG_STAGE, {
+        const operation = naturalCanvasOperation(draft.snapshot.prompt);
+        context.signals.emit(OPERATION_LOG_STAGE_V2, {
           id, phase: 'canvas-plan', state, relatedId: draft.snapshot.preparationId, expiresAt: draft.snapshot.expiresAt,
           count: draft.review.replacement?.count ?? draft.review.actions.length,
-        } satisfies OperationStageUpdate);
+          detail: { ...(operation ? localOperationDetail(operation) : { route: 'model' as const }),
+            step: state === 'running' ? 'commit' : state === 'pending' || state === 'waiting' ? 'review' : 'done',
+            matched: draft.snapshot.nodes.length, actions: actionCounts(draft.review.actions),
+            reason: state === 'pending' ? (execution() === 'review' ? 'review-preference' : 'review-existing') :
+              state === 'waiting' ? 'ready-direct' : state === 'applied' ? 'applied' :
+                state === 'failed' ? controlFailureReason(new Error(draft.review.error)) : state === 'expired' ? 'expired' : undefined },
+        } satisfies OperationStageUpdateV2);
+        if (!generating.has(id) && (state === 'applied' || state === 'failed' || state === 'dismissed')) context.signals.emit(CANVAS_CONTROL_RESULT, {
+          sessionId: draft.review.sessionId, preparationId: draft.snapshot.preparationId, prompt: draft.snapshot.prompt,
+          status: state, count: draft.review.actions.length,
+        });
       };
       const logBackground = (id: string, state: OperationStatus) =>
         context.signals.emit(OPERATION_LOG_STAGE, { id, relatedId: id, phase: 'canvas-background', state } satisfies OperationStageUpdate);
@@ -77,9 +90,20 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       const naturalPlan = async (input: CanvasControlAdmission, chosen = new Map<string, string>(), signal?: AbortSignal, interpreted?: NaturalCanvasOperation) => {
         const operation = interpreted ?? naturalCanvasOperation(input.prompt);
         if (!operation) return undefined;
+        const trace = (state: OperationStatus, detail: OperationStageUpdateV2['detail']) => context.signals.emit(OPERATION_LOG_STAGE_V2, {
+          id: input.preparationId, relatedId: input.preparationId, phase: 'canvas-targets', state,
+          detail: { ...localOperationDetail(operation), ...detail },
+        } satisfies OperationStageUpdateV2);
+        trace('running', { step: 'targets' });
         const previous = lastNatural.get(input.sessionId) ?? { ids: [] };
         let result: NaturalControlResult;
-        if (operation.kind === 'theme' || operation.kind === 'background') {
+        if (operation.kind === 'content') {
+          result = await resolveNaturalOperation(context, input, { kind: 'find', names: operation.names }, previous, chosen, signal);
+          if (result.focus?.length && !result.choice) {
+            trace('completed', { step: 'targets', matched: result.focus.length, reason: 'model-plan' });
+            return { handled: false as const, sourceIds: result.focus };
+          }
+        } else if (operation.kind === 'theme' || operation.kind === 'background') {
           result = { plan: { version: 1, actions: [] }, setting: operation };
         } else if (operation.kind === 'line' && !operation.names.length && operation.reference !== 'selection' && previous.pendingLine) {
           result = { plan: { version: 1, actions: [] }, pendingLine: { id: previous.pendingLine, line: operation.line } };
@@ -94,6 +118,9 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
             }
           }
         }
+        trace('completed', { step: 'targets', matched: result.targets?.length ?? result.focus?.length ?? 0,
+          candidates: result.choice?.ids.length ?? 0, actions: actionCounts(result.plan.actions),
+          reason: result.choice ? 'ambiguous-target' : result.plan.actions.length ? 'local-rule' : result.focus?.length ? 'no-change' : 'empty-targets' });
         const snapshot = await captureControlSnapshot(context, { ...input, sourceIds: result.targets ?? [] }, 'selection', signal, undefined, true);
         const createsDirectly = operation.kind === 'create' || operation.kind === 'connect' || operation.kind === 'connect-many' ||
           (operation.kind === 'batch' && result.plan.actions.every(action => action.type === 'create-node' || action.type === 'create-connection' || action.type === 'create-group'));
@@ -103,8 +130,15 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         localResults.set(input.preparationId, { ...result, chosen });
         while (localResults.size > 8) localResults.delete(localResults.keys().next().value!);
         while (snapshots.size > 8) snapshots.delete(snapshots.keys().next().value!);
-        return { handled: true, text: JSON.stringify(result.plan) };
+        return { handled: true as const, text: JSON.stringify(result.plan) };
       };
+      context.capabilities.provide({ key: 'canvasControl.bindContent@1', invoke: async (input: CanvasControlAdmission, signal) => {
+        if (!isAdmission(input)) throw new Error('画布控制请求无效');
+        const operation = naturalCanvasOperation(input.prompt);
+        if (operation?.kind !== 'content') return { ids: [], needsChoice: false };
+        const result = await resolveNaturalOperation(context, input, { kind: 'find', names: operation.names }, lastNatural.get(input.sessionId) ?? { ids: [] }, new Map(), signal);
+        return { ids: result.choice ? [] : result.focus ?? [], needsChoice: Boolean(result.choice || !result.focus?.length) };
+      } });
       context.capabilities.provide({ key: 'canvasControl.searchPlan@1', invoke: async (input: CanvasControlAdmission & { terms: string[]; ungrouped: boolean }, signal) => {
         if (!isAdmission(input) || !needsCanvasSearchInterpretation(input.prompt) || typeof input.ungrouped !== 'boolean') throw new Error('当前请求不是画布线索筛选');
         validateAIContextSearchRequest({ terms: input.terms, maxResults: 50 });
@@ -118,8 +152,13 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       context.capabilities.provide({ key: 'canvasControl.context@2', invoke: async (input: CanvasControlAdmission & { purpose?: import('../../protocols/canvas-control.ts').CanvasControlPurpose }, signal) => {
         if (!isAdmission(input) || (input.purpose !== undefined && !['appearance', 'move', 'creation', 'structure', 'content', 'general'].includes(input.purpose))) throw new Error('画布控制请求无效');
         const discovery = await discoverControlTargets(context, input, [...reviews.values()], signal);
-        const snapshot = await captureControlSnapshot(context, input, scope(), signal, discovery);
+        const requestedScope = canvasRequestsAllNodes(input.prompt) ? 'canvas' : scope();
+        const previous = /它们|这些|刚才(?:的|那批|创建)/u.test(input.prompt) ? lastNatural.get(input.sessionId)?.ids ?? [] : [];
+        const snapshot = await captureControlSnapshot(context, { ...input, sourceIds: [...new Set([...(input.sourceIds ?? []), ...previous])] }, requestedScope, signal, discovery);
         snapshot.execution = execution();
+        context.signals.emit(OPERATION_LOG_STAGE_V2, { id: input.preparationId, relatedId: input.preparationId, phase: 'canvas-targets', state: 'completed',
+          detail: { step: 'targets', route: 'model', scope: requestedScope === 'canvas' ? 'canvas' : discovery.names.length ? 'named' : 'selection',
+            matched: snapshot.nodes.length, reason: snapshot.nodes.length ? 'model-plan' : 'empty-targets' } } satisfies OperationStageUpdateV2);
         snapshots.set(input.preparationId, snapshot);
         while (snapshots.size > 8) snapshots.delete(snapshots.keys().next().value!);
         const result = controlContextV2(snapshot, input.purpose);
@@ -128,7 +167,11 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       } });
       context.capabilities.provide({ key: 'canvasControl.localPlan@1', invoke: async (input: CanvasControlAdmission, signal) => {
         if (!isAdmission(input)) throw new Error('画布控制请求无效');
-        const resolved = await naturalPlan(input, undefined, signal);
+        const resolved = await naturalPlan(input, undefined, signal).catch(error => {
+          context.signals.emit(OPERATION_LOG_STAGE_V2, { id: input.preparationId, relatedId: input.preparationId, phase: 'canvas-targets', state: 'failed',
+            detail: { step: 'targets', reason: controlFailureReason(error) } } satisfies OperationStageUpdateV2);
+          throw error;
+        });
         if (resolved) return resolved;
         const operation = localOperation(input.prompt);
         const line = lineStyleFollowup(input.prompt);
@@ -183,6 +226,12 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           const admission = { ...current.input, preparationId: createId('canvas-choice') };
           const plan = await naturalPlan(admission, chosen);
           if (!plan) throw new Error('原请求已经失效');
+          if (!plan.handled) {
+            if (plan.sourceIds.length) context.signals.emit(CANVAS_CONTROL_RESUME, { ...admission, sourceIds: plan.sourceIds });
+            navigation = undefined;
+            publish();
+            return {};
+          }
           const offered = await context.commands.invoke('canvasControl.offer@1', { ...admission, text: plan.text, complete: true });
           if (offered.directPlanId) await context.commands.invoke('canvasControl.generate@1', { id: offered.directPlanId });
           publish();
@@ -298,12 +347,15 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           return { result: { message: '本轮需要先预览，请在画布控制底部点击“应用整份计划”。' }, transaction: { label: '显示待应用计划', history: false, patches: [uiPatch('open', true)] } };
         }
         let applied: { createdIds: string[] };
-        try { applied = await context.commands.invoke('canvasControl.apply@1', input); }
+        try {
+          generating.add(input.id);
+          applied = await context.commands.invoke('canvasControl.apply@1', input);
+        }
         catch (error) {
           draft.review.error = error instanceof Error ? error.message : String(error);
           openSurface(); publish();
           return { result: { message: `直接生成未成功：${draft.review.error}。计划已保留，可在画布控制检查。` }, transaction: { label: '显示生成失败计划', history: false, patches: [uiPatch('open', true)] } };
-        }
+        } finally { generating.delete(input.id); }
         const single = draft.review.actions.length === 1 ? draft.review.actions[0] : undefined;
         if (single?.type === 'create-connection') {
           const { titles } = draft.review;
@@ -336,7 +388,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           const current = await readTaskMarkers(context, [...changedIds, ...result.createdIds]).catch(() => undefined);
           const createdIds = new Set(result.createdIds);
           const nodeIds = current?.nodes.filter(node => createdIds.has(node.id)).map(node => node.id);
-          if (nodeIds?.length) remember(draft.review.sessionId, { ids: nodeIds, unfinishedConnection: undefined });
+          if (nodeIds?.length) remember(draft.review.sessionId, { ids: nodeIds, createdIds: nodeIds, unfinishedConnection: undefined });
           if (single?.type === 'create-connection' || single?.type === 'update-connection') remember(draft.review.sessionId, { pendingLine: undefined, lineId: single.type === 'update-connection' ? single.id : result.createdIds[0] });
           if (single?.type === 'create-group' || single?.type === 'update-group') remember(draft.review.sessionId, { groupId: single.type === 'update-group' ? single.id : result.createdIds[0] });
           draft.after = current?.markers;

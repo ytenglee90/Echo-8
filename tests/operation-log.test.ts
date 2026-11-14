@@ -68,3 +68,20 @@ test('owner stages reject forged messages, expire without mutation, and retain a
   for (let index = 0; index < 260; index++) log.transaction('text-node', 'node.create', Date.now());
   assert.equal(log.snapshot().entries.filter(entry => entry.kind === 'transaction').length, 240);
 });
+
+test('detailed logs retain verified steps and action counts while v1 and raw user data stay excluded', () => {
+  const log = new OperationLog(() => undefined);
+  log.stage('canvas-control', { id: 'flow', phase: 'canvas-plan', state: 'pending',
+    detail: { step: 'review', scope: 'canvas', matched: 6, reason: 'review-existing', actions: [{ type: 'update-node', count: 6 }],
+      prompt: 'private-prompt', title: 'private-title', error: 'private-error', raw: 'private-data' } });
+  log.stage('canvas-control', { id: 'flow', phase: 'canvas-plan', state: 'running', detail: { step: 'commit' } });
+  log.stage('canvas-control', { id: 'flow', phase: 'canvas-plan', state: 'applied', detail: { step: 'done', reason: 'applied' } });
+  const entry = log.snapshotDetailed().entries[0]!;
+  assert.deepEqual(entry.steps?.map(step => step.status), ['pending', 'running', 'applied']);
+  assert.equal(entry.detail?.matched, 6);
+  assert.deepEqual(entry.detail?.actions, [{ type: 'update-node', count: 6 }]);
+  assert.doesNotMatch(JSON.stringify(log.snapshotDetailed()), /private-/u);
+  assert.doesNotMatch(JSON.stringify(log.snapshot()), /"detail"|"steps"/u);
+  entry.detail!.matched = 99;
+  assert.equal(log.snapshotDetailed().entries[0]?.detail?.matched, 6);
+});

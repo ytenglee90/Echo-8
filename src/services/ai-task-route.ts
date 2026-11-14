@@ -3,6 +3,7 @@ import { extendedCanvasOperation, naturalColor, naturalTargetFilter, NATURAL_QUO
 
 /** Deterministic, conservative hints. Ambiguous requests retain the full path. */
 export function canvasControlPurpose(prompt: string): CanvasControlPurpose {
+  if (canvasContentTarget(prompt)) return 'content';
   prompt = canvasCommandText(prompt);
   const fields = [
     /颜色|改色|配色|#[0-9a-f]{6}/iu.test(prompt) ? 'appearance' : '',
@@ -19,9 +20,15 @@ export function canvasCommandText(prompt: string): string {
   return prompt.replace(/@\[[^\]\r\n]+\](?:\([^)\r\n]*\))?|@node:[a-z0-9:-]+/giu, ' ');
 }
 
+export function canvasRequestsAllNodes(prompt: string): boolean {
+  const text = canvasCommandText(prompt).replace(new RegExp(NATURAL_QUOTED_NAME, 'gu'), ' ');
+  return /(?:(?:所有|全部)(?:的)?(?:文字)?(?:节点|卡片|文本框)|(?:节点|卡片|文本框)(?:全部|所有)|全画布)/u.test(text);
+}
+
 export type NaturalCanvasOperation =
   | ExtendedCanvasOperation
   | { kind: 'batch'; names: string[]; steps: NaturalCanvasOperation[] }
+  | { kind: 'content'; names: string[] }
   | { kind: 'narrow'; names: string[] }
   | { kind: 'relative-color'; names: string[]; direction: 'lighter' | 'darker' }
   | { kind: 'choose-color'; names: string[]; background?: boolean }
@@ -102,6 +109,22 @@ function canvasIntentText(prompt: string): string {
     .replace(/^(?:我想|我希望)\s*(?=把|将|建|创建|在画布|用(?:实线|虚线))/u, '');
 }
 
+/** A named write destination is an action even when its body needs a model. */
+export function canvasContentTarget(prompt: string): { names: string[] } | undefined {
+  const text = canvasIntentText(prompt).trim().replace(/[。！!]$/u, '');
+  if (/^(?:不要|先别|先不要|别|如果|如何|怎么)/u.test(text) || /[？?]$/u.test(text)) return undefined;
+  let match = /^(?:在|往|向|给)\s*(.+?)(?:里|内|中|上)[，,\s]*(?:设计|创作|写|填|生成|补充|续写|完善)/u.exec(text);
+  if (match) return /^(?:当前)?(?:画布|全画布)$/u.test(name(match[1]!)) ? undefined : { names: [name(match[1]!)] };
+  match = /^(?:填入|填充|补全|完善|填好)\s*(.{1,120}?)(?:[，,].*)?$/u.exec(text);
+  if (match) return { names: [name(match[1]!)] };
+  if (/^(?:填进去|写进去|填进刚才的卡|填入刚才的节点)$/u.test(text)) return { names: ['刚才创建的节点'] };
+  match = /^(?:把|将)\s*(.+?)(?:的正文|的内容)?\s*(?:填成|填上|补全为|写成)[，,\s]*.+$/u.exec(text);
+  if (match && /卡|节点|文本框|刚才|这个|它/u.test(match[1]!)) return { names: [name(match[1]!)] };
+  match = /^(?:把|将)\s*.+?(?:填入|写入|写进)\s*(.+?(?:卡|节点|文本框))(?:里|内|中)?$/u.exec(text);
+  if (match) return { names: [name(match[1]!)] };
+  return undefined;
+}
+
 export function naturalCanvasOperation(prompt: string): NaturalCanvasOperation | undefined {
   const command = canvasIntentText(prompt);
   const literals = new RegExp(NATURAL_QUOTED_NAME, 'gu');
@@ -137,6 +160,18 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
     if (pair.length === 2) return { kind: 'relations', names: pair };
   }
   if (/[？?]$/u.test(command) || /(?:吗|么|会怎样|怎么样)$/u.test(text)) return undefined;
+  const content = canvasContentTarget(command);
+  if (content) return { kind: 'content', ...content };
+  if ((match = /^(水平|横向|横排|垂直|竖直|纵向|纵排|竖排|宫格|网格)(?:排列|排布|布局|整理)\s*(.*)$/u.exec(text))) {
+    const target = match[2]!.trim();
+    return { kind: 'arrange', names: !target || /^(?:节点|卡片|文本框)$/u.test(target) ? ['它们'] : [target],
+      layout: /宫|网/u.test(match[1]!) ? 'grid' : /水平|横/u.test(match[1]!) ? 'horizontal' : 'vertical' };
+  }
+  if ((match = /^(?:把|将)?\s*(.+?)(?:水平|横向|横排|垂直|竖直|纵向|纵排|竖排|宫格|网格)(?:排列|排布|布局|整理)$/u.exec(text))) {
+    const layout = /(?:宫格|网格)(?:排列|排布|布局|整理)$/u.test(text) ? 'grid' : /(?:水平|横向|横排)(?:排列|排布|布局|整理)$/u.test(text) ? 'horizontal' : 'vertical';
+    return { kind: 'arrange', names: [match[1]!.trim()], layout };
+  }
+  if (/^(?:排列|整理|排布)(?:一下)?(?:节点|选中节点)$/u.test(text)) return { kind: 'arrange', names: ['它们'], layout: 'grid' };
   if ((match = /^([^，,；;。]+?)(?:除外|排除在外)$/u.exec(text)) && !/^(?:找出|筛选|高亮)/u.test(text)) return { kind: 'narrow', names: names(match[1]!) };
   if ((match = /^(?:(?:把|将)?(.+?)(?:的(?:颜色|标题栏))?)?(?:颜色)?再(浅|深)(?:一)?点$/u.exec(text))) {
     return { kind: 'relative-color', names: [match[1] ? name(match[1]) : '它们'], direction: match[2] === '浅' ? 'lighter' : 'darker' };

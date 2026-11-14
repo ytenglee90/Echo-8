@@ -13,6 +13,7 @@ import { canvasTitleAliases, normalizeCanvasTitle as normalize } from '../../ser
 
 export interface NaturalControlState {
   ids: string[]; lineId?: string; groupId?: string; pendingLine?: string; draftTitles?: ReadonlyMap<string, string>;
+  createdIds?: string[];
   unfinishedConnection?: { from: string; line?: 'solid' | 'dashed'; expiresAt: number };
 }
 export interface NaturalControlResult {
@@ -32,6 +33,7 @@ export interface NaturalControlResult {
 
 const answer = (message: string): NaturalControlResult => ({ plan: { version: 1, actions: [], answer: message } });
 const CHARACTER_CARD_BODY = ['姓名：', '身份：', '外貌：', '性格：', '目标：', '人物关系：'].join('\n');
+const recentCreation = /^(?:新节点|刚(?:才)?(?:新建|创建|建)(?:的)?(?:那(?:一)?(?:个|张))?(?:节点|卡片|角色卡|人物卡|文本框))$/u;
 const pronoun = /^(?:它|新节点|刚建的节点|刚才(?:那个|找到的|选中的|创建的)(?:节点|卡片)?|这个|这一个|这两个|这几个|这些|它们|这批|刚才的|刚才那批|刚才筛出的(?:空白)?节点|(?:当前)?选中(?:的)?(?:(?:两|2)个)?(?:节点|卡片)?|选区)$/u;
 
 export async function resolveNaturalOperation(
@@ -116,7 +118,9 @@ export async function resolveNaturalOperation(
     const explicit = request.sourceIds?.filter(id => {
       if (!sources.has(id)) return false;
       const candidate = normalize(title(id));
-      return id === name || '@' + id === name || candidate === key ||
+      const short = key.replace(/(?:的?(?:文字节点|节点|卡片|文本框))$/u, '').trim();
+      return id === name || '@' + id === name || candidate === key || canvasTitleAliases(candidate).includes(short) ||
+        (short.length >= 2 && candidate.includes(short)) ||
         (name.endsWith('…') && candidate.startsWith(normalize(name.slice(0, -1))));
     }) ?? [];
     if (explicit.length === 1) return explicit;
@@ -126,15 +130,17 @@ export async function resolveNaturalOperation(
       const group = lookupGroup(name);
       return group && validMembers(group.memberIds) ? group.memberIds : answer('当前没有可沿用的群组。');
     }
-    if (pronoun.test(name)) {
+    if (pronoun.test(name) || recentCreation.test(name)) {
       const selected = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
       const useSelection = /^(?:(?:当前)?选中|选区|这两个$|这几个$)/u.test(name);
-      const selectedIds = (useSelection ? selected.ids : previous.ids.length ? previous.ids : selected.ids);
+      const selectedIds = useSelection ? selected.ids : recentCreation.test(name) ? previous.createdIds ?? previous.ids :
+        previous.ids.length ? previous.ids : selected.ids;
+      const fallback = !selectedIds.length && operation.kind === 'arrange' ? [...sources.values()].filter(source => source.automaticRetrieval !== false).map(source => source.sourceId) : selectedIds;
       const drafts = new Set(previous.draftTitles?.values());
-      const ids = [...new Set(name === '这两个' && operation.kind === 'connect' ? selectedIds : selectedIds.flatMap(id => groups.find(group => group.id === id)?.memberIds ?? [id]))]
+      const ids = [...new Set(name === '这两个' && operation.kind === 'connect' ? fallback : fallback.flatMap(id => groups.find(group => group.id === id)?.memberIds ?? [id]))]
         .filter(id => drafts.has(id) || (sources.has(id) && (useSelection || sources.get(id)?.automaticRetrieval !== false)));
       if (name === '这两个' && ids.length !== 2) return answer('请选中两个节点，再继续连线。');
-      if (ids.length > 1 && /^(?:它|这个|这一个|刚才那个(?:节点|卡片)?)$/u.test(name)) {
+      if (ids.length > 1 && (/^(?:它|这个|这一个|刚才那个(?:节点|卡片)?)$/u.test(name) || recentCreation.test(name))) {
         return chooseNode(name, ids, '刚才涉及多个节点，请选出你指的那一个。');
       }
       const missing = selectedIds.length > 0 && !useSelection ? '刚才的对象已无法定位。' : '';

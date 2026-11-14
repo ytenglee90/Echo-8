@@ -160,7 +160,8 @@ export async function buildGenerateRequest(
   if (carriedInstructions?.length) push('taskState', 'user', '同一正文任务中用户明确提出的要求（原话）。本轮明确修改的要求优先，其余继续沿用。\n' + carriedInstructions.join('\n'));
   if (retrievalText) push('references', 'user', '记忆检索覆盖报告：\n' + retrievalText);
   if (conflictText) push('references', 'user', '记忆冲突目录：\n' + conflictText);
-  if (historyIndex >= 0) for (const message of nativeConversation(prepared.sources[historyIndex]!.text, prepared.prompt, Boolean(taskState?.plans?.length))) push('history', message.role, message.content);
+  if (historyIndex >= 0) for (const message of nativeConversation(prepared.sources[historyIndex]!.text, prepared.prompt, prepared.operation === 'canvas-control' || Boolean(taskState?.plans?.length))) push('history', message.role, message.content);
+  if (controlContext) push('operationProtocol', 'system', '当前应用已经提供真实画布操作通道。只输出完整 JSON 计划，应用会验证和提交。历史回复对工具、插件、节点是否存在的判断可能过时，能力以本轮协议和目录为准。用户明确要求写入且目录提供唯一目标时返回实际 update-node，不要只口头提供粘贴建议。');
   push('userRequest', 'user', (customUser ? '附加要求：' + customUser + '\n' : '') + '用户要求（原文）：\n' + prepared.prompt);
   if (tools.length) inputBreakdown.tools = estimateAITokens(JSON.stringify(tools));
   inputBreakdown.baseRules = (inputBreakdown.baseRules ?? 0) + 3;

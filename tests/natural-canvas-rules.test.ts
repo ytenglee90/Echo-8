@@ -35,6 +35,8 @@ test('natural operation catalog covers every content task without treating quote
   assert.equal(inferAtOperation('新建角色节点的方法有哪些'), 'general');
   assert.equal(inferAtOperation('先别新建角色节点'), 'general');
   assert.equal(naturalCanvasOperation('新建角色节点'), undefined);
+  assert.equal(naturalCanvasOperation('在画布上生成六个节点'), undefined);
+  assert.equal(inferAtOperation('在画布上生成六个节点'), 'canvas-control');
   assert.deepEqual(naturalCanvasOperation('创建一张角色卡'), {
     kind: 'create', names: [], title: '角色卡', presentation: 'card', template: 'character',
   });
@@ -55,7 +57,10 @@ test('natural operation catalog covers every content task without treating quote
     ['给主角用虚线连线', 'connect'], ['再连到地图', 'connect'], ['把武器归到人物组里', 'group-add'],
     ['把画布背景刷成浅灰', 'background'],
     ['我想把主角和武器横着排', 'arrange'], ['建个文本框叫出口然后连到地图', 'batch'],
+    ['填入角色卡', 'content'], ['在角色卡节点里，设计人物', 'content'], ['在角色卡节点里，设计出任务', 'content'],
+    ['水平排列节点', 'arrange'], ['宫格排列所有节点', 'arrange'], ['垂直排列所有节点', 'arrange'],
   ]) assert.equal(naturalCanvasOperation(prompt!)?.kind, kind, prompt);
+  for (const prompt of ['填入角色卡', '在角色卡节点里，设计人物', '水平排列节点', '宫格排列所有节点', '垂直排列所有节点']) assert.equal(inferAtOperation(prompt), 'canvas-control', prompt);
   assert.deepEqual(naturalCanvasOperation('在主角最后加一句：出门前记得带枪。'), { kind: 'append', names: ['主角'], text: '出门前记得带枪。' });
   assert.equal(inferAtOperation('把这些节点摆得整齐一点，给每类留出空隙'), 'canvas-control');
   assert.equal(inferAtOperation('把画布背景调整得更护眼'), 'canvas-control');
@@ -69,6 +74,7 @@ test('natural operation catalog covers every content task without treating quote
 });
 
 test('target filters combine group, conjunction, presentation and exclusions', () => {
+  for (const target of ['所有节点', '画布节点全部', '画布上的节点', '全画布节点']) assert.deepEqual(naturalTargetFilter(target), naturalTargetFilter('所有节点'), target);
   const filter = naturalTargetFilter('人物组里除了主角以外，空白且没连线的卡片');
   assert.equal(filter?.group, '人物组');
   assert.equal(filter?.empty, true);
