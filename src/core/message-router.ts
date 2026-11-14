@@ -6,6 +6,9 @@ import {
 } from './contracts.ts';
 import { DiagnosticsService } from './diagnostics.ts';
 import { TransactionManager } from './transaction-manager.ts';
+import { OPERATION_LOG_STAGE } from '../protocols/operation-log.ts';
+import { operationFailure, type OperationLog } from './operation-log.ts';
+import type { TransactionCommitRecord } from '../protocols/state.ts';
 
 interface OwnedCommand extends CommandRegistration {
   owner: string;
@@ -29,6 +32,8 @@ interface MessageParent {
 
 const MAX_MESSAGE_DEPTH = 48;
 const MAX_PENDING_COMMANDS = 2048;
+const LOG_RUNNING_COMMAND = /^(?:canvasControl\.(?:apply|commit|generate|background.apply)@1|ai\.proposal\.accept|project\.|history\.)/u;
+const LOG_COMPLETED_WITHOUT_DOCUMENT = new Set(['selection.set', 'canvas.focusSelection', 'palette.setPreferences']);
 
 export class MessageRouter {
   private readonly commands = new Map<string, OwnedCommand>();
@@ -39,18 +44,20 @@ export class MessageRouter {
   private readonly eventTails = new Map<string, Promise<void>>();
   private commandTail: Promise<unknown> = Promise.resolve();
   private pendingCommands = 0;
-  private readonly executingCommandIds = new Set<string>();
-  private readonly lineage = new Map<string, MessageParent>();
+  private readonly executingCommandIds = new Map<string, number>();
+  private readonly lineage = new Map<string, MessageEnvelope>();
   private readonly commandListeners = new Set<() => void>();
   private commandVersion = 0;
   private signalScheduled = false;
   private admission: (owner: string) => boolean = (owner) => owner.startsWith('core');
   private readonly transactions: TransactionManager;
   private readonly diagnostics: DiagnosticsService;
+  private readonly operationLog?: OperationLog;
 
-  constructor(transactions: TransactionManager, diagnostics: DiagnosticsService) {
+  constructor(transactions: TransactionManager, diagnostics: DiagnosticsService, operationLog?: OperationLog) {
     this.transactions = transactions;
     this.diagnostics = diagnostics;
+    this.operationLog = operationLog;
     this.transactions.setEventPublisher((type, payload, source, causationId) =>
       this.publishEvent(type, payload, source, causationId),
     );
@@ -231,6 +238,10 @@ export class MessageRouter {
   }
 
   emitSignal(type: string, payload: unknown, sourcePlugin: string, parent?: MessageParent): void {
+    if (type === OPERATION_LOG_STAGE) {
+      if (this.admission(sourcePlugin)) this.operationLog?.stage(sourcePlugin, payload);
+      return;
+    }
     if (parent && parent.depth + 1 > MAX_MESSAGE_DEPTH) {
       this.diagnostics.increment('rejectedMessages');
       throw new Error(`Signal propagation depth exceeded at ${type}`);
@@ -258,6 +269,18 @@ export class MessageRouter {
       causationId,
     };
     this.diagnostics.increment('events');
+    if (type === 'document.replaced') this.operationLog?.cancelStages();
+    if (type === 'plugin.lifecycle.changed') {
+      const change = payload as { id: string; status: string };
+      if (['paused', 'stopped', 'faulted', 'removed'].includes(change.status)) this.operationLog?.cancelStages(change.id);
+    }
+    if (type === 'transaction.committed' && parent && this.operationLog) {
+      const record = (payload as { record?: TransactionCommitRecord }).record;
+      if (record?.forward[0]?.domain === 'document' || sourcePlugin === 'core.persistence') {
+        this.operationLog.transaction(this.commands.get(parent.type)?.owner ?? sourcePlugin,
+          parent.type, parent.timestamp, this.executingCommandIds.get(parent.id));
+      }
+    }
     for (const owned of this.events.get(type) ?? []) {
       if (!this.admission(owned.owner)) continue;
       this.scheduleEventDelivery(owned, envelope);
@@ -283,21 +306,40 @@ export class MessageRouter {
 
   private async executeCommand<TResult>(envelope: MessageEnvelope): Promise<TResult> {
     const registration = this.commands.get(envelope.type);
+    const startedAt = Date.now();
+    const id = `command:${envelope.id}`;
+    const logCommand = (status: 'running' | 'completed' | ReturnType<typeof operationFailure>) => {
+      const now = Date.now();
+      this.operationLog?.record({
+        id, kind: 'command', owner: registration?.owner ?? envelope.sourcePlugin,
+        code: envelope.type, status, createdAt: envelope.timestamp, startedAt,
+        queueMs: Math.max(0, startedAt - envelope.timestamp), updatedAt: now,
+        ...(status !== 'running' ? { finishedAt: now } : {}),
+      });
+    };
     if (!registration || !this.admission(registration.owner)) {
-      throw new Error(`Command unavailable: ${envelope.type}`);
+      const error = new Error(`Command unavailable: ${envelope.type}`);
+      logCommand(operationFailure(error));
+      throw error;
     }
     if (registration.validate && !registration.validate(envelope.payload)) {
-      throw new Error(`Invalid command payload: ${envelope.type}`);
+      const error = new Error(`Invalid command payload: ${envelope.type}`);
+      logCommand(operationFailure(error));
+      throw error;
     }
     this.diagnostics.increment('commands');
-    this.executingCommandIds.add(envelope.id);
+    this.executingCommandIds.set(envelope.id, startedAt);
+    if (LOG_RUNNING_COMMAND.test(envelope.type)) logCommand('running');
     try {
       const outcome = await registration.handle(envelope.payload, envelope);
       if (outcome.transaction) {
         await this.transactions.commit(outcome.transaction, envelope, registration.owner);
       }
+      if (LOG_COMPLETED_WITHOUT_DOCUMENT.has(envelope.type)) logCommand('completed');
+      else this.operationLog?.forget(id);
       return outcome.result as TResult;
     } catch (error) {
+      logCommand(operationFailure(error));
       this.diagnostics.record('error', registration.owner, `Command failed: ${envelope.type}`, error);
       throw error;
     } finally {

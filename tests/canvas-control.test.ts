@@ -31,13 +31,20 @@ test('local canvas routing distinguishes relationship questions, literal titles,
   assert.deepEqual(naturalCanvasOperation('从『写着连到武器的纸条』拉一条虚线到主角'), { kind: 'connect', names: ['写着连到武器的纸条', '主角'], line: 'dashed' });
   assert.deepEqual(naturalCanvasOperation('主角连到武器，用实线'), { kind: 'connect', names: ['主角', '武器'], line: 'solid' });
   assert.deepEqual(naturalCanvasOperation('请让主角指向武器，用虚线'), { kind: 'connect', names: ['主角', '武器'], line: 'dashed' });
-  for (const prompt of ['如果把主角连到武器会怎样', '先别把主角连到武器', '把主角连到武器？', '主角为什么隐瞒旧伤？']) {
+  assert.deepEqual(naturalCanvasOperation('从主角到武器画一条虚线'), { kind: 'connect', names: ['主角', '武器'], line: 'dashed' });
+  for (const prompt of ['在画布上给主角跟武器之间画一条虚线', '主角和武器用虚线连起来', '连接主角和武器，虚线', '先给主角和武器加一条虚线', '用虚线把主角和武器连起来']) {
+    assert.deepEqual(naturalCanvasOperation(prompt), { kind: 'connect', names: ['主角', '武器'], line: 'dashed', eitherDirection: true }, prompt);
+  }
+  for (const prompt of ['把选中的两个节点连一下', '把两张卡片接起来', '连线']) {
+    assert.deepEqual(naturalCanvasOperation(prompt), { kind: 'connect', names: ['这两个'], line: undefined, eitherDirection: true }, prompt);
+  }
+  for (const prompt of ['如果把主角连到武器会怎样', '先别把主角连到武器', '把主角连到武器？', '怎么把主角和武器连起来', '分析主角和武器的连接', '主角为什么隐瞒旧伤？', '@画布操作 新建人物与章节并分组连线。', '把主角和武器分组并连线']) {
     assert.equal(naturalCanvasOperation(prompt), undefined, prompt);
   }
 });
 
 test('natural commands locate two distant nodes among 2000 and preserve connection identity through follow-ups and disambiguation', async () => {
-  const kernel = await harness('direct');
+  const kernel = await harness();
   const create = (title: string, x: number, body = '') => kernel.router.dispatch<{ id: string }>('node.create', { title, x, y: 5_000, body }, 'core.test');
   const hero = await create('主角', 20_000, '年龄：29。\n\n左腕有一道旧伤。');
   const weapon = await create('武器', 21_000);
@@ -80,8 +87,6 @@ test('natural commands locate two distant nodes among 2000 and preserve connecti
   assert.equal((await state()).navigation?.choice, true);
   assert.ok((await state()).navigation?.items.some(item => item.id === otherHero.id));
   await kernel.router.dispatch('canvasControl.navigate@1', { id: otherHero.id }, 'core.test');
-  assert.equal((await state()).navigation?.heading, '选择箭头方向');
-  await kernel.router.dispatch('canvasControl.navigate@1', { id: weapon.id }, 'core.test');
   assert.equal((await state()).navigation, undefined);
   await apply();
   assert.ok((await edges()).connections.some(item => item.from.nodeId === weapon.id && item.to.nodeId === otherHero.id && item.titleRoute));
@@ -94,7 +99,7 @@ test('natural commands locate two distant nodes among 2000 and preserve connecti
 });
 
 test('late line follow-ups cannot change a different review and explicit line references retain their targets', async () => {
-  const kernel = await harness('direct');
+  const kernel = await harness();
   const create = (title: string) => kernel.router.dispatch<{ id: string }>('node.create', { title, x: 0, y: 0 }, 'core.test');
   const hero = await create('主角');
   const weapon = await create('武器');

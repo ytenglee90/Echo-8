@@ -65,13 +65,14 @@ export async function prepareAIContext(
   report: (progress: number) => void,
   budgetOverride?: Readonly<AIContextBudget>,
   previousProposal?: AIProposalRecord,
+  preparationId = createId('ai-context'),
 ): Promise<AIPreparedContext> {
   const localMemoryDirective = naturalMemoryDirective(payload.prompt);
   if (localMemoryDirective) {
     const createdAt = Date.now();
     report(1);
     return {
-      id: createId('ai-context'), sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+      id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
       operation: 'general', contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length, estimatedTokens: 0,
       createdAt, expiresAt: createdAt + 10 * 60_000, localMemoryDirective,
       review: { reason: 'memory-state-change', message: '确认后将这条变更记入当前对话的正式记忆。' },
@@ -80,7 +81,7 @@ export async function prepareAIContext(
   if (payload.operation === 'canvas-control' && (naturalCanvasOperation(payload.prompt) || needsCanvasSearchInterpretation(payload.prompt)) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length) {
     const createdAt = Date.now();
     report(1);
-    return { id: createId('ai-context'), sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+    return { id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
       operation: 'canvas-control', providerProfileId: payload.providerProfileId, contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
       estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000 };
   }
@@ -435,7 +436,7 @@ export async function prepareAIContext(
         }
       : undefined;
   return {
-    id: createId('ai-context'),
+    id: preparationId,
     ...(taskInstructions?.length ? { taskInstructions } : {}),
     ...(retrievalDetails ? { retrievalDetails: { ...retrievalDetails, contributions: [] } } : {}),
     sessionId: session.id,

@@ -35,12 +35,29 @@ test('natural operation catalog covers every content task without treating quote
   assert.equal(inferAtOperation('新建角色节点的方法有哪些'), 'general');
   assert.equal(inferAtOperation('先别新建角色节点'), 'general');
   assert.equal(naturalCanvasOperation('新建角色节点'), undefined);
+  assert.deepEqual(naturalCanvasOperation('创建一张角色卡'), {
+    kind: 'create', names: [], title: '角色卡', presentation: 'card', template: 'character',
+  });
+  assert.equal(naturalCanvasOperation('在当前画布上来一张空白人物卡')?.kind, 'create');
+  assert.equal(inferAtOperation('一张角色卡'), 'canvas-control');
+  assert.equal(inferAtOperation('创建一张角色卡并写一个完整背景故事'), 'canvas-control');
+  assert.equal(inferAtOperation('来一张角色卡，写一个机械师的背景故事'), 'canvas-control');
+  assert.equal(naturalCanvasOperation('创建一张角色卡并写一个完整背景故事'), undefined);
+  assert.equal(inferAtOperation('怎么创建一张角色卡？'), 'general');
+  assert.equal(inferAtOperation('先别创建一张角色卡'), 'general');
   for (const [prompt, kind] of [
     ['帮我找到主角', 'find'], ['帮我给主角和武器连线', 'connect'], ['请用虚线把主角和武器连接起来', 'connect'],
     ['把这两个连接起来', 'connect'], ['帮我把主角标题栏改红色', 'color'], ['把背景色改成暖灰', 'background'],
     ['主题改成深色', 'theme'], ['麻烦把主角和武器组成一个群组，名为角色组', 'group'],
     ['把主角正文的「旧枪」替换为「新枪」，全部', 'replace'],
+    ['建个文本框，就叫线索', 'create'], ['把主角跟武器排成一行', 'arrange'], ['往右挪一点', 'move'],
+    ['能不能帮我把主角刷成墨绿？', 'color'], ['再换成文字框', 'presentation'], ['打开夜间模式', 'theme'],
+    ['给主角用虚线连线', 'connect'], ['再连到地图', 'connect'], ['把武器归到人物组里', 'group-add'],
+    ['把画布背景刷成浅灰', 'background'],
+    ['我想把主角和武器横着排', 'arrange'], ['建个文本框叫出口然后连到地图', 'batch'],
   ]) assert.equal(naturalCanvasOperation(prompt!)?.kind, kind, prompt);
+  assert.deepEqual(naturalCanvasOperation('在主角最后加一句：出门前记得带枪。'), { kind: 'append', names: ['主角'], text: '出门前记得带枪。' });
+  assert.equal(inferAtOperation('把这些节点摆得整齐一点，给每类留出空隙'), 'canvas-control');
   assert.equal(inferAtOperation('把画布背景调整得更护眼'), 'canvas-control');
   assert.equal(inferAtOperation('把选中节点的正文改成第一人称'), 'rewrite');
   assert.equal(inferAtOperation('画布背景怎么改色？'), 'general');
@@ -77,6 +94,7 @@ test('verbatim writing constraints survive twelve follow-ups without duplicating
 test('expanded local operations use owner plans, preserve links and reject stale batches', async () => {
   const kernel = new ApplicationKernel([createTextNodePlugin(), createSelectionPlugin(), createConnectionsPlugin(), createGroupsPlugin(), createCanvasControlPlugin()]);
   await kernel.start();
+  await kernel.router.dispatch('canvasControl.execution@1', { execution: 'review' }, 'core.test');
   let sequence = 0;
   let lastPrompt = '';
   let lastReply: unknown;
@@ -132,6 +150,13 @@ test('expanded local operations use owner plans, preserve links and reject stale
   await run('帮我把沈砚标题栏改红色');
   await apply();
   assert.equal((await nodes()).find(node => node.id === qualified.id)?.titleColor, '#c43d49');
+  await run('给沈砚用虚线连线');
+  assert.match((lastReply as { message: string }).message, /连到哪个节点/u);
+  await run('连到旧地图');
+  assert.deepEqual((await state()).reviews.at(-1)?.actions, [{ type: 'create-connection', ref: 'natural-line', from: qualified.id, to: map.id, line: 'dashed' }]);
+  await apply();
+  assert.ok((await graph()).connections.some(edge => edge.from.nodeId === qualified.id && edge.to.nodeId === map.id && isTitleConnection(edge)));
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
   await run('在主角右边新建一张叫灯塔的卡片，再从主角拉条虚线到灯塔');
   assert.deepEqual((await state()).reviews.at(-1)?.actions.map(action => action.type), ['create-node', 'create-connection']);
   await apply();

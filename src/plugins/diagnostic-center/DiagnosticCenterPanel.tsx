@@ -6,6 +6,7 @@ import type { RuntimeSnapshot } from '../../protocols/runtime.ts';
 import { DIAGNOSTIC_CENTER_NAMESPACE } from './model.ts';
 import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
+import { OperationLogPanel } from './OperationLogPanel.tsx';
 
 interface SearchIndexStatus {
   state: 'idle' | 'building' | 'ready' | 'error';
@@ -22,7 +23,8 @@ export function DiagnosticCenterPanel({ client }: { client: ViewClient }) {
     () => 0,
   );
   const clock = useSyncExternalStore(client.subscribeClock, client.getClock, () => 0);
-  const [open, setOpen] = useState(false);
+  const [view, setView] = useState({ open: false, operationLog: false });
+  const { open, operationLog } = view;
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot>();
   const [searchIndex, setSearchIndex] = useState<SearchIndexStatus>();
   const [error, setError] = useState('');
@@ -30,14 +32,14 @@ export function DiagnosticCenterPanel({ client }: { client: ViewClient }) {
 
   useEffect(() => {
     let current = true;
-    void client.ask<{ open: boolean }>('diagnostics.state').then((state) => {
-      if (current) setOpen(state.open);
+    void client.ask<typeof view>('diagnostics.state').then((state) => {
+      if (current) setView(state);
     });
     return () => { current = false; };
   }, [client, stateVersion]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || operationLog) return;
     let current = true;
     void Promise.all([
       client.ask<RuntimeSnapshot>('system.runtime'),
@@ -54,7 +56,7 @@ export function DiagnosticCenterPanel({ client }: { client: ViewClient }) {
       },
     );
     return () => { current = false; };
-  }, [client, open, refreshTick]);
+  }, [client, open, operationLog, refreshTick]);
 
   if (!open) return null;
   const activePlugins = snapshot?.plugins.filter((plugin) => plugin.status === 'active').length ?? 0;
@@ -64,8 +66,13 @@ export function DiagnosticCenterPanel({ client }: { client: ViewClient }) {
 
   return (
     <section className="diagnostic-center" aria-label="诊断中心">
-      <SettingsPageHeader title="内核与诊断" description="只读运行状态，已脱敏；每两秒刷新。"
+      <SettingsPageHeader title="内核与诊断" description={operationLog ? '查看正在执行和最近完成的操作。' : '查看运行状态及最近错误。'}
         closeLabel="关闭诊断中心" onClose={() => void client.dispatch('diagnostics.close')} />
+      <div className="diagnostic-view-switch" aria-label="诊断视图">
+        <button type="button" className="toolbar-button" aria-pressed={!operationLog} onClick={() => void client.dispatch('diagnostics.open')}>运行概览</button>
+        <button type="button" className="toolbar-button" aria-pressed={operationLog} onClick={() => void client.dispatch('diagnostics.operationLog.open@1')}>实时操作日志</button>
+      </div>
+      {operationLog ? <OperationLogPanel client={client} /> : <>
       {error && <p className="diagnostic-error">{error}</p>}
       {!snapshot ? <p className="diagnostic-empty"><ProcessingLabel size={10}>正在读取运行状态…</ProcessingLabel></p> : (
         <>
@@ -154,6 +161,7 @@ export function DiagnosticCenterPanel({ client }: { client: ViewClient }) {
           </DiagnosticSection>
         </>
       )}
+      </>}
     </section>
   );
 }

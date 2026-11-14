@@ -99,7 +99,7 @@ export function controlInstruction(snapshot: ControlSnapshot): string {
     '已有对象的修改以目录中的 writable、namedForReview 和 lineWritable 为准。创建操作可引用本次范围内对象。不能用未提供的 ID。标题最多 300 字符，连线标签最多 200 字符。color 为 #RRGGBB。坐标和尺寸可省略，由应用放在现有对象旁排版。card 最小 220×120，text-box 最小 120×48，高度最大 1200。',
     '若无可操作既有对象，可以按明确任务创建新对象。若请求需要未提供的对象，请返回空 actions 和 answer 说明需要先选择哪些对象，不要假造 ID。若用户仅查询，返回空 actions 和简短 answer，最多 4000 字符，不发出修改操作。当前目录只含元数据，正文请依据用户明确引用的原文，不要猜测。',
     '用户要求设计、补充人物或创作时，可以生成原创内容。若有唯一匹配的可写空白节点（textLength 为 0），使用 update-node 的 text 填入新正文，保持其他字段。不要因为缺少旧正文拒绝创作，也不要编造已经存在的原文或设定。',
-    '目录只覆盖本轮相关对象。未列出时说“本轮未定位”，不能断言整个画布不存在。提到节点名优先使用目录中的真实对象，不要重复新建同名节点。namedForReview 为 true 的具名节点允许提交待确认的 update-node，但不能删除或直接写入。lineWritable 为 true 的连线可提交待确认的线型修改，保持端点。目标不明确时询问是哪条连线。',
+    '目录只覆盖本轮相关对象。未列出时说“本轮未定位”，不能断言整个画布不存在。提到节点名优先使用目录中的真实对象，不要重复新建同名节点。namedForReview 为 true 的具名节点允许提交待确认的 update-node，但不能删除或直接写入。lineWritable 为 true 的连线可提交待确认的线型修改，保持端点。目标不唯一时返回空 actions，answer 只询问需要用户确认的对象或参数，不猜测同名候选。',
     '<untrusted-canvas-objects>', JSON.stringify(objects).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e'), '</untrusted-canvas-objects>',
   ].join('\n');
 }

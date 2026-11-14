@@ -1,4 +1,5 @@
-import type { PluginContext, TaskHandle } from '../../core/contracts.ts';
+import { createId, type PluginContext, type TaskHandle } from '../../core/contracts.ts';
+import { OPERATION_LOG_STAGE, type OperationStageUpdate } from '../../protocols/operation-log.ts';
 import type {
   AIGenerateResult,
   AIMemoryIndexRecord,
@@ -109,8 +110,10 @@ export function registerAIRequestRuntime(
         message: '正在按目录与关键词准备上下文',
         sessionId: session.id,
       } satisfies AIStatusSignal);
+      const preparationId = createId('ai-context');
       const task = context.tasks.schedule<AIPreparedContext>({
         category: 'ai-context-retrieval',
+        operationLogRelatedId: preparationId,
         label: '正在准备 AI 上下文',
         priority: 18,
         timeoutMs: 2 * 60_000,
@@ -124,6 +127,7 @@ export function registerAIRequestRuntime(
           report,
           undefined,
           Object.values(options.readProposals?.() ?? {}).filter(proposal => proposal.sessionId === session.id).sort((a, b) => b.createdAt - a.createdAt)[0],
+          preparationId,
         ),
       });
       options.preparationTasks.set(session.id, task);
@@ -157,6 +161,7 @@ export function registerAIRequestRuntime(
               } satisfies AIStatusSignal);
             });
           } else {
+            context.signals.emit(OPERATION_LOG_STAGE, { id: prepared.id, relatedId: prepared.id, phase: 'ai-context-review', state: 'pending', expiresAt: prepared.expiresAt } satisfies OperationStageUpdate);
             context.signals.emit('ai.status', {
               state: 'ready',
               message: prepared.review?.message ?? (prepared.contextIntent === 'conversation'
@@ -192,6 +197,7 @@ export function registerAIRequestRuntime(
       const prepared = options.preparations.get(payload.preparationId);
       if (!prepared) return { result: { discarded: false } };
       options.preparations.delete(payload.preparationId);
+      context.signals.emit(OPERATION_LOG_STAGE, { id: prepared.id, phase: 'ai-context-review', state: 'dismissed' } satisfies OperationStageUpdate);
       context.signals.emit('ai.status', {
         state: 'idle',
         message: '已返回修改本次要求',

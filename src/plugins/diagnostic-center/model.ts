@@ -9,7 +9,7 @@ export function createDiagnosticCenterPlugin(panel?: unknown): PluginDefinition 
     manifest: diagnosticCenterManifest,
 
     start(context) {
-      const setOpen = (open: boolean) => ({
+      const setOpen = (open: boolean, operationLog = false) => ({
         transaction: {
           label: open ? '打开诊断中心' : '关闭诊断中心',
           history: false,
@@ -19,6 +19,9 @@ export function createDiagnosticCenterPlugin(panel?: unknown): PluginDefinition 
             namespace: DIAGNOSTIC_CENTER_NAMESPACE,
             key: 'open',
             value: open,
+          }, {
+            op: 'set' as const, domain: 'workspace' as const, namespace: DIAGNOSTIC_CENTER_NAMESPACE,
+            key: 'operationLog', value: operationLog,
           }],
           events: open ? [{
             type: UI_SURFACE_REVEALED_EVENT,
@@ -34,6 +37,13 @@ export function createDiagnosticCenterPlugin(panel?: unknown): PluginDefinition 
         },
       });
       context.commands.register({
+        type: 'diagnostics.operationLog.open@1',
+        handle: () => {
+          context.ui.activateSurface('right.primary', 'diagnostic-center.panel', 'diagnostics.close');
+          return setOpen(true, true);
+        },
+      });
+      context.commands.register({
         type: 'diagnostics.close',
         handle: () => {
           context.ui.deactivateSurface('right.primary', 'diagnostic-center.panel');
@@ -44,6 +54,7 @@ export function createDiagnosticCenterPlugin(panel?: unknown): PluginDefinition 
         type: 'diagnostics.state',
         handle: () => ({
           open: context.store.readValue<boolean>(DIAGNOSTIC_CENTER_NAMESPACE, 'open') ?? false,
+          operationLog: context.store.readValue<boolean>(DIAGNOSTIC_CENTER_NAMESPACE, 'operationLog') ?? false,
         }),
       });
       context.ui.contribute({
@@ -68,6 +79,18 @@ export function createDiagnosticCenterPlugin(panel?: unknown): PluginDefinition 
         id: 'diagnostic-center.close-shortcut',
         command: 'diagnostics.close',
         label: '关闭内核与诊断',
+        category: '系统',
+      });
+      context.ui.action({
+        id: 'diagnostic-center.operation-log',
+        label: '实时操作日志',
+        command: 'diagnostics.operationLog.open@1',
+        category: '系统',
+      });
+      context.ui.shortcut({
+        id: 'diagnostic-center.operation-log-shortcut',
+        command: 'diagnostics.operationLog.open@1',
+        label: '实时操作日志',
         category: '系统',
       });
     },

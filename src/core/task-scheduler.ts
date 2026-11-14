@@ -1,5 +1,7 @@
 import { createId, type TaskHandle, type TaskOptions } from './contracts.ts';
 import { isAbortError } from '../services/abort.ts';
+import { operationFailure, type OperationLog } from './operation-log.ts';
+import type { OperationStatus } from '../protocols/operation-log.ts';
 
 export type TaskState = 'queued' | 'running' | 'paused' | 'retrying';
 
@@ -42,6 +44,11 @@ interface QueuedTask<TResult = unknown> {
   settled: boolean;
   attempts: number;
   progress: number;
+  createdAt: number;
+  firstStartedAt?: number;
+  attemptStartedAt?: number;
+  nextRunAt?: number;
+  loggedPercent?: number;
   noticeVisible: boolean;
   delayTimer?: ReturnType<typeof setTimeout>;
   noticeTimer?: ReturnType<typeof setTimeout>;
@@ -58,6 +65,7 @@ const DEFAULT_NOTICE_DELAY_MS = 1_200;
 export class TaskScheduler {
   private readonly concurrency: number;
   private readonly costBudget: number;
+  private readonly operationLog?: OperationLog;
   private active = 0;
   private activeCost = 0;
   private readonly queue: QueuedTask[] = [];
@@ -65,9 +73,10 @@ export class TaskScheduler {
   private readonly listeners = new Set<() => void>();
   private version = 0;
 
-  constructor(concurrency = 2, costBudget = 16) {
+  constructor(concurrency = 2, costBudget = 16, operationLog?: OperationLog) {
     this.concurrency = Math.max(1, concurrency);
     this.costBudget = Math.max(1, costBudget);
+    this.operationLog = operationLog;
   }
 
   subscribe(listener: () => void): () => void {
@@ -101,14 +110,18 @@ export class TaskScheduler {
       settled: false,
       attempts: 0,
       progress: 0,
+      createdAt: Date.now(),
       noticeVisible: options.noticeAfterMs === 0,
       pauseWaiters: new Set(),
     };
     this.tasks.set(id, task as QueuedTask);
     if ((options.delayMs ?? 0) > 0) {
+      task.nextRunAt = task.createdAt + options.delayMs!;
+      this.log(task as QueuedTask, 'waiting');
       task.noticeVisible = false;
       task.delayTimer = setTimeout(() => {
         task.delayTimer = undefined;
+        task.nextRunAt = undefined;
         if (task.settled || task.rootController.signal.aborted) return;
         this.enqueue(task as QueuedTask);
       }, options.delayMs);
@@ -177,12 +190,22 @@ export class TaskScheduler {
     task.state = task.paused ? 'paused' : 'running';
     task.attempts += 1;
     task.progress = 0;
+    task.loggedPercent = 0;
+    task.attemptStartedAt = Date.now();
+    task.firstStartedAt ??= task.attemptStartedAt;
+    this.log(task);
     const attemptController = new AbortController();
     task.attemptController = attemptController;
     const relayAbort = () => attemptController.abort(abortReason(task.rootController.signal));
     task.rootController.signal.addEventListener('abort', relayAbort, { once: true });
     const report = (progress: number) => {
+      if (task.settled || attemptController.signal.aborted || task.attemptController !== attemptController) return;
       task.progress = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
+      const percent = Math.floor(task.progress * 100);
+      if (percent !== task.loggedPercent) {
+        task.loggedPercent = percent;
+        this.log(task);
+      }
       this.notify();
     };
     const control = { waitIfPaused: () => this.waitIfPaused(task, attemptController.signal) };
@@ -197,6 +220,7 @@ export class TaskScheduler {
       if (!task.settled) {
         task.progress = 1;
         task.settled = true;
+        this.log(task, 'completed', true);
         this.clearNoticeTimer(task);
         task.resolve(value);
         this.tasks.delete(task.id);
@@ -224,8 +248,11 @@ export class TaskScheduler {
     const baseDelay = task.options.retryDelayMs ?? 250;
     const delay = Math.min(30_000, baseDelay * 2 ** Math.max(0, task.attempts - 1));
     task.state = task.paused ? 'paused' : 'retrying';
+    task.nextRunAt = Date.now() + delay;
+    this.log(task);
     task.retryTimer = setTimeout(() => {
       task.retryTimer = undefined;
+      task.nextRunAt = undefined;
       if (task.settled || task.rootController.signal.aborted) {
         this.finishRejected(task, abortReason(task.rootController.signal));
         return;
@@ -233,6 +260,7 @@ export class TaskScheduler {
       task.state = task.paused ? 'paused' : 'queued';
       this.queue.push(task);
       this.sortQueue();
+      this.log(task);
       this.notify();
       this.pump();
     }, delay);
@@ -259,6 +287,7 @@ export class TaskScheduler {
     if (task.settled || task.paused) return;
     task.paused = true;
     task.state = 'paused';
+    this.log(task);
     this.notify();
   }
 
@@ -266,6 +295,7 @@ export class TaskScheduler {
     if (task.settled || !task.paused) return;
     task.paused = false;
     task.state = task.running ? 'running' : task.retryTimer ? 'retrying' : 'queued';
+    this.log(task, task.delayTimer ? 'waiting' : task.state);
     this.releasePauseWaiters(task);
     this.notify();
     this.pump();
@@ -287,6 +317,7 @@ export class TaskScheduler {
   private finishRejected(task: QueuedTask, error: unknown): void {
     if (task.settled) return;
     task.settled = true;
+    this.log(task, operationFailure(error), true);
     this.clearNoticeTimer(task);
     task.reject(error);
     this.tasks.delete(task.id);
@@ -306,6 +337,7 @@ export class TaskScheduler {
   private enqueue(task: QueuedTask): void {
     if (task.settled || task.rootController.signal.aborted || this.queue.includes(task)) return;
     task.state = task.paused ? 'paused' : 'queued';
+    this.log(task);
     this.queue.push(task);
     this.sortQueue();
     if (!task.noticeVisible && task.noticeTimer === undefined) {
@@ -327,6 +359,20 @@ export class TaskScheduler {
   private notify(): void {
     this.version += 1;
     for (const listener of this.listeners) listener();
+  }
+
+  private log(task: QueuedTask, status: OperationStatus = task.state, finished = false): void {
+    if (!this.operationLog) return;
+    const now = Date.now();
+    this.operationLog.record({
+      id: `task:${task.id}`, kind: 'task', owner: task.owner, code: task.options.category, status,
+      createdAt: task.createdAt, updatedAt: now, startedAt: task.attemptStartedAt,
+      relatedId: task.options.operationLogRelatedId,
+      queueMs: task.firstStartedAt === undefined ? undefined : Math.max(0, task.firstStartedAt - task.createdAt),
+      nextRunAt: finished ? undefined : task.nextRunAt,
+      timeoutMs: task.options.timeoutMs, progress: task.progress, attempts: task.attempts,
+      ...(finished ? { finishedAt: now } : {}),
+    });
   }
 }
 

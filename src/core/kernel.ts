@@ -40,6 +40,8 @@ import type {
 } from '../protocols/personal-assets.ts';
 import { CapabilityRegistry } from './capability-registry.ts';
 import { DiagnosticsService } from './diagnostics.ts';
+import { OperationLog } from './operation-log.ts';
+import { OPERATION_LOG_CHANGED, OPERATION_LOG_QUERY } from '../protocols/operation-log.ts';
 import { HistoryService } from './history.ts';
 import { InteractionStateMachine } from './interaction-machine.ts';
 import {
@@ -70,7 +72,8 @@ export class ApplicationKernel {
   // Network generation spends most of its lifetime awaiting remote bytes.
   // Four admission slots let two assistants and one save/checkpoint coexist;
   // the cost budget still prevents several heavy CPU jobs from competing.
-  readonly tasks = new TaskScheduler(4);
+  private readonly operationLog = new OperationLog(() => this.router.emitSignal(OPERATION_LOG_CHANGED, undefined, 'core.diagnostics'));
+  readonly tasks = new TaskScheduler(4, 16, this.operationLog);
   readonly ui = new UIRuntime();
   readonly interactions = new InteractionStateMachine();
   readonly workers: WorkerService;
@@ -100,7 +103,7 @@ export class ApplicationKernel {
       this.diagnostics.record('error', 'core.store', 'State observer failed after commit', error));
     const retiredData = createRetiredDataRegistry(definitions);
     this.transactions = new TransactionManager(this.store, this.history, this.writeToken, retiredData);
-    this.router = new MessageRouter(this.transactions, this.diagnostics);
+    this.router = new MessageRouter(this.transactions, this.diagnostics, this.operationLog);
     this.workers = new WorkerService(options.workerFactory);
     this.persistence = new PersistenceService(
       this.store,
@@ -445,6 +448,10 @@ export class ApplicationKernel {
     this.router.registerQuery('core.diagnostics', {
       type: 'system.diagnostics',
       handle: () => this.diagnostics.snapshot(),
+    });
+    this.router.registerQuery('core.diagnostics', {
+      type: OPERATION_LOG_QUERY,
+      handle: () => this.operationLog.snapshot(),
     });
     this.router.registerQuery<undefined, RuntimeSnapshot>('core.diagnostics', {
       type: 'system.runtime',

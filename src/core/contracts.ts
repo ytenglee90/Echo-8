@@ -380,6 +380,8 @@ export interface TaskOptions<TResult> {
   id?: string;
   category: string;
   label?: string;
+  /** Opaque correlation ID for local operation diagnostics. */
+  operationLogRelatedId?: string;
   /** Wait before admitting the task to the runnable queue. The scheduler owns and cancels this delay. */
   delayMs?: number;
   noticeAfterMs?: number;

@@ -63,12 +63,15 @@ export type ExtendedCanvasOperation =
   | { kind: 'remove'; names: string[] }
   | { kind: 'line-update'; names: string[]; reverse?: boolean; label?: string; color?: string; remove?: boolean; reference?: 'previous' | 'selection' }
   | { kind: 'align'; names: string[]; alignment: 'left' | 'right' | 'top' | 'bottom' | 'horizontal-center' | 'vertical-center' }
-  | { kind: 'create'; names: string[]; title: string; presentation: 'card' | 'text-box'; side?: 'left' | 'right' | 'above' | 'below' }
+  | { kind: 'create'; names: string[]; title: string; presentation: 'card' | 'text-box'; side?: 'left' | 'right' | 'above' | 'below'; template?: 'character' | 'blank-character' }
   | { kind: 'connect-many'; names: string[]; topology: 'fan' | 'chain'; line: 'solid' | 'dashed' };
 
 export function extendedCanvasOperation(text: string): ExtendedCanvasOperation | undefined {
   const operand = `(${NATURAL_QUOTED_NAME}|.+?)`;
   let match: RegExpExecArray | null;
+  if ((match = /^(?:在(?:当前)?画布上\s*)?(?:(?:新建|创建|新增|建|做|添加|加|来)\s*(?:(?:一|1)\s*(?:张|个|份))?|(?:一|1)\s*(?:张|个|份))\s*(空白(?:的)?)?\s*(角色卡片?|人物卡片?|角色档案|人物档案)(?:[，,：:\s]*(?:叫|名为|取名(?:为)?|标题(?:是|为))\s*([「『“"][^」』”"\r\n]+[」』”"]|(?:(?!(?:并|再|然后)(?:写|填|加|补|设|连))[^「『“"』」” ，,。；;！？?!\r\n]){1,80}))?$/u.exec(text))) {
+    return { kind: 'create', names: [], title: match[3] ? naturalName(match[3]) : match[2]!.replace(/卡片$/u, '卡'), presentation: 'card', template: match[1] ? 'blank-character' : 'character' };
+  }
   if ((match = /^(?:选中|选择|框选)\s*(.+)$/u.exec(text))) return { kind: 'select', names: naturalTargetFilter(match[1]!) ? [match[1]!] : naturalNames(match[1]!), selectionMode: 'replace' };
   if ((match = /^(?:把|将)?\s*(.+?)(?:也选上|加入选择|加入选区)$/u.exec(text))) return { kind: 'select', names: naturalNames(match[1]!), selectionMode: 'add' };
   if ((match = new RegExp(`^(?:把|将)?\\s*${operand}\\s*(?:改名为|改名成|标题改成|标题改为)\\s*(.+)$`, 'u').exec(text))) {
@@ -97,6 +100,10 @@ export function extendedCanvasOperation(text: string): ExtendedCanvasOperation |
   }
   if ((match = /^(?:新建|创建)(?:一张|一个)?(?:叫|名为)\s*(.+?)(?:的)?(卡片|文本框|节点)$/u.exec(text))) {
     return { kind: 'create', names: [], title: naturalName(match[1]!), presentation: match[2] === '文本框' ? 'text-box' : 'card' };
+  }
+  if ((match = new RegExp(String.raw`^(?:新建|创建|建|加|添加|来|放)(?:(?:一|1)?[个张])?(空白(?:的)?)?(节点|卡片|文本框)(?:[，,：:\s]*(?:就叫|叫|名为|命名为)\s*(${NATURAL_QUOTED_NAME}|[^\s，,。；;！？?!]{1,80}))?$`, 'u').exec(text))) {
+    return { kind: 'create', names: [], title: match[3] ? naturalName(match[3]) : match[2] === '节点' ? '新节点' : match[2]!,
+      presentation: match[2] === '文本框' ? 'text-box' : 'card' };
   }
   if ((match = /^(.+?)分别(?:连到|指向)(.+?)(?:[，,]\s*(?:用|使用)(实线|虚线))?$/u.exec(text))) {
     const targets = naturalNames(match[2]!);

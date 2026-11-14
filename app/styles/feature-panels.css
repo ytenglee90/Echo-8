@@ -517,6 +517,22 @@
 .shortcut-empty { margin: 0; padding: 20px; color: var(--muted); font-size: 12px; text-align: center; }
 
 .diagnostic-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.diagnostic-view-switch { display: flex; gap: 6px; margin-block: 4px 12px; }
+.diagnostic-view-switch [aria-pressed="true"] { background: var(--control-hover); border-color: var(--ink); }
+.diagnostic-operation-log { display: grid; gap: 8px; min-width: 0; }
+.diagnostic-operation-log header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.diagnostic-operation-log h3 { margin: 0; font-size: 14px; }
+.diagnostic-operation-log p { margin: 0; color: var(--muted); font-size: 12px; }
+.diagnostic-operation-log label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.diagnostic-operation-log select { background: var(--control-surface); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+.diagnostic-operation-log ol { list-style: none; display: grid; gap: 5px; padding: 0; margin: 0; }
+.diagnostic-operation-log li { display: grid; gap: 5px; padding: 8px; min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--control-surface); }
+.operation-log-row-title, .operation-log-row-meta { display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: baseline; }
+.operation-log-row-title { justify-content: space-between; font-size: 13px; overflow-wrap: anywhere; }
+.operation-log-row-title [data-status="applied"] { color: var(--success); }
+.operation-log-row-title [data-status="failed"], .operation-log-row-title [data-status="timed-out"] { color: var(--danger); }
+.operation-log-row-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.diagnostic-operation-log progress { width: 100%; height: 5px; accent-color: var(--ink); }
 .diagnostic-cards > div { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--control-surface); }
 .diagnostic-cards span { color: var(--muted); font-size: 12px; }
 .diagnostic-cards strong { font-size: 16px; letter-spacing: -0.03em; }

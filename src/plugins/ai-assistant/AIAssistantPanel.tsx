@@ -12,6 +12,7 @@ import {
 } from 'react';
 import type { UISlot, ViewClient } from '../../core/contracts.ts';
 import { FloatingPanel } from '../../ui/FloatingPanel.tsx';
+import { IconButton } from '../../ui/Icon.tsx';
 import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import { AIMemoryCenter } from './AIMemoryViews.tsx';
@@ -86,6 +87,7 @@ function AIAssistantWindow({
   renderSlot?: (slot: UISlot) => ReactNode;
 }) {
   const providerSelectionAvailable = useCommandAvailability(client, 'aiProvider.profile.activate');
+  const operationLogAvailable = useCommandAvailability(client, 'diagnostics.operationLog.open@1');
   const providerSettingsAvailable = providerSelectionAvailable;
   const ownVersion = useSyncExternalStore(client.subscribeState, () => client.getOwnStateVersion(AI_UI_NAMESPACE), () => 0);
   const capabilityVersion = useSyncExternalStore(client.subscribeCapabilities, client.getCapabilityVersion, () => 0);
@@ -333,6 +335,8 @@ function AIAssistantWindow({
                     : <i />}
                   {status.message}
                 </div>
+                {operationLogAvailable && (activeSessionTurns > 0 || status.state !== 'idle') &&
+                  <IconButton icon="activity" label="打开实时操作日志" onClick={() => void run(() => client.dispatch('diagnostics.operationLog.open@1'))} />}
                 {generationAction && (
                   <AIGenerationFollowupButton
                     kind={generationAction.kind}

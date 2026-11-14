@@ -11,7 +11,7 @@ export async function resolveNaturalBatch(
   const actions: CanvasControlAction[] = [];
   const targets = new Set<string>();
   const draftTitles = new Map<string, string>();
-  let state: NaturalControlState = { ...previous, draftTitles };
+  let state: NaturalControlState = { ...previous, draftTitles, unfinishedConnection: undefined };
   for (const [index, step] of steps.entries()) {
     if (['theme', 'choose-theme', 'background', 'select', 'find', 'narrow'].includes(step.kind) || (step.kind === 'choose-color' && step.background)) {
       return fail('请单独发送视图、设置和筛选范围调整指令。');

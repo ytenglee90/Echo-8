@@ -1,4 +1,5 @@
 import { createId, type PluginContext } from '../../core/contracts.ts';
+import { OPERATION_LOG_STAGE, type OperationStageUpdate } from '../../protocols/operation-log.ts';
 import type {
   AIPreparedContext,
   AIProposalRecord,
@@ -46,6 +47,14 @@ export function registerAIProposalRuntime(
   context: PluginContext,
   options: AIProposalRuntimeOptions,
 ): void {
+  for (const [event, state] of [
+    ['ai.proposal.created', 'pending'], ['ai.proposal.accepted', 'applied'], ['ai.proposal.dismissed', 'dismissed'],
+  ] as const) {
+    context.events.subscribe<{ proposalId: string; preparationId?: string }>(event, ({ payload }) =>
+      context.signals.emit(OPERATION_LOG_STAGE, {
+        id: payload.proposalId, phase: 'ai-writeback', state, relatedId: payload.preparationId,
+      } satisfies OperationStageUpdate));
+  }
   context.commands.register({
     type: 'ai.generation.record',
     validate: isGenerationRecordPayload,
@@ -144,7 +153,7 @@ export function registerAIProposalRuntime(
             ...(append.events ?? []),
             ...(proposal ? [{
               type: 'ai.proposal.created',
-              payload: { proposalId: proposal.id, sessionId: session.id },
+              payload: { proposalId: proposal.id, sessionId: session.id, preparationId: prepared.id },
             }] : []),
           ],
         },

@@ -1,4 +1,5 @@
-import { isRecord, type PluginContext, type TaskHandle } from '../../core/contracts.ts';
+import { createId, isRecord, type PluginContext, type TaskHandle } from '../../core/contracts.ts';
+import { OPERATION_LOG_STAGE, type OperationStageUpdate, type OperationStatus } from '../../protocols/operation-log.ts';
 import type {
   AIGenerateResult,
   AIGenerateRequest,
@@ -135,6 +136,12 @@ export function registerAIGenerationRuntime(
   context.events.subscribe<{ preparationId: string }>('ai.generation.requested', (message) => {
     const prepared = options.preparations.get(message.payload.preparationId);
     if (!prepared) return;
+    if (prepared.review) context.signals.emit(OPERATION_LOG_STAGE, { id: prepared.id, phase: 'ai-context-review', state: 'completed' } satisfies OperationStageUpdate);
+    const activityId = createId('ai-answer');
+    const logAnswer = (state: OperationStatus) => context.signals.emit(OPERATION_LOG_STAGE, {
+      id: activityId, phase: 'ai-answer', state, relatedId: prepared.id,
+    } satisfies OperationStageUpdate);
+    logAnswer('running');
     prepared.usageTaskId ??= options.taskForSession?.(prepared.sessionId) ?? prepared.sessionId;
     options.tasks.get(prepared.sessionId)?.cancel();
     options.actionBySession.delete(prepared.sessionId);
@@ -158,6 +165,7 @@ export function registerAIGenerationRuntime(
     context.signals.emit('ai.state.invalidated');
     const task = context.tasks.schedule<AIGenerateResult>({
       category: 'ai-generation',
+      operationLogRelatedId: prepared.id,
       label: 'AI 正在生成内容',
       priority: 16,
       timeoutMs: 5 * 60_000,
@@ -204,7 +212,22 @@ export function registerAIGenerationRuntime(
         ));
         const generateOnce = async (activeRequest: AIGenerateRequest, visible = true): Promise<AIGenerateResult> => {
           const inspectedRequest = { ...activeRequest, inspection: { sessionId: prepared.sessionId, userTurn: prepared.userTurn ?? options.readSessions()[prepared.sessionId]?.turns ?? 1 } };
+          const responseId = createId('ai-response');
+          const requestedAt = performance.now();
+          const logResponse = (state: OperationStatus, elapsedMs?: number) => context.signals.emit(OPERATION_LOG_STAGE, {
+            id: responseId, phase: 'ai-model-response', state, relatedId: prepared.id, elapsedMs,
+          } satisfies OperationStageUpdate);
+          let received = false;
+          const receivedResponse = () => {
+            if (received || signal.aborted) return;
+            received = true;
+            logResponse('completed', performance.now() - requestedAt);
+          };
+          logResponse('waiting');
+          const onAbort = () => { if (!received) logResponse(generationFailure(signal.reason)); };
+          signal.addEventListener('abort', onAbort, { once: true });
           try {
+            signal.throwIfAborted();
             const stream = await context.capabilities.request<AIGenerateStream>(
               'ai.generate.stream@1',
               inspectedRequest,
@@ -212,6 +235,7 @@ export function registerAIGenerationRuntime(
             );
             const result = await consumeAIGenerationStream(stream, signal, {
               onDelta: (event) => {
+                receivedResponse();
                 if (!visible || prepared.operation === 'canvas-control') return;
                 emittedSequence += 1;
                 const current = options.stateBySession.get(prepared.sessionId);
@@ -240,18 +264,24 @@ export function registerAIGenerationRuntime(
               report: visible ? report : () => undefined,
             });
             const completed = inferLengthTermination(result, activeRequest);
+            receivedResponse();
             recordUsage(completed, activeRequest);
             return completed;
           } catch (error) {
-            if (!isCapabilityUnavailable(error, 'ai.generate.stream@1')) throw error;
-            const completed = inferLengthTermination(
-              normalizeAIGenerateResult(
+            try {
+              if (!isCapabilityUnavailable(error, 'ai.generate.stream@1')) throw error;
+              const completed = inferLengthTermination(normalizeAIGenerateResult(
                 await context.capabilities.request<AIGenerateResult>('ai.generate@1', inspectedRequest, signal),
-              ),
-              activeRequest,
-            );
-            recordUsage(completed, activeRequest);
-            return completed;
+              ), activeRequest);
+              receivedResponse();
+              recordUsage(completed, activeRequest);
+              return completed;
+            } catch (reason) {
+              if (!received) logResponse(generationFailure(signal.aborted ? signal.reason : reason));
+              throw reason;
+            }
+          } finally {
+            signal.removeEventListener('abort', onAbort);
           }
         };
 
@@ -380,6 +410,7 @@ export function registerAIGenerationRuntime(
         const completedSession = options.readSessions()[prepared.sessionId];
         prepared.transcriptRevisionAfterAssistant = completedSession?.transcriptRevision;
         const directResult = directPlanId ? await context.commands.dispatch('canvasControl.generate@1', { id: directPlanId }) : undefined;
+        logAnswer('completed');
         prepared.expiresAt = Date.now() + AI_GENERATION_ACTION_TTL_MS;
         options.stateBySession.delete(prepared.sessionId);
         if (prepared.localMemoryDirective) {
@@ -395,7 +426,7 @@ export function registerAIGenerationRuntime(
         context.signals.emit('ai.state.invalidated');
         context.signals.emit('ai.status', {
           state: 'complete',
-          message: directResult?.message ?? (result.finishReason === 'length'
+          message: directResult?.message ?? (prepared.operation === 'canvas-control' ? result.text.slice(0, 240) : undefined) ?? (result.finishReason === 'length'
             ? '回答再次达到平台输出上限；已保留全部返回内容，可以继续追问“继续”'
             : recorded.proposalId
             ? '回答完成；检测到明确的节点修改要求，请审查后写回正文'
@@ -418,6 +449,7 @@ export function registerAIGenerationRuntime(
         }
       },
       (error) => {
+        logAnswer(generationFailure(error));
         if (options.tasks.get(prepared.sessionId) === task) options.tasks.delete(prepared.sessionId);
         if (isAbortError(error)) {
           options.stateBySession.delete(prepared.sessionId);
@@ -427,6 +459,7 @@ export function registerAIGenerationRuntime(
         recordGenerationError(context, options.stateBySession, options.actionBySession, prepared, error);
       },
     ).catch((error) => {
+      logAnswer(generationFailure(error));
       // The network task may succeed while the transcript transaction loses a
       // revision race. Scope that failure to this assistant and keep the other
       // concurrent sessions alive.
@@ -437,6 +470,11 @@ export function registerAIGenerationRuntime(
       recordGenerationError(context, options.stateBySession, options.actionBySession, prepared, error);
     });
   });
+}
+
+function generationFailure(error: unknown): OperationStatus {
+  if (error instanceof Error && (error.name === 'TimeoutError' || /(?:\btimed? out\b|超时)/iu.test(error.message))) return 'timed-out';
+  return isAbortError(error) ? 'cancelled' : 'failed';
 }
 
 export function inferLengthTermination(

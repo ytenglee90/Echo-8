@@ -9,8 +9,12 @@ import { naturalTargetFilter } from '../../services/natural-canvas-rules.ts';
 import { readControlOwners } from './context.ts';
 import { naturalColor, NATURAL_COLORS } from '../../services/natural-canvas-rules.ts';
 import { resolveNaturalBatch } from './natural-batch.ts';
+import { canvasTitleAliases, normalizeCanvasTitle as normalize } from '../../services/canvas-titles.ts';
 
-export interface NaturalControlState { ids: string[]; lineId?: string; groupId?: string; pendingLine?: string; draftTitles?: ReadonlyMap<string, string> }
+export interface NaturalControlState {
+  ids: string[]; lineId?: string; groupId?: string; pendingLine?: string; draftTitles?: ReadonlyMap<string, string>;
+  unfinishedConnection?: { from: string; line?: 'solid' | 'dashed'; expiresAt: number };
+}
 export interface NaturalControlResult {
   plan: CanvasControlPlan;
   targets?: string[];
@@ -27,8 +31,8 @@ export interface NaturalControlResult {
 }
 
 const answer = (message: string): NaturalControlResult => ({ plan: { version: 1, actions: [], answer: message } });
-const normalize = (text: string) => text.normalize('NFKC').trim().toLocaleLowerCase();
-const pronoun = /^(?:它|新节点|刚建的节点|这个|这一个|这两个|这几个|这条线|这些|它们|这批|刚才的|刚才那批|刚才筛出的(?:空白)?节点|选中节点|选中的节点|选中的|选区)$/u;
+const CHARACTER_CARD_BODY = ['姓名：', '身份：', '外貌：', '性格：', '目标：', '人物关系：'].join('\n');
+const pronoun = /^(?:它|新节点|刚建的节点|刚才(?:那个|找到的|选中的|创建的)(?:节点|卡片)?|这个|这一个|这两个|这几个|这些|它们|这批|刚才的|刚才那批|刚才筛出的(?:空白)?节点|(?:当前)?选中(?:的)?(?:(?:两|2)个)?(?:节点|卡片)?|选区)$/u;
 
 export async function resolveNaturalOperation(
   context: PluginContext, request: CanvasControlAdmission, operation: NaturalCanvasOperation,
@@ -41,28 +45,38 @@ export async function resolveNaturalOperation(
   const sources = new Map(catalogs.flatMap(catalog => catalog.sources).filter(source => source.kind === 'text').map(source => [source.sourceId, source]));
   const groups = owners.groups ?? [];
   const canReadEndpoint = (id: string) => sources.get(id)?.automaticRetrieval !== false || request.sourceIds?.includes(id);
-  const edges = (owners.graph?.connections ?? []).filter(edge => edge.from.kind !== 'junction' && edge.to.kind !== 'junction' && canReadEndpoint(edge.from.nodeId) && canReadEndpoint(edge.to.nodeId));
+  const nodeEdges = (owners.graph?.connections ?? []).filter(edge => edge.from.kind !== 'junction' && edge.to.kind !== 'junction');
+  const edges = nodeEdges.filter(edge => canReadEndpoint(edge.from.nodeId) && canReadEndpoint(edge.to.nodeId));
   const title = (id: string) => sources.get(id)?.title ?? groups.find(group => group.id === id)?.title ?? id;
   const nodeTitles = new Map<string, string[]>();
   for (const source of sources.values()) {
     if (source.automaticRetrieval === false) continue;
-    const key = normalize(source.title);
-    // The canvas owner numbers duplicate titles. Include that family when the
-    // user says the base name, and keep the full title independently searchable.
-    const base = key.replace(/\s+\d+$/u, '');
-    const qualifiedParts = base.split('|').map(part => part.trim()).filter(Boolean);
-    for (const alias of new Set([key, base, ...(qualifiedParts.length > 1 ? qualifiedParts : [])])) {
+    for (const alias of canvasTitleAliases(source.title)) {
       const list = nodeTitles.get(alias) ?? [];
       list.push(source.sourceId);
       nodeTitles.set(alias, list);
     }
   }
   const lookup = (name: string) => {
+    const literal = nodeTitles.get(normalize(name));
+    if (literal) return { exact: literal, partial: [] };
     const match = /^(.*?)组?(?:里|内|中)的(.+)$/u.exec(name);
-    const ids = nodeTitles.get(normalize(match?.[2] ?? name)) ?? [];
-    if (!match) return ids;
-    const allowed = new Set(groups.filter(group => normalize(group.title).replace(/组$/u, '') === normalize(match[1]!).replace(/组$/u, '')).flatMap(group => group.memberIds));
-    return ids.filter(id => allowed.has(id));
+    const key = normalize(match?.[2] ?? name).replace(/^(?:刚才(?:找到|选中|创建|新建)的|刚建的)\s*/u, '');
+    const descriptive = /^(?:名为|叫)\s*(.+?)(?:的(?:那个|那张|那一张)?(?:文字节点|节点|卡片|文本框))$/u.exec(key)?.[1];
+    const short = descriptive ?? (key.replace(/(?:的?(?:文字节点|节点|卡片|文本框))$/u, '').trim() || key);
+    const allowed = match && new Set(groups.filter(group => normalize(group.title).replace(/组$/u, '') === normalize(match[1]!).replace(/组$/u, '')).flatMap(group => group.memberIds));
+    const inScope = (ids: string[]) => allowed ? ids.filter(id => allowed.has(id)) : ids;
+    const exact = inScope(nodeTitles.get(key) ?? nodeTitles.get(short) ?? []);
+    if (exact.length || short.length < 2) return { exact, partial: [] };
+    const partial = new Set<string>();
+    for (const [alias, ids] of nodeTitles) {
+      if (!alias.includes(short)) continue;
+      for (const id of inScope(ids)) {
+        partial.add(id);
+        if (partial.size > 80) return { exact, partial: [...partial] };
+      }
+    }
+    return { exact, partial: [...partial] };
   };
   const lookupGroup = (name: string | undefined) => {
     if (!name || /^(?:这一组|这组|刚才那组)$/u.test(name)) return groups.find(group => group.id === previous.groupId);
@@ -96,40 +110,54 @@ export async function resolveNaturalOperation(
     return ids;
   };
   const read = async (name: string): Promise<string[] | NaturalControlResult> => {
-    if (previous.draftTitles?.has(normalize(name))) return [previous.draftTitles.get(normalize(name))!];
-    if (!pronoun.test(name) && naturalTargetFilter(name)) return filterTargets(name);
+    const key = normalize(name);
+    const draftId = previous.draftTitles?.get(key);
+    if (draftId) return [draftId];
+    const explicit = request.sourceIds?.filter(id => {
+      if (!sources.has(id)) return false;
+      const candidate = normalize(title(id));
+      return id === name || '@' + id === name || candidate === key ||
+        (name.endsWith('…') && candidate.startsWith(normalize(name.slice(0, -1))));
+    }) ?? [];
+    if (explicit.length === 1) return explicit;
+    if (explicit.length > 1) return chooseNode(name, explicit, '这次引用了多个同名节点，请点选目标。');
+    if (!pronoun.test(name) && !nodeTitles.has(key) && naturalTargetFilter(name)) return filterTargets(name);
     if (/^(?:这一组|这组|刚才那组)$/u.test(name)) {
       const group = lookupGroup(name);
       return group && validMembers(group.memberIds) ? group.memberIds : answer('当前没有可沿用的群组。');
     }
     if (pronoun.test(name)) {
       const selected = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
-      const useSelection = /选中|选区|^这两个$|^这几个$/u.test(name);
+      const useSelection = /^(?:(?:当前)?选中|选区|这两个$|这几个$)/u.test(name);
       const selectedIds = (useSelection ? selected.ids : previous.ids.length ? previous.ids : selected.ids);
       const drafts = new Set(previous.draftTitles?.values());
-      const ids = [...new Set(selectedIds.flatMap(id => groups.find(group => group.id === id)?.memberIds ?? [id]))]
+      const ids = [...new Set(name === '这两个' && operation.kind === 'connect' ? selectedIds : selectedIds.flatMap(id => groups.find(group => group.id === id)?.memberIds ?? [id]))]
         .filter(id => drafts.has(id) || (sources.has(id) && (useSelection || sources.get(id)?.automaticRetrieval !== false)));
       if (name === '这两个' && ids.length !== 2) return answer('请选中两个节点，再继续连线。');
-      return ids.length ? ids : answer('当前没有可沿用的节点。请说出节点名称或先选中节点。');
+      if (ids.length > 1 && /^(?:它|这个|这一个|刚才那个(?:节点|卡片)?)$/u.test(name)) {
+        return chooseNode(name, ids, '刚才涉及多个节点，请选出你指的那一个。');
+      }
+      const missing = selectedIds.length > 0 && !useSelection ? '刚才的对象已无法定位。' : '';
+      return ids.length ? ids : answer(missing + (operation.kind === 'connect' ? '请说出连线的起点，或先选中一个节点。' : '要操作哪个节点？请说出名称，或先在画布上选中。'));
     }
-    const explicit = request.sourceIds?.find(id => id === name || `@${id}` === name || normalize(title(id)) === normalize(name) ||
-      (name.endsWith('…') && normalize(title(id)).startsWith(normalize(name.slice(0, -1)))));
-    if (explicit) return [explicit];
-    const ids = lookup(name);
+    const { exact, partial } = lookup(name);
+    if (exact.length === 1) return exact;
+    if (exact.length > 1) return chooseNode(name, exact, `找到了 ${exact.length} 个「${name}」。请在画布控制里点选目标，继续原操作。`);
+    const group = lookupGroup(name);
+    if (group) return validMembers(group.memberIds) ? group.memberIds : answer('群组包含未授权自动检索的节点，请明确指定范围。');
+    if (partial.length > 80) return answer('相近的节点超过 80 个，请补充标题或群组名。');
+    if (partial.length) return chooseNode(name, partial, '找到了标题相近的节点，请点选后继续原操作。');
+    return answer(`本轮允许查找的画布范围内，没有找到名为「${name}」的节点。`);
+  };
+  const chooseNode = (name: string, ids: string[], message: string): string[] | NaturalControlResult => {
     const resolved = chosen.get(name);
     if (resolved && ids.includes(resolved)) return [resolved];
-    if (!ids.length) {
-      const group = lookupGroup(name);
-      if (group) return validMembers(group.memberIds) ? group.memberIds : answer('群组包含未授权自动检索的节点，请明确指定范围。');
-      return answer(`本轮允许查找的画布范围内，没有找到名为「${name}」的节点。`);
-    }
-    if (ids.length === 1) return ids;
     const items = ids.slice(0, 80).map(id => {
       const neighbors = [...new Set(edges.flatMap(edge => edge.from.nodeId === id ? [edge.to.nodeId] : edge.to.nodeId === id ? [edge.from.nodeId] : []))].slice(0, 3).map(title);
       return { id, label: [groups.find(group => group.memberIds.includes(id))?.title ?? '未分组', title(id), ...(neighbors.length ? [`相连 ${neighbors.join('、')}`] : [])].join(' · ') };
     });
-    return { ...answer(`找到了 ${ids.length} 个「${name}」。请在画布控制里点选目标，继续原操作。`),
-      choice: { name, ids: items.map(item => item.id) }, navigation: { heading: `选择「${name}」`, choice: true, items } };
+    return { ...answer(message), choice: { name, ids: items.map(item => item.id) },
+      navigation: { heading: pronoun.test(name) ? '选择操作对象' : `选择「${name}」`, choice: true, items } };
   };
   const makePlan = (actions: CanvasControlAction[], targets: string[], next?: NaturalControlResult['next']): NaturalControlResult => {
     if (actions.length > 80 || new Set(targets).size > 80) return answer('目标超过 80 项，请按群组或范围分批操作。');
@@ -223,10 +251,15 @@ export async function resolveNaturalOperation(
     if (isTitleConnection(edge) === (operation.line === 'dashed')) return answer(`「${title(edge.from.nodeId)} → ${title(edge.to.nodeId)}」已经是${operation.line === 'dashed' ? '虚线' : '实线'}。`);
     return makePlan([{ type: 'update-connection', id: edge.id, line: operation.line }], [edge.id, edge.from.nodeId, edge.to.nodeId]);
   }
-  const ids: string[] = [];
-  for (const name of operation.names) {
+  const unfinished = operation.kind === 'connect' && operation.continueFromPrevious ? previous.unfinishedConnection : undefined;
+  if (unfinished && (unfinished.expiresAt < Date.now() || !sources.has(unfinished.from))) return {
+    ...answer('上次指定的起点已失效，请重新指定起点。'), next: { ids: [] },
+  };
+  const ids: string[] = unfinished ? [unfinished.from] : [];
+  for (const name of unfinished ? operation.names.slice(1) : operation.names) {
     const result = await read(name);
     if (!Array.isArray(result)) return result;
+    if (operation.kind === 'connect' && operation.names.length === 2 && result.length !== 1) return answer(`「${name}」需要指向一个节点，请明确端点名称。`);
     ids.push(...result);
   }
   const unique = [...new Set(ids)];
@@ -240,6 +273,7 @@ export async function resolveNaturalOperation(
     const width = operation.presentation === 'text-box' ? 240 : 340;
     const height = 220;
     return makePlan([{ type: 'create-node', ref: 'natural-node', title: operation.title, presentation: operation.presentation, width, height,
+      ...(operation.template === 'character' ? { text: CHARACTER_CARD_BODY } : {}),
       ...(anchor ? { x: operation.side === 'left' ? anchor.x - width - 60 : operation.side === 'right' ? anchor.x + anchor.width + 60 : anchor.x,
         y: operation.side === 'above' ? anchor.y - height - 60 : operation.side === 'below' ? anchor.y + anchor.height + 60 : anchor.y } : {}) }], unique);
   }
@@ -293,19 +327,25 @@ export async function resolveNaturalOperation(
       navigation: { heading: `${subject}的连线`, items: related.slice(0, 80).map(edge => ({ id: edge.id, label: `${title(edge.from.nodeId)} → ${title(edge.to.nodeId)} · ${isTitleConnection(edge) ? '虚线' : '实线'}` })) } };
   }
   if (operation.kind === 'connect' || operation.kind === 'line') {
+    if (operation.kind === 'connect' && unique.length === 1 && operation.names.length === 1) {
+      return { ...answer(`要把「${title(unique[0]!)}」连到哪个节点？请接着说“连到……”`), next: {
+        ids: unique, unfinishedConnection: { from: unique[0]!, line: operation.line, expiresAt: Date.now() + 10 * 60_000 },
+      } };
+    }
     if (unique.length !== 2) return answer('请指定两个不同的端点。');
-    const start = operation.kind === 'connect' && operation.chooseDirection ? chosen.get('') : unique[0];
-    if (!start || !unique.includes(start)) return {
-      ...answer('请在画布控制里选择箭头方向，继续原操作。'), choice: { name: '', ids: unique },
-      navigation: { heading: '选择箭头方向', choice: true, items: unique.map(id => ({ id, label: `${title(id)} → ${title(unique.find(other => other !== id)!)}` })) },
-    };
-    const from = start;
-    const to = unique.find(id => id !== from)!;
-    const directed = edges.filter(edge => edge.from.nodeId === from && edge.to.nodeId === to);
-    const line = operation.line ?? 'solid';
-    const desired = directed.find(edge => isTitleConnection(edge) === (line === 'dashed')) ?? (operation.line === undefined && directed.length === 1 ? directed[0] : undefined);
-    if (desired) return { ...answer(`「${title(from)} → ${title(to)}」已有${isTitleConnection(desired) ? '虚线' : '实线'}。`), next: { ids: unique, lineId: desired.id, pendingLine: undefined } };
-    if (directed.length === 1) return makePlan([{ type: 'update-connection', id: directed[0]!.id, line }], [...unique, directed[0]!.id], { ids: unique });
+    const from = unique[0]!;
+    const to = unique[1]!;
+    // Both endpoints were already resolved by name, reference, or selection.
+    const matching = nodeEdges.filter(edge => (edge.from.nodeId === from && edge.to.nodeId === to) ||
+      (operation.kind === 'connect' && operation.eitherDirection && edge.from.nodeId === to && edge.to.nodeId === from));
+    const requestedStyle = operation.line ?? unfinished?.line;
+    const line = requestedStyle ?? 'solid';
+    const alreadyConnected = requestedStyle === undefined ? matching : matching.filter(edge => isTitleConnection(edge) === (line === 'dashed'));
+    if (alreadyConnected.length > 1) return { ...answer('这两个节点已有多条符合要求的连线。请选中要修改的线，或明确箭头方向。'), next: { ids: unique, lineId: undefined, pendingLine: undefined } };
+    const desired = alreadyConnected[0];
+    if (desired) return { ...answer(`「${title(desired.from.nodeId)} → ${title(desired.to.nodeId)}」已有${isTitleConnection(desired) ? '虚线' : '实线'}。`), next: { ids: unique, lineId: desired.id, pendingLine: undefined } };
+    if (matching.length === 1) return makePlan([{ type: 'update-connection', id: matching[0]!.id, line }], [...unique, matching[0]!.id], { ids: unique });
+    if (matching.length > 1) return answer('两个节点之间有多条连线，请选中要修改的线，或说清箭头方向。');
     if (operation.kind === 'line') {
       const reverse = edges.filter(edge => edge.from.nodeId === to && edge.to.nodeId === from);
       if (reverse.length === 1 && isTitleConnection(reverse[0]!) !== (operation.line === 'dashed')) return makePlan([{ type: 'update-connection', id: reverse[0]!.id, line: operation.line }], [...unique, reverse[0]!.id], { ids: unique });
@@ -319,10 +359,20 @@ export async function resolveNaturalOperation(
     return makePlan([{ type: 'create-group', ref: 'natural-group', title: operation.title!, members: unique }], unique, { ids: unique });
   }
   if (operation.kind === 'group-add' || operation.kind === 'group-remove') {
-    const group = lookupGroup(operation.title);
-    if (!group) return answer('请说出群组名称，或先创建要沿用的群组。');
+    const choiceName = '\u0000group';
+    const target = chosen.get(choiceName);
+    const group = target ? groups.find(item => item.id === target) : lookupGroup(operation.title);
+    if (!group) {
+      if (operation.title || !groups.length) return answer('请说出群组名称，或先创建要沿用的群组。');
+      const items = groups.filter(item => operation.kind === 'group-add' || item.memberIds.some(id => unique.includes(id)))
+        .slice(0, 80).map(item => ({ id: item.id, label: item.title }));
+      if (!items.length) return answer('这些节点当前没有可移出的群组。');
+      return { ...answer('请选择群组，选完会继续原操作。'), choice: { name: choiceName, ids: items.map(item => item.id) },
+        navigation: { heading: '选择目标群组', choice: true, items } };
+    }
     if (operation.kind === 'group-add' && groups.some(other => other.id !== group.id && other.memberIds.some(id => unique.includes(id)))) return answer('要加入的节点已属于其他群组。请先将它移出原组。');
     const members = operation.kind === 'group-add' ? [...new Set([...group.memberIds, ...unique])] : group.memberIds.filter(id => !unique.includes(id));
+    if (members.length === group.memberIds.length) return answer(operation.kind === 'group-add' ? '这些节点已经在「' + group.title + '」里。' : '这些节点原本就不在「' + group.title + '」里。');
     if (members.length < 2) return answer('移出后群组不足两个成员。如要保留节点并取消群组，请使用解组。');
     return makePlan([{ type: 'update-group', id: group.id, members }], [group.id, ...group.memberIds, ...unique], { ids: members, groupId: group.id });
   }
