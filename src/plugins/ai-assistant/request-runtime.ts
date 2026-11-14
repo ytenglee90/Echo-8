@@ -81,7 +81,7 @@ export function registerAIRequestRuntime(
     const previous = options.lastPrepareRequestBySession.get(result.sessionId);
     if (!previous || previous.prompt !== result.prompt || options.generationTasks.has(result.sessionId)) return;
     context.signals.emit('ai.status', { sessionId: result.sessionId, state: result.status === 'failed' ? 'error' : 'complete',
-      message: result.status === 'applied' ? `已在画布应用 ${result.count} 项操作，可一次撤销。` :
+      message: result.status === 'applied' ? `已在画布应用 ${result.count} 项操作；${result.verification === 'verified' ? '已完成回读核对，可一次撤销。' : result.verification ? '回读核对尚未通过，请查看画布控制。' : '可一次撤销。'}` :
         result.status === 'dismissed' ? '已放弃这份画布计划。' : '画布提交失败，请查看实时操作日志。' } satisfies AIStatusSignal);
   });
   context.signals.subscribe<CanvasControlResume>(CANVAS_CONTROL_RESUME, message => {

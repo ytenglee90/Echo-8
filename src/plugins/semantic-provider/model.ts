@@ -331,17 +331,18 @@ export function createSemanticProviderPlugin(): PluginDefinition {
         }),
       });
 
-      for (const key of ['context.semanticSearch@1', 'context.remoteSemanticSearch@1'] as const) context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
+      for (const key of ['context.semanticSearch@1', 'context.remoteSemanticSearch@1', 'context.remoteSemanticSearch@2'] as const) context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
         key,
         priority: 20,
         invoke: async (input, signal) => {
           validateAIContextSearchRequest(input);
           const profile = activeProfile();
           const hasKey = profile ? Boolean(sessionApiKeys.get(profile.id)) : false;
+          if (key === 'context.remoteSemanticSearch@2' && (!profile || !isConfigured(profile, hasKey) || cacheState.status !== 'ready' || (indexScope !== '*' && indexScope !== (input.sourceIds ? [...input.sourceIds].sort().join('\n') : '*')))) return { ...emptyContribution(), ready: false };
           if (!profile || !isConfigured(profile, hasKey)) return emptyContribution();
           try {
-            if (input.sourceIds?.length === 0) return emptyContribution();
-            await scheduleIndex(false, input.sourceIds).result;
+            if (input.sourceIds?.length === 0) return key === 'context.remoteSemanticSearch@2' ? { ...emptyContribution(), ready: true } : emptyContribution();
+            if (key !== 'context.remoteSemanticSearch@2') await scheduleIndex(false, input.sourceIds).result;
             assertNotAborted(signal);
             const query = input.query?.trim() || input.terms.join(' ');
             const [vector] = await requestEmbeddings(
@@ -353,17 +354,18 @@ export function createSemanticProviderPlugin(): PluginDefinition {
               signal,
               activeRequests,
             );
-            if (!vector) return emptyContribution();
-            return searchSemanticVectorCache(
+            if (!vector) return key === 'context.remoteSemanticSearch@2' ? { ...emptyContribution(), ready: false } : emptyContribution();
+            const result = searchSemanticVectorCache(
               cacheBySource.values(),
               vector,
               input,
               'remote-semantic-embedding',
             );
+            return key === 'context.remoteSemanticSearch@2' ? { ...result, ready: cacheState.status === 'ready' } : result;
           } catch (error) {
             if (isAbortError(error)) throw error;
             context.diagnostics.warn('远程语义检索不可用，已保留本地 BM25 结果', error);
-            return emptyContribution();
+            return key === 'context.remoteSemanticSearch@2' ? { ...emptyContribution(), ready: false } : emptyContribution();
           }
         },
       });

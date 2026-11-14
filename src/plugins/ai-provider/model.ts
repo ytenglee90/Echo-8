@@ -441,6 +441,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
               contextWindowTokens: profile.contextWindowTokens,
               configured: profile.configured,
               toolCallingSupported: profile.apiStyle === 'openai' && profile.memoryToolEnabled === true,
+              canvasToolCallingSupported: profile.apiStyle === 'openai',
               structuredOutputSupported: profile.apiStyle === 'gemini',
             })),
           };

@@ -51,7 +51,7 @@ function isValidChatMessage(value: unknown): value is AIGenerateRequest['message
 function isValidToolCall(value: unknown): value is AIChatToolCall {
   return isRecord(value) && typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 240 &&
     typeof value.name === 'string' && value.name.length > 0 && value.name.length <= 120 &&
-    typeof value.arguments === 'string' && value.arguments.length <= 8_000;
+    typeof value.arguments === 'string' && value.arguments.length <= 128_000;
 }
 
 function isValidToolDefinition(value: unknown): boolean {

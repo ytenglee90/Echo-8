@@ -7,6 +7,24 @@ import type { AIContextSearchContribution, AIContextSearchRequest } from '../src
 import type { SemanticRetrievalResult } from '../src/protocols/retrieval.ts';
 import { createTextNodePlugin } from '../src/plugins/text-node/plugin.ts';
 import { createSemanticProviderPlugin } from '../src/plugins/semantic-provider/model.ts';
+import { createLocalSemanticProviderPlugin } from '../src/plugins/local-semantic-provider/model.ts';
+
+test('interactive semantic retrieval never waits for model download or a full index and retains lexical fallback', async () => {
+  const kernel = new ApplicationKernel([createTextNodePlugin(), createLocalSemanticProviderPlugin(), createSemanticProviderPlugin(), createRetrievalSettingsPlugin()]);
+  await kernel.start();
+  await kernel.router.dispatch('node.create', { title: '人物', body: '修钟学徒' }, 'core.test');
+  const result = await kernel.capabilities.request<SemanticRetrievalResult>('context.semanticSearch@3', { terms: ['学徒'], query: '修钟学徒', maxResults: 4 });
+  assert.deepEqual(result.attempted, ['local']);
+  assert.equal(result.contributions.length, 1);
+  assert.match(result.warnings[0]!, /索引尚未就绪/u);
+  await kernel.router.dispatch('retrieval.configure@1', { mode: 'cloud-fallback' }, 'core.test');
+  const remote = await kernel.capabilities.request<SemanticRetrievalResult>('context.semanticSearch@3', { terms: ['学徒'], query: '修钟学徒', maxResults: 4 });
+  assert.deepEqual(remote.attempted, ['local', 'cloud']);
+  assert.equal(remote.warnings.length, 2);
+  await kernel.plugins.stop('retrieval-settings');
+  await kernel.plugins.stop('local-semantic-provider');
+  await kernel.plugins.stop('semantic-provider');
+});
 
 test('retrieval policy defaults local, gates cloud fallback, forwards scopes and survives provider failure', async () => {
   const calls: Array<{ kind: string; input: AIContextSearchRequest }> = [];

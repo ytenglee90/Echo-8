@@ -144,7 +144,10 @@ async function openApplication(page: Page): Promise<void> {
   await page.goto('/');
   await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toBeVisible();
   await page.getByRole('button', { name: '新建空白书籍' }).click();
-  await expect(page.getByRole('article', { name: /文本节点：/u })).toHaveCount(2);
+  await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toHaveCount(0);
+  // Establish a real unsaved edit rather than depending on optional onboarding content.
+  await page.getByRole('button', { name: '新建文本', exact: true }).click();
+  await expect(page.getByRole('article', { name: /文本节点：/u }).first()).toBeVisible();
 }
 
 async function openProjectBlob(page: Page, project: Blob): Promise<void> {

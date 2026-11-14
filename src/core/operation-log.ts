@@ -3,17 +3,18 @@ import { isAbortError } from '../services/abort.ts';
 
 const HISTORY_LIMIT = 240;
 const OPEN_STAGE_LIMIT = 120;
-const STAGES = new Set(['ai-routing', 'ai-context-review', 'ai-model-response', 'ai-answer', 'ai-writeback', 'canvas-targets', 'canvas-validation', 'canvas-plan', 'canvas-background']);
+const STAGES = new Set(['ai-routing', 'ai-context-review', 'ai-model-response', 'ai-answer', 'ai-writeback', 'canvas-targets', 'canvas-read', 'canvas-validation', 'canvas-verification', 'canvas-plan', 'canvas-background']);
 const STAGE_STATES = new Set<OperationStatus>(['waiting', 'running', 'pending', 'completed', 'applied', 'failed', 'timed-out', 'cancelled', 'dismissed', 'expired']);
 const TERMINAL = new Set<OperationStatus>(['completed', 'applied', 'failed', 'timed-out', 'cancelled', 'dismissed', 'expired']);
 const safeCode = (value: unknown): value is string => typeof value === 'string' && /^[a-z\d][a-z\d:@._-]{0,199}$/iu.test(value);
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const DETAIL_ENUMS = {
-  step: ['route', 'targets', 'model', 'validate', 'review', 'commit', 'done'],
+  step: ['route', 'targets', 'read', 'model', 'validate', 'review', 'commit', 'verify', 'done'],
+  queryMode: ['state', 'selection', 'recent', 'search', 'all', 'relations'],
   route: ['local', 'model', 'conversation'],
   intent: ['create', 'content', 'connect', 'arrange', 'move', 'color', 'presentation', 'group', 'find', 'other'],
   scope: ['canvas', 'selection', 'named', 'conversation'],
-  reason: ['local-rule', 'model-plan', 'needs-target', 'ambiguous-target', 'empty-targets', 'review-existing', 'review-preference', 'ready-direct', 'invalid-plan', 'stale-target', 'plugin-unavailable', 'scope-limit', 'commit-failed', 'model-http-error', 'model-timeout', 'no-change', 'cancelled', 'expired', 'applied'],
+  reason: ['local-rule', 'model-plan', 'needs-target', 'ambiguous-target', 'empty-targets', 'review-existing', 'review-preference', 'ready-direct', 'invalid-plan', 'stale-target', 'plugin-unavailable', 'scope-limit', 'commit-failed', 'model-http-error', 'model-timeout', 'verified', 'verification-mismatch', 'verification-unavailable', 'no-change', 'cancelled', 'expired', 'applied'],
 } as const;
 const ACTIONS = ['create-node', 'update-node', 'create-group', 'update-group', 'create-connection', 'update-connection', 'delete'];
 
@@ -22,7 +23,7 @@ function safeDetail(value: unknown): OperationDetail | undefined {
   const input = value as Record<string, unknown>;
   const detail: Record<string, unknown> = {};
   for (const [key, values] of Object.entries(DETAIL_ENUMS)) if ((values as readonly unknown[]).includes(input[key])) detail[key] = input[key];
-  for (const key of ['matched', 'candidates']) if (finite(input[key]) && Number.isSafeInteger(input[key]) && input[key] <= 1_000_000) detail[key] = input[key];
+  for (const key of ['matched', 'candidates', 'checked', 'mismatchCount', 'readCharacters']) if (finite(input[key]) && Number.isSafeInteger(input[key]) && input[key] <= 1_000_000) detail[key] = input[key];
   if (finite(input.httpStatus) && Number.isSafeInteger(input.httpStatus) && input.httpStatus >= 100 && input.httpStatus <= 599) detail.httpStatus = input.httpStatus;
   if (Array.isArray(input.actions)) detail.actions = input.actions.slice(0, 7).flatMap(item => item && ACTIONS.includes(item.type) && finite(item.count) && Number.isSafeInteger(item.count) && item.count <= 100 ? [{ type: item.type, count: item.count }] : []);
   return Object.keys(detail).length ? detail as OperationDetail : undefined;

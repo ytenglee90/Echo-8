@@ -48,12 +48,13 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
       commands: [
         'selection.moveEntities',
         'selection.set',
+        'selection.reconcile@1',
         'selection.clear',
         'selection.box',
         'selection.all',
         'selection.delete',
       ],
-      dispatches: ['canvas.focusSelection'],
+      dispatches: ['canvas.focusSelection', 'selection.reconcile@1'],
       events: ['entity.deleted', 'history.changed', 'document.replaced'],
       signals: [
         'content.catalog.invalidated',
@@ -228,6 +229,20 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
         type: 'selection.clear',
         handle: () => ({ transaction: selectionTransaction([], '清除选择') }),
       });
+      context.commands.register({
+        type: 'selection.reconcile@1',
+        validate: (payload): payload is { expectedRevision: number } => isRecord(payload) && Number.isSafeInteger(payload.expectedRevision) && Number(payload.expectedRevision) >= 0,
+        handle: async payload => {
+          if (context.store.revision(SELECTION_NAMESPACE) !== payload.expectedRevision) return {};
+          await ensureCatalogCurrent();
+          if (context.store.revision(SELECTION_NAMESPACE) !== payload.expectedRevision) return {};
+          const items = readSelection().items.filter(item => catalog.get(item.id)).map(item => {
+            const entity = catalog.get(item.id)!;
+            return { id: item.id, kind: entity.kind, ...(item.part && entity.parts?.includes(item.part) ? { part: item.part } : {}) };
+          });
+          return { transaction: selectionTransaction(items, '核对当前选择') };
+        },
+      });
 
       context.commands.register<SelectionBoxPayload>({
         type: 'selection.box',
@@ -327,23 +342,11 @@ export function createSelectionPlugin(selectionActions?: unknown): PluginDefinit
 
       context.events.subscribe('entity.deleted', () => {
         invalidateCatalog();
-        void context.commands.dispatch('selection.clear');
+        void context.commands.dispatch('selection.reconcile@1', { expectedRevision: context.store.revision(SELECTION_NAMESPACE) }).catch(() => undefined);
       });
       context.events.subscribe('history.changed', () => {
         catalogInvalidation += 1;
-        void ensureCatalogCurrent().then(() => {
-          const items = readSelection().items
-            .filter((item) => catalog.get(item.id))
-            .map((item) => {
-              const entity = catalog.get(item.id);
-              return {
-                id: item.id,
-                kind: entity?.kind ?? item.kind,
-                ...(item.part && entity?.parts?.includes(item.part) ? { part: item.part } : {}),
-              };
-            });
-          void context.commands.dispatch('selection.set', { items, mode: 'replace' });
-        }).catch(() => undefined);
+        void context.commands.dispatch('selection.reconcile@1', { expectedRevision: context.store.revision(SELECTION_NAMESPACE) }).catch(() => undefined);
       });
       context.events.subscribe('document.replaced', () => {
         catalog.clear();

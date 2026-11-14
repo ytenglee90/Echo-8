@@ -97,6 +97,7 @@ declare module './messages.ts' {
 }
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'selection.reconcile@1': CommandContract<{ expectedRevision: number }>;
     'selection.moveEntities': CommandContract<EntityMoveRequest, { moved: number }>;
   }
 }

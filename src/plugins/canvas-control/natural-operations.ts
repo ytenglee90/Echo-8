@@ -14,6 +14,7 @@ import { canvasTitleAliases, normalizeCanvasTitle as normalize } from '../../ser
 export interface NaturalControlState {
   ids: string[]; lineId?: string; groupId?: string; pendingLine?: string; draftTitles?: ReadonlyMap<string, string>;
   createdIds?: string[];
+  pendingTask?: { goal: string; question: string };
   unfinishedConnection?: { from: string; line?: 'solid' | 'dashed'; expiresAt: number };
 }
 export interface NaturalControlResult {

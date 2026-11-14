@@ -20,6 +20,7 @@ import { stripOperationCommands } from './command-parser.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
 import { buildGenerateRequest } from './generation-request.ts';
 import { executeMemorySearchToolCalls } from './memory-search-tool.ts';
+import { runCanvasAgentLoop } from './canvas-agent-tools.ts';
 import { operationCreatesWriteback } from './operations.ts';
 import { isAbortError, isCapabilityUnavailable } from './runtime-errors.ts';
 import type { PreparedGeneration } from './request-runtime.ts';
@@ -70,10 +71,12 @@ export async function consumeAIGenerationStream(
     }
     if (event.type === 'tool-call') {
       const existing = toolCalls.get(event.index) ?? { arguments: '' };
+      if (toolCalls.size >= 4 && !toolCalls.has(event.index)) throw new Error('单步工具调用超过四项');
+      if (existing.arguments.length + (event.argumentsDelta?.length ?? 0) > 128_000) throw new Error('模型工具参数超过长度限制，请缩小任务');
       toolCalls.set(event.index, {
         id: event.id ?? existing.id,
         name: event.name ?? existing.name,
-        arguments: `${existing.arguments}${event.argumentsDelta ?? ''}`.slice(0, 8_000),
+        arguments: `${existing.arguments}${event.argumentsDelta ?? ''}`.slice(0, 128_001),
       });
       continue;
     }
@@ -92,7 +95,7 @@ export async function consumeAIGenerationStream(
   }
   const normalized = text.trim();
   const completedToolCalls = [...toolCalls.entries()].sort(([left], [right]) => left - right)
-    .flatMap(([, call]) => call.id && call.name && call.arguments.length <= 8_000
+    .flatMap(([, call]) => call.id && call.name && call.arguments.length <= 128_000
       ? [{ id: call.id, name: call.name, arguments: call.arguments }]
       : []);
   if (!normalized && completedToolCalls.length === 0) {
@@ -239,7 +242,7 @@ export function registerAIGenerationRuntime(
             const result = await consumeAIGenerationStream(stream, signal, {
               onDelta: (event) => {
                 receivedResponse();
-                if (!visible || prepared.operation === 'canvas-control') return;
+                if (!visible || prepared.operation === 'canvas-control' || activeRequest.canvasAgentTransport === 'json') return;
                 emittedSequence += 1;
                 const current = options.stateBySession.get(prepared.sessionId);
                 const text = event.channel === 'answer'
@@ -293,13 +296,23 @@ export function registerAIGenerationRuntime(
             return await generateOnce(activeRequest);
           } catch (error) {
             if (!activeRequest.tools?.length || !isToolRequestCompatibilityError(error)) throw error;
-            context.diagnostics.warn('当前模型连接不支持本地记忆工具，已回退常规检索', error);
+            context.diagnostics.warn('当前模型连接不接受原生工具，正在使用兼容方式', error);
             context.signals.emit('ai.status', {
               state: 'generating',
-              message: '当前连接不支持按需记忆工具，已继续使用常规检索',
+              message: activeRequest.canvasAgentTransport ? '当前连接正在切换画布工具兼容模式' : '当前连接不支持按需记忆工具，已继续使用常规检索',
               sessionId: prepared.sessionId,
               preparationId: prepared.id,
             } satisfies AIStatusSignal);
+            if (activeRequest.canvasAgentTransport) {
+              activeRequest.canvasAgentTransport = 'json';
+              activeRequest.tools = undefined;
+              activeRequest.responseSchema = undefined;
+              activeRequest.messages = activeRequest.messages.map(message => message.role === 'tool'
+                ? { role: 'user' as const, content: message.content }
+                : { ...message, toolCalls: undefined, toolCallId: undefined });
+              activeRequest.messages.push({ role: 'system', content: '当前连接使用 canvas_tool 结构化信封调用画布工具。请先查询再提交计划。普通聊天仍可直接回答。' });
+              return generateOnce(forPurpose(activeRequest, 'compatibility-retry'));
+            }
             return generateOnce(forPurpose({ ...activeRequest, tools: undefined }, 'compatibility-retry'));
           }
         };
@@ -319,7 +332,16 @@ export function registerAIGenerationRuntime(
           }, signal);
           return { ...result, text: local.text, reasoning: undefined, usage: aggregateTokenUsage(requestUsages) };
         }
-        if (result.toolCalls?.length) {
+        if (request.canvasAgentTransport) {
+          const agent = await runCanvasAgentLoop(context, prepared, request, result,
+            active => generateWithToolFallback(active),
+            calls => executeMemorySearchToolCalls(context, prepared, options.readMemoryIndexes(), calls, signal), signal);
+          result = agent.result;
+          if (agent.canvasPlan) {
+            prepared.operation = 'canvas-control';
+            return { ...result, usage: aggregateTokenUsage(requestUsages) };
+          }
+        } else if (result.toolCalls?.length) {
           context.signals.emit('ai.status', {
             state: 'generating',
             message: '正在按需查询已保存的本地记忆',
@@ -515,7 +537,7 @@ export function continuationRequest(request: AIGenerateRequest, partialAnswer: s
 
 function isToolRequestCompatibilityError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /HTTP\s+(?:400|404|422)\b|tool(?:s|_calls?)?.*(?:unsupported|not supported|invalid)|function.*(?:unsupported|not supported|invalid)/iu
+  return /(?:tool(?:s|_calls?)?|function(?:s|_call(?:ing)?)?|工具).{0,120}(?:unsupported|not supported|invalid|unknown|unrecognized|not allowed|不支持|无效|未知)|(?:unsupported|not support(?:ed)?|unknown|unrecognized|不支持|无效|未知).{0,120}(?:tool(?:s|_calls?)?|function(?:s|_call(?:ing)?)?|工具)/iu
     .test(message);
 }
 

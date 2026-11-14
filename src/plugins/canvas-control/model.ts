@@ -14,6 +14,10 @@ import { discoverControlTargets } from './target-discovery.ts';
 import { resolveNaturalOperation, shadeColor, type NaturalControlResult, type NaturalControlState } from './natural-operations.ts';
 import { planControlApplication, validateControlScope } from './planning.ts';
 import { actionCounts, controlFailureReason, localOperationDetail } from './operation-details.ts';
+import type { CanvasAgentQuery, CanvasAgentSubmission } from '../../protocols/canvas-agent.ts';
+import { grantAgentSnapshot, newAgentDiscovery, queryAgentCanvas, readAgentCanvas, type AgentDiscoverySession } from './agent-discovery.ts';
+import { prepareAgentPlan } from './agent-planning.ts';
+import { verifyControlApplication } from './verification.ts';
 
 export const CONTROL_UI_NAMESPACE = 'canvasControlUI';
 export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): PluginDefinition {
@@ -22,8 +26,8 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       namespaces: [CONTROL_UI_NAMESPACE], namespaceDomains: { [CONTROL_UI_NAMESPACE]: 'workspace' },
       sessionOnlyWorkspace: { [CONTROL_UI_NAMESPACE]: true },
       requiresCapabilities: ['content.summaries@1', 'content.summariesById@1', 'selection.read@1', 'selection.resolve@1', 'selection.entities@1', 'canvasControl.nodesPlan@1'],
-      optionalCapabilities: ['context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
-      providesCapabilities: ['canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
+      optionalCapabilities: ['context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'context.semanticSearch@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
+      providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
       commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
       dispatches: ['canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'selection.set', 'canvas.focusSelection', 'palette.setPreferences'],
       queries: ['canvasControl.state@1'],
@@ -39,6 +43,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       const generating = new Set<string>();
       const lastNatural = new Map<string, NaturalControlState>();
       const localResults = new Map<string, NaturalControlResult>();
+      const agentSessions = new Map<string, AgentDiscoverySession>();
       let navigation: CanvasControlState['navigation'];
       let choice: { input: CanvasControlAdmission; name: string; ids: string[]; chosen: Map<string, string> } | undefined;
       let background: { id: string; color: string; previous: string; entity: AppearanceEntityRef } | undefined;
@@ -58,7 +63,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         } satisfies OperationStageUpdateV2);
         if (!generating.has(id) && (state === 'applied' || state === 'failed' || state === 'dismissed')) context.signals.emit(CANVAS_CONTROL_RESULT, {
           sessionId: draft.review.sessionId, preparationId: draft.snapshot.preparationId, prompt: draft.snapshot.prompt,
-          status: state, count: draft.review.actions.length,
+          status: state, count: draft.review.actions.length, verification: draft.review.verification?.status,
         });
       };
       const logBackground = (id: string, state: OperationStatus) =>
@@ -87,6 +92,62 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         context.commands.defer('canvas.focusSelection');
       };
       const remember = (sessionId: string, next: Partial<NaturalControlState>) => lastNatural.set(sessionId, { ids: [], ...lastNatural.get(sessionId), ...next });
+      const agentSession = (input: CanvasControlAdmission) => {
+        if (!isAdmission(input)) throw new Error('画布工具请求无效');
+        let session = agentSessions.get(input.preparationId);
+        if (session && (session.sessionId !== input.sessionId || session.prompt !== input.prompt || session.expiresAt < Date.now())) throw new Error('画布工具任务已失效');
+        if (!session) {
+          session = newAgentDiscovery(input);
+          agentSessions.set(input.preparationId, session);
+          while (agentSessions.size > 8) agentSessions.delete(agentSessions.keys().next().value!);
+        }
+        return session;
+      };
+      context.capabilities.provide({ key: 'canvasControl.agentQuery@1', invoke: async (input: CanvasControlAdmission & { query: CanvasAgentQuery }, signal) => {
+        const id = createId('canvas-agent-query');
+        const started = performance.now();
+        context.signals.emit(OPERATION_LOG_STAGE_V2, { id, relatedId: input.preparationId, phase: 'canvas-targets', state: 'running', detail: { step: 'targets', route: 'model' } } satisfies OperationStageUpdateV2);
+        try {
+        const result = await queryAgentCanvas(context, input, agentSession(input), lastNatural.get(input.sessionId) ?? { ids: [] }, signal);
+        context.signals.emit(OPERATION_LOG_STAGE_V2, { id, relatedId: input.preparationId, phase: 'canvas-targets', state: 'completed', elapsedMs: performance.now() - started,
+          detail: { step: 'targets', route: 'model', scope: input.query.mode === 'all' ? 'canvas' : input.query.mode === 'selection' ? 'selection' : 'named', matched: result.nodes.length,
+            queryMode: input.query.mode, reason: result.nodes.length ? 'model-plan' : 'empty-targets' } } satisfies OperationStageUpdateV2);
+        if (input.query.mode === 'state') result.tasks = await controlTaskState(context, [...reviews.values()], { sessionId: input.sessionId }, signal);
+        return result;
+        } catch (error) {
+          context.signals.emit(OPERATION_LOG_STAGE_V2, { id, relatedId: input.preparationId, phase: 'canvas-targets', state: signal?.aborted ? 'cancelled' : 'failed', elapsedMs: performance.now() - started,
+            detail: { step: 'targets', reason: controlFailureReason(error) } } satisfies OperationStageUpdateV2);
+          throw error;
+        }
+      } });
+      context.capabilities.provide({ key: 'canvasControl.agentRead@1', invoke: async (input: CanvasControlAdmission & { id: string; start?: number; length?: number }, signal) => {
+        const id = createId('canvas-agent-read');
+        const started = performance.now();
+        const trace = (state: OperationStatus, detail?: OperationStageUpdateV2['detail']) => context.signals.emit(OPERATION_LOG_STAGE_V2,
+          { id, relatedId: input.preparationId, phase: 'canvas-read', state, elapsedMs: performance.now() - started, detail: { step: 'read', route: 'model', ...detail } } satisfies OperationStageUpdateV2);
+        trace('running');
+        try {
+          const result = await readAgentCanvas(context, input, agentSession(input), signal);
+          trace('completed', { readCharacters: result.text.length });
+          return result;
+        } catch (error) { trace(signal?.aborted ? 'cancelled' : 'failed', { reason: controlFailureReason(error) }); throw error; }
+      } });
+      context.capabilities.provide({ key: 'canvasControl.agentPlan@1', invoke: async (input: CanvasControlAdmission & CanvasAgentSubmission, signal) => {
+        const id = createId('canvas-agent-validation');
+        const started = performance.now();
+        const trace = (state: OperationStatus, detail?: OperationStageUpdateV2['detail']) => context.signals.emit(OPERATION_LOG_STAGE_V2,
+          { id, relatedId: input.preparationId, phase: 'canvas-validation', state, elapsedMs: performance.now() - started, detail: { step: 'validate', route: 'model', ...detail } } satisfies OperationStageUpdateV2);
+        trace('running');
+        try {
+        const prepared = await prepareAgentPlan(context, input, agentSession(input), execution(), signal);
+        snapshots.set(input.preparationId, prepared.snapshot);
+        localResults.set(input.preparationId, prepared.local);
+        while (localResults.size > 8) localResults.delete(localResults.keys().next().value!);
+        while (snapshots.size > 8) snapshots.delete(snapshots.keys().next().value!);
+        trace('completed', { actions: actionCounts(prepared.local.plan.actions), reason: prepared.local.plan.actions.length ? 'model-plan' : 'no-change' });
+        return { text: prepared.text };
+        } catch (error) { trace(signal?.aborted ? 'cancelled' : 'failed', { reason: controlFailureReason(error) }); throw error; }
+      } });
       const naturalPlan = async (input: CanvasControlAdmission, chosen = new Map<string, string>(), signal?: AbortSignal, interpreted?: NaturalCanvasOperation) => {
         const operation = interpreted ?? naturalCanvasOperation(input.prompt);
         if (!operation) return undefined;
@@ -162,6 +223,8 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         snapshots.set(input.preparationId, snapshot);
         while (snapshots.size > 8) snapshots.delete(snapshots.keys().next().value!);
         const result = controlContextV2(snapshot, input.purpose);
+        const agent = agentSessions.get(input.preparationId);
+        if (agent) grantAgentSnapshot(agent, snapshot);
         if (result.instruction.length + result.objectDirectory.length > 24_000) throw new Error('对象目录过大，请缩小范围');
         return result;
       } });
@@ -356,6 +419,9 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           openSurface(); publish();
           return { result: { message: `直接生成未成功：${draft.review.error}。计划已保留，可在画布控制检查。` }, transaction: { label: '显示生成失败计划', history: false, patches: [uiPatch('open', true)] } };
         } finally { generating.delete(input.id); }
+        if (draft.review.verification && draft.review.verification.status !== 'verified') {
+          return { result: { message: '画布修改已提交，回读核对尚未通过。请查看画布控制中的核对结果，可撤销本次操作。' } };
+        }
         const single = draft.review.actions.length === 1 ? draft.review.actions[0] : undefined;
         if (single?.type === 'create-connection') {
           const { titles } = draft.review;
@@ -384,6 +450,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           draft.before = (await readTaskMarkers(context, changedIds)).markers;
           const result = await context.commands.invoke('canvasControl.commit@1', { id: input.id, token });
           draft.createdIds = result.createdIds;
+          draft.created = result.created;
           const single = draft.review.actions.length === 1 ? draft.review.actions[0] : undefined;
           const current = await readTaskMarkers(context, [...changedIds, ...result.createdIds]).catch(() => undefined);
           const createdIds = new Set(result.createdIds);
@@ -393,6 +460,14 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           if (single?.type === 'create-group' || single?.type === 'update-group') remember(draft.review.sessionId, { groupId: single.type === 'update-group' ? single.id : result.createdIds[0] });
           draft.after = current?.markers;
           draft.review.error = undefined;
+          if (!draft.replacement) draft.review.verification = await verifyControlApplication(context, draft);
+          if (draft.review.verification) context.signals.emit(OPERATION_LOG_STAGE_V2, {
+            id: input.id, relatedId: draft.snapshot.preparationId, phase: 'canvas-verification',
+            state: draft.review.verification.status === 'verified' ? 'completed' : 'failed',
+            detail: { step: 'verify', reason: draft.review.verification.status === 'verified' ? 'verified' :
+              draft.review.verification.status === 'mismatch' ? 'verification-mismatch' : 'verification-unavailable',
+              checked: draft.review.verification.checked, mismatchCount: draft.review.verification.mismatches.length },
+          } satisfies OperationStageUpdateV2);
           draft.review.status = 'applied'; logPlan(input.id, 'applied'); publish();
           return { result };
         } catch (error) {
@@ -411,7 +486,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         const plan = await planControlApplication(context, draft.snapshot, { version: draft.review.planVersion ?? 1, actions: draft.review.actions });
         if (!reviews.has(input.id)) throw new Error('画布已经切换，请重新生成计划');
         if (!plan.patches.length) throw new Error('计划没有可应用的对象修改');
-        return { result: { createdIds: Object.values(plan.created) }, transaction: {
+        return { result: { createdIds: Object.values(plan.created), created: plan.created }, transaction: {
           label: `AI 画布操作（${draft.review.actions.length} 项）`,
           patches: plan.patches, events: plan.events,
         } };
@@ -426,7 +501,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       } });
       context.events.subscribe('document.replaced', () => {
         for (const [id, draft] of reviews) if (draft.review.status === 'pending') logPlan(id, 'expired');
-        snapshots.clear(); reviews.clear(); localResults.clear(); lastNatural.clear(); navigation = undefined;
+        snapshots.clear(); reviews.clear(); localResults.clear(); agentSessions.clear(); lastNatural.clear(); navigation = undefined;
         if (background) clearBackground(); else publish();
       });
       context.events.subscribe('history.changed', publish);

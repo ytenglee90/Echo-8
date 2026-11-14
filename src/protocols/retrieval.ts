@@ -12,6 +12,7 @@ export interface SemanticRetrievalResult {
   matched: Array<'local' | 'cloud'>;
   warnings: string[];
 }
+export interface ReadySemanticContribution extends AIContextSearchContribution { ready: boolean }
 export interface RetrievalSettingsState {
   open: boolean;
   mode: RetrievalMode;
@@ -31,6 +32,10 @@ declare module './messages.ts' {
   interface ApplicationCapabilityMap {
     'context.localSemanticSearch@1': MessageContract<AIContextSearchRequest, AIContextSearchContribution>;
     'context.remoteSemanticSearch@1': MessageContract<AIContextSearchRequest, AIContextSearchContribution>;
+    /** Queries an already-ready index; never downloads or waits for an index build. */
+    'context.localSemanticSearch@2': MessageContract<AIContextSearchRequest, ReadySemanticContribution>;
+    'context.remoteSemanticSearch@2': MessageContract<AIContextSearchRequest, ReadySemanticContribution>;
     'context.semanticSearch@2': MessageContract<SemanticRetrievalRequest, SemanticRetrievalResult>;
+    'context.semanticSearch@3': MessageContract<SemanticRetrievalRequest, SemanticRetrievalResult>;
   }
 }

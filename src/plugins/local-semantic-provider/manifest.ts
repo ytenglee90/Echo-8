@@ -25,7 +25,7 @@ export const localSemanticProviderManifest = defineManifest('local-semantic-prov
   queries: [LOCAL_SEMANTIC_PROVIDER_STATE_QUERY],
   asks: ['system.personalAssets.get'],
   optionalCapabilities: ['context.catalog@1', 'context.read@1'],
-  providesCapabilities: ['context.semanticSearch@1', 'context.localSemanticSearch@1'],
+  providesCapabilities: ['context.semanticSearch@1', 'context.localSemanticSearch@1', 'context.localSemanticSearch@2'],
   ui: ['local-semantic-provider.settings'],
   workerJobs: [
     LOCAL_SEMANTIC_LOAD_MODEL_JOB,

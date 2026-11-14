@@ -241,6 +241,8 @@ export interface AIChatMessage {
 }
 
 export interface AIGenerateRequest {
+  /** Local orchestration hint; omitted from provider request bodies. */
+  canvasAgentTransport?: 'native' | 'json';
   usageContext?: import('./ai-usage.ts').AIUsageContext;
   /** Optional JSON Schema, enabled only by providers advertising support. */
   responseSchema?: Record<string, unknown>;
@@ -353,6 +355,7 @@ export interface AIProviderInfo {
 }
 
 export interface AIProviderOption {
+  canvasToolCallingSupported?: boolean;
   structuredOutputSupported?: boolean;
   id: string;
   label: string;

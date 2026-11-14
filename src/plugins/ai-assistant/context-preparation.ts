@@ -382,12 +382,12 @@ export async function prepareAIContext(
         const query = { terms, query: stripOperationCommands(payload.prompt), maxResults: 12,
           ...(selectedMemorySet.size ? { sourceIds: [...selectedMemorySet].slice(0, 100) } : {}) };
         try {
-          retrievalDetails = await context.capabilities.request<SemanticRetrievalResult>('context.semanticSearch@2', {
+          retrievalDetails = await context.capabilities.request<SemanticRetrievalResult>('context.semanticSearch@3', {
             ...query, lexicalHits: new Set(contributions.flatMap(part => part.hits.map(hit => hit.source.sourceId))).size,
           }, signal);
           semantic = retrievalDetails.contributions;
         } catch (error) {
-          if (!isCapabilityUnavailable(error, 'context.semanticSearch@2')) throw error;
+          if (!isCapabilityUnavailable(error, 'context.semanticSearch@3')) throw error;
           semantic = await context.capabilities.requestAll<AIContextSearchContribution>('context.localSemanticSearch@1', query, signal);
         }
       } catch (error) {

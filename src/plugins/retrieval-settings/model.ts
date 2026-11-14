@@ -1,6 +1,6 @@
 import { isRecord, type PluginDefinition } from '../../core/contracts.ts';
 import { validateAIContextSearchRequest, type AIContextSearchContribution } from '../../protocols/ai.ts';
-import type { RetrievalMode, RetrievalSettingsState, SemanticRetrievalRequest, SemanticRetrievalResult } from '../../protocols/retrieval.ts';
+import type { RetrievalMode, RetrievalSettingsState, SemanticRetrievalRequest, SemanticRetrievalResult, ReadySemanticContribution } from '../../protocols/retrieval.ts';
 import { isAbortError } from '../../services/abort.ts';
 import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { defineManifest } from '../manifest.ts';
@@ -14,7 +14,7 @@ export function createRetrievalSettingsPlugin(panel?: unknown): PluginDefinition
     manifest: defineManifest('retrieval-settings', '检索设置', {
       namespaces: [NAMESPACE], namespaceDomains: { [NAMESPACE]: 'workspace' }, sessionOnlyWorkspace: { [NAMESPACE]: ['open'] },
       commands: ['retrieval.open@1', 'retrieval.close@1', 'retrieval.configure@1'], queries: ['retrieval.state@1'],
-      optionalCapabilities: ['context.localSemanticSearch@1', 'context.remoteSemanticSearch@1'], providesCapabilities: ['context.semanticSearch@2'],
+      optionalCapabilities: ['context.localSemanticSearch@1', 'context.remoteSemanticSearch@1', 'context.localSemanticSearch@2', 'context.remoteSemanticSearch@2'], providesCapabilities: ['context.semanticSearch@2', 'context.semanticSearch@3'],
       events: ['retrieval.settings.changed@1', UI_SURFACE_REVEALED_EVENT], ui: ['retrieval-settings.panel'],
       permissions: ['store.own.read', 'store.own.write', 'content.context.read', 'ui.right.contribute'],
     }),
@@ -38,7 +38,7 @@ export function createRetrievalSettingsPlugin(panel?: unknown): PluginDefinition
       context.commands.register({ type: 'retrieval.configure@1', validate: (input): input is { mode: RetrievalMode } => isRecord(input) && modes.includes(input.mode as RetrievalMode), handle: input => ({
         transaction: { label: '设置检索方式', history: false, patches: [patch('mode', input.mode)], events: [{ type: 'retrieval.settings.changed@1', payload: { mode: input.mode } }] },
       }) });
-      context.capabilities.provide<SemanticRetrievalRequest, SemanticRetrievalResult>({ key: 'context.semanticSearch@2', invoke: async (input, signal) => {
+      for (const key of ['context.semanticSearch@2', 'context.semanticSearch@3'] as const) context.capabilities.provide<SemanticRetrievalRequest, SemanticRetrievalResult>({ key, invoke: async (input, signal) => {
         validateAIContextSearchRequest(input);
         if (input.lexicalHits !== undefined && (!Number.isInteger(input.lexicalHits) || input.lexicalHits < 0)) throw new Error('关键词候选数量无效');
         const selectedMode = mode();
@@ -49,7 +49,12 @@ export function createRetrievalSettingsPlugin(panel?: unknown): PluginDefinition
         const search = async (kind: 'local' | 'cloud') => {
           result.attempted.push(kind);
           try {
-            const parts = await context.capabilities.requestAll<AIContextSearchContribution>(kind === 'local' ? 'context.localSemanticSearch@1' : 'context.remoteSemanticSearch@1', request, signal);
+            const readyOnly = key === 'context.semanticSearch@3';
+            const providerKey = kind === 'local' ? readyOnly ? 'context.localSemanticSearch@2' : 'context.localSemanticSearch@1' : readyOnly ? 'context.remoteSemanticSearch@2' : 'context.remoteSemanticSearch@1';
+            const parts = await context.capabilities.requestAll<AIContextSearchContribution & Partial<ReadySemanticContribution>>(providerKey, request, signal);
+            if (readyOnly && (!parts.length || parts.some(part => part.ready === false))) result.warnings.push(kind === 'local'
+              ? '本地语义索引尚未就绪，本轮使用关键词结果。可在检索设置中后台建立索引。'
+              : '云端语义索引尚未就绪，本轮保留本地结果。可在检索设置中后台建立索引。');
             result.contributions.push(...parts);
             if (parts.some(part => part.hits.length)) result.matched.push(kind);
           } catch (error) {

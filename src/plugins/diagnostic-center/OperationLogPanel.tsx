@@ -14,6 +14,7 @@ const STATUS: Record<OperationStatus, string> = {
 const LABELS: Readonly<Record<string, string>> = {
   'ai-conversation-autosave-delay': '等待自动保存对话', 'search-index-rebuild': '更新画布检索索引',
   'ai-routing': '识别本轮要求', 'canvas-targets': '定位画布对象', 'canvas-validation': '校验画布计划',
+  'canvas-verification': '回读核对画布结果', 'canvas-read': '分段读取节点正文',
   'ai-context-retrieval': '准备 AI 上下文', 'ai-context-review': 'AI 上下文确认', 'ai-model-response': '模型响应',
   'ai-answer': 'AI 回答', 'ai-generation': 'AI 生成', 'ai-memory-index': '建立 AI 记忆索引',
   'ai-writeback': 'AI 正文写回', 'ai.proposal.accept': '应用 AI 正文', 'ai.generation.start': '记录本轮提问',
@@ -25,7 +26,8 @@ const LABELS: Readonly<Record<string, string>> = {
   'connection.create': '创建连线', 'connection.setLabel': '修改连线标签',
   'history.undo': '撤销画布修改', 'history.redo': '重做画布修改',
 };
-const STEPS = { route: '识别意图', targets: '定位对象', model: '生成计划', validate: '校验计划', review: '等待执行', commit: '提交修改', done: '结束' };
+const STEPS = { route: '识别意图', targets: '定位对象', read: '读取正文', model: '生成计划', validate: '校验计划', review: '等待执行', commit: '提交修改', verify: '回读核对', done: '结束' };
+const QUERY_MODES = { state: '当前能力与会话状态', selection: '当前选区', recent: '近期对象', search: '关键词与语义检索', all: '分页查看画布', relations: '查看对象关系' };
 const ROUTES = { local: '本地执行规则', model: '模型规划', conversation: '普通对话或正文任务' };
 const SCOPES = { canvas: '当前全画布', selection: '当前选区', named: '指定名称或会话对象', conversation: '当前对话' };
 const INTENTS = { create: '创建节点', content: '写入节点正文', connect: '连接节点', arrange: '排列节点', move: '移动节点',
@@ -41,6 +43,8 @@ const REASONS = {
   'plugin-unavailable': '执行所需能力未启用', 'commit-failed': '提交失败，画布计划已保留',
   'model-http-error': '模型请求失败，可在 AI 助手中重试', 'model-timeout': '等待模型超过时限',
   'scope-limit': '本轮对象范围超过上限，请缩小范围后重试',
+  verified: '已从实际画布回读并核对本轮操作', 'verification-mismatch': '修改已提交，实际结果与计划有差异，请检查或撤销',
+  'verification-unavailable': '修改已提交，当前无法完成回读核对',
   'no-change': '本轮未产生修改动作', cancelled: '操作已取消', expired: '计划已过期', applied: '修改已提交到画布，可撤销',
 };
 
@@ -52,12 +56,16 @@ function DetailText({ detail }: { detail: OperationDetail }) {
     {detail.matched !== undefined && <span>命中 {detail.matched} 个对象</span>}
     {detail.candidates !== undefined && detail.candidates > 0 && <span>{detail.candidates} 个待选候选</span>}
     {detail.httpStatus !== undefined && <span>HTTP {detail.httpStatus}</span>}
+    {detail.queryMode && <span>{QUERY_MODES[detail.queryMode]}</span>}
+    {detail.readCharacters !== undefined && <span>已读取 {detail.readCharacters} 字符</span>}
+    {detail.checked !== undefined && <span>已核对 {detail.checked} 项</span>}
+    {detail.mismatchCount !== undefined && detail.mismatchCount > 0 && <span>{detail.mismatchCount} 处差异</span>}
     {detail.actions?.map(action => <span key={action.type}>{ACTIONS[action.type]} {action.count} 项</span>)}
   </>;
 }
 
 function isAI(entry: OperationLogEntry): boolean {
-  return /^(?:ai[.-]|canvasControl\.|canvas-(?:plan|background)$)/u.test(entry.code) || entry.owner.startsWith('ai-');
+  return /^(?:ai[.-]|canvasControl\.|canvas-)/u.test(entry.code) || entry.owner.startsWith('ai-');
 }
 
 function duration(ms: number): string {

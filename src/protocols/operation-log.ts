@@ -7,7 +7,7 @@ export const OPERATION_LOG_STAGE_V2 = 'system.operationLog.stage@2';
 export type OperationStatus = 'queued' | 'running' | 'paused' | 'retrying' | 'waiting' | 'completed' |
   'pending' | 'applied' | 'failed' | 'timed-out' | 'cancelled' | 'dismissed' | 'expired';
 
-export type OperationPhase = 'ai-routing' | 'ai-context-review' | 'ai-model-response' | 'ai-answer' | 'ai-writeback' | 'canvas-targets' | 'canvas-validation' | 'canvas-plan' | 'canvas-background';
+export type OperationPhase = 'ai-routing' | 'ai-context-review' | 'ai-model-response' | 'ai-answer' | 'ai-writeback' | 'canvas-targets' | 'canvas-read' | 'canvas-validation' | 'canvas-verification' | 'canvas-plan' | 'canvas-background';
 
 export interface OperationStageUpdate {
   id: string;
@@ -45,10 +45,10 @@ export interface OperationLogSnapshot {
   entries: OperationLogEntry[];
 }
 
-export type OperationStep = 'route' | 'targets' | 'model' | 'validate' | 'review' | 'commit' | 'done';
+export type OperationStep = 'route' | 'targets' | 'read' | 'model' | 'validate' | 'review' | 'commit' | 'verify' | 'done';
 export type OperationReason = 'local-rule' | 'model-plan' | 'needs-target' | 'ambiguous-target' | 'empty-targets' |
   'review-existing' | 'review-preference' | 'ready-direct' | 'invalid-plan' | 'stale-target' |
-  'plugin-unavailable' | 'scope-limit' | 'commit-failed' | 'model-http-error' | 'model-timeout' | 'no-change' | 'cancelled' | 'expired' | 'applied';
+  'plugin-unavailable' | 'scope-limit' | 'commit-failed' | 'model-http-error' | 'model-timeout' | 'verified' | 'verification-mismatch' | 'verification-unavailable' | 'no-change' | 'cancelled' | 'expired' | 'applied';
 export interface OperationDetail {
   step?: OperationStep;
   route?: 'local' | 'model' | 'conversation';
@@ -58,6 +58,10 @@ export interface OperationDetail {
   matched?: number;
   candidates?: number;
   httpStatus?: number;
+  checked?: number;
+  mismatchCount?: number;
+  readCharacters?: number;
+  queryMode?: 'state' | 'selection' | 'recent' | 'search' | 'all' | 'relations';
   actions?: Array<{ type: 'create-node' | 'update-node' | 'create-group' | 'update-group' | 'create-connection' | 'update-connection' | 'delete'; count: number }>;
 }
 export interface OperationStageUpdateV2 extends OperationStageUpdate { detail?: OperationDetail }

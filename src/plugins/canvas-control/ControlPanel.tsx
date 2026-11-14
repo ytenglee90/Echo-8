@@ -76,6 +76,13 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
       {!state.reviews.length && <p className="canvas-control-empty">操作计划将在这里显示。</p>}
       {[...state.reviews].reverse().map(review => <section className="canvas-control-review" key={review.id} aria-label="画布操作计划">
         <header><strong>{review.replacement ? `${review.replacement.nodeCount} 个节点 · ${review.replacement.count} 处正文` : `${review.actions.length} 项操作`}</strong><span>{review.status === 'applied' ? '已应用' : review.status === 'dismissed' ? '已放弃' : '等待确认'}</span></header>
+        {review.verification && <p role={review.verification.status === 'verified' ? undefined : 'alert'}>
+          {review.verification.status === 'verified' ? `已回读核对 ${review.verification.checked} 项操作` :
+            review.verification.status === 'mismatch' ? `修改已提交，核对发现 ${review.verification.mismatches.length} 处差异，请检查画布或撤销` : '修改已提交，本轮回读暂不可用，请检查画布'}
+        </p>}
+          {review.verification?.status === 'mismatch' && <ul>{review.verification.mismatches.map((item, index) => <li key={index}>
+            第 {item.index + 1} 项：{({ exists: '对象存在状态', metadata: '名称、位置或外观', body: '正文', members: '群组成员', endpoints: '连线端点或线型' })[item.field]}与计划不一致
+          </li>)}</ul>}
         {review.replacement && <><p>「{review.replacement.from}」 → 「{review.replacement.to}」</p>
           <ul>{review.replacement.examples.map((example, index) => <li key={index}>{example}</li>)}</ul></>}
         <ol>{review.actions.map((action, index) => <li key={index}>

@@ -39,12 +39,13 @@ export interface CanvasControlOffer extends CanvasControlAdmission { text: strin
 export const CANVAS_CONTROL_RESUME = 'canvasControl.resume@1';
 export const CANVAS_CONTROL_RESULT = 'canvasControl.result@1';
 export interface CanvasControlResume extends CanvasControlAdmission { sourceIds: string[] }
-export interface CanvasControlResult extends CanvasControlAdmission { status: 'applied' | 'failed' | 'dismissed'; count: number }
+export interface CanvasControlResult extends CanvasControlAdmission { status: 'applied' | 'failed' | 'dismissed'; count: number; verification?: import('./canvas-agent.ts').CanvasControlVerification['status'] }
 export type CanvasControlPurpose = 'appearance' | 'move' | 'creation' | 'structure' | 'content' | 'general';
 export interface CanvasControlContextV2 { instruction: string; objectDirectory: string; targetIds?: string[]; responseSchema?: Record<string, unknown> }
 export interface CanvasControlTaskState {
   version: 1;
   plans: Array<{ id: string; goal: string; status: 'pending' | 'applied' | 'undone' | 'changed' | 'failed' | 'dismissed' | 'expired';
+    verification?: import('./canvas-agent.ts').CanvasControlVerification;
     actions: unknown[]; actionCount: number; omittedActions: number; targets: Array<{ id: string; title: string; revision: number }>; error?: string }>;
 }
 export interface CanvasControlPatchPlan {
@@ -69,6 +70,7 @@ export interface CanvasControlConnectionRequest {
   nodes: ConnectionNodeGeometry[];
 }
 export interface CanvasControlReview {
+  verification?: import('./canvas-agent.ts').CanvasControlVerification;
   replacement?: { count: number; nodeCount: number; from: string; to: string; examples: string[] };
   planVersion?: 1 | 2;
   id: string;
@@ -99,7 +101,7 @@ declare module './commands.ts' {
     'canvasControl.offer@1': CommandContract<CanvasControlOffer, { message: string; directPlanId?: string }>;
     'canvasControl.generate@1': CommandContract<{ id: string }, { message: string }>;
     'canvasControl.apply@1': CommandContract<{ id: string }, { createdIds: string[] }>;
-    'canvasControl.commit@1': CommandContract<{ id: string; token: string }, { createdIds: string[] }>;
+    'canvasControl.commit@1': CommandContract<{ id: string; token: string }, { createdIds: string[]; created?: Record<string, string> }>;
     'canvasControl.dismiss@1': CommandContract<{ id: string }>;
   }
 }

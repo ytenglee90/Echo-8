@@ -12,6 +12,100 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('semantic tools complete an unfamiliar no-mention task, then edit discovered bodies and relationships with verified undo', async ({ page }) => {
+    let stage = 0;
+    let hero = '';
+    let scene = '';
+    let edge = '';
+    let revision = 0;
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      const request = route.request().postDataJSON() as { tools?: Array<{ function: { name: string } }>; messages: Array<{ role: string; content: string }> };
+      expect(request.tools?.map(tool => tool.function.name)).toEqual(expect.arrayContaining(['query_canvas', 'read_canvas', 'propose_canvas_plan']));
+      const last = request.messages.at(-1)!;
+      let call: { name: string; arguments: unknown };
+      stage++;
+      if (stage === 1) call = { name: 'query_canvas', arguments: { mode: 'all' } };
+      else if (stage === 2) {
+        expect(last.role).toBe('tool');
+        call = { name: 'propose_canvas_plan', arguments: { plan: { version: 1, actions: [
+          { type: 'create-node', ref: 'hero', title: '人物｜林渊', text: '修钟学徒。口头禅：时间到了。' },
+          { type: 'create-node', ref: 'scene', title: '场景｜雨夜', text: '钟楼下重逢。' },
+          { type: 'create-group', ref: 'chapter', title: '开篇人物与场景', members: ['hero', 'scene'] },
+          { type: 'create-connection', ref: 'edge', from: 'hero', to: 'scene', line: 'solid' },
+        ] } } };
+      } else if (stage === 3) call = { name: 'query_canvas', arguments: { mode: 'search', query: '林渊' } };
+      else if (stage === 4) {
+        const data = JSON.parse(last.content.replace(/^<untrusted-canvas-tool-result>\n|\n<\/untrusted-canvas-tool-result>$/gu, '')) as { nodes: Array<{ id: string; title: string }> };
+        hero = data.nodes.find(node => node.title === '人物｜林渊')!.id;
+        call = { name: 'query_canvas', arguments: { mode: 'relations', ids: [hero] } };
+      } else if (stage === 5) {
+        const data = JSON.parse(last.content.replace(/^<untrusted-canvas-tool-result>\n|\n<\/untrusted-canvas-tool-result>$/gu, '')) as { connections: Array<{ id: string; to: string }> };
+        edge = data.connections[0]!.id; scene = data.connections[0]!.to;
+        call = { name: 'read_canvas', arguments: { id: hero, start: 0, length: 100 } };
+      } else {
+        const data = JSON.parse(last.content.replace(/^<untrusted-canvas-tool-result>\n|\n<\/untrusted-canvas-tool-result>$/gu, '')) as { text: string; revision: number };
+        revision = data.revision;
+        expect(data.text).toContain('时间到了'); expect(scene).toBeTruthy();
+        call = { name: 'propose_canvas_plan', arguments: { plan: { version: 2, actions: [
+          { type: 'update-node', id: hero, edit: { start: data.text.indexOf('时间到了'), deleteCount: 4, insert: '钟还没停', expectedRevision: revision } },
+          { type: 'update-connection', id: edge, line: 'dashed' },
+        ] } } };
+      }
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call-' + stage, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 50, completion_tokens: 30 } })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await ai.locator('.ai-composer textarea').fill('我想让这张画布讲一个修钟学徒的故事：请安排人物、雨夜场景，以及两者的关系。落实到画布。');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(control.getByText('4 项操作', { exact: true })).toBeVisible();
+    await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
+    await expect(control).toContainText('已回读核对 4 项操作');
+    await control.getByRole('button', { name: '关闭画布控制' }).click();
+    await ai.locator('.ai-composer textarea').fill('林渊的口头禅换成“钟还没停”，人物和雨夜场景之间的关系改成引用。');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(control.getByText('2 项操作', { exact: true })).toBeVisible({ timeout: 30_000 });
+    await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
+    await expect(control).toContainText('已回读核对 2 项操作');
+    await control.screenshot({ path: 'local-data/canvas-agent-verified-review.png' });
+    expect(stage).toBe(6);
+    await control.getByRole('button', { name: '关闭画布控制' }).click();
+    await ai.getByRole('button', { name: '关闭AI 助手' }).click();
+    const card = page.getByRole('article', { name: /文本节点：人物｜林渊$/u });
+    await expect(card).toContainText('钟还没停');
+    await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(card).toContainText('时间到了');
+    await expect(page.locator('.connection-path.title-connection')).toHaveCount(0);
+    await page.getByRole('button', { name: '重做', exact: true }).click();
+    await expect(card).toContainText('钟还没停');
+  });
+
+  test('native tool rejection falls back to structured canvas tools and corrects a false permission denial', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      calls++;
+      const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ role: string; content: string }> };
+      if (calls === 1) return route.fulfill({ status: 400, headers: { 'access-control-allow-origin': '*' }, json: { error: { message: 'tools is not supported' } } });
+      expect(request.tools).toBeUndefined(); expect(request.messages.some(message => message.role === 'tool')).toBe(false);
+      const content = calls === 2 ? '我没有操控画布的能力，请自行粘贴。' : calls === 3
+        ? JSON.stringify({ canvas_tool: { name: 'query_canvas', arguments: { mode: 'state' } } })
+        : JSON.stringify({ canvas_tool: { name: 'propose_canvas_plan', arguments: { plan: { version: 1, actions: [{ type: 'create-node', ref: 'role', title: '兼容模式角色', text: '修钟学徒，等待第十三声钟。' }] } } } });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('让画布里出现一位等待第十三声钟的修钟学徒，写好他的资料。');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项操作');
+    await expect(page.getByRole('article', { name: /文本节点：兼容模式角色$/u })).toHaveCount(1);
+    expect(calls).toBe(4);
+    await ai.getByRole('button', { name: '打开实时操作日志', exact: true }).click();
+    await expect(page.getByRole('region', { name: '实时操作日志', exact: true })).toContainText('回读核对画布结果');
+  });
+
   test('reported all-node layouts run offline without selection and log scope, counts and commit states', async ({ page }) => {
     const book = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '全画布排列验收' }),
       ...Array.from({ length: 6 }, (_, index) => JSON.stringify({ type: 'node', id: 'layout-' + index, category: '对象', name: '节点' + (index + 1), text: '' })),
@@ -882,8 +976,10 @@ export function canvasControlScenarios(url: string): void {
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     await ai.locator('.ai-composer textarea').fill('@画布操作 新建人物与章节并分组连线。');
     await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
-    await expect(ai).toContainText(failure === 'format' ? '版本或字段不正确' : '控制范围外');
-    await ai.getByRole('button', { name: '重试上一次发送', exact: true }).click();
+    if (failure === 'format') {
+      await expect(ai).toContainText('版本或字段不正确');
+      await ai.getByRole('button', { name: '重试上一次发送', exact: true }).click();
+    }
     await expect(page.getByRole('region', { name: '画布控制', exact: true }).getByText('6 项操作', { exact: true })).toBeVisible();
     expect(requests).toBe(failure === 'format' ? 3 : 2);
     await expect(ai.getByLabel('本轮 Token 用量')).toContainText('（估算）');

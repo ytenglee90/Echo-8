@@ -309,20 +309,21 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
         },
       });
       context.queries.register({ type: LOCAL_SEMANTIC_PROVIDER_STATE_QUERY, handle: readState });
-      for (const key of ['context.semanticSearch@1', 'context.localSemanticSearch@1'] as const) context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
+      for (const key of ['context.semanticSearch@1', 'context.localSemanticSearch@1', 'context.localSemanticSearch@2'] as const) context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
         key,
         priority: 24,
         invoke: async (input, signal) => {
           validateAIContextSearchRequest(input);
+          if (key === 'context.localSemanticSearch@2' && (!enabled() || !modelLoaded || cacheState.status !== 'ready')) return { ...emptyContribution(), ready: false };
           if (!enabled()) return emptyContribution();
           const modelId = activeModel();
           try {
-            await scheduleIndex(false).result;
+            if (key !== 'context.localSemanticSearch@2') await scheduleIndex(false).result;
             assertNotAborted(signal);
-            if (!enabled() || activeModel() !== modelId || !modelLoaded) return emptyContribution(modelId);
+            if (!enabled() || activeModel() !== modelId || !modelLoaded) return key === 'context.localSemanticSearch@2' ? { ...emptyContribution(modelId), ready: false } : emptyContribution(modelId);
             const query = input.query?.trim() || input.terms.join(' ');
             const [vector] = await embedTexts(context, [query], signal);
-            return vector && enabled() && activeModel() === modelId
+            const result = vector && enabled() && activeModel() === modelId
               ? searchSemanticVectorCache(
                   cacheBySource.values(),
                   vector,
@@ -330,10 +331,11 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
                   `local-bge-${modelId}-zh-v1.5`,
                 )
               : emptyContribution(modelId);
+            return key === 'context.localSemanticSearch@2' ? { ...result, ready: cacheState.status === 'ready' } : result;
           } catch (error) {
             if (isAbortError(error)) throw error;
             context.diagnostics.warn('本地语义检索不可用，已保留 BM25 结果', error);
-            return emptyContribution(modelId);
+            return key === 'context.localSemanticSearch@2' ? { ...emptyContribution(modelId), ready: false } : emptyContribution(modelId);
           }
         },
       });

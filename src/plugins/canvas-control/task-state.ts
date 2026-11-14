@@ -8,6 +8,7 @@ export interface StoredControlReview {
   snapshot: ControlSnapshot;
   replacement?: import('../../protocols/search.ts').ContentReplaceRequest;
   createdIds?: string[];
+  created?: Record<string, string>;
   before?: Record<string, string>;
   after?: Record<string, string>;
 }
@@ -39,6 +40,7 @@ export async function controlTaskState(context: PluginContext, drafts: StoredCon
     if (status === 'pending' && draft.review.error) status = 'failed';
     else if (status === 'pending' && draft.snapshot.expiresAt < Date.now()) status = 'expired';
     plans.push({ id: draft.review.id, goal: draft.snapshot.prompt.slice(0, 1_000), status,
+      ...(draft.review.verification ? { verification: draft.review.verification } : {}),
       actions: draft.review.actions.slice(0, 12).map(action => ({ ...action, ...('text' in action && action.text ? { text: action.text.slice(0, 120), textLength: action.text.length } : {}),
         ...('append' in action && action.append ? { append: action.append.slice(0, 120), appendLength: action.append.length } : {}),
         ...('edit' in action && action.edit ? { edit: { ...action.edit, insert: action.edit.insert.slice(0, 120), insertLength: action.edit.insert.length } } : {}) })),
