@@ -175,4 +175,6 @@
 
 | [0148](ADR-0148-CANVAS-TOOL-WIRE-AND-LOCAL-RESOLUTION.md) | 画布工具的模型请求与本地定位 | 有效，补充 0147，兼容原工具与文件协议 |
 
+| [0149](ADR-0149-CANVAS-RECENT-STATE-AND-RELATIVE-PLACEMENT.md) | 画布近期状态与相对摆放 | 有效，补充 0147、0148，沿用原画布计划和书籍格式 |
+
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

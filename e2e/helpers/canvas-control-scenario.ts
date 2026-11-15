@@ -12,6 +12,44 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('a typo in a relative layout request uses current named cards and an exact gap after earlier canvas turns', async ({ page }) => {
+    await page.goto(url);
+    await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+    await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    await page.context().setOffline(true);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    const ask = async (prompt: string) => {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.locator('.ai-composer textarea').press('Enter');
+    };
+    for (const prompt of ['新建一张角色卡，叫人物卡', '新建一个叫武器卡的节点', '新建一个叫干扰卡的节点', '选中干扰卡']) {
+      await ask(prompt);
+      await expect(ai.getByRole('status')).toContainText(/已直接完成|已选中/u);
+    }
+    await ask('武器卡排列杂人物卡上方，中间空20PX');
+    await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('修改文字对象 · 武器卡');
+    await control.getByRole('button', { name: '应用整份计划' }).click();
+    await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('已回读核对 1 项操作');
+    const first = page.getByRole('article', { name: /文本节点：武器卡$/u });
+    const second = page.getByRole('article', { name: /文本节点：人物卡$/u });
+    const gap = async () => {
+      const scale = await page.locator('.canvas-world').evaluate(el => new DOMMatrix(getComputedStyle(el).transform).a);
+      const moving = (await first.boundingBox())!;
+      const anchor = (await second.boundingBox())!;
+      return (anchor.y - moving.y - moving.height) / scale;
+    };
+    // The renderer snaps both edges to device pixels. The geometry unit tests check exact world coordinates.
+    await expect.poll(async () => Math.abs(await gap() - 20)).toBeLessThan(1.25);
+    await control.getByRole('button', { name: '关闭画布控制' }).click();
+    await ask('间距改成35');
+    await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('修改文字对象 · 武器卡');
+    await control.getByRole('button', { name: '应用整份计划' }).click();
+    await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('已回读核对 1 项操作');
+    await expect.poll(async () => Math.abs(await gap() - 35)).toBeLessThan(1.25);
+    await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
+  });
+
   test('DeepSeek accepts the two-tool follow-up for a natural card-writing request and writes into the existing card', async ({ page }) => {
     const fixture = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '模型协议回归' }),
       JSON.stringify({ type: 'node', id: 'weapon', category: '资料', name: '武器卡', text: '旧设定：来自钟楼。' }),

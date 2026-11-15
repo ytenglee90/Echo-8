@@ -11,6 +11,7 @@ export interface StoredControlReview {
   created?: Record<string, string>;
   before?: Record<string, string>;
   after?: Record<string, string>;
+  placement?: import('../../protocols/canvas-agent.ts').CanvasRelativePlacement;
 }
 function nodeMarker(node: ContentSummary): string {
   return JSON.stringify([node.revision, node.nodeRevision, node.title, node.x, node.y, node.width, node.height, node.titleColor, node.presentation, node.length]);

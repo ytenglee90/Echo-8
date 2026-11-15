@@ -26,6 +26,36 @@ async function harness(execution: 'direct' | 'review' = 'review') {
 }
 let sequence = 0;
 
+test('relative placement uses named nodes and exact geometry despite a different current selection', async () => {
+  const kernel = await harness();
+  const create = (title: string, x: number, y: number, width: number, height: number) => kernel.router.dispatch<{ id: string }>('node.create', { title, x, y, width, height }, 'core.test');
+  const moving = await create('武器卡', 80, 100, 240, 160);
+  const anchor = await create('人物卡', 500, 400, 340, 220);
+  const decoy = await create('其他卡', 800, 900, 300, 150);
+  await kernel.router.dispatch('selection.set', { ids: [decoy.id], mode: 'replace' }, 'core.test');
+  const input = { preparationId: 'relative:reported', sessionId: 'relative', prompt: '武器卡排列杂人物卡上方，中间空20PX' };
+  const local = await kernel.capabilities.request<{ handled: boolean; text?: string }>('canvasControl.localPlan@1', input);
+  assert.equal(local.handled, true);
+  const offerResult = await kernel.router.dispatch<{ directPlanId?: string }>('canvasControl.offer@1', { ...input, complete: true, text: local.text }, 'core.test');
+  assert.equal(offerResult.directPlanId, undefined);
+  const state = () => kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test');
+  const review = (await state()).reviews.at(-1)!;
+  assert.deepEqual(review.actions, [{ type: 'update-node', id: moving.id, x: 550, y: 220 }]);
+  await kernel.router.dispatch('canvasControl.apply@1', { id: review.id }, 'core.test');
+  const summaries = await nodes(kernel);
+  const actual = summaries.find(node => node.id === moving.id)!;
+  assert.equal(summaries.find(node => node.id === anchor.id)!.y - actual.y - actual.height, 20);
+  assert.equal(summaries.find(node => node.id === decoy.id)!.y, 900);
+  assert.equal((await state()).reviews.at(-1)?.verification?.status, 'verified');
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.equal((await nodes(kernel)).find(node => node.id === moving.id)?.y, 100);
+  const continued = await kernel.capabilities.request<{ text: string }>('canvasControl.localPlan@1', { ...input, preparationId: 'relative:after-undo', prompt: '间距改成35' });
+  const continuation = parseCanvasControlPlan(continued.text);
+  assert.deepEqual(continuation.actions, []);
+  assert.match(continuation.answer ?? '', /哪两张卡/u);
+  await kernel.plugins.stop('canvas-control');
+});
+
 test('ordinary abbreviated canvas requests resolve numbered cards, title links and unnamed groups without a model', async () => {
   const kernel = await harness();
   const create = (title: string) => kernel.router.dispatch<{ id: string }>('node.create', { title }, 'core.test');

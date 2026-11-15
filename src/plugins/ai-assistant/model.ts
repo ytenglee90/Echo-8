@@ -235,7 +235,7 @@ export function createAIAssistantPlugin(
         'ai.provider.taskUsage@1',
         'ai.provider.requestTrace@1',
         'canvasControl.context@1',
-        'canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1',
+        'canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2',
         'canvasControl.bindContent@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1',
         'editor.selection@1', 'selection.read@1',
         'context.search@1',

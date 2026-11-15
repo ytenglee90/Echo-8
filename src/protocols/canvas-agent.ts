@@ -1,4 +1,4 @@
-import type { CanvasControlAdmission, CanvasControlPlan } from './canvas-control.ts';
+import type { CanvasControlAdmission, CanvasControlPlan, CanvasControlTaskState } from './canvas-control.ts';
 
 export interface CanvasAgentQuery {
   mode: 'state' | 'selection' | 'recent' | 'search' | 'all' | 'relations';
@@ -29,7 +29,7 @@ export interface CanvasAgentQueryResult {
   recentIds?: string[];
   createdIds?: string[];
   pendingTask?: { goal: string; question: string };
-  tasks?: unknown;
+  tasks?: CanvasControlTaskState;
   available: { nodes: boolean; groups: boolean; connections: boolean };
 }
 export interface CanvasAgentReadResult {
@@ -46,6 +46,15 @@ export interface CanvasAgentSubmission {
   setting?: { kind: 'theme'; theme: 'light' | 'dark' } | { kind: 'background'; color: string };
   clarification?: boolean;
 }
+export interface CanvasRelativePlacement {
+  nodeId: string;
+  anchorId: string;
+  side: 'above' | 'below' | 'left' | 'right';
+  gap: number;
+}
+export interface CanvasAgentSubmissionV2 extends CanvasAgentSubmission {
+  placements?: CanvasRelativePlacement[];
+}
 export interface CanvasControlVerification {
   status: 'verified' | 'mismatch' | 'unavailable';
   checked: number;
@@ -57,5 +66,6 @@ declare module './messages.ts' {
     'canvasControl.agentQuery@1': MessageContract<CanvasControlAdmission & { query: CanvasAgentQuery }, CanvasAgentQueryResult>;
     'canvasControl.agentRead@1': MessageContract<CanvasControlAdmission & { id: string; start?: number; length?: number }, CanvasAgentReadResult>;
     'canvasControl.agentPlan@1': MessageContract<CanvasControlAdmission & CanvasAgentSubmission, { text: string }>;
+    'canvasControl.agentPlan@2': MessageContract<CanvasControlAdmission & CanvasAgentSubmissionV2, { text: string }>;
   }
 }

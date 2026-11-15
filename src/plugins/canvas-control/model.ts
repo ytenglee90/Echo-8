@@ -14,7 +14,7 @@ import { discoverControlTargets } from './target-discovery.ts';
 import { resolveNaturalOperation, shadeColor, type NaturalControlResult, type NaturalControlState } from './natural-operations.ts';
 import { planControlApplication, validateControlScope } from './planning.ts';
 import { actionCounts, controlFailureReason, localOperationDetail } from './operation-details.ts';
-import type { CanvasAgentQuery, CanvasAgentSubmission } from '../../protocols/canvas-agent.ts';
+import type { CanvasAgentQuery, CanvasAgentSubmissionV2 } from '../../protocols/canvas-agent.ts';
 import { grantAgentSnapshot, newAgentDiscovery, queryAgentCanvas, readAgentCanvas, type AgentDiscoverySession } from './agent-discovery.ts';
 import { prepareAgentPlan } from './agent-planning.ts';
 import { verifyControlApplication } from './verification.ts';
@@ -27,7 +27,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       sessionOnlyWorkspace: { [CONTROL_UI_NAMESPACE]: true },
       requiresCapabilities: ['content.summaries@1', 'content.summariesById@1', 'selection.read@1', 'selection.resolve@1', 'selection.entities@1', 'canvasControl.nodesPlan@1'],
       optionalCapabilities: ['context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'context.semanticSearch@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
-      providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
+      providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
       commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
       dispatches: ['canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'selection.set', 'canvas.focusSelection', 'palette.setPreferences'],
       queries: ['canvasControl.state@1'],
@@ -132,13 +132,14 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           return result;
         } catch (error) { trace(signal?.aborted ? 'cancelled' : 'failed', { reason: controlFailureReason(error) }); throw error; }
       } });
-      context.capabilities.provide({ key: 'canvasControl.agentPlan@1', invoke: async (input: CanvasControlAdmission & CanvasAgentSubmission, signal) => {
+      for (const key of ['canvasControl.agentPlan@1', 'canvasControl.agentPlan@2'] as const) context.capabilities.provide({ key, invoke: async (input: CanvasControlAdmission & CanvasAgentSubmissionV2, signal) => {
         const id = createId('canvas-agent-validation');
         const started = performance.now();
         const trace = (state: OperationStatus, detail?: OperationStageUpdateV2['detail']) => context.signals.emit(OPERATION_LOG_STAGE_V2,
           { id, relatedId: input.preparationId, phase: 'canvas-validation', state, elapsedMs: performance.now() - started, detail: { step: 'validate', route: 'model', ...detail } } satisfies OperationStageUpdateV2);
         trace('running');
         try {
+        if (key === 'canvasControl.agentPlan@1' && input.placements !== undefined) throw new Error('相对摆放需要画布计划接口 v2');
         const prepared = await prepareAgentPlan(context, input, agentSession(input), execution(), signal);
         snapshots.set(input.preparationId, prepared.snapshot);
         localResults.set(input.preparationId, prepared.local);
@@ -156,7 +157,16 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           detail: { ...localOperationDetail(operation), ...detail },
         } satisfies OperationStageUpdateV2);
         trace('running', { step: 'targets' });
-        const previous = lastNatural.get(input.sessionId) ?? { ids: [] };
+        let previous = lastNatural.get(input.sessionId) ?? { ids: [] };
+        if (operation.kind === 'placement-gap') {
+          const last = [...reviews.values()].findLast(draft => draft.review.sessionId === input.sessionId);
+          const placement = last?.placement;
+          if (last?.review.status === 'applied' && last.after && placement) {
+            const ids = [placement.nodeId, placement.anchorId];
+            const live = await readTaskMarkers(context, ids, signal);
+            if (ids.every(id => live.markers[id] === last.after?.[id])) previous = { ...previous, lastPlacement: placement };
+          }
+        }
         let result: NaturalControlResult;
         if (operation.kind === 'content') {
           result = await resolveNaturalOperation(context, input, { kind: 'find', names: operation.names }, previous, chosen, signal);
@@ -384,7 +394,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           review.replacement = { count: hits.length, nodeCount: new Set(hits.map(hit => hit.nodeId)).size,
             from: hits[0]!.matchedText, to: replacement, examples: hits.slice(0, 5).map(hit => `${hit.title} · ${hit.preview}`) };
         }
-        reviews.set(id, { review, snapshot, replacement: local?.replacement });
+        reviews.set(id, { review, snapshot, replacement: local?.replacement, placement: local?.placement });
         if (local && plan.actions.length === 1 && (plan.actions[0]?.type === 'create-connection' || plan.actions[0]?.type === 'update-connection')) remember(input.sessionId, { pendingLine: id });
         while (reviews.size > 8) {
           const oldest = reviews.keys().next().value!;

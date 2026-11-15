@@ -154,7 +154,8 @@ export async function queryAgentCanvas(
     groups: visibleGroups.map(group => ({ id: group.id, title: group.title.slice(0, 300), members: group.memberIds, revision: group.revision })),
     connections: connections.slice(0, 12).map(edge => ({ id: edge.id, from: edge.from.nodeId, to: edge.to.nodeId,
       line: isTitleConnection(edge) ? 'dashed' : 'solid', label: (edge.label ?? '').slice(0, 200), revision: edge.revision })),
-    ...(mode === 'state' ? { selectedIds, recentIds, createdIds, pendingTask: previous.pendingTask } : {}),
+    ...(mode === 'state' || mode === 'selection' ? { selectedIds: selectedIds.filter(id => visibleIds.has(id)) } : {}),
+    ...(mode === 'state' ? { recentIds: recentIds.filter(id => visibleIds.has(id)), createdIds: createdIds.filter(id => visibleIds.has(id)), pendingTask: previous.pendingTask } : {}),
     available: { nodes: true, groups: Boolean(owners.groups), connections: Boolean(owners.graph) },
   };
 }

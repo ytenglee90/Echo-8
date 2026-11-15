@@ -38,6 +38,56 @@ function tool(name: string, args: unknown): AIGenerateResult {
 }
 const initial: AIGenerateRequest = { messages: [{ role: 'user', content: '完善人物并关联新场景' }], canvasAgentTransport: 'native', tools: CANVAS_AGENT_TOOLS, maxOutputTokens: 4000, temperature: 0.2 };
 
+test('a model can delegate exact relative geometry and stale anchors reject the whole plan', async () => {
+  const h = await harness();
+  const a = await h.create('武器卡');
+  const b = await h.create('人物卡');
+  const plan: CanvasControlPlan = { version: 1, actions: [] };
+  const args = { plan, placements: [{ nodeId: a.id, anchorId: b.id, side: 'below', gap: 35 }] };
+  await h.query({ mode: 'search', query: '武器卡' });
+  await assert.rejects(() => h.kernel.capabilities.request('canvasControl.agentPlan@2', { ...h.input, ...args }), /范围外/u);
+  await h.query({ mode: 'search', query: '人物卡' });
+  const result = await runCanvasAgentLoop(h.context, prepared(h.input), initial, tool('propose_canvas_plan', args),
+    async () => { throw new Error('unexpected model round'); }, async () => ({ messages: [], executed: 0 }), new AbortController().signal);
+  assert.equal(result.canvasPlan, true);
+  await h.kernel.router.dispatch('canvasControl.offer@1', { ...h.input, text: result.result.text, complete: true }, 'core.test');
+  const seen = (await h.state()).reviews.at(-1)!;
+  assert.equal(seen.actions.length, 1);
+  assert.equal(await h.kernel.router.dispatch('node.rename', { id: b.id, title: '人物新卡' }, 'core.test') !== undefined, true);
+  await assert.rejects(() => h.kernel.router.dispatch('canvasControl.apply@1', { id: seen.id }, 'core.test'), /已经变化/u);
+  const next = { ...h.input, preparationId: 'agent:relative-fresh' };
+  await h.query({ mode: 'search', query: '武器卡' }, next);
+  await h.query({ mode: 'search', query: '人物新卡' }, next);
+  const fresh = await h.kernel.capabilities.request<{ text: string }>('canvasControl.agentPlan@2', { ...next, ...args });
+  await h.kernel.router.dispatch('canvasControl.offer@1', { ...next, text: fresh.text, complete: true }, 'core.test');
+  await h.kernel.router.dispatch('canvasControl.apply@1', { id: (await h.state()).reviews.at(-1)!.id }, 'core.test');
+  const summaries = await h.kernel.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: [a.id, b.id] });
+  const moved = summaries.find(node => node.id === a.id)!;
+  const anchor = summaries.find(node => node.id === b.id)!;
+  assert.equal(moved.y - anchor.y - anchor.height, 35);
+  assert.equal((await h.state()).reviews.at(-1)?.verification?.status, 'verified');
+  await h.kernel.plugins.stop('canvas-control');
+});
+
+test('identical tool results cite their existing call without replaying data or breaking the tool-message sequence', async () => {
+  const h = await harness();
+  await h.create('本轮目标');
+  let round = 0;
+  const search = (id: string): AIGenerateResult => ({ ...tool('query_canvas', { mode: 'search', query: '本轮目标' }),
+    toolCalls: [{ id, name: 'query_canvas', arguments: '{"mode":"search","query":"本轮目标"}' }] });
+  await runCanvasAgentLoop(h.context, prepared(h.input), initial, search('first'), async request => {
+    if (++round === 1) return search('second');
+    const results = request.messages.filter(message => message.role === 'tool');
+    assert.deepEqual(results.map(message => message.toolCallId), ['first', 'second']);
+    assert.match(results[0]!.content, /"title":"本轮目标"/u);
+    assert.match(results[1]!.content, /"previousCall":"first"/u);
+    assert.doesNotMatch(results[1]!.content, /"nodes"/u);
+    return { text: '已定位。', provider: 'test', model: 'test' };
+  }, async () => ({ messages: [], executed: 0 }), new AbortController().signal);
+  assert.equal(round, 2);
+  await h.kernel.plugins.stop('canvas-control');
+});
+
 test('semantic canvas tools discover, range-read and submit a general-chat task through one verified atomic transaction', async () => {
   const h = await harness();
   const hero = await h.create('主角｜林渊', '修钟学徒。年龄29。');

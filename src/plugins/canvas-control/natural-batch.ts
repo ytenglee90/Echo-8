@@ -20,7 +20,7 @@ export async function resolveNaturalBatch(
     if (result.choice) return result;
     if (result.replacement) return fail('请单独提交多处正文替换，预览会显示全部命中。');
     if (!result.plan.actions.length && step.kind !== 'filter' && step.kind !== 'relations') {
-      return fail(`第 ${index + 1} 步未形成可应用的操作。${result.plan.answer ?? '请补充目标。'}`);
+      return { ...fail(`第 ${index + 1} 步未形成可应用的操作。${result.plan.answer ?? '请补充目标。'}`), unresolvedTarget: result.unresolvedTarget };
     }
     const aliases = new Map(result.plan.actions.flatMap(action => 'ref' in action ? [[action.ref, `step-${index + 1}-${action.ref}`]] : []));
     const resolveId = (id: string) => aliases.get(id) ?? id;

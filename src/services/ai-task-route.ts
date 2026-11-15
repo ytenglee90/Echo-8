@@ -4,6 +4,7 @@ import { extendedCanvasOperation, naturalColor, naturalTargetFilter, NATURAL_QUO
 /** Deterministic, conservative hints. Ambiguous requests retain the full path. */
 export function canvasControlPurpose(prompt: string): CanvasControlPurpose {
   if (canvasContentTarget(prompt)) return 'content';
+  if (relativePlacement(canvasIntentText(prompt)) || placementGap(canvasIntentText(prompt))) return 'move';
   prompt = canvasCommandText(prompt);
   const fields = [
     /颜色|改色|配色|#[0-9a-f]{6}/iu.test(prompt) ? 'appearance' : '',
@@ -13,6 +14,11 @@ export function canvasControlPurpose(prompt: string): CanvasControlPurpose {
     /新建|创建|生成/u.test(prompt) ? 'creation' : '',
   ].filter(Boolean);
   return fields.length === 1 ? fields[0] as CanvasControlPurpose : 'general';
+}
+
+export function isGeometryOnlyCanvasTask(prompt: string): boolean {
+  return canvasControlPurpose(prompt) === 'move' &&
+    !/正文|内容|历史|记忆|参考|根据|结合|依据|写着|提到|描述/u.test(canvasCommandText(prompt));
 }
 
 /** Reference titles are data, never routing commands or creative-intent cues. */
@@ -45,7 +51,9 @@ export type NaturalCanvasOperation =
   | { kind: 'replace' | 'append'; names: string[]; text: string; old?: string; occurrence?: number | 'all' }
   | { kind: 'filter'; names: string[]; empty: boolean; disconnected: boolean; target?: string }
   | { kind: 'search'; names: string[]; terms: string[]; ungrouped: boolean }
-  | { kind: 'move' | 'arrange'; names: string[]; x?: number; y?: number; layout?: 'horizontal' | 'vertical' | 'grid' };
+  | { kind: 'move' | 'arrange'; names: string[]; x?: number; y?: number; layout?: 'horizontal' | 'vertical' | 'grid' }
+  | { kind: 'place-relative'; names: [string, string]; side: 'above' | 'below' | 'left' | 'right'; gap: number }
+  | { kind: 'placement-gap'; names: []; gap: number };
 
 const name = (value: string) => value.trim().replace(/^@\[([^\]]+)\](?:\([^)]+\))?$/u, '$1').replace(/^[「“"『]|[」”"』]$/gu, '').trim();
 // Quoted titles and inline references are single operands, including any list separators.
@@ -127,6 +135,31 @@ function canvasIntentText(prompt: string): string {
     .replace(/^(?:我想|我希望)\s*(?=把|将|建|创建|在画布|用(?:实线|虚线))/u, '');
 }
 
+function relativePlacement(command: string): Extract<NaturalCanvasOperation, { kind: 'place-relative' }> | undefined {
+  const text = command.trim().replace(/[。！!]$/u, '');
+  const position = new RegExp(String.raw`^(?:把|将)?\s*${connectionOperand}\s*(?:(?:摆放|放置|排列|移动|挪动|摆|放|排|移|挪)(?:到|在)|排列杂)\s*${connectionOperand}\s*(上方|上面|下方|下面|左侧|左边|右侧|右边)(?:[，,、；;\s]*(?:中间\s*)?(?:间隔|间距(?:为)?|相隔|隔|留(?:出)?|空)\s*(\d+(?:\.\d+)?)[ \t]*(?:px|像素)?)?$`, 'iu');
+  const match = position.exec(text);
+  if (!match) return undefined;
+  const anchor = match[2]!.trim();
+  const targets: [string, string] = [name(match[1]!), name(anchor === name(anchor) ? anchor.replace(/的$/u, '') : anchor)];
+  if (targets.some(target => !target || target.length > 120) || /^(?:如果|假如|假设|要是|不要|先别|别|如何|怎么|怎样|解释|分析)/u.test(targets[0])) return undefined;
+  const gap = Number(match[4] ?? 60);
+  if (!Number.isFinite(gap) || gap > 10_000) return undefined;
+  const side = match[3]!.startsWith('上') ? 'above' : match[3]!.startsWith('下') ? 'below' : match[3]!.startsWith('左') ? 'left' : 'right';
+  return { kind: 'place-relative', names: targets, side, gap };
+}
+
+function placementGap(command: string): Extract<NaturalCanvasOperation, { kind: 'placement-gap' }> | undefined {
+  const match = /^(?:把|将)?(?:刚才(?:的)?|现在(?:的)?)?(?:两张卡(?:之间)?的)?(?:中间|间距|间隔|空隙|距离)\s*(?:再)?\s*(?:留|空|改成|改为|调到|调成|换成|拉到)\s*(\d+(?:\.\d+)?)[ \t]*(?:px|像素)?[。！!]?$/iu.exec(command.trim());
+  const gap = Number(match?.[1]);
+  return Number.isFinite(gap) && gap <= 10_000 ? { kind: 'placement-gap', names: [], gap } : undefined;
+}
+
+export function asksForCanvasContinuation(prompt: string): boolean {
+  if (placementGap(canvasIntentText(prompt))) return true;
+  return /继续|刚才|上次|上一(?:个|条|轮|次|张)|这份计划|前(?:一个|一条|一张)|(?:改|换|挪|移|拆|连|用)回来|(?:把|给|改|移动|连接|让)\s*(?:它|这(?:条|张|组|个|些))|^\s*(?:它|这(?:条|张|组|个|些))/u.test(canvasCommandText(prompt));
+}
+
 /** A named write destination is an action even when its body needs a model. */
 export function canvasContentTarget(prompt: string): { names: string[] } | undefined {
   const text = canvasIntentText(prompt).trim().replace(/[。！!]$/u, '');
@@ -181,6 +214,8 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
     if (pair.length === 2) return { kind: 'relations', names: pair };
   }
   if (/[？?]$/u.test(command) || /(?:吗|么|会怎样|怎么样)$/u.test(text)) return undefined;
+  const placement = relativePlacement(command) ?? placementGap(command);
+  if (placement) return placement;
   const content = canvasContentTarget(command);
   if (content) return { kind: 'content', ...content };
   if ((match = /^(水平|横向|横排|垂直|竖直|纵向|纵排|竖排|宫格|网格)(?:排列|排布|布局|整理)\s*(.*)$/u.exec(text))) {
@@ -250,6 +285,9 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
     const filter = naturalTargetFilter(match[1]!);
     return { kind: 'presentation', names: filter ? [match[1]!.trim()] : group ? [name(group[1]!)] : names(match[1]!), presentation: /文本框|文字框/u.test(match[2]!) ? 'text-box' : 'card', members: Boolean(group) && !filter };
   }
+  if (/^(?:把|将)?(?:这组|这一组|刚才那组|选中的群组)(?:拆开|散开|解散)$/u.test(text)) {
+    return { kind: 'ungroup', names: [/刚才/u.test(text) ? '刚才那组' : '这组'] };
+  }
   if ((match = /^(?:解组|取消(?:分组|群组))\s*(.*)$/u.exec(text))) return ungroupTarget(match[1]!);
   if ((match = /^取消\s*(.+?)\s*(?:的)?(?:分组|群组)$/u.exec(text))) return ungroupTarget(match[1]!);
   if ((match = /^(?:把|将)?\s*(.+?)\s*(?:解组|取消群组|取消分组)$/u.exec(text))) return ungroupTarget(match[1]!);
@@ -297,5 +335,7 @@ export function needsCanvasActionPlanning(prompt: string): boolean {
     /(?:怎么做|如何做|的方法|的步骤|有哪些方式)/u.test(text)) return false;
   const imperative = /^(?:在(?:当前)?画布上|(?:再|接着|然后)?(?:把|将|给|让|新建|创建|添加|移动|调整|连接|整理|排列))/u.test(text);
   if (imperative && /节点|卡片|文本框|画布|标题栏|群组|拉线|连线|连接到|连接起来|连起来|对齐|分组|归组|留白|横着排|竖着排/u.test(text)) return true;
+  if (imperative && /(?:挪|移|摆|放|排)(?:动)?(?:到|在).{1,120}(?:上方|下方|上头|下头|旁边|左边|右边|底下)/u.test(text) &&
+      /(?:这|那|哪|一)(?:张|个).{0,24}卡|卡(?:上方|下方|上头|下头|旁边|左边|右边|底下)/u.test(text)) return true;
   return /^(?:选中的?(?:文字)?节点|画布(?:背景)?|(?:应用)?主题).{0,120}?(?:移动|对齐|排列|改色|改成|改为|换成|调整|切换|分组|连线|连接|文本框|删除)/u.test(text);
 }

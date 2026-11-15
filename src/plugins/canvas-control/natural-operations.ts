@@ -2,6 +2,7 @@ import type { PluginContext } from '../../core/contracts.ts';
 import type { AIContextCatalogContribution, AIContextReadContribution, AIContextSearchContribution } from '../../protocols/ai.ts';
 import type { CanvasControlAction, CanvasControlAdmission, CanvasControlPlan, CanvasControlState } from '../../protocols/canvas-control.ts';
 import { isTitleConnection } from '../../protocols/connections.ts';
+import type { CanvasRelativePlacement } from '../../protocols/canvas-agent.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { ContentReplaceRequest, SearchHit } from '../../protocols/search.ts';
 import type { NaturalCanvasOperation } from '../../services/ai-task-route.ts';
@@ -10,11 +11,13 @@ import { readControlOwners } from './context.ts';
 import { naturalColor, NATURAL_COLORS } from '../../services/natural-canvas-rules.ts';
 import { resolveNaturalBatch } from './natural-batch.ts';
 import { canvasTitleAliases, normalizeCanvasTitle as normalize } from '../../services/canvas-titles.ts';
+import { planRelativePlacement } from './relative-placement.ts';
 
 export interface NaturalControlState {
   ids: string[]; lineId?: string; groupId?: string; pendingLine?: string; draftTitles?: ReadonlyMap<string, string>;
   createdIds?: string[];
   pendingTask?: { goal: string; question: string };
+  lastPlacement?: CanvasRelativePlacement;
   unfinishedConnection?: { from: string; line?: 'solid' | 'dashed'; expiresAt: number };
 }
 export interface NaturalControlResult {
@@ -31,13 +34,14 @@ export interface NaturalControlResult {
   selectionMode?: 'replace' | 'add';
   replacement?: ContentReplaceRequest;
   unresolvedTarget?: boolean;
+  placement?: CanvasRelativePlacement;
 }
 
 const answer = (message: string): NaturalControlResult => ({ plan: { version: 1, actions: [], answer: message } });
 const unresolvedTarget = (message: string): NaturalControlResult => ({ ...answer(message), unresolvedTarget: true });
 const CHARACTER_CARD_BODY = ['姓名：', '身份：', '外貌：', '性格：', '目标：', '人物关系：'].join('\n');
 const recentCreation = /^(?:新节点|刚(?:才)?(?:新建|创建|建)(?:的)?(?:那(?:一)?(?:个|张))?(?:节点|卡片|角色卡|人物卡|文本框))$/u;
-const pronoun = /^(?:它|新节点|刚建的节点|刚才(?:那个|找到的|选中的|创建的)(?:节点|卡片)?|这个|这一个|这两个|这几个|这些|它们|这批|刚才的|刚才那批|刚才筛出的(?:空白)?节点|(?:当前)?选中(?:的)?(?:(?:两|2)个)?(?:节点|卡片)?|选区)$/u;
+const pronoun = /^(?:它|新节点|刚建的节点|刚才(?:那个|那张|找到的|选中的|创建的)(?:节点|卡片|卡)?|这个|这一个|这张(?:卡片|卡)?|这两个|这几个|这些|它们|这批|刚才的|刚才那批|刚才筛出的(?:空白)?节点|(?:当前)?选中(?:的)?(?:(?:两|2)个)?(?:节点|卡片)?|选区)$/u;
 
 export async function resolveNaturalOperation(
   context: PluginContext, request: CanvasControlAdmission, operation: NaturalCanvasOperation,
@@ -135,7 +139,7 @@ export async function resolveNaturalOperation(
     }
     if (pronoun.test(name) || recentCreation.test(name)) {
       const selected = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
-      const useSelection = /^(?:(?:当前)?选中|选区|这两个$|这几个$)/u.test(name);
+      const useSelection = /^(?:(?:当前)?选中|选区|这两个$|这几个$|这张(?:卡片|卡)?$)/u.test(name);
       const selectedIds = useSelection ? selected.ids : recentCreation.test(name) ? previous.createdIds ?? previous.ids :
         previous.ids.length ? previous.ids : selected.ids;
       const fallback = !selectedIds.length && operation.kind === 'arrange' ? [...sources.values()].filter(source => source.automaticRetrieval !== false).map(source => source.sourceId) : selectedIds;
@@ -143,7 +147,7 @@ export async function resolveNaturalOperation(
       const ids = [...new Set(name === '这两个' && operation.kind === 'connect' ? fallback : fallback.flatMap(id => groups.find(group => group.id === id)?.memberIds ?? [id]))]
         .filter(id => drafts.has(id) || (sources.has(id) && (useSelection || sources.get(id)?.automaticRetrieval !== false)));
       if (name === '这两个' && ids.length !== 2) return answer('请选中两个节点，再继续连线。');
-      if (ids.length > 1 && (/^(?:它|这个|这一个|刚才那个(?:节点|卡片)?)$/u.test(name) || recentCreation.test(name))) {
+      if (ids.length > 1 && (/^(?:它|这个|这一个|这张(?:卡片|卡)?|刚才(?:那个|那张)(?:节点|卡片|卡)?)$/u.test(name) || recentCreation.test(name))) {
         return chooseNode(name, ids, '刚才涉及多个节点，请选出你指的那一个。');
       }
       const missing = selectedIds.length > 0 && !useSelection ? '刚才的对象已无法定位。' : '';
@@ -175,6 +179,17 @@ export async function resolveNaturalOperation(
   };
   if (operation.kind === 'batch') return resolveNaturalBatch(operation.steps, previous, (step, state) =>
     resolveNaturalOperation(context, request, step, state, chosen, signal));
+  const relativePlan = async (placement: CanvasRelativePlacement): Promise<NaturalControlResult> => {
+    const targets = [placement.nodeId, placement.anchorId];
+    const nodes = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: targets }, signal);
+    if (nodes.length !== 2) return answer('上次涉及的卡片已无法定位，请指出这次的两张卡。');
+    return { ...makePlan([planRelativePlacement(nodes, placement)], targets, { ids: [placement.nodeId] }), placement };
+  };
+  if (operation.kind === 'placement-gap') {
+    const previousPlacement = previous.lastPlacement;
+    if (!previousPlacement) return answer('哪两张卡之间要留这个间距？');
+    return relativePlan({ ...previousPlacement, gap: operation.gap });
+  }
   if (operation.kind === 'narrow') {
     if (!previous.ids.length) return answer('当前没有可缩小的筛选结果。');
     const excluded = new Set<string>();
@@ -282,6 +297,7 @@ export async function resolveNaturalOperation(
   for (const name of unfinished ? operation.names.slice(1) : operation.names) {
     const result = await read(name);
     if (!Array.isArray(result)) return result;
+    if (operation.kind === 'place-relative' && result.length !== 1) return answer(`「${name}」需要指向一张卡，请选中它或补充名称。`);
     if (operation.kind === 'connect' && operation.names.length === 2 && result.length !== 1) return answer(`「${name}」需要指向一个节点，请明确端点名称。`);
     ids.push(...result);
   }
@@ -471,6 +487,10 @@ export async function resolveNaturalOperation(
     const matches = fieldHits.length ? fieldHits : hits;
     if (matches.length !== 1) return answer(matches.length ? '旧值出现多次，请引用更完整的原句。' : '没有找到要替换的旧值。');
     return makePlan([{ type: 'update-node', id: source.sourceId, edit: { start: matches[0]!, deleteCount: operation.old.length, insert: operation.text, expectedRevision: source.revision } }], unique, { ids: unique });
+  }
+  if (operation.kind === 'place-relative') {
+    if (unique.length !== 2) return answer('请指定两个不同的节点。');
+    return relativePlan({ nodeId: unique[0]!, anchorId: unique[1]!, side: operation.side, gap: operation.gap });
   }
   if (operation.kind === 'move' || operation.kind === 'arrange') {
     if (unique.length > 80) return answer('目标超过 80 项，请分批移动或排列。');

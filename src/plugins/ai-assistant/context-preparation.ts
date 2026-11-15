@@ -34,7 +34,7 @@ import {
 } from './memory-retrieval.ts';
 import { extractTerms } from './memory-terms.ts';
 import { sessionTranscriptSourceId } from './transcript-storage.ts';
-import { canvasCommandText, canvasControlPurpose, naturalCanvasOperation, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
+import { asksForCanvasContinuation, canvasCommandText, canvasControlPurpose, isGeometryOnlyCanvasTask, naturalCanvasOperation, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
 import { readParagraphTarget } from './paragraph-target.ts';
 import { operationCreatesWriteback } from './operations.ts';
 import { bindNaturalWriteback, naturalWritebackIntent, readBoundWriteback, writebackTaskInstructions } from './natural-writeback.ts';
@@ -94,10 +94,12 @@ export async function prepareAIContext(
     ? { budget: budgetOverride, modelContextWindowTokens: undefined }
     : await resolveAIContextBudget(context, payload.providerProfileId, signal);
   const budget = resolvedBudget.budget;
-  const selectedMemorySourceIds = [...new Set(payload.memorySourceIds ?? [])];
+  const mechanicalCanvasTask = payload.operation === 'canvas-control' && isGeometryOnlyCanvasTask(payload.prompt);
+  const continuingCanvasTask = asksForCanvasContinuation(payload.prompt);
+  const selectedMemorySourceIds = mechanicalCanvasTask ? [] : [...new Set(payload.memorySourceIds ?? [])];
   const selectedMemorySet = new Set(selectedMemorySourceIds);
   const memoryArtifactOwner = new Map<string, string>();
-  for (const memory of Object.values(memoryIndexes)) {
+  for (const memory of mechanicalCanvasTask ? [] : Object.values(memoryIndexes)) {
     memoryArtifactOwner.set(memory.sourceId, memory.sourceId);
     if (memory.indexNodeId) memoryArtifactOwner.set(memory.indexNodeId, memory.sourceId);
     if (memory.hubNodeId) memoryArtifactOwner.set(memory.hubNodeId, memory.sourceId);
@@ -136,13 +138,14 @@ export async function prepareAIContext(
     ? Object.fromEntries(Object.entries(memoryIndexes).filter(([sourceId]) => selectedMemorySet.has(sourceId)))
     : permitsAutomaticRetrieval ? memoryIndexes : {};
   const transcriptSourceId = sessionTranscriptSourceId(session);
-  const transcriptMetadata = await readContextSource(
+  const useTranscript = !naturalEdit && !fullSummary && (!mechanicalCanvasTask || continuingCanvasTask);
+  const transcriptMetadata = !mechanicalCanvasTask || useTranscript ? await readContextSource(
     context,
     { sourceId: transcriptSourceId, start: 0, length: 0 },
     signal,
-  );
+  ) : undefined;
   const baseCatalog = externalCatalog.some((source) => source.sourceId === transcriptSourceId) ||
-    !transcriptMetadata.source
+    !transcriptMetadata?.source
     ? externalCatalog
     : [...externalCatalog, transcriptMetadata.source];
   const memorySources = (await Promise.all(Object.values(scopedMemoryIndexes).map(async (memory) => {
@@ -243,11 +246,11 @@ export async function prepareAIContext(
   report(0.25);
 
   const transcriptMeta = catalog.find((source) => source.sourceId === transcriptSourceId);
-  if (transcriptMeta?.length && !naturalEdit && !fullSummary) {
+  if (transcriptMeta?.length && useTranscript) {
     const block = await readTailEvidenceBlock(
       context,
       transcriptMeta,
-      Math.min(budget.transcriptWindow, remainingCharacters),
+      Math.min(mechanicalCanvasTask ? 1_000 : budget.transcriptWindow, remainingCharacters),
       remainingTokens,
       signal,
     );

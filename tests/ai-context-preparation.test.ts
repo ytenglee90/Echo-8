@@ -76,6 +76,18 @@ function memory(sourceId: string, title: string, keywords: string[] = []): AIMem
   };
 }
 
+test('a geometry-only request skips both the selected memory and unrelated conversation history', async () => {
+  const context = preparationContext({
+    'node:transcript': { title: '当前对话', text: '[用户]\n旧任务：把地图删掉。\n[助手]\n等待确认。' },
+    'node:memory': { title: '旧任务', text: '旧卡片的正文。' },
+  });
+  const prepared = await prepareAIContext(context, session(), { 'node:memory': memory('node:memory', '旧任务') }, {
+    sessionId: 'session:1', operation: 'canvas-control', prompt: '@画布操作 把人物卡和武器卡的位置对齐，保留相对距离', memorySourceIds: ['node:memory'],
+  }, new AbortController().signal, () => undefined, deriveAIContextBudget());
+  assert.deepEqual(prepared.sources, []);
+  assert.equal(prepared.selectedMemorySourceIds?.length ?? 0, 0);
+});
+
 test('appearance commands omit body reads while creative palette requests retain explicitly referenced theme evidence', async () => {
   const texts = { 'node:transcript': { title: '当前对话', text: '' }, 'node:theme': { title: '主题', text: '主题为冬夜海港，禁止使用暖红色。' } };
   const context = preparationContext(texts);

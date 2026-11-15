@@ -1,6 +1,6 @@
 import { isRecord, type PluginContext } from '../../core/contracts.ts';
 import type { CanvasControlAdmission } from '../../protocols/canvas-control.ts';
-import type { CanvasAgentSubmission } from '../../protocols/canvas-agent.ts';
+import type { CanvasAgentSubmissionV2, CanvasRelativePlacement } from '../../protocols/canvas-agent.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
 import { assertNotAborted } from '../../services/async-control.ts';
@@ -10,18 +10,40 @@ import { captureControlSnapshot, readControlOwners } from './context.ts';
 import { validateControlScope } from './planning.ts';
 import type { AgentDiscoverySession } from './agent-discovery.ts';
 import type { NaturalControlResult } from './natural-operations.ts';
+import { planRelativePlacement } from './relative-placement.ts';
+
+function validatePlacements(value: unknown): CanvasRelativePlacement[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 20 || value.some(item => !isRecord(item) ||
+    Object.keys(item).some(key => !['nodeId', 'anchorId', 'side', 'gap'].includes(key)) ||
+    typeof item.nodeId !== 'string' || typeof item.anchorId !== 'string' || item.nodeId === item.anchorId ||
+    !['above', 'below', 'left', 'right'].includes(String(item.side)) ||
+    typeof item.gap !== 'number' || !Number.isFinite(item.gap) || item.gap < 0 || item.gap > 10_000)) {
+    throw new Error('相对摆放参数无效，请提供两张已有卡片、方向与间距');
+  }
+  const moved = new Set(value.map(item => item.nodeId));
+  if (moved.size !== value.length || value.some(item => moved.has(item.anchorId))) throw new Error('同一份计划的相对摆放需要固定且互不移动的参照卡片');
+  return value;
+}
 
 export async function prepareAgentPlan(
-  context: PluginContext, input: CanvasControlAdmission & CanvasAgentSubmission,
+  context: PluginContext, input: CanvasControlAdmission & CanvasAgentSubmissionV2,
   session: AgentDiscoverySession, execution: 'direct' | 'review', signal?: AbortSignal,
 ) {
   if (!isRecord(input.plan) || (input.focusIds !== undefined && (!Array.isArray(input.focusIds) || input.focusIds.length > 80 || input.focusIds.some(id => typeof id !== 'string'))) ||
     (input.clarification !== undefined && typeof input.clarification !== 'boolean')) throw new Error('画布计划参数无效');
-  const plan = parseCanvasControlPlan(JSON.stringify(input.plan));
+  let plan = parseCanvasControlPlan(JSON.stringify(input.plan));
+  const placements = validatePlacements(input.placements);
+  if (placements.length && (input.setting || input.clarification)) throw new Error('相对摆放不能与主题设置或澄清合并');
+  const placementIds = new Set(placements.flatMap(item => [item.nodeId, item.anchorId]));
+  if (plan.actions.some(action => (action.type === 'delete' && action.ids.some(id => placementIds.has(id))) ||
+    (action.type === 'update-node' && placementIds.has(action.id) && ['x', 'y', 'width', 'height', 'presentation'].some(key => key in action)))) {
+    throw new Error('相对摆放引用的卡片不能同时重复移动、变更尺寸或删除');
+  }
   if (!input.clarification && needsCanvasCreationPlanning(input.prompt) && !plan.actions.some(action => action.type === 'create-node')) throw new Error('当前文字节点能力已启用，但返回计划没有 create-node。请根据本轮要求生成新节点。');
   if (!plan.actions.length && plan.answer && deniesCanvasCapability(plan.answer)) throw new Error('应用已确认节点读写能力可用。请查询实际对象，或只询问缺少的目标信息。');
   const refs = new Set(plan.actions.flatMap(action => 'ref' in action ? [action.ref] : []));
-  const ids = new Set(input.focusIds ?? []);
+  const ids = new Set([...(input.focusIds ?? []), ...placementIds]);
   for (const action of plan.actions) {
     if ('id' in action) ids.add(action.id);
     if (action.type === 'delete') action.ids.forEach(id => ids.add(id));
@@ -51,13 +73,31 @@ export async function prepareAgentPlan(
     if (session.connectionRevisions.has(id) && owners.graph?.connections.find(edge => edge.id === id)?.revision !== session.connectionRevisions.get(id)) throw new Error('已查询的连线已变化，请重新发送任务');
   }
   const snapshot = await captureControlSnapshot(context, { ...input, sourceIds: [...ids] }, 'selection', signal, undefined, true);
+  for (const id of placementIds) {
+    const current = snapshot.nodes.find(node => node.id === id);
+    const known = session.nodes.get(id);
+    if (!current || !known || (current.nodeRevision ?? current.revision) !== known.nodeRevision || current.revision !== known.revision) {
+      throw new Error('相对摆放使用的卡片已变化，请重新发送任务');
+    }
+  }
+  if (placements.length) {
+    const actions = [...plan.actions];
+    for (const placement of placements) {
+      const move = planRelativePlacement(snapshot.nodes, placement);
+      const index = actions.findIndex(action => action.type === 'update-node' && action.id === placement.nodeId);
+      if (index < 0) actions.push(move);
+      else actions[index] = { ...actions[index], ...move };
+    }
+    plan = parseCanvasControlPlan(JSON.stringify({ ...plan, actions }));
+  }
   snapshot.execution = execution;
   validateControlScope(plan, snapshot);
   assertNotAborted(signal);
   const local: NaturalControlResult = { plan, targets: [...ids],
+    ...(placements.length === 1 ? { placement: placements[0] } : {}),
     ...(input.setting ? { setting: input.setting.kind === 'theme' ? { ...input.setting, names: [] } : input.setting } : {}),
     ...(input.focusIds?.length ? { focus: input.focusIds } : {}),
-    next: { ids: nodes.length ? nodes.map(node => node.id) : [...session.nodes.keys()].slice(-12),
+    next: { ids: placements.length ? placements.map(item => item.nodeId) : nodes.length ? nodes.map(node => node.id) : [...session.nodes.keys()].slice(-12),
       pendingTask: input.clarification ? { goal: input.prompt.slice(0, 1000), question: plan.answer!.slice(0, 800) } : undefined },
   };
   return { snapshot, local, text: JSON.stringify(plan) };

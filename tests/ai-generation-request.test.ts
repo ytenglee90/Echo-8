@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PluginContext } from '../src/core/contracts.ts';
+import { nativeConversation } from '../src/plugins/ai-assistant/request-evidence.ts';
 import type {
   AIPromptPolicyContribution,
   AIPromptTemplateCatalog,
@@ -95,6 +96,57 @@ function contextWithPolicies(
     },
   } as unknown as PluginContext;
 }
+
+test('long conversations preserve the latest text and exact earlier user constraints within a local budget', () => {
+  const text = [
+    '[用户]\n钟楼段落必须保留黎南的动机。',
+    '[助手]\n' + '旧版草稿片段。'.repeat(950),
+    '[用户]\n加入雨夜场景。',
+    '[助手]\n开头需要保留。' + '长篇草稿。'.repeat(1500) + '最后一句。',
+  ].join('\n');
+  const history = nativeConversation(text, '把黎南那段改短一点');
+  assert.equal(history[0]?.content, '钟楼段落必须保留黎南的动机。');
+  assert.equal(history[1]?.content, '加入雨夜场景。');
+  assert.match(history.at(-1)!.content, /^开头需要保留。[\s\S]+省略该条原文中段[\s\S]+最后一句。$/u);
+  assert.ok(history.at(-1)!.content.length <= 4000);
+  assert.doesNotMatch(JSON.stringify(history), /旧版草稿片段/u);
+});
+
+test('mechanical canvas prompts advertise a smaller tool set but descriptive body matches can read text', async () => {
+  const context = { capabilities: { requestAll: async () => [], request: async (key: string) => {
+    if (key === 'ai.provider.catalog@1') return { activeId: 'provider:1', options: [{ id: 'provider:1', canvasToolCallingSupported: true }] };
+    if (key === 'canvasControl.context@2') return { instruction: 'legacy', objectDirectory: '' };
+    assert.equal(key, 'canvasControl.agentQuery@1');
+    return { nodes: [], groups: [], connections: [], total: 0, available: { nodes: true, groups: true, connections: true } };
+  } }, diagnostics: { warn() {} } } as unknown as PluginContext;
+  const prepared = { ...preparedContext(), operation: 'canvas-control' as const, sources: [], memoryRetrieval: undefined, webSearchEnabled: false };
+  const simple = await buildGenerateRequest(context, { ...prepared, prompt: '把人物卡和武器卡的位置对齐，保留相对距离' }, { templates: [] });
+  const described = await buildGenerateRequest(context, { ...prepared, prompt: '把写着铜片的卡片移动到人物卡上方' }, { templates: [] });
+  assert.deepEqual(simple.tools?.map(tool => tool.function.name), ['query_canvas', 'propose_canvas_plan']);
+  assert.ok(described.tools?.some(tool => tool.function.name === 'read_canvas'));
+  assert.ok(JSON.stringify(simple).length < JSON.stringify(described).length * 0.75);
+});
+
+test('fresh canvas requests use selection without past plans, while a follow-up sends only concise current status', async () => {
+  const modes: string[] = [];
+  const context = { capabilities: { requestAll: async () => [], request: async (key: string, input?: { query?: { mode: string } }) => {
+    if (key === 'ai.provider.catalog@1') return { activeId: 'provider:1', options: [{ id: 'provider:1', canvasToolCallingSupported: true }] };
+    assert.equal(key, 'canvasControl.agentQuery@1');
+    const mode = input!.query!.mode;
+    modes.push(mode);
+    return { nodes: [], groups: [], connections: [], total: 0, available: { nodes: true, groups: true, connections: true },
+      ...(mode === 'state' ? { tasks: { version: 1, plans: [{ goal: '旧计划', status: 'applied', actions: [{ text: '旧卡片正文不应携带' }], targets: [], actionCount: 1 },
+        { goal: '把现有卡移动到上方', status: 'undone', actions: [{ x: 100 }], targets: [], actionCount: 1 }] } } : {}) };
+  } }, diagnostics: { warn: () => undefined } } as unknown as PluginContext;
+  const prepared = { ...preparedContext(), operation: 'general' as const, contextMode: 'explicit-only' as const, sources: [], memoryRetrieval: undefined };
+  const first = await buildGenerateRequest(context, { ...prepared, prompt: '解释一下场景卡怎么设计' }, promptCatalog());
+  const next = await buildGenerateRequest(context, { ...prepared, prompt: '刚才那张再移一点' }, promptCatalog());
+  assert.deepEqual(modes, ['selection', 'state']);
+  assert.doesNotMatch(JSON.stringify(first.messages), /latestTask|旧计划/u);
+  const summary = JSON.stringify(next.messages);
+  assert.match(summary, /undone/u);
+  assert.doesNotMatch(summary, /旧计划|旧卡片正文不应携带/u);
+});
 
 test('AI prompt variables and policy validation stay bounded', () => {
   assert.equal(

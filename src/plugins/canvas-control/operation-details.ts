@@ -9,7 +9,7 @@ export function actionCounts(actions: readonly CanvasControlAction[]): Operation
 }
 
 export function localOperationDetail(operation: NaturalCanvasOperation): OperationDetail {
-  const intent = operation.kind;
+  const intent = operation.kind === 'place-relative' || operation.kind === 'placement-gap' ? 'move' : operation.kind;
   const known = ['create', 'content', 'connect', 'arrange', 'move', 'color', 'presentation', 'group', 'find'];
   return {
     route: intent === 'content' ? 'model' : 'local',
