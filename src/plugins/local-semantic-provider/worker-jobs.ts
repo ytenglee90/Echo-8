@@ -93,9 +93,15 @@ async function loadExternalOnnxRuntime(
   };
   release: () => void;
 }> {
-  const backendUrl = URL.createObjectURL(new Blob([runtimeBackend], { type: 'text/javascript' }));
-  const moduleSource = linkOnnxRuntimeEntry(runtimeModule, backendUrl);
-  const url = URL.createObjectURL(new Blob([moduleSource], { type: 'text/javascript' }));
+  // WebKit rejects nested blob:null imports when a portable worker has an opaque origin.
+  // These are bounded, pinned modules from the existing model asset policy.
+  const opaqueOrigin = globalThis.origin === 'null';
+  const moduleUrl = (source: string) => opaqueOrigin
+    ? `data:text/javascript;charset=utf-8,${encodeURIComponent(source)}`
+    : URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+  const releaseUrl = (url: string) => { if (!opaqueOrigin) URL.revokeObjectURL(url); };
+  const backendUrl = moduleUrl(runtimeBackend);
+  const url = moduleUrl(linkOnnxRuntimeEntry(runtimeModule, backendUrl));
   try {
     const ort = await import(/* @vite-ignore */ url) as {
       InferenceSession: { create(model: Uint8Array, options: { executionProviders: string[] }): Promise<LocalSemanticRuntime['session']> };
@@ -106,12 +112,12 @@ async function loadExternalOnnxRuntime(
     ort.env.wasm.numThreads = 1;
     // ORT imports the fixed backend lazily during InferenceSession.create().
     // Keep that Blob URL alive until this model instance is explicitly released.
-    return { ort, release: () => URL.revokeObjectURL(backendUrl) };
+    return { ort, release: () => releaseUrl(backendUrl) };
   } catch (error) {
-    URL.revokeObjectURL(backendUrl);
+    releaseUrl(backendUrl);
     throw error;
   } finally {
-    URL.revokeObjectURL(url);
+    releaseUrl(url);
   }
 }
 

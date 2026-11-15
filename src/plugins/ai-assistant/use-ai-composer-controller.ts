@@ -72,7 +72,7 @@ export function useAIComposerController({
   const [prompt, setPrompt] = useState('');
   const acceptsWriteback = Boolean(pendingWritebackId && /^(?:就用这版[，,]\s*)?(?:替换进去|用这版替换原文|应用这份草稿)[。！!]?$/u.test(prompt.trim()));
   const route = useMemo(() => classifyAITurn(prompt, explicitAtOperation(prompt)), [prompt]);
-  const canRunLocally = Boolean(acceptsWriteback || route.local || route.applyItems || route.clarification ||
+  const canRunLocally = Boolean(route.operation === 'general' || acceptsWriteback || route.local || route.applyItems || route.clarification ||
     route.fieldTask && route.fieldTask.kind !== 'complete' || naturalMemoryDirective(prompt));
   const promptHistory = useLocalTextHistory(prompt, setPrompt);
   const {

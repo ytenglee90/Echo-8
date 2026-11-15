@@ -21,7 +21,7 @@ import { stripOperationCommands } from './command-parser.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
 import { buildGenerateRequest } from './generation-request.ts';
 import { executeMemorySearchToolCalls } from './memory-search-tool.ts';
-import { CANVAS_INTENT_INSTRUCTIONS, initialCanvasAgentState, runCanvasAgentLoop } from './canvas-agent-tools.ts';
+import { initialCanvasAgentState, runCanvasAgentLoop } from './canvas-agent-tools.ts';
 import { canvasTurnId, rememberTurnAssembly, turnAssembly } from './turn-route.ts';
 import { prepareAIContext } from './context-preparation.ts';
 import { revalidatePreparedSources } from './context-source-reader.ts';
@@ -235,12 +235,13 @@ export function registerAIGenerationRuntime(
         }
         let localTargetUnresolved = false;
         if (route.category === 'operation') {
-          const local = await context.capabilities.request<{ handled: boolean; text?: string; unresolvedTarget?: boolean }>('canvasControl.localPlan@1', {
+          const local = await context.capabilities.request<{ handled: boolean; text?: string; unresolvedTarget?: boolean }>(assembly.localInstructions ? 'canvasControl.localPlan@2' : 'canvasControl.localPlan@1', {
             preparationId: canvasTurnId(prepared), sessionId: prepared.sessionId, prompt: prepared.prompt,
-            sourceIds: prepared.sources.filter(source => source.reason === 'explicit-reference').map(source => source.sourceId),
-          }, signal).catch(error => { if (isCapabilityUnavailable(error, 'canvasControl.localPlan@1')) return { handled: false }; throw error; });
+            sourceIds: assembly.localSourceIds ?? prepared.sources.filter(source => source.reason === 'explicit-reference').map(source => source.sourceId),
+            ...(assembly.localInstructions ? { instructions: assembly.localInstructions, expectedSelectionCount: assembly.expectedSelectionCount } : {}),
+          }, signal).catch(error => { if (isCapabilityUnavailable(error, assembly.localInstructions ? 'canvasControl.localPlan@2' : 'canvasControl.localPlan@1')) return { handled: false }; throw error; });
           if (local.handled && 'text' in local && local.text) {
-            if (local.unresolvedTarget) {
+            if (local.unresolvedTarget && !assembly.localInstructions) {
               const catalog = await context.capabilities.request<AIProviderCatalog>('ai.provider.catalog@1', undefined, signal)
                 .catch(error => { if (isAbortError(error)) throw error; return undefined; });
               const provider = catalog?.options.find(option => option.id === (prepared.providerProfileId ?? catalog.activeId));
@@ -248,6 +249,7 @@ export function registerAIGenerationRuntime(
             }
             if (!localTargetUnresolved) return { text: local.text, provider: 'local', model: '确定性操作', usage: { inputTokens: 0, outputTokens: 0 } };
           }
+          if(assembly.localInstructions) throw new Error('本地画布操作能力不可用，请启用 AI 画布控制插件；没有调用云端模型。');
         }
         const interpretSearch = route.interpretedSearch;
         let request: AIGenerateRequest = interpretSearch ? {
@@ -292,10 +294,6 @@ export function registerAIGenerationRuntime(
               httpStatus: failure instanceof Error ? Number(/\bHTTP\s+(\d{3})\b/iu.exec(failure.message)?.[1]) || undefined : undefined },
           } satisfies OperationStageUpdateV2);
           let received = false;
-          const semanticJson = activeRequest.canvasAgentTransport === 'json' &&
-            activeRequest.messages.some(message => message.role === 'system' && message.content === CANVAS_INTENT_INSTRUCTIONS);
-          let intentPrefix = '';
-          let plainAnswer = false;
           const receivedResponse = () => {
             if (received || signal.aborted) return;
             received = true;
@@ -314,26 +312,14 @@ export function registerAIGenerationRuntime(
             const result = await consumeAIGenerationStream(stream, signal, {
               onDelta: (event) => {
                 receivedResponse();
-                if (!visible || prepared.operation === 'canvas-control') return;
-                let delta = event.delta;
-                if (activeRequest.canvasAgentTransport === 'json') {
-                  if (!semanticJson) return;
-                  if (event.channel === 'answer' && !plainAnswer) {
-                    intentPrefix += delta;
-                    const first = intentPrefix.trimStart()[0];
-                    if (!first || first === '{' || first === '`') return;
-                    plainAnswer = true;
-                    delta = intentPrefix;
-                    intentPrefix = '';
-                  }
-                }
+                if (!visible || prepared.operation === 'canvas-control' || activeRequest.canvasAgentTransport === 'json') return;
                 emittedSequence += 1;
                 const current = options.stateBySession.get(prepared.sessionId);
                 const text = event.channel === 'answer'
-                  ? `${current?.text ?? ''}${delta}`
+                  ? `${current?.text ?? ''}${event.delta}`
                   : current?.text ?? '';
                 const reasoning = event.channel === 'reasoning'
-                  ? `${current?.reasoning ?? ''}${delta}`
+                  ? `${current?.reasoning ?? ''}${event.delta}`
                   : current?.reasoning ?? '';
                 options.stateBySession.set(prepared.sessionId, {
                   state: 'generating',
@@ -347,7 +333,7 @@ export function registerAIGenerationRuntime(
                   preparationId: prepared.id,
                   sessionId: prepared.sessionId,
                   sequence: emittedSequence,
-                  delta,
+                  delta: event.delta,
                   channel: event.channel,
                 } satisfies AIGenerationDeltaSignal);
               },

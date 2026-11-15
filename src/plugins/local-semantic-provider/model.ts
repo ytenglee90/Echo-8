@@ -7,6 +7,7 @@ import {
 import type { LocalModelAsset } from '../../protocols/network.ts';
 import type { PersonalTextAssetRecord } from '../../protocols/personal-assets.ts';
 import { isAbortError } from '../../services/abort.ts';
+import type { LocalLanguageRequest, LocalLanguageResult } from '../../protocols/local-language.ts';
 import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
 import type {
   AIContextSearchContribution,
@@ -86,6 +87,7 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
       };
       const enabled = () => readConfiguration(context).enabled;
       const activeModel = () => readConfiguration(context).modelId ?? 'small';
+      let modelLoading: { result: Promise<void>; controller: AbortController } | undefined;
       const readState = (): LocalSemanticProviderPanelState => ({
         enabled: enabled(),
         modelId: activeModel(),
@@ -97,6 +99,7 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
         cacheState = emptyCache(status);
       };
       const disposeModel = async () => {
+        modelLoading?.controller.abort();
         if (!modelLoaded) return;
         modelLoaded = false;
         if (!context.workers.available()) return;
@@ -106,7 +109,7 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
           context.diagnostics.warn('释放本地语义模型失败', error);
         }
       };
-      const ensureModel = async (modelId: LocalSemanticModelId, signal: AbortSignal, report: (progress: number) => void) => {
+      const loadModel = async (modelId: LocalSemanticModelId, signal: AbortSignal, report: (progress: number) => void) => {
         if (modelLoaded) return;
         if (!context.workers.available()) throw new Error('当前环境无法启动本地语义 Worker');
         const modelAsset = `bge-${modelId}-zh-v1.5` as const;
@@ -162,6 +165,26 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
         modelLoaded = true;
         cacheState = { ...cacheState, status: 'indexing', download: undefined };
         notify('model-ready');
+      };
+      const ensureModel = async (modelId: LocalSemanticModelId, signal: AbortSignal, report: (progress: number) => void) => {
+        if (modelLoaded) return;
+        if (modelLoading?.controller.signal.aborted) {
+          const stale = modelLoading;
+          await stale.result.catch(() => undefined);
+          if (modelLoading === stale) modelLoading = undefined;
+        }
+        assertNotAborted(signal);
+        if (!enabled() || activeModel() !== modelId) throw new Error('本地语言模型配置已变化，请重新发送');
+        if (!modelLoading) {
+          const controller = new AbortController();
+          const entry = { result: loadModel(modelId, AbortSignal.any([signal, controller.signal]), report), controller };
+          modelLoading = entry;
+          void entry.result.then(() => { if (modelLoading === entry) modelLoading = undefined; },
+            () => { if (modelLoading === entry) modelLoading = undefined; });
+        }
+        await modelLoading.result;
+        assertNotAborted(signal);
+        if (!enabled() || activeModel() !== modelId) throw new Error('本地语言模型配置已变化，请重新发送');
       };
       const scheduleIndex = (force = false): TaskHandle<void> => {
         if (indexTask) return indexTask;
@@ -262,7 +285,7 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
         validate: (value): value is { modelId: LocalSemanticModelId } => isRecord(value) && (value.modelId === 'small' || value.modelId === 'base'),
         handle: async ({ modelId }) => {
           if (modelId === activeModel()) return { result: { modelId } };
-          if (indexTask) throw new Error('请等待本地索引完成，或先取消当前任务。');
+          if (indexTask || modelLoading) throw new Error('请等待本地模型或索引准备完成，或先取消当前任务。');
           await disposeModel();
           clearCache(enabled() ? 'idle' : 'disabled');
           return { result: { modelId }, transaction: {
@@ -309,6 +332,30 @@ export function createLocalSemanticProviderPlugin(panel?: unknown): PluginDefini
         },
       });
       context.queries.register({ type: LOCAL_SEMANTIC_PROVIDER_STATE_QUERY, handle: readState });
+      context.capabilities.provide<LocalLanguageRequest, LocalLanguageResult>({ key: 'language.embed@1',
+        invoke: async (input, signal) => {
+          if (!isRecord(input) || Object.keys(input).some(key => key !== 'texts') || !Array.isArray(input.texts) ||
+            !input.texts.length || input.texts.length > 16 || input.texts.some(text => typeof text !== 'string' || !text.trim() || text.length > 2000)) {
+            throw new Error('本地语言输入需要 1 到 16 段、不超过 2000 字符的文字');
+          }
+          if (!enabled()) return { ready: false, reason: 'disabled' };
+          const modelId = activeModel();
+          try {
+            // No canvas catalog, index build, cloud embedding or child scheduler task.
+            await ensureModel(modelId, signal ?? new AbortController().signal, () => undefined);
+            if (!indexTask && cacheState.status === 'indexing') cacheState = { ...cacheState, status: 'idle' };
+            const vectors = await embedTexts(context, input.texts, signal);
+            assertNotAborted(signal);
+            if (!enabled() || activeModel() !== modelId) return { ready: false, reason: 'unavailable' };
+            return { ready: true, modelId, vectors };
+          } catch (error) {
+            if (isAbortError(error)) throw error;
+            context.diagnostics.warn('本地指令理解暂不可用', error);
+            if (!indexTask) cacheState = { ...cacheState, status: 'error', download: undefined, error: '本地语言模型准备失败，请重试或检查模型资源连接。' };
+            return { ready: false, reason: 'unavailable' };
+          }
+        },
+      });
       for (const key of ['context.semanticSearch@1', 'context.localSemanticSearch@1', 'context.localSemanticSearch@2'] as const) context.capabilities.provide<AIContextSearchRequest, AIContextSearchContribution>({
         key,
         priority: 24,

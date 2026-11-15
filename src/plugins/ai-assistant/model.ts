@@ -231,6 +231,7 @@ export function createAIAssistantPlugin(
         'entity.deletePlan@1',
       ],
       optionalCapabilities: [
+        'language.embed@1', 'canvasControl.localPlan@2',
         'groups.list@1',
         'content.search@2',
         'ai.provider.taskUsage@1',

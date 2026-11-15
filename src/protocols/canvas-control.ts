@@ -113,6 +113,7 @@ declare module './messages.ts' {
     'canvasControl.context@2': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
     'canvasControl.context@3': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
     'canvasControl.localPlan@1': MessageContract<CanvasControlAdmission, { handled: boolean; text?: string; unresolvedTarget?: boolean }>;
+    'canvasControl.localPlan@2': MessageContract<CanvasControlAdmission & { instructions: string[]; expectedSelectionCount?: number }, { handled: boolean; text?: string; unresolvedTarget?: boolean }>;
     'canvasControl.taskState@1': MessageContract<{ sessionId: string; targetIds?: string[] }, CanvasControlTaskState>;
     'canvasControl.context@1': MessageContract<CanvasControlAdmission, { instruction: string }>;
     'canvasControl.nodesPlan@1': MessageContract<CanvasControlNodeRequest, CanvasControlNodePlan>;

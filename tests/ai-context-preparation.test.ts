@@ -42,6 +42,11 @@ function preparationContext(
   const sources = Object.entries(texts).map(([sourceId, item]) => source(sourceId, item.title, item.text));
   return {
     capabilities: {
+      request: async (key: string) => {
+        if (key === 'canvasControl.taskState@1') return { version: 1, plans: [] };
+        if (key === 'language.embed@1') return { ready: false, reason: 'unavailable' };
+        throw new Error(`Capability unavailable: ${key}`);
+      },
       requestAll: async (key: string, request?: AIContextReadRequest) => {
         if (key === 'context.catalog@1') return [{ provider: 'test', sources }];
         if (key === 'context.read@1') {
@@ -117,6 +122,29 @@ test('canvas failure follow-ups resume only the nearest user action from the cur
   assert.equal(await recoverCanvasRequest(suggestion, session(), '为什么画布上看不到？', signal), undefined);
   const oversized = preparationContext({ 'node:transcript': { title: '当前对话', text: `[用户]\n${original}${'设定'.repeat(5000)}\n[助手]\n完成。` } });
   assert.equal(await recoverCanvasRequest(oversized, session(), '还是没有', signal), undefined);
+  const recorded = '造一个角色卡，一个人物卡';
+  const local = preparationContext({ 'node:transcript': {
+    title: '当前对话', text: `[用户 · 画布操作]\n${recorded}\n[助手 · 画布操作]\n已准备 2 项操作。\n`,
+  } });
+  assert.equal(await recoverCanvasRequest(local, session(), '还是没有', signal), recorded);
+});
+
+test('local counted creation keeps both operands and never interprets a quoted command as an extra action', async () => {
+  const context = preparationContext({});
+  const signal = new AbortController().signal;
+  for (const prompt of ['造一个角色卡，一个人物卡', '造一个角色卡和一个人物卡']) {
+    const prepared = await prepareAIContext(context, session(), {}, {
+      sessionId: session().id, operation: 'general', prompt,
+    }, signal, () => undefined);
+    assert.deepEqual(turnAssembly(prepared).localInstructions, ['新建一张角色卡', '新建一张人物卡']);
+    assert.equal(prepared.prompt, prompt);
+    assert.equal(prepared.operation, 'canvas-control');
+  }
+  const prompt = '造一张「角色，删除人物卡」';
+  const prepared = await prepareAIContext(context, session(), {}, {
+    sessionId: session().id, operation: 'general', prompt,
+  }, signal, () => undefined);
+  assert.deepEqual(turnAssembly(prepared).localInstructions, ['新建一个叫「角色，删除人物卡」的节点']);
 });
 
 test('original decisions and suggestions remain distinguishable after 1, 15, 100 and 300 turns', async () => {

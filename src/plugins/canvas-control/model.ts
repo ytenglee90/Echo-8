@@ -27,7 +27,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       sessionOnlyWorkspace: { [CONTROL_UI_NAMESPACE]: true },
       requiresCapabilities: ['content.summaries@1', 'content.summariesById@1', 'selection.read@1', 'selection.resolve@1', 'selection.entities@1', 'canvasControl.nodesPlan@1'],
       optionalCapabilities: ['content.search@2', 'context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'context.semanticSearch@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
-      providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.context@3', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
+      providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.context@3', 'canvasControl.localPlan@1', 'canvasControl.localPlan@2', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
       commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.applyItems@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
       dispatches: ['canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'selection.set', 'canvas.focusSelection', 'palette.setPreferences'],
       queries: ['canvasControl.state@1'],
@@ -38,6 +38,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
     }),
     start(context) {
       const snapshots = new Map<string, ControlSnapshot>();
+      const localInterpretations = new Map<string, NaturalCanvasOperation>();
       const reviews = new Map<string, StoredControlReview>();
       const lastPlacementBySession = new Map<string, StoredControlReview>();
       const applying = new Map<string, { token: string; draft: StoredControlReview }>();
@@ -155,7 +156,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         } catch (error) { trace(signal?.aborted ? 'cancelled' : 'failed', { reason: controlFailureReason(error) }); throw error; }
       } });
       const naturalPlan = async (input: CanvasControlAdmission, chosen = new Map<string, string>(), signal?: AbortSignal, interpreted?: NaturalCanvasOperation) => {
-        const operation = interpreted ?? naturalCanvasOperation(input.prompt);
+        const operation = interpreted ?? localInterpretations.get(input.preparationId) ?? naturalCanvasOperation(input.prompt);
         if (!operation) return undefined;
         const trace = (state: OperationStatus, detail: OperationStageUpdateV2['detail']) => context.signals.emit(OPERATION_LOG_STAGE_V2, {
           id: input.preparationId, relatedId: input.preparationId, phase: 'canvas-targets', state,
@@ -208,6 +209,33 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         while (snapshots.size > 8) snapshots.delete(snapshots.keys().next().value!);
         return { handled: true as const, text: JSON.stringify(result.plan), ...(result.unresolvedTarget ? { unresolvedTarget: true } : {}) };
       };
+      context.capabilities.provide({ key: 'canvasControl.localPlan@2', invoke: async (input: CanvasControlAdmission & { instructions: string[]; expectedSelectionCount?: number }, signal) => {
+        if (!isAdmission(input) || !Array.isArray(input.instructions) || !input.instructions.length || input.instructions.length > 80 ||
+          input.instructions.some(text => typeof text !== 'string' || !text.trim() || text.length > 600) ||
+          input.instructions.reduce((total, text) => total + text.length, 0) > 12_000 ||
+          input.expectedSelectionCount !== undefined && (!Number.isInteger(input.expectedSelectionCount) ||
+            input.expectedSelectionCount < 1 || input.expectedSelectionCount > 80)) {
+          throw new Error('本地画布指令参数无效');
+        }
+        if (input.expectedSelectionCount !== undefined) {
+          const selected = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
+          if (selected.ids.length !== input.expectedSelectionCount) throw new Error(
+            `你指定了 ${input.expectedSelectionCount} 个对象，当前选中 ${selected.ids.length} 个。请先明确范围，画布尚未修改。`,
+          );
+        }
+        const steps = input.instructions.map(naturalCanvasOperation);
+        if (!steps.every(step => step !== undefined)) throw new Error('本地解析尚不能完整执行这组要求，请补充具体目标或参数。');
+        const operation: NaturalCanvasOperation = steps.length === 1 ? steps[0]! : { kind: 'batch', names: [], steps };
+        const result = await naturalPlan(input, undefined, signal, operation);
+        localInterpretations.set(input.preparationId, operation);
+        while (localInterpretations.size > 8) localInterpretations.delete(localInterpretations.keys().next().value!);
+        const snapshot = snapshots.get(input.preparationId);
+        if (snapshot) {
+          snapshot.localDirect = true;
+          snapshot.execution = execution();
+        }
+        return result ?? { handled: false };
+      } });
       context.capabilities.provide({ key: 'canvasControl.bindContent@1', invoke: async (input: CanvasControlAdmission, signal) => {
         if (!isAdmission(input)) throw new Error('画布控制请求无效');
         const operation = naturalCanvasOperation(input.prompt);
@@ -306,7 +334,8 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           choice = undefined;
           const chosen = new Map(current.chosen).set(current.name, input.id);
           const admission = { ...current.input, preparationId: createId('canvas-choice') };
-          const plan = await naturalPlan(admission, chosen);
+          const original = localInterpretations.get(current.input.preparationId);
+          const plan = await naturalPlan(admission, chosen, undefined, original);
           if (!plan) throw new Error('原请求已经失效');
           if (!plan.handled) {
             if (plan.sourceIds.length) context.signals.emit(CANVAS_CONTROL_RESUME, { ...admission, sourceIds: plan.sourceIds });
@@ -540,7 +569,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       } });
       context.events.subscribe('document.replaced', () => {
         for (const [id, draft] of reviews) if (draft.review.status === 'pending') logPlan(id, 'expired');
-        snapshots.clear(); reviews.clear(); lastPlacementBySession.clear(); localResults.clear(); agentSessions.clear(); lastNatural.clear(); navigation = undefined;
+        snapshots.clear(); reviews.clear(); lastPlacementBySession.clear(); localResults.clear(); localInterpretations.clear(); agentSessions.clear(); lastNatural.clear(); navigation = undefined;
         if (background) clearBackground(); else publish();
       });
       context.events.subscribe('history.changed', publish);
@@ -563,6 +592,10 @@ function isPlanId(input: unknown): input is { id: string } { return isRecord(inp
 function canGenerateDirectly(review: CanvasControlReview, snapshot: ControlSnapshot): boolean {
   return review.actions.every(action => {
     if (action.type === 'create-node' || action.type === 'create-group' || action.type === 'create-connection') return true;
+    if (snapshot.localDirect && 'id' in action && snapshot.writable.has(action.id)) {
+      if (action.type === 'update-group' || action.type === 'update-connection') return true;
+      if (action.type === 'update-node' && action.text === undefined && action.append === undefined && !action.edit) return true;
+    }
     if (action.type !== 'update-node' || !snapshot.writable.has(action.id)) return false;
     const node = snapshot.nodes.find(item => item.id === action.id);
     if (!node || node.length !== 0 || !Object.keys(action).every(key => ['type', 'id', 'text', 'append', 'edit'].includes(key))) return false;

@@ -7,6 +7,7 @@ import type { SelectionResolution, SelectionSnapshot, SelectionCatalogContributi
 import { CANVAS_CONTROL_MAX_OBJECTS } from '../../services/canvas-control-validation.ts';
 
 export interface ControlSnapshot extends CanvasControlAdmission {
+  localDirect?: boolean;
   expiresAt: number;
   execution?: 'direct' | 'review';
   writable: Set<string>;

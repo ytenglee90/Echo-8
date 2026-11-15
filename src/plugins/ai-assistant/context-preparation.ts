@@ -48,7 +48,8 @@ import { exactHistoryRequest, recallConversation } from './conversation-recall.t
 import { OPERATION_LOG_STAGE_V2, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
 import { prepareStructuredFields } from './structured-fields.ts';
 import { prepareCardRestructure } from './card-restructure.ts';
-import { recoverCanvasRequest } from './canvas-recovery.ts';
+import { checkCanvasRecovery, recoverCanvasRequest } from './canvas-recovery.ts';
+import { interpretLocalTurn } from './local-turn-routing.ts';
 
 export interface AIContextBudget {
   characterLimit: number;
@@ -85,8 +86,23 @@ export async function prepareAIContext(
     context.signals.emit(OPERATION_LOG_STAGE_V2, { id: preparationId, relatedId: preparationId,
       phase: 'ai-routing', state: 'completed', detail: { step: 'route', route: 'model', reason: 'model-plan' } } satisfies OperationStageUpdateV2);
   }
+  const local = recoveryPrompt
+    ? { clarification: await checkCanvasRecovery(context, session.id, recoveryPrompt, signal) }
+    : !explicitAtOperation(payload.prompt) && !naturalMemoryDirective(payload.prompt)
+      ? await interpretLocalTurn(context, payload.prompt, route, signal) : {};
+  if (local.instructions) {
+    route = { ...classifyAITurn(local.instructions[0]!, 'canvas-control'), purpose: 'general', geometryOnly: false };
+    payload = { ...payload, operation: 'canvas-control' };
+    context.signals.emit(OPERATION_LOG_STAGE_V2, { id: preparationId, relatedId: preparationId,
+      phase: 'ai-routing', state: 'completed', detail: { step: 'route', route: 'local', reason: 'local-rule' } } satisfies OperationStageUpdateV2);
+  }
   const completePreparation = (prepared: AIPreparedContext, binding: Omit<TurnAssembly, 'route'> = {}) =>
-    rememberTurnAssembly(prepared, { route, recoveryPrompt, ...binding });
+    rememberTurnAssembly(prepared, { route, recoveryPrompt, localInstructions: local.instructions,
+      expectedSelectionCount: local.expectedSelectionCount,
+      localSourceIds: local.instructions
+        ? [...new Set([...(payload.references ?? []).filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
+          ...parseExplicitReferences(payload.prompt)])] : undefined,
+      ...(local.clarification ? { clarify: local.clarification } : {}), ...binding });
   const localMemoryDirective = naturalMemoryDirective(payload.prompt);
   if (localMemoryDirective) {
     const createdAt = Date.now();
@@ -103,7 +119,7 @@ export async function prepareAIContext(
     preparationId, sessionId: session.id, prompt: payload.prompt,
     sourceIds: payload.references?.filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
   }, signal) : undefined;
-  if (route.clarification || route.applyItems || (route.category === 'operation' && (!contentTarget || contentBinding?.needsChoice) && (route.local || route.interpretedSearch) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length)) {
+  if (local.instructions || local.clarification || route.clarification || route.applyItems || (route.category === 'operation' && (!contentTarget || contentBinding?.needsChoice) && (route.local || route.interpretedSearch) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length)) {
     const createdAt = Date.now();
     report(1);
     return completePreparation({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
