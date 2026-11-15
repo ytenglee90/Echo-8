@@ -17,6 +17,8 @@
 .canvas-control-review header span { color: var(--muted); font-size: 12px; }
 .canvas-control-review ol { padding-left: 22px; display: grid; gap: 12px; }
 .canvas-control-review li > strong { font-size: 13px; }
+.canvas-control-review label.canvas-control-item { display: flex; align-items: flex-start; gap: 8px; overflow-wrap: anywhere; }
+.canvas-control-item input[type="checkbox"] { flex: 0 0 auto; width: 16px; height: 16px; margin: 1px 0 0; accent-color: var(--text); }
 .canvas-control-review li p { margin: 5px 0; overflow-wrap: anywhere; color: var(--muted); }
 .canvas-control-review details { margin-top: 7px; }
 .canvas-control-review summary { cursor: pointer; color: var(--muted); }

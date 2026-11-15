@@ -82,7 +82,7 @@ export function controlInstruction(snapshot: ControlSnapshot): string {
   const objects = {
     available: snapshot.available,
     nodes: snapshot.nodes.map(({ id, title, x, y, width, height, presentation, titleColor, length }) => ({ id, title: title.slice(0, 300), x, y, width, height, presentation, color: titleColor, textLength: length, writable: snapshot.writable.has(id), namedForReview: snapshot.namedTargetIds?.includes(id) || undefined })),
-    groups: snapshot.groups.map(({ id, title, memberIds }) => ({ id, title: title.slice(0, 300), members: memberIds, writable: snapshot.writable.has(id) })),
+    groups: snapshot.groups.map(({ id, title, memberIds, color }) => ({ id, title: title.slice(0, 300), members: memberIds, color, writable: snapshot.writable.has(id) })),
     connections: snapshot.graph.connections.map(edge => controlEdgeDirectory(snapshot, edge)),
   };
   return [
@@ -109,7 +109,7 @@ function controlAvailability(snapshot: ControlSnapshot): string {
 }
 
 function controlEdgeDirectory(snapshot: ControlSnapshot, edge: ConnectionGraphSnapshot['connections'][number]) {
-  return { id: edge.id, from: edge.from.nodeId, to: edge.to.nodeId, label: edge.label,
+  return { id: edge.id, from: edge.from.nodeId, to: edge.to.nodeId, label: edge.label, color: edge.lineColor,
     line: isTitleConnection(edge) ? 'dashed' : 'solid', writable: snapshot.writable.has(edge.id), lineWritable: snapshot.relatedLineIds?.has(edge.id) || snapshot.writable.has(edge.id) };
 }
 
@@ -125,8 +125,9 @@ export function controlContextV2(snapshot: ControlSnapshot, purpose: CanvasContr
   const objects = purpose === 'general' ? JSON.parse(full.slice(split + '<untrusted-canvas-objects>'.length, full.lastIndexOf('</untrusted-canvas-objects>'))) as unknown : {
     available: snapshot.available, nodes,
     ...(['structure', 'appearance'].includes(purpose) ? {
-      groups: snapshot.groups.map(group => ({ id: group.id, title: group.title, writable: snapshot.writable.has(group.id), ...(purpose === 'structure' ? { members: group.memberIds } : {}) })),
-      connections: snapshot.graph.connections.map(edge => purpose === 'structure' ? controlEdgeDirectory(snapshot, edge) : { id: edge.id, writable: snapshot.writable.has(edge.id) }),
+      groups: snapshot.groups.map(group => ({ id: group.id, title: group.title, writable: snapshot.writable.has(group.id),
+        ...(purpose === 'structure' ? { members: group.memberIds } : { color: group.color }) })),
+      connections: snapshot.graph.connections.map(edge => controlEdgeDirectory(snapshot, edge)),
     } : {}),
   };
   const compact = purpose === 'appearance'

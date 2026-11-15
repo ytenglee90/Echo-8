@@ -43,7 +43,7 @@ export async function prepareAgentPlan(
   if (!input.clarification && needsCanvasCreationPlanning(input.prompt) && !plan.actions.some(action => action.type === 'create-node')) throw new Error('当前文字节点能力已启用，但返回计划没有 create-node。请根据本轮要求生成新节点。');
   if (!plan.actions.length && plan.answer && deniesCanvasCapability(plan.answer)) throw new Error('应用已确认节点读写能力可用。请查询实际对象，或只询问缺少的目标信息。');
   const refs = new Set(plan.actions.flatMap(action => 'ref' in action ? [action.ref] : []));
-  const ids = new Set([...(input.focusIds ?? []), ...placementIds]);
+  const ids = new Set([...(input.sourceIds ?? []), ...(input.focusIds ?? []), ...placementIds]);
   for (const action of plan.actions) {
     if ('id' in action) ids.add(action.id);
     if (action.type === 'delete') action.ids.forEach(id => ids.add(id));

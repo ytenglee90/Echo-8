@@ -8,8 +8,9 @@ import type {
   AIStatusSignal,
   AIProposalRecord,
 } from '../../protocols/ai.ts';
-import { explicitAtOperation, inferAtOperation } from './command-parser.ts';
-import { canvasCommandText, naturalCanvasOperation } from '../../services/ai-task-route.ts';
+import { explicitAtOperation } from './command-parser.ts';
+import { classifyAITurn } from './turn-route.ts';
+import { canvasCommandText } from '../../services/ai-task-route.ts';
 import { naturalWritebackIntent } from './natural-writeback.ts';
 import { CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, type CanvasControlResume, type CanvasControlResult } from '../../protocols/canvas-control.ts';
 import {
@@ -49,6 +50,7 @@ export type PreparedGeneration = AIPreparedContext & {
   userEntryStart?: number;
   userEntryLength?: number;
   userTurn?: number;
+  replayRequest?: PreparePayload;
 };
 
 export interface AIRequestRuntimeOptions {
@@ -104,13 +106,12 @@ export function registerAIRequestRuntime(
             assistant.id === payload.assistantId && assistant.sessionId === payload.sessionId)
         : undefined;
       if (payload.assistantId && !boundAssistant) throw new Error('当前 AI 助手窗口已经不存在');
-      const inferredOperation = inferAtOperation(payload.prompt);
+      const explicit = explicitAtOperation(payload.prompt);
+      const route = classifyAITurn(payload.prompt, explicit, payload.operation);
       const normalizedPayload: PreparePayload = {
         ...payload,
-        operation: explicitAtOperation(payload.prompt) ?? (inferredOperation === 'canvas-control'
-          ? 'canvas-control' : payload.operation !== 'general' ? payload.operation
-            : inferredOperation !== 'general' ? inferredOperation
-              : naturalWritebackIntent(canvasCommandText(payload.prompt).trim()) ? 'rewrite' : 'general'),
+        operation: route.operation === 'general' && !explicit && naturalWritebackIntent(canvasCommandText(payload.prompt).trim())
+          ? 'rewrite' : route.operation,
         ...(boundAssistant
           ? {
               memorySourceIds: boundAssistant.memorySourceIds ?? [],
@@ -130,12 +131,12 @@ export function registerAIRequestRuntime(
         sessionId: session.id,
       } satisfies AIStatusSignal);
       const preparationId = createId('ai-context');
-      const localOperation = naturalCanvasOperation(normalizedPayload.prompt);
+      const local = route.clarification || route.applyItems || (route.category === 'operation' && route.local && route.local.kind !== 'content');
       context.signals.emit(OPERATION_LOG_STAGE_V2, {
         id: preparationId, relatedId: preparationId, phase: 'ai-routing', state: 'completed',
         detail: { step: 'route', route: normalizedPayload.operation !== 'canvas-control' ? 'conversation' :
-          localOperation && localOperation.kind !== 'content' ? 'local' : 'model',
-          reason: normalizedPayload.operation === 'canvas-control' ? localOperation && localOperation.kind !== 'content' ? 'local-rule' : 'model-plan' : undefined },
+          local ? 'local' : 'model',
+          reason: normalizedPayload.operation === 'canvas-control' ? local ? 'local-rule' : 'model-plan' : undefined },
       } satisfies OperationStageUpdateV2);
       const task = context.tasks.schedule<AIPreparedContext>({
         category: 'ai-context-retrieval',
@@ -154,14 +155,15 @@ export function registerAIRequestRuntime(
           undefined,
           Object.values(options.readProposals?.() ?? {}).filter(proposal => proposal.sessionId === session.id).sort((a, b) => b.createdAt - a.createdAt)[0],
           preparationId,
+          route,
         ),
       });
       options.preparationTasks.set(session.id, task);
       void task.result.then(
         (prepared) => {
-          if (options.preparationTasks.get(session.id) === task) {
-            options.preparationTasks.delete(session.id);
-          }
+          if (options.preparationTasks.get(session.id) !== task) return;
+          options.preparationTasks.delete(session.id);
+          if (prepared.operation === 'canvas-control') (prepared as PreparedGeneration).replayRequest = normalizedPayload;
           options.preparations.set(prepared.id, prepared);
           options.lastMemoryUseBySession.set(prepared.sessionId, {
             sourceIds: prepared.sources
@@ -201,9 +203,8 @@ export function registerAIRequestRuntime(
           }
         },
         (error) => {
-          if (options.preparationTasks.get(session.id) === task) {
-            options.preparationTasks.delete(session.id);
-          }
+          if (options.preparationTasks.get(session.id) !== task) return;
+          options.preparationTasks.delete(session.id);
           if (isAbortError(error)) return;
           recordRequestError(context, options, session.id, error);
           context.signals.emit('ai.status', {
@@ -248,6 +249,8 @@ export function registerAIRequestRuntime(
         source.sourceId === transcriptSourceId && source.reason === 'recent-conversation');
       const currentRevision = transcript?.revision ??
         await readContextSourceRevision(context, transcriptSourceId);
+      const summaryTranscript = prepared.fullSummary?.sources.find(source => source.sourceId === transcriptSourceId);
+      if (summaryTranscript && summaryTranscript.revision !== currentRevision) throw new Error('对话已变化，请重新准备全文回顾。');
       const userText = prepared.localMemoryDirective ? `${prepared.prompt}\n${prepared.localMemoryDirective}` : prepared.prompt;
       const userEntry = formatAITranscriptEntry('用户', userText, prepared.operation, Date.now());
       const append = await planTranscriptAppend(
@@ -257,6 +260,7 @@ export function registerAIRequestRuntime(
         currentRevision,
       );
       prepared.transcriptRevisionAfterUser = append.revision;
+      if (summaryTranscript) summaryTranscript.revision = append.revision;
       prepared.transcriptRevisionAfterAssistant = undefined;
       prepared.followupAction = undefined;
       prepared.userEntryStart = append.start;
@@ -330,7 +334,7 @@ export function registerAIRequestRuntime(
         .filter((source) => source.reason === 'conversation-memory' &&
           memoryIndexes[source.sourceId]?.sessionId === session.id)
         .map((source) => source.sourceId));
-      await revalidatePreparedSources(
+      if (action.kind !== 'retry' || !prepared.replayRequest) await revalidatePreparedSources(
         context,
         prepared.sources.filter((source) => source.sourceId !== transcriptSourceId),
         { allowUnchangedRangeRevisionAdvanceFor: currentConversationMemorySources },
@@ -338,6 +342,8 @@ export function registerAIRequestRuntime(
       const marker = action.kind === 'repeat' ? '再来一次' : '重试';
       const userEntry = formatAITranscriptEntry('用户', marker, prepared.operation, Date.now());
       const append = await planTranscriptAppend(context, session, userEntry, currentRevision);
+      const summaryTranscript = prepared.fullSummary?.sources.find(source => source.sourceId === transcriptSourceId);
+      if (summaryTranscript) summaryTranscript.revision = append.revision;
       prepared.transcriptRevisionAfterUser = append.revision;
       prepared.transcriptRevisionAfterAssistant = undefined;
       prepared.followupAction = action.kind;

@@ -12,6 +12,7 @@ import { naturalColor, NATURAL_COLORS } from '../../services/natural-canvas-rule
 import { resolveNaturalBatch } from './natural-batch.ts';
 import { canvasTitleAliases, normalizeCanvasTitle as normalize } from '../../services/canvas-titles.ts';
 import { planRelativePlacement } from './relative-placement.ts';
+import { auditCanvasNames, findCanvasText, planGroupColumns, shortestCanvasPath } from './structured-operations.ts';
 
 export interface NaturalControlState {
   ids: string[]; lineId?: string; groupId?: string; pendingLine?: string; draftTitles?: ReadonlyMap<string, string>;
@@ -54,6 +55,10 @@ export async function resolveNaturalOperation(
   const sources = new Map(catalogs.flatMap(catalog => catalog.sources).filter(source => source.kind === 'text').map(source => [source.sourceId, source]));
   const groups = owners.groups ?? [];
   const canReadEndpoint = (id: string) => sources.get(id)?.automaticRetrieval !== false || request.sourceIds?.includes(id);
+  const allowedSources = [...sources.values()].filter(source => canReadEndpoint(source.sourceId));
+  if (operation.kind === 'sync-text') return findCanvasText(context, allowedSources.map(source => source.sourceId), operation.before, operation.after, signal);
+  if (operation.kind === 'audit-names') return auditCanvasNames(allowedSources);
+  if (operation.kind === 'group-columns') return planGroupColumns(context, groups, allowedSources, operation.lead, operation.keep, signal);
   const nodeEdges = (owners.graph?.connections ?? []).filter(edge => edge.from.kind !== 'junction' && edge.to.kind !== 'junction');
   const edges = nodeEdges.filter(edge => canReadEndpoint(edge.from.nodeId) && canReadEndpoint(edge.to.nodeId));
   const title = (id: string) => sources.get(id)?.title ?? groups.find(group => group.id === id)?.title ?? id;
@@ -297,11 +302,22 @@ export async function resolveNaturalOperation(
   for (const name of unfinished ? operation.names.slice(1) : operation.names) {
     const result = await read(name);
     if (!Array.isArray(result)) return result;
-    if (operation.kind === 'place-relative' && result.length !== 1) return answer(`「${name}」需要指向一张卡，请选中它或补充名称。`);
+    if ((operation.kind === 'place-relative' || operation.kind === 'shortest-path') && result.length !== 1) return answer(`「${name}」需要指向一张卡，请选中它或补充名称。`);
     if (operation.kind === 'connect' && operation.names.length === 2 && result.length !== 1) return answer(`「${name}」需要指向一个节点，请明确端点名称。`);
     ids.push(...result);
   }
   const unique = [...new Set(ids)];
+  if (operation.kind === 'shortest-path') {
+    if (unique.length !== 2) return answer('请指定两个不同的路径端点。');
+    const allowed = new Set(allowedSources.map(source => source.sourceId));
+    groups.filter(group => group.memberIds.every(id => allowed.has(id))).forEach(group => allowed.add(group.id));
+    const path = shortestCanvasPath(owners.graph, allowed, unique[0]!, unique[1]!, operation.directed, signal);
+    if (!path) return answer('在当前可查看的连线中未找到路径。');
+    if (path.edges.length > 80) return answer(`最短路径经过 ${path.edges.length} 条连线，请指定中间节点后分段查看。`);
+    return { ...answer(`最短路径（${path.edges.length} 段）\n${path.objects.map(title).join(operation.directed ? ' → ' : ' — ')}`),
+      next: { ids: path.objects }, focus: [...path.objects, ...path.edges],
+      navigation: { heading: '最短路径', items: path.objects.map(id => ({ id, label: title(id) })) } };
+  }
   if (operation.kind === 'select') return { ...answer(`已${operation.selectionMode === 'add' ? '追加选择' : '选中'} ${unique.length} 个节点。`), next: { ids: unique }, focus: unique, selectionMode: operation.selectionMode };
   if (operation.kind !== 'create' && operation.names.length && !unique.length) return answer('没有命中符合条件的节点。');
   if (operation.kind === 'rename') return makePlan(unique.map(id => ({ type: 'update-node', id, title: operation.title })), unique, { ids: unique });

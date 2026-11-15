@@ -8,7 +8,7 @@ const source = (id: string, text: string, reason: AIPreparedSource['reason'] = '
 export const efficiencyContext = {
   capabilities: {
     requestAll: async () => [],
-    request: async (key: string) => ['canvasControl.context@1', 'canvasControl.context@2'].includes(key)
+    request: async (key: string) => ['canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.context@3'].includes(key)
       ? { instruction: '仅输出本轮必要的结构化操作；改动必须经过范围和修订校验。' }
       : key === 'canvasControl.taskState@1' ? undefined : { options: [] },
   }, diagnostics: { warn() {} },

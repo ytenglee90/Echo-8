@@ -8,15 +8,20 @@ import { createGroupsPlugin } from '../src/plugins/groups/model.ts';
 import { createConnectionsPlugin } from '../src/plugins/connections/model.ts';
 import { createCanvasControlPlugin } from '../src/plugins/canvas-control/model.ts';
 import { CANVAS_AGENT_TOOLS, runCanvasAgentLoop } from '../src/plugins/ai-assistant/canvas-agent-tools.ts';
+import { canvasToolEvidence } from '../src/plugins/ai-assistant/canvas-tool-evidence.ts';
 import type { AIGenerateRequest, AIGenerateResult, AIPreparedContext } from '../src/protocols/ai.ts';
 import type { CanvasAgentQueryResult, CanvasAgentReadResult } from '../src/protocols/canvas-agent.ts';
 import type { CanvasControlAdmission, CanvasControlPlan, CanvasControlState } from '../src/protocols/canvas-control.ts';
 import type { ContentSummary } from '../src/protocols/content.ts';
-import type { ConnectionGraphSnapshot } from '../src/protocols/connections.ts';
+import type { ConnectionEndpoint, ConnectionGraphSnapshot } from '../src/protocols/connections.ts';
 import { deniesCanvasCapability } from '../src/services/canvas-capabilities.ts';
 import { verifyControlApplication } from '../src/plugins/canvas-control/verification.ts';
 import { captureControlSnapshot } from '../src/plugins/canvas-control/context.ts';
 import { OPERATION_LOG_QUERY_V2, type OperationLogSnapshotV2 } from '../src/protocols/operation-log.ts';
+import { initialCanvasAgentState } from '../src/plugins/ai-assistant/canvas-agent-tools.ts';
+import { classifyAITurn, rememberTurnAssembly } from '../src/plugins/ai-assistant/turn-route.ts';
+import { shortestCanvasPath } from '../src/plugins/canvas-control/structured-operations.ts';
+import { cardRestructureTask, validateCardRestructurePlan } from '../src/plugins/ai-assistant/card-restructure.ts';
 
 async function harness() {
   const kernel = new ApplicationKernel([createTextNodePlugin(), createSelectionPlugin(), createGroupsPlugin(), createConnectionsPlugin(), createCanvasControlPlugin()]);
@@ -37,6 +42,124 @@ function tool(name: string, args: unknown): AIGenerateResult {
   return { text: '', provider: 'test', model: 'test', finishReason: 'tool-calls', toolCalls: [{ id: 'call:' + name, name, arguments: JSON.stringify(args) }] };
 }
 const initial: AIGenerateRequest = { messages: [{ role: 'user', content: '完善人物并关联新场景' }], canvasAgentTransport: 'native', tools: CANVAS_AGENT_TOOLS, maxOutputTokens: 4000, temperature: 0.2 };
+
+test('discussion denies unsolicited write tool calls in native and JSON modes', async () => {
+  const h = await harness();
+  const input = { ...h.input, prompt: '人物卡怎么设计？' };
+  const context = prepared(input);
+  const args = { plan: { version: 1, actions: [{ type: 'create-node', ref: 'x', title: '模型擅自创建' }] } };
+  for (const transport of ['native', 'json'] as const) {
+    const first = transport === 'native' ? tool('propose_canvas_plan', args)
+      : { provider: 'test', model: 'test', text: JSON.stringify({ canvas_tool: { name: 'propose_canvas_plan', arguments: args } }) };
+    const result = await runCanvasAgentLoop(h.context, context, { ...initial, canvasAgentTransport: transport }, first, async request => {
+      assert.match(request.messages.at(-1)!.content, /本轮为讨论/u);
+      return { provider: 'test', model: 'test', text: '先确定角色目标和动机。' };
+    }, async () => ({ messages: [], executed: 0 }), new AbortController().signal);
+    assert.equal(result.canvasPlan, false);
+    assert.equal((await h.state()).reviews.length, 0);
+  }
+  await h.kernel.plugins.stop('canvas-control');
+});
+
+test('apply selected preview items checks their own revisions and undoes the batch as one change', async () => {
+  const h = await harness();
+  const first = await h.create('甲'), skipped = await h.create('乙'), third = await h.create('丙');
+  await h.query({ mode: 'search', query: '甲' });
+  await h.query({ mode: 'search', query: '乙' });
+  await h.query({ mode: 'search', query: '丙' });
+  const plan = await h.submit({ version: 1, actions: [first, skipped, third].map(node => ({ type: 'update-node', id: node.id, x: 45 })) });
+  await h.kernel.router.dispatch('canvasControl.offer@1', { ...h.input, text: plan.text, complete: true }, 'core.test');
+  const review = (await h.state()).reviews.at(-1)!;
+  await h.kernel.router.dispatch('node.rename', { id: skipped.id, title: '改了标题的乙' }, 'core.test');
+  const positions = async () => {
+    const current = await h.kernel.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: [first.id, skipped.id, third.id] });
+    return [first, skipped, third].map(item => current.find(node => node.id === item.id)?.x);
+  };
+  await assert.rejects(() => h.kernel.router.dispatch('canvasControl.applyItems@1', { id: review.id, items: [4] }, 'core.test'), /超出/u);
+  await h.kernel.router.dispatch('canvasControl.applyItems@1', { sessionId: h.input.sessionId, items: [1, 3] }, 'core.test');
+  assert.deepEqual(await positions(), [45, 0, 45]);
+  assert.equal((await h.state()).reviews.at(-1)?.verification?.status, 'verified');
+  await h.kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.deepEqual(await positions(), [0, 0, 0]);
+  await h.kernel.plugins.stop('canvas-control');
+});
+
+test('mixed summary cannot write into a read-only source and can append to the designated destination on correction', async () => {
+  const h = await harness();
+  const a = await h.create('来源卡', '第一条观察。');
+  const b = await h.create('总览卡', '原有笔记。');
+  const input = { ...h.input, prompt: '总结来源卡，把结果写进总览卡', sourceIds: [a.id, b.id] };
+  const current = await h.kernel.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: input.sourceIds });
+  const turn: AIPreparedContext = { ...prepared(input), operation: 'canvas-control', sources: current.map(node => ({
+    sourceId: node.id, title: node.title, provider: 'text-node', kind: 'text', revision: node.revision,
+    start: 0, length: 0, text: '', reason: 'explicit-reference',
+  })) };
+  rememberTurnAssembly(turn, { route: classifyAITurn(turn.prompt), readIds: [a.id], destinationId: b.id });
+  await initialCanvasAgentState(h.context, turn, new AbortController().signal, input.sourceIds);
+  const proposal = (id: string) => tool('propose_canvas_plan', { plan: { version: 1,
+    actions: [{ type: 'update-node', id, append: '\n结果。' }] } });
+  const result = await runCanvasAgentLoop(h.context, turn, initial, proposal(a.id), async request => {
+    assert.match(request.messages.at(-1)!.content, /指定结果卡/u);
+    return proposal(b.id);
+  }, async () => ({ messages: [], executed: 0 }), new AbortController().signal);
+  assert.equal(result.canvasPlan, true);
+  assert.deepEqual(JSON.parse(result.result.text).actions.map((action: { id: string }) => action.id), [b.id]);
+  await h.kernel.router.dispatch('canvasControl.offer@1', { ...input, text: result.result.text, complete: true }, 'core.test');
+  const review = (await h.state()).reviews.at(-1)!;
+  await h.kernel.router.dispatch('node.rename', { id: a.id, title: '已手改的来源卡' }, 'core.test');
+  await assert.rejects(() => h.kernel.router.dispatch('canvasControl.apply@1', { id: review.id }, 'core.test'), /已经变化/u);
+  await h.kernel.plugins.stop('canvas-control');
+});
+
+test('cross-card exact synchronization stages a checked replacement and skips private sources', async () => {
+  const h = await harness();
+  const a = await h.create('人物卡', '林渊的职业：钟匠。');
+  const b = await h.create('线索卡', '林渊的职业：钟匠。');
+  const privateCard = await h.create('私密卡', '林渊的职业：钟匠。', false);
+  const input = { ...h.input, prompt: '把画布上的「职业：钟匠」统一改成「职业：守夜人」' };
+  const local = await h.kernel.capabilities.request<{ handled: boolean; text: string }>('canvasControl.localPlan@1', input);
+  assert.equal(local.handled, true);
+  await h.kernel.router.dispatch('canvasControl.offer@1', { ...input, text: local.text, complete: true }, 'core.test');
+  const review = (await h.state()).reviews.at(-1)!;
+  assert.equal(review.replacement?.count, 2);
+  await h.kernel.router.dispatch('canvasControl.apply@1', { id: review.id }, 'core.test');
+  const sources = await h.kernel.capabilities.requestAll<{ handled: boolean; text: string }>('context.read@1', { sourceId: a.id, start: 0, length: 100 });
+  const second = await h.kernel.capabilities.requestAll<{ handled: boolean; text: string }>('context.read@1', { sourceId: b.id, start: 0, length: 100 });
+  const original = await h.kernel.capabilities.requestAll<{ handled: boolean; text: string }>('context.read@1', { sourceId: privateCard.id, start: 0, length: 100 });
+  assert.match(sources.find(item => item.handled)!.text, /守夜人/u);
+  assert.match(second.find(item => item.handled)!.text, /守夜人/u);
+  assert.match(original.find(item => item.handled)!.text, /钟匠/u);
+  await h.kernel.plugins.stop('canvas-control');
+});
+
+test('path tracing uses true edges through routing points, honors direction and excludes private intermediates', () => {
+  const endpoint = (nodeId: string, side: 'left' | 'right'): ConnectionEndpoint =>
+    ({ nodeId, side, ...(nodeId === 'j' ? { kind: 'junction' } : {}) });
+  const graph: ConnectionGraphSnapshot = { version: 1, junctions: [], connections: [
+    ['a-j', 'a', 'j'], ['j-d', 'j', 'd'], ['a-b', 'a', 'private'], ['b-d', 'private', 'd'],
+  ].map(([id, from, to]) => ({ id: id!, from: endpoint(from!, 'right'), to: endpoint(to!, 'left'),
+    labelWidth: 180, labelHeight: 48, revision: 1, createdAt: 1 })) };
+  const allowed = new Set(['a', 'd']);
+  assert.deepEqual(shortestCanvasPath(graph, allowed, 'a', 'd', true), { objects: ['a', 'd'], edges: ['a-j', 'j-d'] });
+  assert.equal(shortestCanvasPath(graph, allowed, 'd', 'a', true), undefined);
+  assert.deepEqual(shortestCanvasPath(graph, allowed, 'd', 'a', false)?.edges, ['j-d', 'a-j']);
+});
+
+test('split scope preserves the original card and only rewires its side of the approved connections', () => {
+  assert.deepEqual(cardRestructureTask('把长卡拆成人物、事件、地点三张，保留原卡并重接相关连线'), {
+    names: ['长卡'], titles: ['人物', '事件', '地点'], reconnect: true,
+  });
+  const scope = { ids: ['long'], titles: ['人物', '事件', '地点'], reconnect: true };
+  const edges = [{ id: 'edge', from: 'long', to: 'other', line: 'dashed' as const, label: '原标签', revision: 1 }];
+  const plan: CanvasControlPlan = { version: 1, actions: [
+    ...scope.titles.map((title, index) => ({ type: 'create-node' as const, ref: 'new' + index, title, text: '有关原文' })),
+    { type: 'update-connection', id: 'edge', from: 'new0' },
+  ] };
+  assert.doesNotThrow(() => validateCardRestructurePlan(scope, plan, edges));
+  assert.throws(() => validateCardRestructurePlan(scope, { ...plan, actions: [...plan.actions, { type: 'delete', ids: ['long'] }] }, edges), /保留原卡/u);
+  assert.throws(() => validateCardRestructurePlan(scope, { ...plan, actions: [...plan.actions.slice(0, 3),
+    { type: 'update-connection', id: 'edge', from: 'new0', to: 'new1' }] }, edges), /保留另一端/u);
+});
 
 test('a model can delegate exact relative geometry and stale anchors reject the whole plan', async () => {
   const h = await harness();
@@ -86,6 +209,33 @@ test('identical tool results cite their existing call without replaying data or 
   }, async () => ({ messages: [], executed: 0 }), new AbortController().signal);
   assert.equal(round, 2);
   await h.kernel.plugins.stop('canvas-control');
+});
+
+test('tool evidence sends only new rows and non-overlapping text after a validated lookup', () => {
+  const h = prepared({ preparationId: 'x', sessionId: 'y', prompt: '整理人物关系' });
+  const evidence = canvasToolEvidence(initial, h, new Set(['links']));
+  const node = { id: 'node:hero', title: '一张标题足够长的测试人物卡', revision: 1, nodeRevision: 2, length: 700,
+    x: 1, y: 2, width: 80, height: 60, color: '#123456', presentation: 'card' as const };
+  const edge = { id: 'link:hero-weapon', from: node.id, to: 'node:weapon', line: 'dashed' as const, label: '武器原主', revision: 1 };
+  const state = { nodes: [node], groups: [], connections: [edge], available: { nodes: true, groups: true, connections: true }, total: 1 };
+  evidence.query(state, 'relations', 'query-first').record();
+  const next = evidence.query({ ...state, nodes: [node, { ...node, id: 'node:weapon', title: '武器卡' }], total: 2 }, 'relations', 'query-two');
+  assert.match(JSON.stringify(next.value), /"seenIn":"query-first"/u);
+  assert.match(JSON.stringify(next.value), /"title":"武器卡"/u);
+  assert.doesNotMatch(JSON.stringify(next.value), /"label":"武器原主"|"width"/u);
+  const changed = evidence.query({ ...state, connections: [{ ...edge, revision: 2, line: 'solid' }] }, 'relations', 'query-three');
+  assert.match(JSON.stringify(changed.value), /"line":"solid"/u);
+
+  const shared = '重叠的验证范围。'.repeat(50);
+  const read = { id: node.id, revision: 1, start: 0, text: '首段。' + shared, totalLength: shared.length + 6 };
+  evidence.read(read, 'read-first').record();
+  const second = evidence.read({ ...read, start: 3, text: shared + '末段。' }, 'read-second');
+  assert.match(JSON.stringify(second.value), /"previousCall":"read-first"/u);
+  assert.match(JSON.stringify(second.value), /"text":"末段。"/u);
+  assert.doesNotMatch(JSON.stringify(second.value), /重叠的验证范围/u);
+  const fresh = evidence.read({ ...read, revision: 2 }, 'read-third');
+  assert.match(JSON.stringify(fresh.value), /重叠的验证范围/u);
+  assert.doesNotMatch(JSON.stringify(fresh.value), /"previousCall"/u);
 });
 
 test('semantic canvas tools discover, range-read and submit a general-chat task through one verified atomic transaction', async () => {

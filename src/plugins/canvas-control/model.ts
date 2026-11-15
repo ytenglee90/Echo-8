@@ -3,7 +3,7 @@ import { CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, type CanvasControlAdmissi
 import type { AppearanceEntityRef, AppearanceReadContribution, AppearanceUpdatePlan } from '../../protocols/appearance.ts';
 import type { ContentReplacePlan } from '../../protocols/search.ts';
 import { OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2, type OperationStatus, type OperationStageUpdate, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
-import { canvasRequestsAllNodes, naturalCanvasOperation, needsCanvasSearchInterpretation, type NaturalCanvasOperation } from '../../services/ai-task-route.ts';
+import { asksForCanvasContinuation, canvasCommandText, canvasRequestsAllNodes, naturalCanvasOperation, needsCanvasSearchInterpretation, type NaturalCanvasOperation } from '../../services/ai-task-route.ts';
 import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
 import { defineManifest } from '../manifest.ts';
@@ -26,9 +26,9 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       namespaces: [CONTROL_UI_NAMESPACE], namespaceDomains: { [CONTROL_UI_NAMESPACE]: 'workspace' },
       sessionOnlyWorkspace: { [CONTROL_UI_NAMESPACE]: true },
       requiresCapabilities: ['content.summaries@1', 'content.summariesById@1', 'selection.read@1', 'selection.resolve@1', 'selection.entities@1', 'canvasControl.nodesPlan@1'],
-      optionalCapabilities: ['context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'context.semanticSearch@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
-      providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
-      commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
+      optionalCapabilities: ['content.search@2', 'context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'context.semanticSearch@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
+      providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.context@3', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1'],
+      commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.applyItems@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
       dispatches: ['canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'selection.set', 'canvas.focusSelection', 'palette.setPreferences'],
       queries: ['canvasControl.state@1'],
       events: ['document.replaced', 'history.changed', 'canvas.appearance.changed', 'canvasControl.background.applied@1'], signals: [CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, 'canvasControl.updated@1', 'appearance.color.preview', OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2],
@@ -39,7 +39,8 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
     start(context) {
       const snapshots = new Map<string, ControlSnapshot>();
       const reviews = new Map<string, StoredControlReview>();
-      const applying = new Map<string, string>();
+      const lastPlacementBySession = new Map<string, StoredControlReview>();
+      const applying = new Map<string, { token: string; draft: StoredControlReview }>();
       const generating = new Set<string>();
       const lastNatural = new Map<string, NaturalControlState>();
       const localResults = new Map<string, NaturalControlResult>();
@@ -98,6 +99,8 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         if (session && (session.sessionId !== input.sessionId || session.prompt !== input.prompt || session.expiresAt < Date.now())) throw new Error('画布工具任务已失效');
         if (!session) {
           session = newAgentDiscovery(input);
+          const existing = snapshots.get(input.preparationId);
+          if (existing?.sessionId === input.sessionId && existing.prompt === input.prompt && existing.expiresAt >= Date.now()) grantAgentSnapshot(session, existing);
           agentSessions.set(input.preparationId, session);
           while (agentSessions.size > 8) agentSessions.delete(agentSessions.keys().next().value!);
         }
@@ -112,7 +115,9 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         context.signals.emit(OPERATION_LOG_STAGE_V2, { id, relatedId: input.preparationId, phase: 'canvas-targets', state: 'completed', elapsedMs: performance.now() - started,
           detail: { step: 'targets', route: 'model', scope: input.query.mode === 'all' ? 'canvas' : input.query.mode === 'selection' ? 'selection' : 'named', matched: result.nodes.length,
             queryMode: input.query.mode, reason: result.nodes.length ? 'model-plan' : 'empty-targets' } } satisfies OperationStageUpdateV2);
-        if (input.query.mode === 'state') result.tasks = await controlTaskState(context, [...reviews.values()], { sessionId: input.sessionId }, signal);
+        if (input.query.mode === 'state') result.tasks = await controlTaskState(context, [...new Set([
+          ...lastPlacementBySession.values(), ...reviews.values(),
+        ])], { sessionId: input.sessionId }, signal);
         return result;
         } catch (error) {
           context.signals.emit(OPERATION_LOG_STAGE_V2, { id, relatedId: input.preparationId, phase: 'canvas-targets', state: signal?.aborted ? 'cancelled' : 'failed', elapsedMs: performance.now() - started,
@@ -159,7 +164,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         trace('running', { step: 'targets' });
         let previous = lastNatural.get(input.sessionId) ?? { ids: [] };
         if (operation.kind === 'placement-gap') {
-          const last = [...reviews.values()].findLast(draft => draft.review.sessionId === input.sessionId);
+          const last = lastPlacementBySession.get(input.sessionId);
           const placement = last?.placement;
           if (last?.review.status === 'applied' && last.after && placement) {
             const ids = [placement.nodeId, placement.anchorId];
@@ -220,12 +225,15 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           (input.targetIds !== undefined && (!Array.isArray(input.targetIds) || input.targetIds.length > 80 || input.targetIds.some(id => typeof id !== 'string')))) throw new Error('任务状态请求无效');
         return controlTaskState(context, [...reviews.values()], input, signal);
       } });
-      context.capabilities.provide({ key: 'canvasControl.context@2', invoke: async (input: CanvasControlAdmission & { purpose?: import('../../protocols/canvas-control.ts').CanvasControlPurpose }, signal) => {
+      for (const key of ['canvasControl.context@2', 'canvasControl.context@3'] as const) context.capabilities.provide({ key, invoke: async (input: CanvasControlAdmission & { purpose?: import('../../protocols/canvas-control.ts').CanvasControlPurpose }, signal) => {
         if (!isAdmission(input) || (input.purpose !== undefined && !['appearance', 'move', 'creation', 'structure', 'content', 'general'].includes(input.purpose))) throw new Error('画布控制请求无效');
         const discovery = await discoverControlTargets(context, input, [...reviews.values()], signal);
         const requestedScope = canvasRequestsAllNodes(input.prompt) ? 'canvas' : scope();
         const previous = /它们|这些|刚才(?:的|那批|创建)/u.test(input.prompt) ? lastNatural.get(input.sessionId)?.ids ?? [] : [];
-        const snapshot = await captureControlSnapshot(context, { ...input, sourceIds: [...new Set([...(input.sourceIds ?? []), ...previous])] }, requestedScope, signal, discovery);
+        const hasNamedObjects = Boolean(input.sourceIds?.length || discovery.names.length);
+        const usesSelection = asksForCanvasContinuation(input.prompt) || /选中|选区|当前卡片|这几张|这两张/u.test(canvasCommandText(input.prompt));
+        const snapshot = await captureControlSnapshot(context, { ...input, sourceIds: [...new Set([...(input.sourceIds ?? []), ...previous])] },
+          requestedScope, signal, discovery, key === 'canvasControl.context@3' && hasNamedObjects && !usesSelection);
         snapshot.execution = execution();
         context.signals.emit(OPERATION_LOG_STAGE_V2, { id: input.preparationId, relatedId: input.preparationId, phase: 'canvas-targets', state: 'completed',
           detail: { step: 'targets', route: 'model', scope: requestedScope === 'canvas' ? 'canvas' : discovery.names.length ? 'named' : 'selection',
@@ -233,6 +241,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         snapshots.set(input.preparationId, snapshot);
         while (snapshots.size > 8) snapshots.delete(snapshots.keys().next().value!);
         const result = controlContextV2(snapshot, input.purpose);
+        if (key === 'canvasControl.context@3') result.targetIds = [...new Set([...(result.targetIds ?? []), ...(snapshot.namedTargetIds ?? [])])];
         const agent = agentSessions.get(input.preparationId);
         if (agent) grantAgentSnapshot(agent, snapshot);
         if (result.instruction.length + result.objectDirectory.length > 24_000) throw new Error('对象目录过大，请缩小范围');
@@ -394,14 +403,20 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           review.replacement = { count: hits.length, nodeCount: new Set(hits.map(hit => hit.nodeId)).size,
             from: hits[0]!.matchedText, to: replacement, examples: hits.slice(0, 5).map(hit => `${hit.title} · ${hit.preview}`) };
         }
-        reviews.set(id, { review, snapshot, replacement: local?.replacement, placement: local?.placement });
+        const stored = { review, snapshot, replacement: local?.replacement, placement: local?.placement };
+        reviews.set(id, stored);
+        if (stored.placement) {
+          lastPlacementBySession.delete(input.sessionId);
+          lastPlacementBySession.set(input.sessionId, stored);
+          if (lastPlacementBySession.size > 32) lastPlacementBySession.delete(lastPlacementBySession.keys().next().value!);
+        }
         if (local && plan.actions.length === 1 && (plan.actions[0]?.type === 'create-connection' || plan.actions[0]?.type === 'update-connection')) remember(input.sessionId, { pendingLine: id });
         while (reviews.size > 8) {
           const oldest = reviews.keys().next().value!;
           if (reviews.get(oldest)?.review.status === 'pending') logPlan(oldest, 'expired');
           reviews.delete(oldest);
         }
-        if (snapshot.execution === 'direct' && execution() === 'direct' && canGenerateDirectly(review, snapshot)) {
+        if (snapshot.execution === 'direct' && execution() === 'direct' && !/先(?:预览|看)|不要直接|只应用|(?:总结|概括|归纳|对比|比较|分析).*(?:写进|写入|填入)|缺.{1,10}的(?:卡片?|节点).*补|拆(?:分)?成|合并成/u.test(input.prompt) && canGenerateDirectly(review, snapshot)) {
           logPlan(id, 'waiting');
           publish();
           return { result: { message: `已准备 ${plan.actions.length} 项操作，将直接生成到画布，无需点击应用。完成后可一次撤销。`, directPlanId: id } };
@@ -445,20 +460,21 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         }
         return { result: { message: `已直接完成 ${draft.review.actions.length} 项操作，内容已生成到画布，可一次撤销。` } };
       } });
-      context.commands.register({ type: 'canvasControl.apply@1', validate: isPlanId, handle: async input => {
-        const draft = reviews.get(input.id);
-        if (!draft || draft.snapshot.expiresAt < Date.now()) {
-          if (draft) logPlan(input.id, 'expired');
+      const applyReview = async (id: string, items?: number[]) => {
+        const original = reviews.get(id);
+        if (!original || original.snapshot.expiresAt < Date.now()) {
+          if (original) logPlan(id, 'expired');
           throw new Error('操作计划已经过期，请重新生成');
         }
-        if (draft.review.status !== 'pending' || applying.has(input.id)) throw new Error('这份操作计划已处理');
+        if (original.review.status !== 'pending' || applying.has(id)) throw new Error('这份操作计划已处理');
+        const draft = items ? selectReviewItems(original, items) : original;
         const token = createId('control-commit');
-        applying.set(input.id, token);
-        logPlan(input.id, 'running');
+        applying.set(id, { token, draft });
+        logPlan(id, 'running');
         try {
           const changedIds = [...new Set([...draft.snapshot.writable, ...draft.review.actions.flatMap(action => 'id' in action ? [action.id] : [])])];
           draft.before = (await readTaskMarkers(context, changedIds)).markers;
-          const result = await context.commands.invoke('canvasControl.commit@1', { id: input.id, token });
+          const result = await context.commands.invoke('canvasControl.commit@1', { id, token });
           draft.createdIds = result.createdIds;
           draft.created = result.created;
           const single = draft.review.actions.length === 1 ? draft.review.actions[0] : undefined;
@@ -472,21 +488,34 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           draft.review.error = undefined;
           if (!draft.replacement) draft.review.verification = await verifyControlApplication(context, draft);
           if (draft.review.verification) context.signals.emit(OPERATION_LOG_STAGE_V2, {
-            id: input.id, relatedId: draft.snapshot.preparationId, phase: 'canvas-verification',
+            id, relatedId: draft.snapshot.preparationId, phase: 'canvas-verification',
             state: draft.review.verification.status === 'verified' ? 'completed' : 'failed',
             detail: { step: 'verify', reason: draft.review.verification.status === 'verified' ? 'verified' :
               draft.review.verification.status === 'mismatch' ? 'verification-mismatch' : 'verification-unavailable',
               checked: draft.review.verification.checked, mismatchCount: draft.review.verification.mismatches.length },
           } satisfies OperationStageUpdateV2);
-          draft.review.status = 'applied'; logPlan(input.id, 'applied'); publish();
+          draft.review.status = 'applied'; reviews.set(id, draft);
+          if (lastPlacementBySession.get(draft.review.sessionId) === original && draft !== original) {
+            if (draft.placement) lastPlacementBySession.set(draft.review.sessionId, draft);
+            else lastPlacementBySession.delete(draft.review.sessionId);
+          }
+          logPlan(id, 'applied'); publish();
           return { result };
         } catch (error) {
-          draft.review.error = error instanceof Error ? error.message : String(error); logPlan(input.id, 'failed'); publish(); throw error;
-        } finally { applying.delete(input.id); }
+          original.review.error = error instanceof Error ? error.message : String(error); logPlan(id, 'failed'); publish(); throw error;
+        } finally { applying.delete(id); }
+      };
+      context.commands.register({ type: 'canvasControl.apply@1', validate: isPlanId, handle: input => applyReview(input.id) });
+      context.commands.register({ type: 'canvasControl.applyItems@1', validate: isItemSelection, handle: input => {
+        const candidates = 'id' in input ? [input.id] : [...reviews.values()].filter(draft =>
+          draft.review.sessionId === input.sessionId && draft.review.status === 'pending' && draft.snapshot.expiresAt >= Date.now()).map(draft => draft.review.id);
+        if (candidates.length !== 1) throw new Error(candidates.length ? '这段对话有多份待应用计划，请在画布控制中选定一份。' : '这段对话没有可应用的预览。');
+        return applyReview(candidates[0]!, input.items);
       } });
       context.commands.register({ type: 'canvasControl.commit@1', validate: (input): input is { id: string; token: string } => isPlanId(input) && typeof (input as { token?: unknown }).token === 'string', handle: async input => {
-        const draft = reviews.get(input.id);
-        if (!draft || applying.get(input.id) !== input.token || draft.review.status !== 'pending') throw new Error('画布控制提交授权已失效');
+        const active = applying.get(input.id);
+        if (!active || active.token !== input.token || active.draft.review.status !== 'pending') throw new Error('画布控制提交授权已失效');
+        const { draft } = active;
         if (draft.replacement) {
           if (draft.replacement.hits.some(hit => !draft.snapshot.writable.has(hit.nodeId))) throw new Error('替换目标超出操作范围');
           const replacement = await context.capabilities.request<ContentReplacePlan>('content.replacePlan@2', draft.replacement);
@@ -511,7 +540,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       } });
       context.events.subscribe('document.replaced', () => {
         for (const [id, draft] of reviews) if (draft.review.status === 'pending') logPlan(id, 'expired');
-        snapshots.clear(); reviews.clear(); localResults.clear(); agentSessions.clear(); lastNatural.clear(); navigation = undefined;
+        snapshots.clear(); reviews.clear(); lastPlacementBySession.clear(); localResults.clear(); agentSessions.clear(); lastNatural.clear(); navigation = undefined;
         if (background) clearBackground(); else publish();
       });
       context.events.subscribe('history.changed', publish);
@@ -540,4 +569,43 @@ function canGenerateDirectly(review: CanvasControlReview, snapshot: ControlSnaps
     if (action.edit) return action.edit.start === 0 && action.edit.deleteCount === 0 && action.edit.expectedRevision === node.revision && Boolean(action.edit.insert.trim());
     return Boolean((action.text ?? action.append)?.trim());
   });
+}
+
+function isItemSelection(input: unknown): input is ({ id: string } | { sessionId: string }) & { items: number[] } {
+  return isRecord(input) && (isPlanId(input) !== (typeof input.sessionId === 'string' && input.sessionId.length > 0 && input.sessionId.length <= 200)) &&
+    Array.isArray(input.items) && input.items.length > 0 && input.items.length <= 100 &&
+    input.items.every(item => Number.isInteger(item) && item >= 1 && item <= 100) && new Set(input.items).size === input.items.length;
+}
+
+function selectReviewItems(original: StoredControlReview, items: number[]): StoredControlReview {
+  const { review, snapshot } = original;
+  if (original.replacement && review.replacement) {
+    if (items.some(item => item > review.replacement!.examples.length)) throw new Error('请按预览中显示的替换项编号选择。');
+    const indexes = [...items].sort((a, b) => a - b).map(item => item - 1);
+    const hits = indexes.map(index => original.replacement!.hits[index]!);
+    const ids = new Set(hits.map(hit => hit.nodeId));
+    return { ...original, replacement: { ...original.replacement, hits },
+      snapshot: { ...snapshot, writable: new Set([...snapshot.writable].filter(id => ids.has(id))) },
+      review: { ...review, replacement: { ...review.replacement, count: hits.length, nodeCount: ids.size,
+        examples: indexes.map(index => review.replacement!.examples[index]!) } } };
+  }
+  if (items.some(item => item > review.actions.length)) throw new Error('选中的项超出当前预览范围。');
+  const selected = new Set(items.map(item => item - 1));
+  const actions = review.actions.filter((_, index) => selected.has(index));
+  if (actions.length === review.actions.length) return original;
+  const removedRefs = new Set(review.actions.flatMap((action, index) => !selected.has(index) && 'ref' in action ? [action.ref] : []));
+  if (actions.some(action => ('members' in action && action.members?.some(id => removedRefs.has(id))) ||
+    ('from' in action && action.from && removedRefs.has(action.from)) ||
+    ('to' in action && action.to && removedRefs.has(action.to)))) throw new Error('选中项依赖未选中的新对象，请一并勾选。');
+  const placement = original.placement && actions.some(action => action.type === 'update-node' && action.id === original.placement?.nodeId &&
+    (action.x !== undefined || action.y !== undefined)) ? original.placement : undefined;
+  if (placement || actions.some(action => action.type !== 'update-node' && action.type !== 'create-node')) {
+    return { ...original, placement, review: { ...review, actions } };
+  }
+  const ids = new Set(actions.flatMap(action => action.type === 'update-node' ? [action.id] : []));
+  return { ...original, placement, review: { ...review, actions }, snapshot: { ...snapshot,
+    nodes: snapshot.nodes.filter(node => ids.has(node.id)), groups: [], graph: { ...snapshot.graph, connections: [] },
+    namedTargetIds: snapshot.namedTargetIds?.filter(id => ids.has(id)),
+    writable: new Set([...snapshot.writable].filter(id => ids.has(id))),
+  } };
 }

@@ -10,12 +10,13 @@ import type {
   AIPreparedSource,
   AISessionRecord,
 } from '../../protocols/ai.ts';
-import { stripOperationCommands } from './command-parser.ts';
+import { explicitAtOperation, stripOperationCommands } from './command-parser.ts';
 import { classifyAIContextIntent } from './context-intent.ts';
 import type { PreparePayload } from './command-payloads.ts';
 import {
   readContextCatalog,
   readContextSource,
+  readCanvasDraftEvidence,
   readHeadEvidenceBlock,
   readNaturalEvidenceBlock,
   readTailEvidenceBlock,
@@ -34,13 +35,19 @@ import {
 } from './memory-retrieval.ts';
 import { extractTerms } from './memory-terms.ts';
 import { sessionTranscriptSourceId } from './transcript-storage.ts';
-import { asksForCanvasContinuation, canvasCommandText, canvasControlPurpose, isGeometryOnlyCanvasTask, naturalCanvasOperation, needsCanvasSearchInterpretation } from '../../services/ai-task-route.ts';
+import { canvasCommandText, isFocusedCanvasContentTask } from '../../services/ai-task-route.ts';
 import { readParagraphTarget } from './paragraph-target.ts';
 import { operationCreatesWriteback } from './operations.ts';
 import { bindNaturalWriteback, naturalWritebackIntent, readBoundWriteback, writebackTaskInstructions } from './natural-writeback.ts';
 import { naturalMemoryDirective } from './memory-suggestion.ts';
 import { bindNaturalSourceScope, naturalResultDestination } from './natural-source-scope.ts';
 import { planFullSourceSummary } from './full-source-summary.ts';
+import { classifyAITurn, mixedCanvasWrite, rememberTurnAssembly, type AITurnRoute, type TurnAssembly } from './turn-route.ts';
+import { canvasTitleAliases, normalizeCanvasTitle } from '../../services/canvas-titles.ts';
+import { exactHistoryRequest, recallConversation } from './conversation-recall.ts';
+import { OPERATION_LOG_STAGE_V2, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
+import { prepareStructuredFields } from './structured-fields.ts';
+import { prepareCardRestructure } from './card-restructure.ts';
 
 export interface AIContextBudget {
   characterLimit: number;
@@ -66,7 +73,11 @@ export async function prepareAIContext(
   budgetOverride?: Readonly<AIContextBudget>,
   previousProposal?: AIProposalRecord,
   preparationId = createId('ai-context'),
+  turnRoute?: AITurnRoute,
 ): Promise<AIPreparedContext> {
+  const route = turnRoute ?? classifyAITurn(payload.prompt, explicitAtOperation(payload.prompt) ?? payload.operation);
+  const completePreparation = (prepared: AIPreparedContext, binding: Omit<TurnAssembly, 'route'> = {}) =>
+    rememberTurnAssembly(prepared, { route, ...binding });
   const localMemoryDirective = naturalMemoryDirective(payload.prompt);
   if (localMemoryDirective) {
     const createdAt = Date.now();
@@ -78,25 +89,29 @@ export async function prepareAIContext(
       review: { reason: 'memory-state-change', message: '确认后将这条变更记入当前对话的正式记忆。' },
     };
   }
-  const contentTarget = payload.operation === 'canvas-control' && naturalCanvasOperation(payload.prompt)?.kind === 'content';
+  const contentTarget = route.category === 'operation' && route.local?.kind === 'content';
   const contentBinding = contentTarget ? await context.capabilities.request<{ ids: string[]; needsChoice: boolean }>('canvasControl.bindContent@1', {
     preparationId, sessionId: session.id, prompt: payload.prompt,
     sourceIds: payload.references?.filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
   }, signal) : undefined;
-  if (payload.operation === 'canvas-control' && (!contentTarget || contentBinding?.needsChoice) && (naturalCanvasOperation(payload.prompt) || needsCanvasSearchInterpretation(payload.prompt)) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length) {
+  if (route.clarification || route.applyItems || (route.category === 'operation' && (!contentTarget || contentBinding?.needsChoice) && (route.local || route.interpretedSearch) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length)) {
     const createdAt = Date.now();
     report(1);
-    return { id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
-      operation: 'canvas-control', providerProfileId: payload.providerProfileId, contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
-      estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000 };
+    return completePreparation({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+      operation: payload.operation, providerProfileId: payload.providerProfileId, contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
+      estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000 });
   }
   const resolvedBudget = budgetOverride
     ? { budget: budgetOverride, modelContextWindowTokens: undefined }
     : await resolveAIContextBudget(context, payload.providerProfileId, signal);
   const budget = resolvedBudget.budget;
-  const mechanicalCanvasTask = payload.operation === 'canvas-control' && isGeometryOnlyCanvasTask(payload.prompt);
-  const continuingCanvasTask = asksForCanvasContinuation(payload.prompt);
-  const selectedMemorySourceIds = mechanicalCanvasTask ? [] : [...new Set(payload.memorySourceIds ?? [])];
+  const mechanicalCanvasTask = route.mechanical;
+  const continuingCanvasTask = route.continuation;
+  const canvasHistory = route.category !== 'chat' && route.history;
+  const useDraft = route.draft && contentBinding?.ids.length === 1;
+  const focusedContent = contentBinding?.ids.length === 1 && session.turns > 0 && isFocusedCanvasContentTask(payload.prompt);
+  const selectedMemorySourceIds = mechanicalCanvasTask ? [] : [...new Set(payload.memorySourceIds ?? [])]
+    .filter(sourceId => !focusedContent || memoryIndexes[sourceId]?.sessionId !== session.id);
   const selectedMemorySet = new Set(selectedMemorySourceIds);
   const memoryArtifactOwner = new Map<string, string>();
   for (const memory of mechanicalCanvasTask ? [] : Object.values(memoryIndexes)) {
@@ -118,10 +133,64 @@ export async function prepareAIContext(
   const conversationalFollowup = editIntent?.kind === 'followup' && (!previousProposal?.suggestedTarget?.range || previousProposal.status === 'dismissed');
   const naturalEdit = conversationalFollowup ? undefined : editIntent;
   const externalCatalog = await readContextCatalog(context);
+  if (route.operation === 'canvas-control' && (route.fieldTask || route.restructureTask)) {
+    const limits = {
+      characters: Math.max(0, budget.characterLimit - payload.prompt.length),
+      tokens: Math.max(0, budget.tokenLimit - estimateAITokens(payload.prompt)),
+    };
+    const sourceId = sessionTranscriptSourceId(session);
+    const needsTranscript = route.fieldTask?.kind === 'restore' || route.fieldTask?.kind === 'scan-old';
+    const transcript = needsTranscript ? (await readContextSource(context, { sourceId, start: 0, length: 0 }, signal)).source : undefined;
+    const { sources = [], ...binding } = route.fieldTask
+      ? await prepareStructuredFields(context, route.fieldTask, externalCatalog, limits, signal, boundReferences, transcript)
+      : await prepareCardRestructure(context, route.restructureTask!, externalCatalog, boundReferences, limits, signal);
+    const createdAt = Date.now();
+    report(1);
+    return completePreparation({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId,
+      prompt: payload.prompt, operation: payload.operation, providerProfileId: payload.providerProfileId, contextMode: 'explicit-only', sources,
+      totalCharacters: payload.prompt.length + sources.reduce((total, source) => total + source.text.length, 0),
+      estimatedTokens: estimateAITokens(payload.prompt) + sources.reduce((total, source) => total + estimateAITokens(source.text), 0),
+      createdAt, expiresAt: createdAt + 10 * 60_000,
+    }, binding);
+  }
+  const mixedWrite = route.category === 'mixed' ? mixedCanvasWrite(payload.prompt) : undefined;
+  let destinationId: string | undefined;
+  let readIds: string[] | undefined;
+  let clarify: string | undefined;
+  if (mixedWrite) {
+    const targetText = mixedWrite.destination.replace(/(?:的正文|里|内)$/u, '').trim();
+    const targetRef = boundReferences.find(reference => targetText === reference.token);
+    const targetName = normalizeCanvasTitle(targetText.replace(/^[「『“"]|[」』”"]$/gu, ''));
+    const targets = externalCatalog.filter(source => source.kind === 'text' && (targetRef ? source.sourceId === targetRef.sourceId
+      : source.automaticRetrieval !== false && canvasTitleAliases(source.title).includes(targetName)));
+    destinationId = targets.length === 1 ? targets[0]!.sourceId : undefined;
+    if (!destinationId) clarify = targets.length ? `「${targetText}」有多个匹配，请用 @ 指定要写入的卡片。` : `要写入哪张卡片？请用 @ 指定「${targetText}」。`;
+    const readRefs = boundReferences.filter(reference => mixedWrite.readPrompt.includes(reference.token)).map(reference => reference.sourceId);
+    const readOperation = /对比|比较/u.test(mixedWrite.readPrompt) ? 'compare' : 'summarize';
+    if (!clarify) try {
+      const readScope = readRefs.length ? undefined : await bindNaturalSourceScope(context,
+        mixedWrite.readPrompt.replace(/这\s*(?:三|四|五|\d+)\s*张(?:卡片?|节点)?/u, '这几个'),
+        readOperation, externalCatalog, signal);
+      readIds = readRefs.length ? readRefs : readScope?.ids ?? [];
+      const count = /这\s*(两|二|三|四|五|\d+)\s*(?:张|个)/u.exec(mixedWrite.readPrompt)?.[1];
+      const expected = count && (({ 两: 2, 二: 2, 三: 3, 四: 4, 五: 5 } as Record<string, number>)[count] ?? Number(count));
+      if (!readIds.length || (expected && readIds.length !== expected)) clarify = '请用 @ 指定要读取的卡片，或在画布选中原要求中的来源。';
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      clarify = error instanceof Error ? error.message : '请用 @ 指定要读取的卡片。';
+    }
+    explicit.length = 0;
+    if (!clarify) explicit.push(...new Set([...(readIds ?? []), destinationId!]));
+  }
   const naturalScope = explicit.length || naturalEdit ? undefined : await bindNaturalSourceScope(context, command, payload.operation, externalCatalog, signal);
   explicit.push(...(naturalScope?.ids ?? []));
-  const fullSummary = payload.operation === 'summarize' && explicit.length > 0 && (naturalScope?.group || /全文|完整总结|逐段汇总/u.test(command))
-    ? planFullSourceSummary(explicit, externalCatalog, budget)
+  const transcriptSourceId = sessionTranscriptSourceId(session);
+  const wholeConversation = route.category === 'chat' && !explicit.length &&
+    /^(?:请|帮我)?\s*(?:回顾|复盘|总结|汇总|梳理)(?:一下)?(?:这段|本次|本轮)?(?:全部|所有|完整)(?:的)?(?:讨论|对话|聊天记录)[。！!]?$/u.test(command.trim());
+  const wholeTranscript = wholeConversation ? (await readContextSource(context, { sourceId: transcriptSourceId, start: 0, length: 0 }, signal)).source : undefined;
+  const fullSummary = wholeTranscript ? planFullSourceSummary([wholeTranscript.sourceId], [wholeTranscript], budget)
+    : payload.operation === 'summarize' && explicit.length > 0 && (naturalScope?.group || /全文|完整总结|逐段汇总/u.test(command))
+      ? planFullSourceSummary(explicit, externalCatalog, budget)
     : undefined;
   const paragraph = /(?:改写|修改|重写|润色)[\s\S]{0,30}?第\s*(\d+)\s*段/u.exec(command) ?? /第\s*(\d+)\s*段[\s\S]{0,30}?(?:改写|修改|重写|润色)/u.exec(command);
   const continuation = /续写|接着写|继续写|从末尾/u.test(command);
@@ -133,13 +202,14 @@ export async function prepareAIContext(
     hasExplicitSource: explicit.length > 0,
     hasSelectedMemory: selectedMemorySet.size > 0,
   });
-  const permitsAutomaticRetrieval = contextMode === 'automatic' && contextIntent !== 'conversation';
+  const permitsAutomaticRetrieval = contextMode === 'automatic' && contextIntent !== 'conversation' &&
+    !(route.category === 'chat' && route.readCanvas && !route.history && !selectedMemorySet.size);
   const scopedMemoryIndexes = selectedMemorySet.size > 0
     ? Object.fromEntries(Object.entries(memoryIndexes).filter(([sourceId]) => selectedMemorySet.has(sourceId)))
-    : permitsAutomaticRetrieval ? memoryIndexes : {};
-  const transcriptSourceId = sessionTranscriptSourceId(session);
-  const useTranscript = !naturalEdit && !fullSummary && (!mechanicalCanvasTask || continuingCanvasTask);
-  const transcriptMetadata = !mechanicalCanvasTask || useTranscript ? await readContextSource(
+    : permitsAutomaticRetrieval || (canvasHistory && payload.contextMode !== 'explicit-only') ? memoryIndexes : {};
+  const useTranscript = !clarify && !mixedWrite && !naturalEdit && !fullSummary &&
+    (!mechanicalCanvasTask || continuingCanvasTask) && (!route.lookupOnly || continuingCanvasTask);
+  const transcriptMetadata = useTranscript || route.history ? await readContextSource(
     context,
     { sourceId: transcriptSourceId, start: 0, length: 0 },
     signal,
@@ -225,8 +295,10 @@ export async function prepareAIContext(
       writebackTarget = { nodeId: source.sourceId, expectedRevision: source.revision, start: target.start, end: target.end, mode: 'replace' };
       continue;
     }
-    const purpose = canvasControlPurpose(payload.prompt);
-    const omitBody = purpose === 'move' || (purpose === 'appearance' && !/设计|方案|主题|根据|协调|参考|推荐|想法/u.test(canvasCommandText(payload.prompt)));
+    const purpose = route.purpose;
+    const omitBody = route.mechanical && !(route.history || route.draft) ||
+      (purpose === 'appearance' && !/设计|方案|主题|根据|协调|参考|推荐|想法/u.test(canvasCommandText(payload.prompt))) ||
+      (reference === destinationId && !readIds?.includes(reference));
     if (payload.operation === 'canvas-control' && (omitBody || source.length === 0)) {
       sources.push({ ...source, start: 0, length: 0, text: '', reason: 'explicit-reference', complete: true });
       continue;
@@ -236,18 +308,45 @@ export async function prepareAIContext(
     const block = await readBlock(
       context,
       source,
-      Math.min(3_500, remainingCharacters, naturalScope ? Math.floor(budget.characterLimit / explicit.length) : Infinity),
-      Math.min(remainingTokens, naturalScope ? Math.floor(budget.tokenLimit / explicit.length) : Infinity),
+      Math.min(useDraft ? Math.min(1_200, Math.floor(remainingCharacters / 4)) : 3_500, remainingCharacters,
+        naturalScope || mixedWrite ? Math.floor(budget.characterLimit / explicit.length) : Infinity),
+      Math.min(remainingTokens, naturalScope || mixedWrite ? Math.floor(budget.tokenLimit / explicit.length) : Infinity),
       signal,
     );
     if (block.text) add({ ...source, ...block, reason: 'explicit-reference' });
+    else if (mixedWrite) sources.push({ ...source, start: 0, length: 0, text: '', reason: 'explicit-reference', complete: source.length === 0 });
     else if (naturalScope?.ids.length) sources.push({ ...source, start: 0, length: 0, text: '', reason: 'explicit-reference', complete: source.length === 0 });
   }
   report(0.25);
 
   const transcriptMeta = catalog.find((source) => source.sourceId === transcriptSourceId);
-  if (transcriptMeta?.length && useTranscript) {
-    const block = await readTailEvidenceBlock(
+  const exactHistory = !clarify && transcriptMeta?.length && exactHistoryRequest(payload.prompt);
+  let exactHistoryFound = false;
+  if (transcriptMeta && exactHistory) {
+    const started = performance.now();
+    const recalled = await recallConversation(context, transcriptMeta, payload.prompt, remainingCharacters, remainingTokens, signal);
+    let sent = 0;
+    for (const { start, length, text, estimatedTokens } of recalled.evidence) {
+      if (add({ ...transcriptMeta, start, length, text, estimatedTokens, reason: 'conversation-memory', boundary: 'conversation-turn', complete: true })) sent++;
+    }
+    exactHistoryFound = sent > 0;
+    if (recalled.ambiguousSubjects.length && !selectedMemorySet.size) {
+      clarify = `找到多个对象的历史记录。你指的是${recalled.ambiguousSubjects.map(subject => '「' + subject + '」').join('、')}中的哪一个？`;
+    } else if (recalled.competing && recalled.evidence.length > 1) {
+      const differences = [...new Set(recalled.evidence.map(item => item.text.replace(/^\[[^\]\r\n]+\][ \t]*\r?\n/u, '').trim()))];
+      if (differences.length > 1) clarify = '这些已确认的记录没有明确的替代关系。请选一项继续。\n' +
+        recalled.evidence.map(item => `第 ${item.turn} 轮 · ${item.text.replace(/^\[[^\]\r\n]+\][ \t]*\r?\n/u, '').trim().slice(0, 260)}`).join('\n');
+    }
+    context.signals?.emit(OPERATION_LOG_STAGE_V2, { id: createId('ai-history-read'), relatedId: preparationId,
+      phase: 'canvas-read', state: 'completed', elapsedMs: performance.now() - started, count: recalled.reads,
+      detail: { step: 'read', route: 'local', scope: 'conversation', matched: sent, candidates: recalled.candidates,
+        reason: recalled.boundedOut ? 'scope-limit' : sent ? 'local-rule' : 'empty-targets',
+        readCharacters: recalled.evidence.reduce((total, entry) => total + entry.length, 0) },
+    } satisfies OperationStageUpdateV2);
+  }
+  if (transcriptMeta?.length && useTranscript && !exactHistoryFound && !clarify) {
+    const draft = useDraft ? await readCanvasDraftEvidence(context, transcriptMeta, remainingCharacters, remainingTokens, signal) : undefined;
+    const block = draft ?? await readTailEvidenceBlock(
       context,
       transcriptMeta,
       Math.min(mechanicalCanvasTask ? 1_000 : budget.transcriptWindow, remainingCharacters),
@@ -255,9 +354,13 @@ export async function prepareAIContext(
       signal,
     );
     if (block.text) add({ ...transcriptMeta, ...block, reason: 'recent-conversation' });
+    else if (draft) {
+      sources.push({ ...transcriptMeta, ...draft, complete: false, reason: 'recent-conversation' });
+      clarify = '上一版草稿超出本轮可用范围。请指定要填入的段落。';
+    }
   }
 
-  const memoryMatchSet = matchConversationMemories(payload.prompt, scopedMemoryIndexes, selectedMemorySet);
+  const memoryMatchSet = matchConversationMemories(payload.prompt, exactHistoryFound && !selectedMemorySet.size ? {} : scopedMemoryIndexes, selectedMemorySet);
   const memoryMatches = memoryMatchSet.matches;
   const memoryIssues: NonNullable<AIPreparedContext['memoryIssues']> = [];
   const usableMemoryMatches: MemoryMatch[] = [];
@@ -348,7 +451,7 @@ export async function prepareAIContext(
 
   const terms = extractTerms(payload.prompt);
   let retrievalDetails: SemanticRetrievalResult | undefined;
-  if (permitsAutomaticRetrieval && remainingCharacters > 0 && remainingTokens > 0 && terms.length > 0) {
+  if (!exactHistoryFound && permitsAutomaticRetrieval && remainingCharacters > 0 && remainingTokens > 0 && terms.length > 0) {
     try {
       let contributions: AIContextSearchContribution[] = [];
       try {
@@ -444,7 +547,7 @@ export async function prepareAIContext(
           message: '本次要求会确认或改变历史信息状态，请确认后继续',
         }
       : undefined;
-  return {
+  return completePreparation({
     id: preparationId,
     ...(taskInstructions?.length ? { taskInstructions } : {}),
     ...(retrievalDetails ? { retrievalDetails: { ...retrievalDetails, contributions: [] } } : {}),
@@ -489,7 +592,7 @@ export async function prepareAIContext(
       staleCandidates: staleMemoryMatches.length,
       staleCandidatesRecovered: staleCandidatesRecovered.size,
     },
-  };
+  }, { destinationId, readIds, clarify });
 }
 
 export function deriveAIContextBudget(contextWindowTokens?: number): Readonly<AIContextBudget> {

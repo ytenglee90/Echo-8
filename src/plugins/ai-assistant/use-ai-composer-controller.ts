@@ -16,13 +16,13 @@ import type {
   AIStatusSignal,
 } from '../../protocols/ai.ts';
 import { useLocalTextHistory } from '../../ui/use-local-text-history.ts';
-import { naturalCanvasOperation } from '../../services/ai-task-route.ts';
+import { classifyAITurn } from './turn-route.ts';
 import type { AIComposerProps } from './AIComposer.tsx';
 import {
   activeInlineReferences,
   atQueryAt,
   compactReferenceToken,
-  inferAtOperation,
+  explicitAtOperation,
   replaceAtQuery,
 } from './command-parser.ts';
 import { buildAIMentionSuggestions } from './mention-suggestions.ts';
@@ -71,7 +71,9 @@ export function useAIComposerController({
 }) {
   const [prompt, setPrompt] = useState('');
   const acceptsWriteback = Boolean(pendingWritebackId && /^(?:就用这版[，,]\s*)?(?:替换进去|用这版替换原文|应用这份草稿)[。！!]?$/u.test(prompt.trim()));
-  const canRunLocally = Boolean(acceptsWriteback || naturalCanvasOperation(prompt) || naturalMemoryDirective(prompt));
+  const route = useMemo(() => classifyAITurn(prompt, explicitAtOperation(prompt)), [prompt]);
+  const canRunLocally = Boolean(acceptsWriteback || route.local || route.applyItems || route.clarification ||
+    route.fieldTask && route.fieldTask.kind !== 'complete' || naturalMemoryDirective(prompt));
   const promptHistory = useLocalTextHistory(prompt, setPrompt);
   const {
     change: changePrompt,
@@ -205,7 +207,7 @@ export function useAIComposerController({
         assistantId,
         sessionId: activeSession.id,
         prompt: prompt.trim(),
-        operation: inferAtOperation(prompt),
+        operation: route.operation,
         providerProfileId: selectedProviderId || undefined,
         webSearchEnabled: assistant?.webSearchEnabled === true,
         promptTemplateId: assistant?.promptTemplateId,
@@ -229,6 +231,7 @@ export function useAIComposerController({
     onSubmitted,
     pendingWritebackId,
     prompt,
+    route.operation,
     run,
     resetPrompt,
     selectedProviderConfigured,

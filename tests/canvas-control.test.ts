@@ -245,6 +245,12 @@ test('a relationship follow-up resolves the actual neighboring node and only cha
   assert.equal((await readEdge()).titleRoute, false);
   const named = await kernel.capabilities.request<CanvasControlContextV2>('canvasControl.context@2', { ...admission, preparationId: 'named-hero', prompt: '@画布操作 补充主角正文', purpose: 'content' });
   assert.match(named.objectDirectory, /"title":"主角","writable":false,"namedForReview":true/u);
+  const v3 = await kernel.capabilities.request<CanvasControlContextV2>('canvasControl.context@3', {
+    ...admission, preparationId: 'named-v3', prompt: '把主角改成蓝色', purpose: 'appearance',
+  });
+  assert.match(v3.objectDirectory, /主角/u);
+  assert.doesNotMatch(v3.objectDirectory, /"title":"武器"/u);
+  assert.deepEqual(v3.targetIds, [hero.id]);
   await assert.rejects(() => kernel.router.dispatch('canvasControl.offer@1', { ...admission, preparationId: 'named-hero', prompt: '@画布操作 补充主角正文', complete: true, text: JSON.stringify({ version: 1, actions: [{ type: 'delete', ids: [hero.id] }] }) }, 'core.test'), /范围外/u);
   await kernel.plugins.stop('canvas-control');
 });

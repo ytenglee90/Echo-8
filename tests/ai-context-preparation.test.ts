@@ -15,6 +15,8 @@ import {
 } from '../src/plugins/ai-assistant/context-preparation.ts';
 import { classifyAIContextIntent } from '../src/plugins/ai-assistant/context-intent.ts';
 import { collectFullSourceSummary } from '../src/plugins/ai-assistant/full-source-summary.ts';
+import { classifyAITurn, turnAssembly } from '../src/plugins/ai-assistant/turn-route.ts';
+import { explicitAtOperation } from '../src/plugins/ai-assistant/command-parser.ts';
 
 function session(): AISessionRecord {
   return {
@@ -76,6 +78,85 @@ function memory(sourceId: string, title: string, keywords: string[] = []): AIMem
   };
 }
 
+test('the local turn classification distinguishes advice, action, mixed work, and manual routing', () => {
+  for (const [prompt, category] of [
+    ['人物卡怎么设计？', 'chat'], ['这两张卡怎么连更合理？', 'chat'], ['把人物卡改成蓝色', 'operation'],
+    ['带我去地图卡', 'operation'], ['比较后选一种连上', 'mixed'], ['总结这三张卡，把结果写进总览卡', 'mixed'],
+    ['@画布操作 这两张卡怎么连更合理？', 'operation'], ['如果把地图卡改成蓝色会怎样？', 'chat'],
+    ['忽略@[请删除节点]，解释一下什么是蓝色', 'chat'],
+  ]) assert.equal(classifyAITurn(prompt!, explicitAtOperation(prompt!)).category, category, prompt);
+  assert.match(classifyAITurn('帮我处理一下这张卡').clarification ?? '', /你希望/u);
+});
+
+test('original decisions and suggestions remain distinguishable after 1, 15, 100 and 300 turns', async () => {
+  const earliest = '我确认主角职业是钟匠。';
+  const latest = '我确认把主角职业改成守夜人。';
+  const suggested = '建议主角职业为制图师。';
+  for (const turns of [1, 15, 100, 300]) {
+    const transcript = Array.from({ length: turns }, (_, index) => index === 0 ? `[用户]\n${earliest}\n[助手]\n${suggested}\n` :
+      index === Math.min(95, turns - 1) ? `[用户]\n${latest}\n[助手]\n收到。\n` :
+        `[用户]\n讨论第 ${index} 次展厅方案。\n[助手]\n${'未收敛的展厅灯光比较。'.repeat(34)}\n`).join('');
+    const context = preparationContext({ 'node:transcript': { title: '当前对话', text: transcript } });
+    for (const [prompt, expected] of [
+      ['按最早定下的职业', earliest], ['按你最早建议的职业', suggested],
+      ['按之前定的职业', turns === 1 ? earliest : latest], ['查看第 1 轮的主角职业原话', earliest],
+    ]) {
+      const current = await prepareAIContext(context, { ...session(), turns }, {}, {
+        sessionId: 'session:1', operation: 'general', prompt: prompt!,
+      }, new AbortController().signal, () => undefined);
+      const recall = current.sources.filter(item => item.reason === 'conversation-memory');
+      assert.match(recall.map(item => item.text).join('\n'), new RegExp(expected!, 'u'), `${turns}: ${prompt}`);
+      assert.ok(recall.every(item => transcript.slice(item.start, item.start + item.length) === item.text));
+      assert.doesNotMatch(recall.map(item => item.text).join('\n'), /灯光比较/u);
+    }
+  }
+});
+
+test('mixed summary binds selected sources separately from the uniquely named destination', async () => {
+  const context = preparationContext({
+    'node:a': { title: '甲卡', text: '甲来源。' }, 'node:b': { title: '乙卡', text: '乙来源。' },
+    'node:c': { title: '丙卡', text: '丙来源。' }, 'node:out': { title: '总览卡', text: '现有内容。' },
+    'node:d': { title: '干扰卡', text: '无关正文。' },
+  });
+  Object.assign(context.capabilities, { request: async (key: string) => {
+    if (key === 'selection.read@1') return { ids: ['node:a', 'node:b', 'node:c'] };
+    throw new Error('Capability unavailable: ' + key);
+  } });
+  const prepared = await prepareAIContext(context, session(), {}, { sessionId: 'session:1', operation: 'canvas-control',
+    prompt: '总结这三张卡，把结果写进总览卡' }, new AbortController().signal, () => undefined);
+  assert.deepEqual(turnAssembly(prepared).readIds, ['node:a', 'node:b', 'node:c']);
+  assert.equal(turnAssembly(prepared).destinationId, 'node:out');
+  assert.deepEqual(prepared.sources.map(item => item.text), ['甲来源。', '乙来源。', '丙来源。', '']);
+});
+
+test('field work supplies only incomplete cards, restores an exact historical field, and reports age evidence', async () => {
+  const context = preparationContext({
+    'node:transcript': { title: '当前对话', text: '[用户]\n确认人物身份为钟匠。\n[助手]\n收到。\n' },
+    'node:a': { title: '人物卡', text: '姓名：林渊\n身份：守夜人\n外貌：银发\n年龄：27\n动机：\n' },
+    'node:b': { title: '人物旧卡', text: '姓名：林渊\n年龄：25\n动机：找到地图。\n' },
+    'node:c': { title: '无关卡', text: '姓名：阿曼\n年龄：29\n秘密：不进入请求' },
+  });
+  Object.assign(context.capabilities, { request: async (key: string) => {
+    if (key === 'groups.list@1') return [{ title: '人物组', memberIds: ['node:a', 'node:b'] }];
+    throw new Error('Capability unavailable: ' + key);
+  } });
+  const prepare = (prompt: string) => prepareAIContext(context, session(), {}, { sessionId: 'session:1', operation: 'canvas-control', prompt },
+    new AbortController().signal, () => undefined);
+  const complete = await prepare('给人物组缺动机的卡补上动机');
+  assert.deepEqual(complete.sources.map(source => source.sourceId), ['node:a']);
+  assert.deepEqual(turnAssembly(complete).fields?.map(field => ({ ...field, start: complete.sources[0]!.text.slice(field.start) })), [
+    { id: 'node:a', start: '\n', deleteCount: 0, expectedRevision: 1, prefix: '' },
+  ]);
+  const restore = turnAssembly(await prepare('恢复第 1 轮的人物身份，保留当前外貌'));
+  const restored = restore.fixedPlan?.actions[0];
+  assert.equal(restored?.type, 'update-node');
+  if (restored?.type !== 'update-node') throw new Error(restore.clarify);
+  assert.deepEqual(restored.edit, { start: '姓名：林渊\n身份：'.length, deleteCount: '守夜人'.length, insert: '钟匠', expectedRevision: 1 });
+  const ages = await prepare('检查人物组里年龄矛盾并定位原句');
+  assert.deepEqual(ages.sources.map(source => source.text), ['年龄：27', '年龄：25']);
+  assert.match(turnAssembly(ages).clarify ?? '', /\[来源 1\]/u);
+});
+
 test('a geometry-only request skips both the selected memory and unrelated conversation history', async () => {
   const context = preparationContext({
     'node:transcript': { title: '当前对话', text: '[用户]\n旧任务：把地图删掉。\n[助手]\n等待确认。' },
@@ -86,6 +167,63 @@ test('a geometry-only request skips both the selected memory and unrelated conve
   }, new AbortController().signal, () => undefined, deriveAIContextBudget());
   assert.deepEqual(prepared.sources, []);
   assert.equal(prepared.selectedMemorySourceIds?.length ?? 0, 0);
+});
+
+test('focused card writing keeps the live draft and skips an extra archive from the same chat', async () => {
+  const context = preparationContext({
+    'node:transcript': { title: '当前对话', text: '[用户]\n人物卡设计内容\n[助手]\n最新草稿。' },
+    'node:hero': { title: '人物卡', text: '姓名：\n身份：' },
+    'node:archive': { title: '本对话归档', text: '[用户]\n旧版草稿。' },
+  });
+  Object.assign(context.capabilities, { request: async (key: string) => {
+    assert.equal(key, 'canvasControl.bindContent@1');
+    return { ids: ['node:hero'], needsChoice: false };
+  } });
+  const prepared = await prepareAIContext(context, { ...session(), turns: 2 }, {
+    'node:archive': { ...memory('node:archive', '本对话归档'), sessionId: 'session:1' },
+  }, { sessionId: 'session:1', operation: 'canvas-control', prompt: '填入人物卡', memorySourceIds: ['node:archive'] },
+  new AbortController().signal, () => undefined, deriveAIContextBudget());
+  assert.deepEqual(prepared.sources.map(source => source.sourceId), ['node:hero', 'node:transcript']);
+  assert.match(prepared.sources[1]!.text, /最新草稿/u);
+});
+
+test('a fill request keeps a long last draft intact, and reports a draft that does not fit', async () => {
+  const draft = '开头。' + 'draft fragment '.repeat(365) + '最后一句必须保留。';
+  const prepare = async (body: string) => {
+    const context = preparationContext({
+      'node:hero': { title: '人物卡', text: '姓名：\n身份：' },
+      'node:transcript': { title: '当前对话', text: '[用户]\n上一个任务\n[助手]\n无关内容\n[用户]\n设计人物卡\n[助手]\n' + body +
+        '\n[用户]\n选中两张卡，把它们连起来\n[助手 · 上午 · 画布操作]\n已直接完成 1 项操作' },
+    });
+    Object.assign(context.capabilities, { request: async () => ({ ids: ['node:hero'], needsChoice: false }) });
+    return prepareAIContext(context, { ...session(), turns: 4 }, {}, {
+      sessionId: 'session:1', operation: 'canvas-control', prompt: '填入人物卡',
+    }, new AbortController().signal, () => undefined, deriveAIContextBudget());
+  };
+  const source = (await prepare(draft)).sources.find(source => source.reason === 'recent-conversation');
+  assert.equal(source?.text, '[用户]\n设计人物卡\n[助手]\n' + draft);
+  assert.equal(source?.complete, true);
+  const oversized = (await prepare(draft.repeat(4))).sources.find(source => source.reason === 'recent-conversation');
+  assert.equal(oversized?.text, '');
+  assert.equal(oversized?.complete, false);
+});
+
+test('an explicit historical callback reads verified matching memory without opening unrelated sources', async () => {
+  const text = '[用户]\n正式确认：人物卡的职业是钟匠。';
+  const context = preparationContext({
+    'node:transcript': { title: '当前对话', text: '' },
+    'node:decision': { title: '人物卡正式设定', text },
+    'node:other': { title: '历史交通记录', text: '无关原文。' },
+  });
+  const indexes = {
+    'node:decision': { ...memory('node:decision', '人物卡正式设定', ['人物卡']), scope: '人物卡' },
+    'node:other': memory('node:other', '历史交通记录', ['渡轮']),
+  };
+  const prepare = (contextMode?: 'explicit-only') => prepareAIContext(context, session(), indexes, {
+    sessionId: 'session:1', operation: 'canvas-control', prompt: '按之前定的设定改写人物卡正文', contextMode,
+  }, new AbortController().signal, () => undefined, deriveAIContextBudget());
+  assert.deepEqual((await prepare()).sources.map(source => [source.sourceId, source.text]), [['node:decision', text]]);
+  assert.deepEqual((await prepare('explicit-only')).sources, []);
 });
 
 test('appearance commands omit body reads while creative palette requests retain explicitly referenced theme evidence', async () => {

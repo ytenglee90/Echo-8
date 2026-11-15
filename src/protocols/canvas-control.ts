@@ -101,6 +101,7 @@ declare module './commands.ts' {
     'canvasControl.offer@1': CommandContract<CanvasControlOffer, { message: string; directPlanId?: string }>;
     'canvasControl.generate@1': CommandContract<{ id: string }, { message: string }>;
     'canvasControl.apply@1': CommandContract<{ id: string }, { createdIds: string[] }>;
+    'canvasControl.applyItems@1': CommandContract<{ id: string; items: number[] } | { sessionId: string; items: number[] }, { createdIds: string[] }>;
     'canvasControl.commit@1': CommandContract<{ id: string; token: string }, { createdIds: string[]; created?: Record<string, string> }>;
     'canvasControl.dismiss@1': CommandContract<{ id: string }>;
   }
@@ -110,6 +111,7 @@ declare module './messages.ts' {
     'canvasControl.bindContent@1': MessageContract<CanvasControlAdmission, { ids: string[]; needsChoice: boolean }>;
     'canvasControl.searchPlan@1': MessageContract<CanvasControlAdmission & { terms: string[]; ungrouped: boolean }, { text: string }>;
     'canvasControl.context@2': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
+    'canvasControl.context@3': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
     'canvasControl.localPlan@1': MessageContract<CanvasControlAdmission, { handled: boolean; text?: string; unresolvedTarget?: boolean }>;
     'canvasControl.taskState@1': MessageContract<{ sessionId: string; targetIds?: string[] }, CanvasControlTaskState>;
     'canvasControl.context@1': MessageContract<CanvasControlAdmission, { instruction: string }>;

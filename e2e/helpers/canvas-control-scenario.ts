@@ -12,6 +12,33 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('only checked preview items are applied and verified offline', async ({ page }) => {
+    await page.goto(url);
+    await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+    await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    await page.context().setOffline(true);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    const ask = async (prompt: string) => {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.locator('.ai-composer textarea').press('Enter');
+    };
+    for (const [index, title] of ['甲项', '乙项', '丙项'].entries()) {
+      await ask(`新建一个叫${title}的节点`);
+      await expect(ai.getByLabel('本轮 Token 用量')).toHaveCount(index + 1);
+    }
+    await ask('把甲项改成蓝色，然后把乙项改成蓝色，再把丙项改成蓝色');
+    const review = control.getByRole('region', { name: '画布操作计划', exact: true }).first();
+    await expect(review.getByRole('checkbox')).toHaveCount(3);
+    await review.getByRole('checkbox', { name: '修改文字对象 · 甲项' }).check();
+    await review.getByRole('checkbox', { name: '修改文字对象 · 丙项' }).check();
+    await control.getByRole('button', { name: '应用选中的 2 项' }).click();
+    await expect(review).toContainText('已回读核对 2 项操作');
+    await expect(review).toContainText('修改文字对象 · 甲项');
+    await expect(review).toContainText('修改文字对象 · 丙项');
+    await expect(review).not.toContainText('修改文字对象 · 乙项');
+  });
+
   test('a typo in a relative layout request uses current named cards and an exact gap after earlier canvas turns', async ({ page }) => {
     await page.goto(url);
     await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
@@ -51,8 +78,9 @@ export function canvasControlScenarios(url: string): void {
   });
 
   test('DeepSeek accepts the two-tool follow-up for a natural card-writing request and writes into the existing card', async ({ page }) => {
+    const oldText = '旧设定：来自钟楼，武器原先由城北的铜匠保管。';
     const fixture = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '模型协议回归' }),
-      JSON.stringify({ type: 'node', id: 'weapon', category: '资料', name: '武器卡', text: '旧设定：来自钟楼。' }),
+      JSON.stringify({ type: 'node', id: 'weapon', category: '资料', name: '武器卡', text: oldText }),
       JSON.stringify({ type: 'node', id: 'other', category: '资料', name: '角色卡', text: '另一张卡。' }), JSON.stringify({ type: 'end' })].join('\n');
     let rounds = 0;
     let target = '';
@@ -67,6 +95,8 @@ export function canvasControlScenarios(url: string): void {
         const dir = body.messages.find(message => message.content?.startsWith('<untrusted-canvas-objects>'))?.content ?? '';
         const parsed = JSON.parse(dir.split('\n')[1]!) as { nodes: Array<{ id: string; title: string }> };
         target = parsed.nodes.find(node => node.title.endsWith('武器卡'))!.id;
+        expect(parsed.nodes).toHaveLength(1);
+        expect(body.messages.some(message => message.content?.includes(oldText))).toBe(true);
         calls = [{ id: 'call_state', name: 'query_canvas', args: { mode: 'state' } }, { id: 'call_body', name: 'read_canvas', args: { id: target } }];
       } else {
         const [assistant, first, second] = body.messages.slice(-3);
@@ -75,7 +105,8 @@ export function canvasControlScenarios(url: string): void {
         if (JSON.stringify(assistant?.tool_calls) !== JSON.stringify(expected) || first?.tool_call_id !== 'call_state' || second?.tool_call_id !== 'call_body') {
           return route.fulfill({ status: 422, headers: { 'access-control-allow-origin': '*' }, json: { error: { message: 'Invalid tool message' } } });
         }
-        expect(second?.content).toContain('旧设定：来自钟楼');
+        expect(second?.content).toContain('"source":1');
+        expect(second?.content).not.toContain(oldText);
         calls = [{ id: 'call_plan', name: 'propose_canvas_plan', args: { plan: { version: 1, actions: [{ type: 'update-node', id: target, append: '\n新设定：用钟楼铜片铸成。' }] } } }];
       }
       const tool_calls = calls.map(({ id, name, args }, index) => ({ index, id, type: 'function', function: { name, arguments: JSON.stringify(args) } }));

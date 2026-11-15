@@ -232,11 +232,12 @@ export function createAIAssistantPlugin(
       ],
       optionalCapabilities: [
         'groups.list@1',
+        'content.search@2',
         'ai.provider.taskUsage@1',
         'ai.provider.requestTrace@1',
         'canvasControl.context@1',
         'canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2',
-        'canvasControl.bindContent@1', 'canvasControl.context@2', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1',
+        'canvasControl.bindContent@1', 'canvasControl.context@2', 'canvasControl.context@3', 'canvasControl.localPlan@1', 'canvasControl.taskState@1', 'canvasControl.searchPlan@1',
         'editor.selection@1', 'selection.read@1',
         'context.search@1',
         'context.search@2',
@@ -310,7 +311,7 @@ export function createAIAssistantPlugin(
         'ai.memory.candidate.dismiss',
       ],
       dispatches: [
-        'canvasControl.offer@1', 'canvasControl.generate@1', 'diagnostics.operationLog.open@1',
+        'canvasControl.offer@1', 'canvasControl.generate@1', 'canvasControl.applyItems@1', 'diagnostics.operationLog.open@1',
         'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings', 'retrieval.open@1',
         'ai.context.prepare',
         'aiProvider.profile.activate', 'ai.promptTemplate.restorePersonal', 'system.preferences.set',

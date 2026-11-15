@@ -8,6 +8,7 @@ import type {
   AIProposalRecord,
 } from '../../protocols/ai.ts';
 import { assertNotAborted } from '../../services/async-control.ts';
+import { omitCanvasReply } from './request-evidence.ts';
 import {
   emptyEvidenceBlock,
   enclosingChatExchange,
@@ -123,6 +124,7 @@ export async function revalidatePreparedSources(
   sources: AIPreparedSource[],
   options?: {
     allowUnchangedRangeRevisionAdvanceFor?: ReadonlySet<string>;
+    signal?: AbortSignal;
   },
 ): Promise<void> {
   for (const source of sources) {
@@ -130,14 +132,14 @@ export async function revalidatePreparedSources(
       sourceId: source.sourceId,
       start: source.start,
       length: 0,
-    });
+    }, options?.signal);
     if (current.source?.revision === source.revision) continue;
     if (current.source && options?.allowUnchangedRangeRevisionAdvanceFor?.has(source.sourceId)) {
       const reread = await readContextSource(context, {
         sourceId: source.sourceId,
         start: source.start,
         length: source.length,
-      });
+      }, options.signal);
       if (reread.source?.revision === current.source.revision && reread.text === source.text) {
         source.revision = current.source.revision;
         source.title = current.source.title;
@@ -222,6 +224,27 @@ export async function readTailEvidenceBlock(
     chatStart !== undefined ? 'conversation-turn' : 'paragraph',
     naturalStart !== undefined,
   );
+}
+
+/** Transfer requests need the complete answer. A clipped suffix is not a usable draft. */
+export async function readCanvasDraftEvidence(
+  context: PluginContext, source: AIContextSource, maxLength: number, maxTokens: number, signal: AbortSignal,
+): Promise<EvidenceBlock | undefined> {
+  const probeStart = Math.max(0, source.length - maxLength - 800);
+  const result = await readContextSource(context, { sourceId: source.sourceId, start: probeStart, length: source.length - probeStart }, signal);
+  if (result.source?.revision !== source.revision) throw new Error('对话已变化，请重新准备上下文');
+  const text = result.text ?? '';
+  const turns = [...text.matchAll(/^\[(用户|助手)(?:[ \t]*·[^\]\r\n]+)?\][ \t]*\r?$/gmu)];
+  const latest = turns.findLastIndex((turn, index) => turn[1] === '助手' &&
+    !omitCanvasReply(turn[0], text.slice(turn.index! + turn[0].length, turns[index + 1]?.index).trim()));
+  if (latest < 0) return probeStart > 0 ? emptyEvidenceBlock() : undefined;
+  const answer = turns[latest]!;
+  const end = turns[latest + 1]?.index ?? text.length;
+  let start = answer.index!;
+  if (!rangeFitsBudget(text, { start, end }, maxLength, maxTokens)) return emptyEvidenceBlock();
+  const previous = turns.slice(0, latest).findLast(turn => turn[1] === '用户');
+  if (previous && rangeFitsBudget(text, { start: previous.index!, end }, maxLength, maxTokens)) start = previous.index!;
+  return evidenceFromLocalRange(probeStart, text, { start, end }, 'conversation-turn', true);
 }
 
 export async function readNaturalEvidenceBlock(

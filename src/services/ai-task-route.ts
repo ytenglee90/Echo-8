@@ -21,6 +21,22 @@ export function isGeometryOnlyCanvasTask(prompt: string): boolean {
     !/正文|内容|历史|记忆|参考|根据|结合|依据|写着|提到|描述/u.test(canvasCommandText(prompt));
 }
 
+export function isFocusedCanvasContentTask(prompt: string): boolean {
+  const text = canvasCommandText(prompt);
+  const target = canvasContentTarget(prompt)?.names[0];
+  return Boolean(target && !requestsCanvasHistory(prompt) && !/^(?:它|这个|这张|刚才|选中|当前|选区)/u.test(target) &&
+    !/历史|记忆|参考|根据|结合|依据|同时|顺便|并且|然后|再把|分组|连线|群组|改色|主题|移动|删掉|新建/u.test(text));
+}
+
+export function requestsCanvasHistory(prompt: string): boolean {
+  return /历史|记忆|回顾|最早|从头|完整对话|之前(?:定|说|确认|决定|的设定)|上次(?:定|说|确认|决定|的设定)|以前(?:定|说|确认|决定|的设定)/u.test(canvasCommandText(prompt));
+}
+
+export function reusesCanvasDraft(prompt: string): boolean {
+  return /^(?:@画布操作\s+)?(?:(?:请|帮我)\s*)?填(?:入|充|好)/u.test(prompt.trim()) ||
+    /(?:上一版|上份草稿|刚才(?:的|那段|那份))[^。！？\r\n]{0,100}(?:填入|写进|写入)/u.test(canvasCommandText(prompt));
+}
+
 /** Reference titles are data, never routing commands or creative-intent cues. */
 export function canvasCommandText(prompt: string): string {
   return prompt.replace(/@\[[^\]\r\n]+\](?:\([^)\r\n]*\))?|@node:[a-z0-9:-]+/giu, ' ');
@@ -41,6 +57,10 @@ export type NaturalCanvasOperation =
   | { kind: 'choose-theme'; names: string[] }
   | { kind: 'find' | 'ungroup'; names: string[]; byMembers?: boolean }
   | { kind: 'relations'; names: string[]; direction?: 'in' | 'out' }
+  | { kind: 'shortest-path'; names: [string, string]; directed: boolean }
+  | { kind: 'sync-text'; names: []; before: string; after?: string }
+  | { kind: 'audit-names'; names: [] }
+  | { kind: 'group-columns'; names: []; lead?: string; keep: string[] }
   | { kind: 'presentation'; names: string[]; presentation: 'card' | 'text-box'; color?: string; members?: boolean }
   | { kind: 'connect'; names: string[]; line?: 'solid' | 'dashed'; eitherDirection?: boolean; continueFromPrevious?: boolean }
   | { kind: 'line'; names: string[]; line: 'solid' | 'dashed'; reference?: 'previous' | 'selection' }
@@ -157,6 +177,7 @@ function placementGap(command: string): Extract<NaturalCanvasOperation, { kind: 
 
 export function asksForCanvasContinuation(prompt: string): boolean {
   if (placementGap(canvasIntentText(prompt))) return true;
+  if (/^(?:再|接着)(?:往|向)[上下左右]/u.test(canvasIntentText(prompt))) return true;
   return /继续|刚才|上次|上一(?:个|条|轮|次|张)|这份计划|前(?:一个|一条|一张)|(?:改|换|挪|移|拆|连|用)回来|(?:把|给|改|移动|连接|让)\s*(?:它|这(?:条|张|组|个|些))|^\s*(?:它|这(?:条|张|组|个|些))/u.test(canvasCommandText(prompt));
 }
 
@@ -205,6 +226,19 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
   const text = command.replace(/[。！？!?]$/u, '').trim();
   let match: RegExpExecArray | null;
   if (/^(?:如果|假如|假设|要是|先别|先不要|不要|别|不用|暂不|如何|怎么|怎样|解释|分析|总结|对比|比较)/u.test(text)) return undefined;
+  if ((match = /^(?:沿(?:着)?连线\s*)?(?:查找|查看|查|找|追查|高亮)\s*(?:从)?(.+?)\s*到\s*(.+?)\s*的(有向)?最短路径(?:[，,]?\s*(?:并|再)?高亮)?$/u.exec(text))) {
+    return { kind: 'shortest-path', names: [name(match[1]!), name(match[2]!)], directed: Boolean(match[3]) };
+  }
+  if ((match = /^(?:查找|找出|筛出)(?:所有|全部)?(?:还)?(?:写着|包含|提到)\s*[「『“"]([^」』”"\r\n]{1,240})[」』”"]的(?:卡片?|节点|文本框)$/u.exec(text))) {
+    return { kind: 'sync-text', names: [], before: match[1]! };
+  }
+  if ((match = /^(?:把|将)?(?:画布(?:上|中|里)的?|所有卡片(?:里|中)的?|全画布(?:里的?)?)\s*[「『“"]([^」』”"\r\n]{1,240})[」』”"]\s*(?:都|统一|批量|全部)?(?:替换为|更新为|同步为|改成)\s*[「『“"]([^」』”"\r\n]{1,240})[」』”"]$/u.exec(text))) {
+    return { kind: 'sync-text', names: [], before: match[1]!, after: match[2]! };
+  }
+  if (/^(?:查|检查|找出|查找)(?:画布(?:上|中|里的?)?)?(?:是否有|有没有)?(?:重名|同名|重复标题)(?:卡片?|节点|文本框)?$/u.test(text)) return { kind: 'audit-names', names: [] };
+  if ((match = /^按(?:画布)?(?:群组|阵营)(?:分列|排成列|按列排列)(?:[，,]\s*(.+?)放(?:在)?每列(?:的)?最上方)?(?:[，,]\s*(.+?)保持原位)?$/u.exec(text))) {
+    return { kind: 'group-columns', names: [], lead: match[1] && name(match[1]), keep: match[2] ? names(match[2]) : [] };
+  }
   if ((match = /^谁指向\s*(.+)$/u.exec(text))) return { kind: 'relations', names: [name(match[1]!)], direction: 'in' };
   if ((match = /^(.+?)\s*指向谁$/u.exec(text))) return { kind: 'relations', names: [name(match[1]!)], direction: 'out' };
   if ((match = /^(?:找到|定位|查找|查一下)\s*(.+?)(?:节点)?(?:[，,]\s*(?:带我过去|定位过去|跳过去))?$/u.exec(text))) return { kind: 'find', names: [name(match[1]!)] };

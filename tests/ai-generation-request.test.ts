@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PluginContext } from '../src/core/contracts.ts';
 import { nativeConversation } from '../src/plugins/ai-assistant/request-evidence.ts';
+import { canvasRequestScope, projectCanvasObjects, scopedCanvasTools } from '../src/plugins/ai-assistant/canvas-request-scope.ts';
+import { CANVAS_AGENT_TOOLS } from '../src/plugins/ai-assistant/canvas-agent-tools.ts';
 import type {
   AIPromptPolicyContribution,
   AIPromptTemplateCatalog,
@@ -115,7 +117,7 @@ test('long conversations preserve the latest text and exact earlier user constra
 test('mechanical canvas prompts advertise a smaller tool set but descriptive body matches can read text', async () => {
   const context = { capabilities: { requestAll: async () => [], request: async (key: string) => {
     if (key === 'ai.provider.catalog@1') return { activeId: 'provider:1', options: [{ id: 'provider:1', canvasToolCallingSupported: true }] };
-    if (key === 'canvasControl.context@2') return { instruction: 'legacy', objectDirectory: '' };
+    if (key === 'canvasControl.context@3') return { instruction: 'legacy', objectDirectory: '' };
     assert.equal(key, 'canvasControl.agentQuery@1');
     return { nodes: [], groups: [], connections: [], total: 0, available: { nodes: true, groups: true, connections: true } };
   } }, diagnostics: { warn() {} } } as unknown as PluginContext;
@@ -146,6 +148,53 @@ test('fresh canvas requests use selection without past plans, while a follow-up 
   const summary = JSON.stringify(next.messages);
   assert.match(summary, /undone/u);
   assert.doesNotMatch(summary, /旧计划|旧卡片正文不应携带/u);
+});
+
+test('filling a named card sends one card and the previous draft, with the normal canvas tools', async () => {
+  const node = { id: 'node:hero', title: '人物卡', length: 7, revision: 1, width: 280, color: '#222222' };
+  const context = { capabilities: { requestAll: async () => [], request: async (key: string, input: { query?: { mode: string } }) => {
+    if (key === 'ai.provider.catalog@1') return { activeId: 'provider:1', options: [{ id: 'provider:1', canvasToolCallingSupported: true }] };
+    if (key === 'canvasControl.context@3') return { instruction: '旧协议', objectDirectory: '重复目录', targetIds: [node.id] };
+    assert.equal(key, 'canvasControl.agentQuery@1');
+    assert.equal(input.query?.mode, 'selection');
+    return { nodes: [node, { ...node, id: 'other', title: '无关武器卡' }], groups: [], connections: [],
+      available: { nodes: true, groups: true, connections: true }, tasks: { plans: [{ goal: '旧摆放计划', actions: [{}] }] } };
+  } }, diagnostics: { warn: () => undefined } } as unknown as PluginContext;
+  const draft = '沈砚舟在旧城巡夜。';
+  const history = '[用户]\n旧摆放操作\n[助手 · 上午 · 画布操作]\n已直接完成 2 项操作\n[用户]\n人物卡设计内容\n[助手]\n' + draft;
+  const first = preparedContext();
+  const prepared: AIPreparedContext = { ...first, operation: 'canvas-control', prompt: '填入人物卡', memoryRetrieval: undefined, webSearchEnabled: false, sources: [
+    { ...first.sources[0]!, title: node.title, sourceId: node.id, provider: 'text-node', kind: 'text', revision: 1, start: 0,
+      length: 7, text: '姓名：\n身份：', reason: 'explicit-reference' },
+    { ...first.sources[0]!, text: history, length: history.length, reason: 'recent-conversation' },
+  ] };
+  const request = await buildGenerateRequest(context, prepared, { templates: [] });
+  const wire = JSON.stringify(request.messages);
+  assert.equal(request.messages.filter(message => message.content.includes(draft)).length, 1);
+  assert.equal(request.messages.filter(message => message.content.startsWith('<untrusted-canvas-objects>')).length, 1);
+  assert.match(wire, /姓名|身份|人物卡设计内容/u);
+  assert.doesNotMatch(wire, /无关武器卡|旧摆放|重复目录|width|记忆执行协议/u);
+  assert.deepEqual(request.tools?.map(tool => tool.function.name), ['query_canvas', 'read_canvas', 'propose_canvas_plan']);
+  assert.doesNotMatch(JSON.stringify(request.tools), /"placements"|"setting"/u);
+});
+
+test('model projection merges fields for a batch and selects only the necessary canvas tool parameters', () => {
+  const scopeFor = (prompt: string) => canvasRequestScope({ ...preparedContext(), operation: 'canvas-control', prompt });
+  const node = { id: 'actor', title: '人物卡', x: 20, y: 10, width: 100, height: 70, color: '#112233', textLength: 45, presentation: 'card' };
+  const directory = { nodes: [node], groups: [{ id: 'group', title: '角色组', members: ['actor'] }],
+    connections: [{ id: 'link', from: 'actor', to: 'weapon', line: 'solid', label: '引用' }] };
+  const moveAndColor = scopeFor('把人物卡向左20像素，然后把武器卡改成红色')!;
+  const projected = projectCanvasObjects(directory, moveAndColor);
+  assert.equal(projected.nodes?.length, 1);
+  assert.deepEqual(projected.nodes?.[0], { id: 'actor', title: '人物卡', x: 20, y: 10, width: 100, height: 70, color: '#112233' });
+  assert.doesNotMatch(JSON.stringify(scopedCanvasTools(CANVAS_AGENT_TOOLS, moveAndColor)), /"read_canvas"|"setting"/u);
+  const links = scopeFor('人物卡和武器卡连起来')!;
+  assert.deepEqual(projectCanvasObjects(directory, links).connections, directory.connections);
+  assert.doesNotMatch(JSON.stringify(projectCanvasObjects(directory, links)), /"width"|"color"|"textLength"/u);
+  const settings = scopeFor('主题切换成深色')!;
+  assert.deepEqual(projectCanvasObjects(directory, settings), { nodes: [] });
+  assert.match(JSON.stringify(scopedCanvasTools(CANVAS_AGENT_TOOLS, settings)), /"setting"/u);
+  assert.equal(scopeFor('把写着铜片的卡片移动到人物卡上方'), undefined);
 });
 
 test('AI prompt variables and policy validation stay bounded', () => {

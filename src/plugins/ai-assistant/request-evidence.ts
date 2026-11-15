@@ -1,5 +1,6 @@
-import type { AIChatMessage, AIPreparedSource } from '../../protocols/ai.ts';
+import type { AIChatMessage, AIPreparedContext, AIPreparedSource } from '../../protocols/ai.ts';
 import { deniesCanvasCapability } from '../../services/canvas-capabilities.ts';
+import { isFocusedCanvasContentTask } from '../../services/ai-task-route.ts';
 import { extractTerms } from './memory-terms.ts';
 
 const RECENT_MESSAGES = 6;
@@ -10,15 +11,34 @@ const EARLIER_CHARACTER_LIMIT = 1_800;
 const CANVAS_RECENT_LIMIT = 4;
 const CANVAS_HISTORY_BUDGET = 1_200;
 
+export function omitCanvasReply(header: string, content: string): boolean {
+  return (/·\s*画布操作\]/u.test(header) && /^(?:已准备\s*\d+\s*项|已生成\s*\d+\s*项|已直接完成\s*\d+\s*项|本次没有需要应用的画布操作)/u.test(content)) ||
+    deniesCanvasCapability(content);
+}
+
+export function focusedCanvasContentSource(prepared: AIPreparedContext): AIPreparedSource | undefined {
+  if (prepared.operation !== 'canvas-control' || !isFocusedCanvasContentTask(prepared.prompt)) return undefined;
+  const sources = prepared.sources.filter(source => source.reason === 'explicit-reference');
+  const source = sources[0];
+  return sources.length === 1 && source?.provider === 'text-node' && source.kind === 'text' ? source : undefined;
+}
+
 /** Bounded selection of verbatim messages from already range-read originals. */
-export function nativeConversation(text: string, prompt: string, omitCanvasStatus = false, recentOnly = false): Array<AIChatMessage & { role: 'user' | 'assistant' }> {
+export function nativeConversation(text: string, prompt: string, omitCanvasStatus = false, recentOnly = false, focusedContent = false): Array<AIChatMessage & { role: 'user' | 'assistant' }> {
   const headers = [...text.matchAll(/^\[(用户|助手)(?:\s*·\s*[^\]]+)?\]\s*$/gmu)];
   const messages = headers.map((header, index) => ({
     role: header[1] === '用户' ? 'user' as const : 'assistant' as const,
     content: text.slice(header.index! + header[0].length, headers[index + 1]?.index ?? text.length).trim(),
   })).filter((item, index) => item.content && !(omitCanvasStatus && item.role === 'assistant' &&
-    ((/·\s*画布操作\]/u.test(headers[index]![0]) && /^(?:已准备\s*\d+\s*项|已生成\s*\d+\s*项|本次没有需要应用的画布操作)/u.test(item.content)) ||
-        deniesCanvasCapability(item.content))));
+    omitCanvasReply(headers[index]![0], item.content)));
+  if (focusedContent) {
+    const latestAnswer = messages.findLastIndex(message => message.role === 'assistant');
+    if (latestAnswer >= 0) {
+      const previous = messages.slice(0, latestAnswer).findLast(message => message.role === 'user');
+      const answer = messages[latestAnswer]!;
+      return [...(previous ? [previous] : []), answer];
+    }
+  }
   if (recentOnly) {
     const recent: typeof messages = [];
     const seen = new Set<string>();
@@ -75,8 +95,8 @@ export function nativeConversation(text: string, prompt: string, omitCanvasStatu
 }
 
 /** Keep every citation/source identity, but send identical verified bodies once. */
-export function evidenceBodies(sources: readonly AIPreparedSource[], historyIndex: number, prompt = '', omitCanvasStatus = false, recentOnly = false): string[] {
-  const sentHistory = historyIndex >= 0 ? nativeConversation(sources[historyIndex]!.text, prompt, omitCanvasStatus, recentOnly) : [];
+export function evidenceBodies(sources: readonly AIPreparedSource[], historyIndex: number, prompt = '', omitCanvasStatus = false, recentOnly = false, focusedContent = false): string[] {
+  const sentHistory = historyIndex >= 0 ? nativeConversation(sources[historyIndex]!.text, prompt, omitCanvasStatus, recentOnly, focusedContent) : [];
   return sources.map((source, index) => {
     if (index === historyIndex) return '本来源对话以原生角色消息附后。';
     const hasOtherRevision = sources.some((previous, previousIndex) => previousIndex < index && previous.sourceId === source.sourceId && previous.revision !== source.revision);

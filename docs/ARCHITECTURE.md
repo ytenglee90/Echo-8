@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+The assistant routes each turn locally, gates canvas writes in native and JSON tool transport, and prepares mixed tasks with distinct evidence and mutation targets. The conversation owner locates old confirmed and suggested values through revision-scoped transcript ranges. Canvas control retains verified placement state and handles partial application through `canvasControl.applyItems@1` and the existing owner transaction (ADR-0151).
+
 General conversation can use bounded canvas discovery, revision-checked range reading and guarded plan submission through canvasControl.agentQuery@1, agentRead@1 and agentPlan@1. Native model tools and a structured JSON fallback share owner validation and the existing transaction/review path. Real post-commit verification checks nodes, bodies, groups and edges; mismatch never implies rollback. Interactive semantic policy v3 and provider v2 query ready indexes without blocking on downloads or full builds. Selection reconciliation uses its captured workspace revision to avoid overriding newer input (ADR-0147).
 
 Canvas writing requests bind actual node IDs before model generation through canvasControl.bindContent@1. Ambiguous targets resume the original assistant request after a governed canvasControl.resume@1 notification. Explicit all-node layout requests use the real canvas scope. The diagnostic log v2 exposes validated routing, target counts, action counts, review reasons and step history while preserving the v1 query response (ADR-0146).

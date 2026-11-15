@@ -9,6 +9,7 @@ import { createCanvasControlPlugin } from '../src/plugins/canvas-control/model.t
 import { buildGenerateRequest } from '../src/plugins/ai-assistant/generation-request.ts';
 import { runCanvasAgentLoop } from '../src/plugins/ai-assistant/canvas-agent-tools.ts';
 import { inferAtOperation } from '../src/plugins/ai-assistant/command-parser.ts';
+import { estimateAITokens } from '../src/services/ai-token-estimate.ts';
 import { buildProviderRequest, parseCompletion, validateGenerateRequest } from '../src/plugins/ai-provider/provider-transport.ts';
 import type { AIGenerateRequest, AIGenerateResult, AIPreparedContext } from '../src/protocols/ai.ts';
 import type { CanvasControlState } from '../src/protocols/canvas-control.ts';
@@ -32,6 +33,7 @@ function fixtureResponse(call: number, placement: CanvasRelativePlacement): AIGe
 }
 
 async function evaluate(turns: number) {
+  const evaluationStarted = performance.now();
   const kernel = new ApplicationKernel([createTextNodePlugin(), createSelectionPlugin(), createGroupsPlugin(), createConnectionsPlugin(), createCanvasControlPlugin()]);
   await kernel.start();
   try {
@@ -65,13 +67,18 @@ async function evaluate(turns: number) {
     const calls: unknown[] = [];
     const generate = async (input: AIGenerateRequest): Promise<AIGenerateResult> => {
       if (calls.length >= 4) throw new Error('Evaluation limit reached after four requests');
+      const start = performance.now();
       validateGenerateRequest(input);
       const wire = buildProviderRequest(profile, key ?? '', { ...input, maxOutputTokens: 1200 }, false);
-      const start = performance.now();
       const metric = { requestBytes: Buffer.byteLength(String(wire.init.body)), messageCount: input.messages.length,
+        estimatedInputTokens: 3 + input.messages.reduce((total, message) => total + 4 + estimateAITokens(message.content) +
+          (message.toolCalls ? estimateAITokens(JSON.stringify(message.toolCalls)) : 0), 0) + (input.tools ? estimateAITokens(JSON.stringify(input.tools)) : 0),
         durationMs: undefined as number | undefined, status: undefined as number | undefined, usage: undefined as AIGenerateResult['usage'] };
       calls.push(metric);
-      if (!key) return fixtureResponse(calls.length, placement);
+      if (!key) {
+        metric.durationMs = Math.round(performance.now() - start);
+        return fixtureResponse(calls.length, placement);
+      }
       try {
         const response = await fetch(wire.endpoint, { ...wire.init, signal: AbortSignal.any([signal, AbortSignal.timeout(35_000)]) });
         metric.status = response.status;
@@ -104,12 +111,13 @@ async function evaluate(turns: number) {
     } catch (error) {
       outcome = { applied: false, error: error instanceof Error ? error.message : 'Unknown failure' };
     }
-    return { turns, calls, outcome };
+    return { turns, calls, outcome, totalDurationMs: Math.round(performance.now() - evaluationStarted) };
   } finally {
     await kernel.plugins.stop('canvas-control');
   }
 }
 
-const scenarios = [await evaluate(2), await evaluate(48)];
+const scenarios = [];
+for (const turns of [1, 15, 100, 300]) scenarios.push(await evaluate(turns));
 console.log(JSON.stringify({ mode: live ? 'live DeepSeek' : 'fixture, no model calls', ...(live ? { model: profile.model } : {}), scenarios }, null, 2));
 if (scenarios.some(({ outcome }) => !('applied' in outcome && outcome.applied && 'gap' in outcome && outcome.gap === 35 && 'centered' in outcome && outcome.centered))) process.exitCode = 1;
