@@ -75,6 +75,7 @@ export type AITurnRoute = ReturnType<typeof classifyAITurn>;
 
 export interface TurnAssembly {
   route: AITurnRoute;
+  recoveryPrompt?: string;
   destinationId?: string;
   readIds?: string[];
   clarify?: string;

@@ -39,9 +39,11 @@ export function canvasToolEvidence(initial: AIGenerateRequest, prepared: AIPrepa
     }));
     const { total, nextCursor, selectedIds, recentIds, createdIds, pendingTask, available, tasks } = result;
     const metadata = { total, nextCursor, selectedIds, recentIds, createdIds, pendingTask, available };
-    const recentPlans = scope && tasks ? tasks.plans.map(({ goal, status, actionCount, targets }) => ({ goal, status, actionCount,
-      targets: targets.map(target => target.id) })) : undefined;
-    return { value: { ...rows, ...metadata, ...(recentPlans ? { recentPlans } : tasks ? { tasks } : {}) },
+    const recentPlans = tasks?.plans.slice(-1).map(({ goal, status, actionCount, targets }) => ({
+      goal: goal === prepared.prompt || initial.messages.some(message => message.role === 'user' && message.content === goal)
+        ? '见用户原话' : goal.slice(0, 320), status, actionCount, targets: targets.map(target => target.id),
+    }));
+    return { value: { ...rows, ...metadata, ...(recentPlans ? { recentPlans } : {}) },
       record: () => { for (const [id, fields] of updates) objects.set(id, { fields, seenIn: callId }); } };
   }
 

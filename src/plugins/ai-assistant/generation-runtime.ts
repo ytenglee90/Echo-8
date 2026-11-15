@@ -21,7 +21,7 @@ import { stripOperationCommands } from './command-parser.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
 import { buildGenerateRequest } from './generation-request.ts';
 import { executeMemorySearchToolCalls } from './memory-search-tool.ts';
-import { initialCanvasAgentState, runCanvasAgentLoop } from './canvas-agent-tools.ts';
+import { CANVAS_INTENT_INSTRUCTIONS, initialCanvasAgentState, runCanvasAgentLoop } from './canvas-agent-tools.ts';
 import { canvasTurnId, rememberTurnAssembly, turnAssembly } from './turn-route.ts';
 import { prepareAIContext } from './context-preparation.ts';
 import { revalidatePreparedSources } from './context-source-reader.ts';
@@ -292,6 +292,10 @@ export function registerAIGenerationRuntime(
               httpStatus: failure instanceof Error ? Number(/\bHTTP\s+(\d{3})\b/iu.exec(failure.message)?.[1]) || undefined : undefined },
           } satisfies OperationStageUpdateV2);
           let received = false;
+          const semanticJson = activeRequest.canvasAgentTransport === 'json' &&
+            activeRequest.messages.some(message => message.role === 'system' && message.content === CANVAS_INTENT_INSTRUCTIONS);
+          let intentPrefix = '';
+          let plainAnswer = false;
           const receivedResponse = () => {
             if (received || signal.aborted) return;
             received = true;
@@ -310,14 +314,26 @@ export function registerAIGenerationRuntime(
             const result = await consumeAIGenerationStream(stream, signal, {
               onDelta: (event) => {
                 receivedResponse();
-                if (!visible || prepared.operation === 'canvas-control' || activeRequest.canvasAgentTransport === 'json') return;
+                if (!visible || prepared.operation === 'canvas-control') return;
+                let delta = event.delta;
+                if (activeRequest.canvasAgentTransport === 'json') {
+                  if (!semanticJson) return;
+                  if (event.channel === 'answer' && !plainAnswer) {
+                    intentPrefix += delta;
+                    const first = intentPrefix.trimStart()[0];
+                    if (!first || first === '{' || first === '`') return;
+                    plainAnswer = true;
+                    delta = intentPrefix;
+                    intentPrefix = '';
+                  }
+                }
                 emittedSequence += 1;
                 const current = options.stateBySession.get(prepared.sessionId);
                 const text = event.channel === 'answer'
-                  ? `${current?.text ?? ''}${event.delta}`
+                  ? `${current?.text ?? ''}${delta}`
                   : current?.text ?? '';
                 const reasoning = event.channel === 'reasoning'
-                  ? `${current?.reasoning ?? ''}${event.delta}`
+                  ? `${current?.reasoning ?? ''}${delta}`
                   : current?.reasoning ?? '';
                 options.stateBySession.set(prepared.sessionId, {
                   state: 'generating',
@@ -331,7 +347,7 @@ export function registerAIGenerationRuntime(
                   preparationId: prepared.id,
                   sessionId: prepared.sessionId,
                   sequence: emittedSequence,
-                  delta: event.delta,
+                  delta,
                   channel: event.channel,
                 } satisfies AIGenerationDeltaSignal);
               },

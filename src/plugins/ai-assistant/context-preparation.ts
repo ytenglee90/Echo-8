@@ -48,6 +48,7 @@ import { exactHistoryRequest, recallConversation } from './conversation-recall.t
 import { OPERATION_LOG_STAGE_V2, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
 import { prepareStructuredFields } from './structured-fields.ts';
 import { prepareCardRestructure } from './card-restructure.ts';
+import { recoverCanvasRequest } from './canvas-recovery.ts';
 
 export interface AIContextBudget {
   characterLimit: number;
@@ -75,9 +76,17 @@ export async function prepareAIContext(
   preparationId = createId('ai-context'),
   turnRoute?: AITurnRoute,
 ): Promise<AIPreparedContext> {
-  const route = turnRoute ?? classifyAITurn(payload.prompt, explicitAtOperation(payload.prompt) ?? payload.operation);
+  let route = turnRoute ?? classifyAITurn(payload.prompt, explicitAtOperation(payload.prompt) ?? payload.operation);
+  const recoveryPrompt = route.category === 'chat' && !explicitAtOperation(payload.prompt)
+    ? await recoverCanvasRequest(context, session, payload.prompt, signal) : undefined;
+  if (recoveryPrompt) {
+    route = { ...classifyAITurn(payload.prompt, 'canvas-control'), continuation: true };
+    payload = { ...payload, operation: 'canvas-control' };
+    context.signals.emit(OPERATION_LOG_STAGE_V2, { id: preparationId, relatedId: preparationId,
+      phase: 'ai-routing', state: 'completed', detail: { step: 'route', route: 'model', reason: 'model-plan' } } satisfies OperationStageUpdateV2);
+  }
   const completePreparation = (prepared: AIPreparedContext, binding: Omit<TurnAssembly, 'route'> = {}) =>
-    rememberTurnAssembly(prepared, { route, ...binding });
+    rememberTurnAssembly(prepared, { route, recoveryPrompt, ...binding });
   const localMemoryDirective = naturalMemoryDirective(payload.prompt);
   if (localMemoryDirective) {
     const createdAt = Date.now();

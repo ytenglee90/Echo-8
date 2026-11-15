@@ -163,7 +163,7 @@ export function registerAIRequestRuntime(
         (prepared) => {
           if (options.preparationTasks.get(session.id) !== task) return;
           options.preparationTasks.delete(session.id);
-          if (prepared.operation === 'canvas-control') (prepared as PreparedGeneration).replayRequest = normalizedPayload;
+          (prepared as PreparedGeneration).replayRequest = normalizedPayload;
           options.preparations.set(prepared.id, prepared);
           options.lastMemoryUseBySession.set(prepared.sessionId, {
             sourceIds: prepared.sources

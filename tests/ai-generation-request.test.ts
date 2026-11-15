@@ -4,6 +4,7 @@ import type { PluginContext } from '../src/core/contracts.ts';
 import { nativeConversation } from '../src/plugins/ai-assistant/request-evidence.ts';
 import { canvasRequestScope, projectCanvasObjects, scopedCanvasTools } from '../src/plugins/ai-assistant/canvas-request-scope.ts';
 import { CANVAS_AGENT_TOOLS } from '../src/plugins/ai-assistant/canvas-agent-tools.ts';
+import { classifyAITurn, rememberTurnAssembly } from '../src/plugins/ai-assistant/turn-route.ts';
 import type {
   AIPromptPolicyContribution,
   AIPromptTemplateCatalog,
@@ -73,6 +74,34 @@ function promptCatalog(): AIPromptTemplateCatalog {
     }],
   };
 }
+
+test('short transcript messages are sent once across native history, saved originals and recovery state', async () => {
+  const original = '创建一张世界观，一张能力，四张空白，空白打组，能力连接世界观，四张空白连接能力用虚线。';
+  const transcript = `[用户]\n${original}\n[助手]\n已搭好。\n[用户]\n为什么画布上看不到？\n[助手]\n请补充对象。`;
+  const context = { capabilities: { requestAll: async () => [], request: async (key: string) => {
+    if (key === 'ai.provider.catalog@1') return { activeId: 'provider:1', options: [{ id: 'provider:1', canvasToolCallingSupported: true }] };
+    if (key === 'canvasControl.context@3') return { instruction: 'legacy', objectDirectory: '' };
+    assert.equal(key, 'canvasControl.agentQuery@1');
+    return { nodes: [], groups: [], connections: [], total: 0, available: { nodes: true, groups: true, connections: true } };
+  } }, diagnostics: { warn() {} } } as unknown as PluginContext;
+  for (const recovery of [false, true]) {
+    const baseline = preparedContext();
+    const prepared: AIPreparedContext = { ...baseline, operation: 'canvas-control', prompt: recovery ? '还是没有' : original,
+      webSearchEnabled: false, memoryRetrieval: undefined, sources: recovery ? [
+        { ...baseline.sources[0]!, sourceId: 'ai-transcript:session:1', text: transcript, length: transcript.length, reason: 'recent-conversation' },
+        { ...baseline.sources[0]!, sourceId: 'node:archive', text: transcript, length: transcript.length, reason: 'conversation-memory' },
+      ] : [] };
+    if (recovery) rememberTurnAssembly(prepared, { route: { ...classifyAITurn('还是没有', 'canvas-control'), continuation: true }, recoveryPrompt: original });
+    const request = await buildGenerateRequest(context, prepared, { templates: [] });
+    assert.ok(request.tools?.some(tool => tool.function.name === 'propose_canvas_plan'));
+    const wire = JSON.stringify(request.messages);
+    assert.equal(wire.split(original).length - 1, 1);
+    if (recovery) {
+      assert.equal(wire.split('为什么画布上看不到？').length - 1, 1);
+      assert.match(wire, /不得重复创建/u);
+    }
+  }
+});
 
 function contextWithPolicies(
   policies: AIPromptPolicyContribution[] | Error,

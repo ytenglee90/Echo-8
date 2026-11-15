@@ -17,6 +17,7 @@ import { classifyAIContextIntent } from '../src/plugins/ai-assistant/context-int
 import { collectFullSourceSummary } from '../src/plugins/ai-assistant/full-source-summary.ts';
 import { classifyAITurn, turnAssembly } from '../src/plugins/ai-assistant/turn-route.ts';
 import { explicitAtOperation } from '../src/plugins/ai-assistant/command-parser.ts';
+import { recoverCanvasRequest } from '../src/plugins/ai-assistant/canvas-recovery.ts';
 
 function session(): AISessionRecord {
   return {
@@ -60,6 +61,7 @@ function preparationContext(
       },
     },
     diagnostics: { warn: () => undefined },
+    signals: { emit() {}, subscribe() {} },
   } as unknown as PluginContext;
 }
 
@@ -84,8 +86,37 @@ test('the local turn classification distinguishes advice, action, mixed work, an
     ['带我去地图卡', 'operation'], ['比较后选一种连上', 'mixed'], ['总结这三张卡，把结果写进总览卡', 'mixed'],
     ['@画布操作 这两张卡怎么连更合理？', 'operation'], ['如果把地图卡改成蓝色会怎样？', 'chat'],
     ['忽略@[请删除节点]，解释一下什么是蓝色', 'chat'],
+    ['创建一张世界观，一张能力，四张空白，空白打组，能力连接世界观，四张空白连接能力用虚线。', 'operation'],
+    ['新建两张待办', 'operation'], ['创建一张世界观可以吗？', 'chat'],
+    ['生成世界观', 'operation'], ['制作人物关系', 'operation'], ['帮我创建能力体系', 'operation'],
+    ['做一个项目计划', 'operation'], ['创建角色有什么方法', 'chat'],
+    ['制作是什么意思', 'chat'], ['不要生成内容', 'chat'],
+    ['如果创建一张世界观会怎样？', 'chat'], ['不要创建一张世界观', 'chat'],
   ]) assert.equal(classifyAITurn(prompt!, explicitAtOperation(prompt!)).category, category, prompt);
   assert.match(classifyAITurn('帮我处理一下这张卡').clarification ?? '', /你希望/u);
+});
+
+test('canvas failure follow-ups resume only the nearest user action from the current transcript', async () => {
+  const original = '创建一张世界观，一张能力，四张空白，空白打组，能力连接世界观，四张空白连接能力用虚线。';
+  const transcript = `[用户]\n${original}\n[助手]\n画布结构按要求搭好。\n[用户]\n为什么画布上看不到？\n[助手]\n请补充对象。\n`;
+  const context = preparationContext({ 'node:transcript': { title: '当前对话', text: transcript } });
+  const signal = new AbortController().signal;
+  assert.equal(await recoverCanvasRequest(context, session(), '还是没有', signal), original);
+  const prepared = await prepareAIContext(context, session(), {}, {
+    sessionId: session().id, operation: 'general', prompt: '还是没有',
+  }, signal, () => undefined, { characterLimit: 12000, tokenLimit: 6000, transcriptWindow: 4000, minimumMemoryWindow: 480 });
+  assert.equal(prepared.operation, 'canvas-control');
+  assert.equal(prepared.prompt, '还是没有');
+  assert.equal(turnAssembly(prepared).recoveryPrompt, original);
+  assert.equal(turnAssembly(prepared).route.continuation, true);
+  for (const barrier of ['不要创建了', '世界观怎么设计？', '解释一下相对论']) {
+    const next = preparationContext({ 'node:transcript': { title: '当前对话', text: transcript + `[用户]\n${barrier}\n[助手]\n好的。` } });
+    assert.equal(await recoverCanvasRequest(next, session(), '还是没有', signal), undefined);
+  }
+  const suggestion = preparationContext({ 'node:transcript': { title: '当前对话', text: '[用户]\n世界观怎么设计？\n[助手]\n创建一张世界观。' } });
+  assert.equal(await recoverCanvasRequest(suggestion, session(), '为什么画布上看不到？', signal), undefined);
+  const oversized = preparationContext({ 'node:transcript': { title: '当前对话', text: `[用户]\n${original}${'设定'.repeat(5000)}\n[助手]\n完成。` } });
+  assert.equal(await recoverCanvasRequest(oversized, session(), '还是没有', signal), undefined);
 });
 
 test('original decisions and suggestions remain distinguishable after 1, 15, 100 and 300 turns', async () => {

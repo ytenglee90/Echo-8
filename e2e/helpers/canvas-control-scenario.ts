@@ -12,6 +12,109 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  for (const recover of [false, true]) test(`implicit card creation ${recover ? 'resumes a failed request without duplicate objects' : 'creates six cards, one group and five edges atomically'}`, async ({ page }) => {
+    const original = '创建一张世界观，一张能力，四张空白，空白打组，能力连接世界观，四张空白连接能力用虚线。';
+    const actions: CanvasControlPlan['actions'] = [
+      { type: 'create-node', ref: 'world', title: '世界观', x: 0, y: 0 },
+      { type: 'create-node', ref: 'ability', title: '能力', x: 400, y: 0 },
+      ...Array.from({ length: 4 }, (_, index) => ({ type: 'create-node' as const, ref: 'blank' + index, title: '空白' + (index + 1), x: 800 + (index % 2) * 320, y: Math.floor(index / 2) * 250 })),
+      { type: 'create-group', ref: 'blanks', title: '空白组', members: ['blank0', 'blank1', 'blank2', 'blank3'] },
+      { type: 'create-connection', ref: 'main', from: 'ability', to: 'world', line: 'solid' },
+      ...Array.from({ length: 4 }, (_, index) => ({ type: 'create-connection' as const, ref: 'edge' + index, from: 'blank' + index, to: 'ability', line: 'dashed' as const })),
+    ];
+    let round = 0;
+    await page.route('https://api.deepseek.com/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      const request = route.request().postDataJSON() as { tools: Array<{ function: { name: string } }>; messages: Array<{ role: string; content: string }> };
+      expect(request.tools.map(tool => tool.function.name)).toContain('propose_canvas_plan');
+      const last = request.messages.at(-1)!.content;
+      round++;
+      let name = 'propose_canvas_plan';
+      let args: unknown = { plan: { version: 1, actions } };
+      let content: string | undefined;
+      if (recover && round === 1) content = '需要补充正文吗？';
+      else if (recover && last.includes('用户要求（原文）：\n为什么画布上看不到？')) {
+        expect(JSON.stringify(request.messages).split(original)).toHaveLength(2);
+        name = 'query_canvas'; args = { mode: 'all' };
+      } else if (last.includes('用户要求（原文）：\n还是没有')) { name = 'query_canvas'; args = { mode: 'all' }; }
+      else if (request.messages.some(message => message.content?.includes('用户要求（原文）：\n还是没有'))) {
+        expect(last).toContain('世界观');
+        args = { plan: { version: 1, actions: [], answer: '六张卡片已存在，未重复创建。' } };
+      }
+      const delta = content ? { content } : { tool_calls: [{ index: 0, id: 'call-' + round, type: 'function', function: { name, arguments: JSON.stringify(args) } }] };
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
+        body: `data: ${JSON.stringify({ choices: [{ delta, finish_reason: content ? 'stop' : 'tool_calls' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'deepseek', 'deepseek-flash', 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    const send = async (prompt: string) => {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.locator('.ai-composer textarea').press('Enter');
+    };
+    const cards = page.getByRole('article', { name: /文本节点：(世界观|能力|空白[1-4])$/u });
+    await send(original);
+    if (recover) {
+      await expect(ai).toContainText('需要补充正文吗？');
+      if (await control.isVisible()) await control.getByRole('button', { name: '关闭画布控制' }).click();
+      await send('为什么画布上看不到？');
+    }
+    await expect(cards).toHaveCount(6);
+    await openControl(page);
+    await expect(control).toContainText('已回读核对 12 项操作');
+    await expect(page.locator('.group-frame')).toHaveCount(1);
+    await expect(page.locator('.connection-path.title-connection')).toHaveCount(4);
+    await control.getByRole('button', { name: '关闭画布控制' }).click();
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(cards).toHaveCount(0);
+    await expect(page.locator('.group-frame')).toHaveCount(0);
+    await page.getByRole('button', { name: '重做', exact: true }).click();
+    await expect(cards).toHaveCount(6);
+    await send('还是没有');
+    await expect(ai).toContainText('六张卡片已存在，未重复创建。');
+    await expect(cards).toHaveCount(6);
+    expect(round).toBe(recover ? 5 : 3);
+  });
+
+  test('semantic routing handles an unfamiliar operation and keeps discussion in one model request', async ({ page }) => {
+    let round = 0;
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      const request = route.request().postDataJSON() as { tools: Array<{ function: { name: string } }>; messages: Array<{ role: string; content: string }> };
+      round++;
+      const names = request.tools.map(tool => tool.function.name);
+      let delta: unknown;
+      if (round === 1) {
+        expect(names).toContain('begin_canvas_task');
+        expect(names).not.toContain('propose_canvas_plan');
+        expect(JSON.stringify(request.messages)).not.toContain('当前画布工具状态');
+        delta = { tool_calls: [{ index: 0, id: 'intent', type: 'function', function: { name: 'begin_canvas_task', arguments: '{"intent":"operation"}' } }] };
+      } else if (round === 2) {
+        expect(names).toContain('propose_canvas_plan');
+        expect(request.messages.at(-1)?.role).toBe('tool');
+        delta = { tool_calls: [{ index: 0, id: 'plan', type: 'function', function: { name: 'propose_canvas_plan', arguments: JSON.stringify({ plan: { version: 1, actions: [{ type: 'create-node', ref: 'idea', title: '想法', text: '待完善。' }] } }) } }] };
+      } else {
+        expect(names).toContain('begin_canvas_task');
+        delta = { content: '可以先讨论利弊，再决定是否调整。' };
+      }
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('让这个想法在眼前有个落脚的地方吧');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.getByRole('article', { name: /文本节点：想法$/u })).toHaveCount(1);
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await openControl(page);
+    await expect(control).toContainText('已回读核对 1 项操作');
+    await control.getByRole('button', { name: '关闭画布控制' }).click();
+    await ai.locator('.ai-composer textarea').fill('这些想法值得继续讨论');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai).toContainText('可以先讨论利弊，再决定是否调整。');
+    expect(round).toBe(3);
+    await expect(page.getByRole('article', { name: /文本节点：想法$/u })).toHaveCount(1);
+  });
+
   test('only checked preview items are applied and verified offline', async ({ page }) => {
     await page.goto(url);
     await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
@@ -1263,6 +1366,13 @@ export function canvasControlScenarios(url: string): void {
     await expect(page.locator('.group-frame')).toHaveCount(1);
     expect(errors).toEqual([]);
   });
+}
+
+async function openControl(page: Page): Promise<void> {
+  await page.getByRole('button', { name: '命令面板', exact: true }).click();
+  const palette = page.getByRole('dialog', { name: '命令面板' });
+  await palette.getByRole('textbox', { name: '搜索命令' }).fill('画布控制');
+  await palette.getByRole('option', { name: /^画布控制/u }).click();
 }
 
 async function configure(page: Page, url: string, preset: 'openai' | 'gemini' | 'deepseek' = 'openai', model?: string, execution: 'direct' | 'review' = 'review', openCanvas = true): Promise<void> {

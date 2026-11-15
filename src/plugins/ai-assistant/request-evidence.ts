@@ -119,7 +119,7 @@ export function evidenceBodies(sources: readonly AIPreparedSource[], historyInde
         const end = headers[position + 1]?.index ?? source.text.length;
         const original = source.text.slice(start, end).trim();
         const same = sentHistory.findIndex(message => message.role === (header[1] === '用户' ? 'user' : 'assistant') && message.content === original);
-        if (same >= 0 && original.length >= 48) text = text.slice(0, start) + `\n见附后对话第 ${same + 1} 条。\n` + text.slice(end);
+        if (same >= 0) text = text.slice(0, start) + `\n见附后对话第 ${same + 1} 条。\n` + text.slice(end);
       }
     }
     return `<untrusted-canvas-content>\n${text}\n</untrusted-canvas-content>`;

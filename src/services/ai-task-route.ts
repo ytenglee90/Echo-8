@@ -354,10 +354,13 @@ export function needsCanvasSearchInterpretation(prompt: string): boolean {
   return /^(?:请\s*)?(?:把|将|找出|筛选|查找).*(?:有关|相关).*(?:整理出来|找出来|筛出来|列出来)[。！]?$/u.test(prompt.trim());
 }
 
-/** Creation without a literal title may require generated content, so it uses the plan path. */
+/** In the canvas assistant, direct creation requests imply a new text node. */
 export function needsCanvasCreationPlanning(prompt: string): boolean {
   const text = canvasIntentText(canvasCommandText(prompt)).replace(/^在(?:当前)?画布上\s*/u, '');
-  if (/[？?]\s*$/u.test(text) || /(?:吗|么|怎么做|如何做)[。！!]?$/u.test(text)) return false;
+  if (/[？?]\s*$/u.test(text) || /(?:吗|么|怎么做|如何做)[。！!]?$/u.test(text) ||
+    /^(?:如何|怎么|怎样|是否|如果|假如|假设|不要|先别|先不要|别)/u.test(text)) return false;
+  if (/^(?:新建|创建|新增|生成|制作|添加|做|建)\s*\S/u.test(text) &&
+    !/^(?:新建|创建|新增|生成|制作|添加|做|建).{0,30}(?:是什么|有什么|有哪些|的(?:方法|步骤|区别|意思)|怎么|如何)/u.test(text)) return true;
   if (/^(?:(?:新建|创建|新增|生成|做|添加|建|来)\s*|(?:一|1)\s*(?:张|个|份))\s*[^，。；!?！？\r\n]{0,35}?(?:角色卡片?|人物卡片?|角色档案|人物档案)(?=$|[\s，。；,;！!：:]|(?:叫|名为|并|然后|再|用于|用来|写上|填上|带上))/u.test(text)) return true;
   return /^(?:新建|创建|新增|生成|做|添加|建)\s*[^，。；!?！？\r\n]{0,60}?(?:节点|卡片|文本框)(?=$|[\s，。；,;！!：:]|(?:叫|名为|并|然后|再|用于|用来|写上|填上|带上))/u.test(text);
 }

@@ -7,7 +7,7 @@ import { createSelectionPlugin } from '../src/plugins/selection/model.ts';
 import { createGroupsPlugin } from '../src/plugins/groups/model.ts';
 import { createConnectionsPlugin } from '../src/plugins/connections/model.ts';
 import { createCanvasControlPlugin } from '../src/plugins/canvas-control/model.ts';
-import { CANVAS_AGENT_TOOLS, runCanvasAgentLoop } from '../src/plugins/ai-assistant/canvas-agent-tools.ts';
+import { CANVAS_AGENT_TOOLS, CANVAS_INTENT_TOOL, CANVAS_INTENT_INSTRUCTIONS, runCanvasAgentLoop } from '../src/plugins/ai-assistant/canvas-agent-tools.ts';
 import { canvasToolEvidence } from '../src/plugins/ai-assistant/canvas-tool-evidence.ts';
 import type { AIGenerateRequest, AIGenerateResult, AIPreparedContext } from '../src/protocols/ai.ts';
 import type { CanvasAgentQueryResult, CanvasAgentReadResult } from '../src/protocols/canvas-agent.ts';
@@ -42,6 +42,65 @@ function tool(name: string, args: unknown): AIGenerateResult {
   return { text: '', provider: 'test', model: 'test', finishReason: 'tool-calls', toolCalls: [{ id: 'call:' + name, name, arguments: JSON.stringify(args) }] };
 }
 const initial: AIGenerateRequest = { messages: [{ role: 'user', content: '完善人物并关联新场景' }], canvasAgentTransport: 'native', tools: CANVAS_AGENT_TOOLS, maxOutputTokens: 4000, temperature: 0.2 };
+
+test('semantic intent enters the existing canvas workflow without a local verb match in native and JSON modes', async () => {
+  for (const transport of ['native', 'json'] as const) {
+    const h = await harness();
+    const first = await h.create('甲', '甲的正文'), second = await h.create('乙');
+    const input = { ...h.input, prompt: '移动这一对块儿，让它们看着紧凑一点' };
+    assert.equal(classifyAITurn(input.prompt).category, 'chat');
+    const turn = prepared(input);
+    const request = { ...initial, canvasAgentTransport: transport,
+      tools: transport === 'native' ? [CANVAS_INTENT_TOOL] : undefined,
+      messages: [{ role: 'system' as const, content: CANVAS_INTENT_INSTRUCTIONS }, { role: 'user' as const, content: input.prompt }] };
+    const call = (name: string, args: unknown) => transport === 'native' ? tool(name, args)
+      : { provider: 'test', model: 'test', text: JSON.stringify({ canvas_tool: { name, arguments: args } }) };
+    let rounds = 0;
+    const result = await runCanvasAgentLoop(h.context, turn, request, call('begin_canvas_task', { intent: 'operation' }), async active => {
+      rounds++;
+      if (rounds === 1) {
+        if (transport === 'native') {
+          assert.ok(active.tools?.some(tool => tool.function.name === 'propose_canvas_plan'));
+          assert.equal(active.messages.at(-1)?.toolCallId, 'call:begin_canvas_task');
+        }
+        return call('query_canvas', { mode: 'all' });
+      }
+      if (rounds === 2) return call('read_canvas', { id: first.id, start: 0, length: 20 });
+      assert.match(JSON.stringify(active.messages), /甲|乙/u);
+      assert.match(active.messages.at(-1)!.content, /甲的正文/u);
+      return call('propose_canvas_plan', { plan: { version: 1, actions: [
+        { type: 'create-group', ref: 'pair', title: '一组', members: [first.id, second.id] },
+        { type: 'update-node', id: first.id, color: '#4488cc', x: 100, y: 80 },
+        { type: 'create-connection', ref: 'link', from: first.id, to: second.id, line: 'dashed' },
+      ] } });
+    }, async () => ({ messages: [], executed: 0 }), new AbortController().signal);
+    assert.equal(rounds, 3);
+    assert.equal(result.canvasPlan, true);
+    await h.kernel.router.dispatch('canvasControl.offer@1', { ...input, text: result.result.text, complete: true }, 'core.test');
+    const review = (await h.state()).reviews.at(-1)!;
+    await h.kernel.router.dispatch('canvasControl.apply@1', { id: review.id }, 'core.test');
+    assert.equal((await h.state()).reviews.at(-1)?.verification?.status, 'verified');
+    assert.equal((await h.kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections.length, 1);
+    const nodes = () => h.kernel.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: [first.id] });
+    assert.equal((await nodes())[0]?.x, 100);
+    await h.kernel.router.dispatch('history.undo', undefined, 'core.test');
+    assert.equal((await nodes())[0]?.x, 0);
+    assert.equal((await h.kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections.length, 0);
+    await h.kernel.router.dispatch('history.redo', undefined, 'core.test');
+    assert.equal((await nodes())[0]?.x, 100);
+    await h.kernel.plugins.stop('canvas-control');
+  }
+});
+
+test('semantic entry lets ordinary conversation answer without canvas queries or an extra generation', async () => {
+  const turn = prepared({ preparationId: 'chat', sessionId: 'chat', prompt: '这些想法值得继续讨论' });
+  const context = { capabilities: { request() { throw new Error('ordinary chat must not read canvas'); } } } as unknown as PluginContext;
+  const result = await runCanvasAgentLoop(context, turn, { ...initial, tools: [CANVAS_INTENT_TOOL] },
+    { provider: 'test', model: 'test', text: '可以先谈各自的利弊。' }, async () => { throw new Error('unexpected extra model request'); },
+    async () => ({ messages: [], executed: 0 }), new AbortController().signal);
+  assert.equal(result.canvasPlan, false);
+  assert.equal(turn.operation, 'general');
+});
 
 test('discussion denies unsolicited write tool calls in native and JSON modes', async () => {
   const h = await harness();
