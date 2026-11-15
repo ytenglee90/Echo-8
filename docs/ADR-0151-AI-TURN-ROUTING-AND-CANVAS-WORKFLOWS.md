@@ -31,3 +31,9 @@ AI 助手按本轮原话本地分流。聊天在需要画布资料时只提供�
 Firefox 最初在创建空白页时无法启动内容子进程，导致首轮全量的 246 项环境失败。测试进程使用 `MOZ_DISABLE_CONTENT_SANDBOX=1` 后可启动并完成验证。现有固定浏览器运行时可用，重新安装命令因本地 `ms-playwright/__dirlock` 目录权限失败。
 
 随后 Firefox/WebKit 托管全量为 476 通过、16 失败。16 项串行复核后 5 通过、11 项仍失败。剩余 Firefox 八项涉及中转点端口连接、缩放尺寸参考线、标题端口、40% 群组端口、拖出视口和三档中转点控件间距。WebKit 三项涉及云端实时保存、中转点反向拖线及拖动释放预览。WebKit 的自然连线场景复核通过。原全量与复核失败记录保留在 `local-data/complete-ai-cross-final.log` 和 `local-data/complete-ai-cross-recheck.log`。
+
+## 正式发布
+
+功能提交 `abb5bc6290380883c9f9a15fded02db5ccfb2064` 已推送到 GitHub 的 main。2026-11-15 17:47（北京时间），Cloudflare Worker 版本 `df985f81-61ab-43fa-84e9-ed19c9da3d1a` 接收正式站 100% 流量。生产依赖审计通过。线上首页、匿名云状态接口及两份新模块返回 200，模块 SHA256 与本地托管构建一致，AI 模块含 `canvasControl.context@3` 和 `canvasControl.applyItems@1`。
+
+正式站三种浏览器的五类场景共 15 项均完成验证，覆盖按项应用、相对摆放接续、DeepSeek 双工具配对、语义读取及原子修改、工具续轮 422 恢复。首次为 13 通过、2 项 WebKit 书库启动超时；两项单独复跑通过。测试使用隔离的本地画布数据和模拟模型接口。完整日志位于 `local-data/ai-routing-release-online*.log`，静态资源与流量核对位于 `local-data/ai-routing-release-online-assets.json`。前述 11 项托管全量失败继续保留在验收记录中。
