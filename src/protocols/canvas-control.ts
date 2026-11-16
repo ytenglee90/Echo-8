@@ -36,10 +36,11 @@ export interface CanvasControlAdmission {
   sourceIds?: string[];
 }
 export interface CanvasControlOffer extends CanvasControlAdmission { text: string; complete: boolean }
+export interface CanvasControlNativeRequest extends CanvasControlAdmission { selectedIds?: string[] }
 export const CANVAS_CONTROL_RESUME = 'canvasControl.resume@1';
 export const CANVAS_CONTROL_RESULT = 'canvasControl.result@1';
 export interface CanvasControlResume extends CanvasControlAdmission { sourceIds: string[] }
-export interface CanvasControlResult extends CanvasControlAdmission { status: 'applied' | 'failed' | 'dismissed'; count: number; verification?: import('./canvas-agent.ts').CanvasControlVerification['status'] }
+export interface CanvasControlResult extends CanvasControlAdmission { status: 'applied' | 'failed' | 'dismissed'; count: number; verification?: import('./canvas-agent.ts').CanvasControlVerification['status']; message?: string }
 export type CanvasControlPurpose = 'appearance' | 'move' | 'creation' | 'structure' | 'content' | 'general';
 export interface CanvasControlContextV2 { instruction: string; objectDirectory: string; targetIds?: string[]; responseSchema?: Record<string, unknown> }
 export interface CanvasControlTaskState {
@@ -47,6 +48,13 @@ export interface CanvasControlTaskState {
   plans: Array<{ id: string; goal: string; status: 'pending' | 'applied' | 'undone' | 'changed' | 'failed' | 'dismissed' | 'expired';
     verification?: import('./canvas-agent.ts').CanvasControlVerification;
     actions: unknown[]; actionCount: number; omittedActions: number; targets: Array<{ id: string; title: string; revision: number }>; error?: string }>;
+}
+export interface CanvasControlReceipt {
+  preparationId: string;
+  status: CanvasControlTaskState['plans'][number]['status'];
+  message: string;
+  directPlanId?: string;
+  repeatableCreation?: string;
 }
 export interface CanvasControlPatchPlan {
   patches: PatchOperation[];
@@ -70,6 +78,7 @@ export interface CanvasControlConnectionRequest {
   nodes: ConnectionNodeGeometry[];
 }
 export interface CanvasControlReview {
+  nativeLabel?: string;
   verification?: import('./canvas-agent.ts').CanvasControlVerification;
   replacement?: { count: number; nodeCount: number; from: string; to: string; examples: string[] };
   planVersion?: 1 | 2;
@@ -99,6 +108,7 @@ declare module './commands.ts' {
     'canvasControl.scope@1': CommandContract<{ scope: 'selection' | 'canvas' }>;
     'canvasControl.execution@1': CommandContract<{ execution: 'direct' | 'review' }>;
     'canvasControl.offer@1': CommandContract<CanvasControlOffer, { message: string; directPlanId?: string }>;
+    'canvasControl.native@1': CommandContract<CanvasControlNativeRequest, { message: string }>;
     'canvasControl.generate@1': CommandContract<{ id: string }, { message: string }>;
     'canvasControl.apply@1': CommandContract<{ id: string }, { createdIds: string[] }>;
     'canvasControl.applyItems@1': CommandContract<{ id: string; items: number[] } | { sessionId: string; items: number[] }, { createdIds: string[] }>;
@@ -115,6 +125,7 @@ declare module './messages.ts' {
     'canvasControl.localPlan@1': MessageContract<CanvasControlAdmission, { handled: boolean; text?: string; unresolvedTarget?: boolean }>;
     'canvasControl.localPlan@2': MessageContract<CanvasControlAdmission & { instructions: string[]; expectedSelectionCount?: number }, { handled: boolean; text?: string; unresolvedTarget?: boolean }>;
     'canvasControl.taskState@1': MessageContract<{ sessionId: string; targetIds?: string[] }, CanvasControlTaskState>;
+    'canvasControl.receipt@1': MessageContract<{ sessionId: string; preparationId?: string; goal?: string }, CanvasControlReceipt | undefined>;
     'canvasControl.context@1': MessageContract<CanvasControlAdmission, { instruction: string }>;
     'canvasControl.nodesPlan@1': MessageContract<CanvasControlNodeRequest, CanvasControlNodePlan>;
     'canvasControl.nodesPlan@2': MessageContract<CanvasControlNodeRequest, CanvasControlNodePlan>;

@@ -1,0 +1,176 @@
+import type { PluginContext } from '../../core/contracts.ts';
+import { MAX_ANNOTATION_BODY_LENGTH, type AnnotationRecord, type AnnotationTarget } from '../../protocols/annotations.ts';
+import type { AIContextCatalogContribution } from '../../protocols/ai.ts';
+import type { AppearanceReadContribution } from '../../protocols/appearance.ts';
+import type { CanvasControlNativeRequest } from '../../protocols/canvas-control.ts';
+import type { ConnectionGraphSnapshot } from '../../protocols/connections.ts';
+import type { GroupRecord } from '../../protocols/groups.ts';
+import type { SelectionResolution, SelectionSnapshot } from '../../protocols/selection.ts';
+import { canvasTitleAliases, normalizeCanvasTitle } from '../../services/canvas-titles.ts';
+import type { NativeCanvasIntent } from '../../services/native-canvas-intent.ts';
+import { readTaskMarkers } from './task-state.ts';
+
+export interface NativeCanvasAction {
+  label: string;
+  ids: string[];
+  review: boolean;
+  apply(): Promise<string>;
+}
+
+const sameIds = (a: readonly string[], b: readonly string[]) => {
+  const ids = new Set(b);
+  return a.length === ids.size && a.every(id => ids.has(id));
+};
+
+export async function prepareNativeCanvasAction(context: PluginContext, input: CanvasControlNativeRequest, intent: NativeCanvasIntent): Promise<NativeCanvasAction> {
+  const selection = async () => {
+    const current = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+    if (!input.selectedIds || !sameIds(input.selectedIds, current.ids)) throw new Error('选区已变化，请重新选定目标后发送。');
+    if (!current.ids.length) throw new Error('请先在画布上选中要操作的对象。');
+    return current;
+  };
+  const action = (label: string, apply: () => Promise<string>, ids: string[] = [], review = false) => ({ label, ids, review, apply });
+  if (intent.kind === 'undo' || intent.kind === 'redo') {
+    const undo = intent.kind === 'undo';
+    const label = undo ? '撤销' : '重做';
+    return action(label, async () => {
+      const state = await context.queries.ask<{ nextUndo?: string; nextRedo?: string }>('history.state');
+      const next = undo ? state.nextUndo : state.nextRedo;
+      if (next?.startsWith('记录 AI ')) return `下一项是「${next}」。如需处理这条对话记录，请使用历史控制。`;
+      return await context.commands.invoke(undo ? 'history.undo' : 'history.redo')
+        ? `已${label}上一项画布操作。` : `没有可${label}的画布操作。`;
+    });
+  }
+  if (intent.kind === 'paste') {
+    const clipboardState = () => context.capabilities.request<{ copiedAt?: number; count: number; hasContent: boolean }>('clipboard.state@1');
+    const initial = await clipboardState();
+    if (!initial.hasContent) throw new Error('内部剪贴板为空，请先复制或剪切。');
+    return action('粘贴内部剪贴板', async () => {
+      const live = await clipboardState();
+      if (!live.hasContent || live.copiedAt !== initial.copiedAt || live.count !== initial.count) throw new Error('剪贴板已变化，请重新准备粘贴。');
+      const result = await context.commands.invoke('clipboard.paste') as { created: number };
+      return `已粘贴 ${result.created} 个选中项，可一次撤销。`;
+    });
+  }
+  if (intent.kind === 'preferences') {
+    const label = `${intent.label}颜色改为 ${intent.color}`;
+    return action(label, async () => {
+      await context.commands.invoke('palette.setPreferences', { [intent.property]: intent.color });
+      return `已将${label}。`;
+    });
+  }
+  if (intent.kind === 'copy' || intent.kind === 'cut') {
+    const initial = await selection();
+    if (intent.expectedCount && initial.ids.length !== intent.expectedCount) throw new Error(`本轮指定 ${intent.expectedCount} 个对象，当前选中 ${initial.ids.length} 个。`);
+    if (intent.expectedKind && initial.items.some(item => item.kind !== intent.expectedKind)) {
+      throw new Error(`选区包含其他类型的画布对象，请只选中要处理的${intent.expectedKind === 'group' ? '群组' : '节点'}。`);
+    }
+    const cut = intent.kind === 'cut';
+    const resolve = (value: SelectionSnapshot) => context.capabilities.request<SelectionResolution>('selection.resolve@1', { items: value.items, mode: 'replace' });
+    const expanded = cut ? (await resolve(initial)).expandedIds : initial.ids;
+    const before = cut ? (await readTaskMarkers(context, expanded)).markers : undefined;
+    return action(`${cut ? '剪切' : '复制'} ${initial.ids.length} 个选中项`, async () => {
+      const current = await selection();
+      if (before) {
+        if (!sameIds(expanded, (await resolve(current)).expandedIds)) throw new Error('群组成员已变化，请重新准备剪切。');
+        const verified = (await readTaskMarkers(context, expanded)).markers;
+        if (expanded.some(id => verified[id] !== before[id])) throw new Error('选中内容已变化，请重新准备剪切。');
+      }
+      const result = await context.commands.invoke('clipboard.copy') as { count: number };
+      if (cut) {
+        const deleted = await context.commands.invoke('selection.delete') as { deleted: number };
+        if (!deleted.deleted) throw new Error('已复制到剪贴板，原对象未删除。');
+      }
+      return `已${cut ? '剪切' : '复制'} ${result.count} 个选中项到内部剪贴板。`;
+    }, expanded, cut);
+  }
+  if (intent.kind === 'junction') {
+    const current = await selection();
+    const graph = await context.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
+    const chosen = new Set(current.ids);
+    const edges = graph.connections.filter(edge => chosen.has(edge.id));
+    if (!edges.length || edges.length !== chosen.size) throw new Error('请只选中要添加中转点的连接线。');
+    return action(`给 ${edges.length} 条连接线添加中转点`, async () => {
+      await selection();
+      const live = await context.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
+      const revisions = new Map(live.connections.map(edge => [edge.id, edge.revision]));
+      if (edges.some(edge => revisions.get(edge.id) !== edge.revision)) throw new Error('连接线已变化，请重新准备。');
+      const result = await context.commands.invoke('connection.toolbarToggle@1', { kind: 'junction' });
+      return `已添加 ${result.ids?.length ?? 0} 个中转点，可一次撤销。`;
+    }, current.ids);
+  }
+  if (intent.kind === 'annotation-create') {
+    assertBodyLength(intent.body);
+    const target = intent.name ? await namedAnnotationTarget(context, intent.name, input.sourceIds) : annotationTarget(await selection());
+    return action(`为${intent.name ? `「${intent.name}」` : '选中对象'}添加标注`, async () => {
+      if (!intent.name) await selection();
+      const exists = target.kind === 'group'
+        ? (await context.capabilities.request<GroupRecord[]>('groups.list@1')).some(group => group.id === target.targetId)
+        : (await context.capabilities.request<Array<{ id: string }>>('content.summariesById@1', { nodeIds: [target.targetId] })).some(node => node.id === target.targetId);
+      if (!exists) throw new Error('标注对象已不存在，请重新指定。');
+      await context.commands.invoke('annotation.create', { target, body: intent.body });
+      return '已添加标注，可一次撤销。';
+    }, [target.targetId]);
+  }
+
+  const current = await selection();
+  if (current.items.length !== 1 || current.items[0]?.kind !== 'annotation') throw new Error('请只选中要修改的一个标注。');
+  const id = current.items[0].id;
+  const records = () => context.capabilities.request<AnnotationRecord[]>('annotations.list@1');
+  const annotation = (await records()).find(record => record.id === id);
+  if (!annotation) throw new Error('标注已不存在。');
+  const ensureRevision = async () => {
+    const live = (await records()).find(record => record.id === id);
+    if (live?.revision !== annotation.revision) throw new Error('标注已变化，请重新准备。');
+  };
+  if (intent.kind === 'annotation-delete') return action('删除选中的标注', async () => {
+    await ensureRevision();
+    await context.commands.invoke('annotation.delete', { id });
+    return '已删除标注，可一次撤销。';
+  }, [id], true);
+  if (intent.kind === 'annotation-update') {
+    assertBodyLength(intent.body);
+    return action('替换选中标注的内容', async () => {
+      await context.commands.invoke('annotation.update', { id, body: intent.body, expectedRevision: annotation.revision });
+      return '已更新标注内容，可一次撤销。';
+    }, [id], Boolean(annotation.body));
+  }
+  if (intent.kind !== 'annotation-color') throw new Error('这项标注指令尚不可用。');
+  const { color } = intent;
+  const contributions = await context.capabilities.requestAll<AppearanceReadContribution>('appearance.read@1', {
+    mode: 'selection', selectedIds: [id], selectedItems: current.items,
+  });
+  const target = contributions.flatMap(item => item.targets).find(item => item.kind === 'annotation-marker');
+  const entity = target?.entities.find(item => item.id === id);
+  if (!entity) throw new Error('没有找到选中标注的颜色。');
+  return action(`选中标注改色为 ${color}`, async () => {
+    await context.commands.invoke('palette.applyAppearance', { kind: 'annotation-marker', color, entities: [entity] });
+    return `已将标注颜色设为 ${color}。`;
+  }, [id]);
+}
+
+function assertBodyLength(body: string | undefined): void {
+  if (body && body.length > MAX_ANNOTATION_BODY_LENGTH) throw new Error('标注正文超过可写入长度，请缩短后重试。');
+}
+
+function annotationTarget(selection: SelectionSnapshot): AnnotationTarget {
+  const item = selection.items[0];
+  if (selection.items.length !== 1 || (item?.kind !== 'text-node' && item?.kind !== 'group')) throw new Error('请只选中一个需要添加标注的节点或群组。');
+  return { kind: item.kind, targetId: item.id };
+}
+
+async function namedAnnotationTarget(context: PluginContext, name: string, sourceIds?: string[]): Promise<AnnotationTarget> {
+  const key = normalizeCanvasTitle(name);
+  const [catalogs, groups] = await Promise.all([
+    context.capabilities.requestAll<AIContextCatalogContribution>('context.catalog@1'),
+    context.capabilities.request<GroupRecord[]>('groups.list@1').catch(() => []),
+  ]);
+  const nodes = catalogs.flatMap(catalog => catalog.sources).filter(source => source.kind === 'text' && canvasTitleAliases(source.title).includes(key));
+  const explicit = nodes.filter(node => sourceIds?.includes(node.sourceId));
+  const targets: AnnotationTarget[] = (explicit.length ? explicit : nodes.filter(node => node.automaticRetrieval !== false))
+    .map(node => ({ kind: 'text-node', targetId: node.sourceId }));
+  if (!explicit.length) targets.push(...groups.filter(group => normalizeCanvasTitle(group.title) === key)
+    .map(group => ({ kind: 'group' as const, targetId: group.id })));
+  if (targets.length !== 1) throw new Error(`请选中要添加标注的唯一对象「${name}」。`);
+  return targets[0]!;
+}

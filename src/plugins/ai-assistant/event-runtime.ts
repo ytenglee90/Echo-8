@@ -10,6 +10,7 @@ import {
   type AssistantDraftPreview,
 } from './command-payloads.ts';
 import { internalTranscriptSourceId } from './transcript-storage.ts';
+import { invalidateConversationDirectories, noteConversationAppend } from './conversation-recall.ts';
 
 export interface AIEventRuntimeOptions {
   readSessions(): Record<string, AISessionRecord>;
@@ -92,7 +93,9 @@ export function registerAIEventRuntime(
       context.diagnostics.warn('继续安排 AI 对话自动保存失败', error);
     });
   });
-  context.events.subscribe<{ sessionId: string }>('ai.transcript.changed', (message) => {
+  context.events.subscribe<{ sessionId: string; revision: number }>('ai.transcript.changed', (message) => {
+    const session = options.readSessions()[message.payload.sessionId];
+    if (session) noteConversationAppend(context, session, message.payload.revision);
     invalidateState();
     context.signals.emit('ai.transcript.invalidated', {
       nodeId: internalTranscriptSourceId(message.payload.sessionId),
@@ -153,12 +156,14 @@ export function registerAIEventRuntime(
   context.events.subscribe('node.renamed', invalidateCatalog);
   context.events.subscribe('nodes.deleted', invalidateCatalog);
   context.events.subscribe('history.changed', () => {
+    invalidateConversationDirectories(context);
     invalidateState();
     invalidateCatalog();
     context.signals.emit('ai.transcript.invalidated', {});
     context.signals.emit('ai.memory.invalidated');
   });
   context.events.subscribe('document.replaced', () => {
+    invalidateConversationDirectories(context);
     options.resetTransientRuntime();
     invalidateState();
     invalidateCatalog();

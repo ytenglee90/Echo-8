@@ -80,7 +80,7 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
       <p className="canvas-control-note">新对象和空白节点正文默认直接生成。覆盖已有内容或删除对象需确认。修改正文时可 @ 引用节点。待应用计划十分钟内有效，整批操作可一次撤销。</p>
       {!state.reviews.length && <p className="canvas-control-empty">操作计划将在这里显示。</p>}
       {[...state.reviews].reverse().map(review => <section className="canvas-control-review" key={review.id} aria-label="画布操作计划">
-        <header><strong>{review.replacement ? `${review.replacement.nodeCount} 个节点 · ${review.replacement.count} 处正文` : `${review.actions.length} 项操作`}</strong><span>{review.status === 'applied' ? '已应用' : review.status === 'dismissed' ? '已放弃' : '等待确认'}</span></header>
+        <header><strong>{review.nativeLabel ?? (review.replacement ? `${review.replacement.nodeCount} 个节点 · ${review.replacement.count} 处正文` : `${review.actions.length} 项操作`)}</strong><span>{review.status === 'applied' ? '已应用' : review.status === 'dismissed' ? '已放弃' : '等待确认'}</span></header>
         {review.verification && <p role={review.verification.status === 'verified' ? undefined : 'alert'}>
           {review.verification.status === 'verified' ? `已回读核对 ${review.verification.checked} 项操作` :
             review.verification.status === 'mismatch' ? `修改已提交，核对发现 ${review.verification.mismatches.length} 处差异，请检查画布或撤销` : '修改已提交，本轮回读暂不可用，请检查画布'}
@@ -106,9 +106,9 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
     <footer className="canvas-control-actions" aria-label="画布计划操作">
       {(error || activeReview?.error) && <p role="alert">{error || activeReview?.error}</p>}
       {pending.length > 1 && <label>待应用计划<select aria-label="选择待应用计划" value={activeReview?.id ?? ''} onChange={event => { setSelectedPlanId(event.target.value); setError(''); }} disabled={busy}>
-        {[...pending].reverse().map(review => <option key={review.id} value={review.id}>{review.replacement ? `${review.replacement.count} 处替换` : `${review.actions.length} 项`} · {new Date(review.createdAt).toLocaleTimeString('zh-CN')}</option>)}
+        {[...pending].reverse().map(review => <option key={review.id} value={review.id}>{review.nativeLabel ?? (review.replacement ? `${review.replacement.count} 处替换` : `${review.actions.length} 项`)} · {new Date(review.createdAt).toLocaleTimeString('zh-CN')}</option>)}
       </select></label>}
-      {activeReview ? <div className="canvas-control-action-row"><span>{activeReview.replacement ? `${activeReview.replacement.count} 处待替换` : `${activeReview.actions.length} 项待应用`}</span><button className="primary-button" disabled={busy} onClick={() => void apply(activeReview, selectedItems.length ? selectedItems : undefined)}>{busy ? '正在应用…' : selectedItems.length ? `应用选中的 ${selectedItems.length} 项` : '应用整份计划'}</button><button disabled={busy} onClick={() => dismiss(activeReview.id)}>放弃</button></div>
+      {activeReview ? <div className="canvas-control-action-row"><span>{activeReview.replacement ? `${activeReview.replacement.count} 处待替换` : `${activeReview.nativeLabel ? 1 : activeReview.actions.length} 项待应用`}</span><button className="primary-button" disabled={busy} onClick={() => void apply(activeReview, selectedItems.length ? selectedItems : undefined)}>{busy ? '正在应用…' : selectedItems.length ? `应用选中的 ${selectedItems.length} 项` : '应用整份计划'}</button><button disabled={busy} onClick={() => dismiss(activeReview.id)}>放弃</button></div>
         : <span className="canvas-control-note">{state.reviews.length ? '没有待应用计划，已生成的内容可在画布查看。' : '生成结果会直接出现在画布；也可切换为先预览。'}</span>}
     </footer>
     </div>

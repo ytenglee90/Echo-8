@@ -31,6 +31,7 @@ import {
 } from './transcript-storage.ts';
 import { collectAIResponseCitations } from './transcript-presentation.ts';
 import type { PreparedGeneration } from './request-runtime.ts';
+import { isCanvasReceiptTurn } from './turn-route.ts';
 import type { AIResponseDetail } from './types.ts';
 import { normalizeTokenUsage } from '../../services/ai-token-usage.ts';
 
@@ -130,6 +131,7 @@ export function registerAIProposalRuntime(
         result: { proposalId },
         transaction: {
           label: proposal ? '记录 AI 助手消息与正文修改建议' : '记录 AI 助手消息',
+          ...(isCanvasReceiptTurn(prepared) ? { history: false } : {}),
           patches: [
             ...append.patches,
             { op: 'set', domain: 'document', namespace: AI_SESSION_NAMESPACE, key: session.id, value: nextSession },

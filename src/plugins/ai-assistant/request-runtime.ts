@@ -9,9 +9,11 @@ import type {
   AIProposalRecord,
 } from '../../protocols/ai.ts';
 import { explicitAtOperation } from './command-parser.ts';
-import { classifyAITurn } from './turn-route.ts';
+import { classifyAITurn, isCanvasReceiptTurn } from './turn-route.ts';
 import { canvasCommandText } from '../../services/ai-task-route.ts';
 import { naturalWritebackIntent } from './natural-writeback.ts';
+import { naturalMemoryDirective } from './memory-suggestion.ts';
+import { LOCAL_LANGUAGE_TIMEOUT_MS, mayUseLocalLanguage } from './local-turn-routing.ts';
 import { CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, type CanvasControlResume, type CanvasControlResult } from '../../protocols/canvas-control.ts';
 import {
   isGenerationCancelPayload,
@@ -51,6 +53,7 @@ export type PreparedGeneration = AIPreparedContext & {
   userEntryLength?: number;
   userTurn?: number;
   replayRequest?: PreparePayload;
+  appliedItemsMessage?: string;
 };
 
 export interface AIRequestRuntimeOptions {
@@ -83,7 +86,7 @@ export function registerAIRequestRuntime(
     const previous = options.lastPrepareRequestBySession.get(result.sessionId);
     if (!previous || previous.prompt !== result.prompt || options.generationTasks.has(result.sessionId)) return;
     context.signals.emit('ai.status', { sessionId: result.sessionId, state: result.status === 'failed' ? 'error' : 'complete',
-      message: result.status === 'applied' ? `已在画布应用 ${result.count} 项操作；${result.verification === 'verified' ? '已完成回读核对，可一次撤销。' : result.verification ? '回读核对尚未通过，请查看画布控制。' : '可一次撤销。'}` :
+      message: result.status === 'applied' ? result.message ?? `已在画布应用 ${result.count} 项操作；${result.verification === 'verified' ? '已完成回读核对，可一次撤销。' : result.verification ? '回读核对尚未通过，请查看画布控制。' : '可一次撤销。'}` :
         result.status === 'dismissed' ? '已放弃这份画布计划。' : '画布提交失败，请查看实时操作日志。' } satisfies AIStatusSignal);
   });
   context.signals.subscribe<CanvasControlResume>(CANVAS_CONTROL_RESUME, message => {
@@ -108,9 +111,10 @@ export function registerAIRequestRuntime(
       if (payload.assistantId && !boundAssistant) throw new Error('当前 AI 助手窗口已经不存在');
       const explicit = explicitAtOperation(payload.prompt);
       const route = classifyAITurn(payload.prompt, explicit, payload.operation);
+      const mayLoadLocalLanguage = !explicit && !naturalMemoryDirective(payload.prompt) && mayUseLocalLanguage(payload.prompt, route);
       const normalizedPayload: PreparePayload = {
         ...payload,
-        operation: route.operation === 'general' && !explicit && naturalWritebackIntent(canvasCommandText(payload.prompt).trim())
+        operation: route.operation === 'general' && route.disposition === 'normal' && !explicit && naturalWritebackIntent(canvasCommandText(payload.prompt).trim())
           ? 'rewrite' : route.operation,
         ...(boundAssistant
           ? {
@@ -127,11 +131,11 @@ export function registerAIRequestRuntime(
       context.signals.emit('ai.state.invalidated');
       context.signals.emit('ai.status', {
         state: 'preparing',
-        message: '正在按目录与关键词准备上下文',
+        message: mayLoadLocalLanguage ? '正在本地理解指令，首次使用可能需要下载语义模型' : '正在按目录与关键词准备上下文',
         sessionId: session.id,
       } satisfies AIStatusSignal);
       const preparationId = createId('ai-context');
-      const local = route.clarification || route.applyItems || (route.category === 'operation' && route.local && route.local.kind !== 'content');
+      const local = route.clarification || route.applyItems || route.native || (route.category === 'operation' && route.local && route.local.kind !== 'content');
       context.signals.emit(OPERATION_LOG_STAGE_V2, {
         id: preparationId, relatedId: preparationId, phase: 'ai-routing', state: 'completed',
         detail: { step: 'route', route: normalizedPayload.operation !== 'canvas-control' ? 'conversation' :
@@ -143,7 +147,7 @@ export function registerAIRequestRuntime(
         operationLogRelatedId: preparationId,
         label: '正在准备 AI 上下文',
         priority: 18,
-        timeoutMs: 2 * 60_000,
+        timeoutMs: 2 * 60_000 + (mayLoadLocalLanguage ? LOCAL_LANGUAGE_TIMEOUT_MS : 0),
         estimatedCost: 4,
         run: (signal, report) => prepareAIContext(
           context,
@@ -206,10 +210,12 @@ export function registerAIRequestRuntime(
           if (options.preparationTasks.get(session.id) !== task) return;
           options.preparationTasks.delete(session.id);
           if (isAbortError(error)) return;
-          recordRequestError(context, options, session.id, error);
+          const failure = error instanceof Error && error.name === 'TimeoutError'
+            ? new Error('准备 AI 上下文超时。请重试，或减少本轮引用的资料。') : error;
+          recordRequestError(context, options, session.id, failure);
           context.signals.emit('ai.status', {
             state: 'error',
-            message: error instanceof Error ? error.message : String(error),
+            message: failure instanceof Error ? failure.message : String(failure),
             sessionId: session.id,
           } satisfies AIStatusSignal);
         },
@@ -279,6 +285,7 @@ export function registerAIRequestRuntime(
         result: { queued: true },
         transaction: {
           label: '记录 AI 用户消息',
+          ...(isCanvasReceiptTurn(prepared) ? { history: false } : {}),
           patches: [
             ...append.patches,
             {
@@ -365,6 +372,7 @@ export function registerAIRequestRuntime(
         result: { queued: true, mode: action.kind },
         transaction: {
           label: action.kind === 'repeat' ? '记录 AI 再来一次请求' : '记录 AI 重试请求',
+          ...(isCanvasReceiptTurn(prepared) ? { history: false } : {}),
           patches: [
             ...append.patches,
             {

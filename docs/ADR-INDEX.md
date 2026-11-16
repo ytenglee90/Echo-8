@@ -185,4 +185,8 @@
 
 | [0153](ADR-0153-LOCAL-CANVAS-INSTRUCTION-UNDERSTANDING.md) | 本地理解画布指令 | 有效，取代 0152 的云端语义入口 |
 
+| [0154](ADR-0154-ASSISTANT-CONVERSATION-AND-NATIVE-CANVAS-ACTIONS.md) | 对话草稿回查与本地画布指令 | 有效，补充 0142、0151 和 0153 |
+
+| [0155](ADR-0155-ASSISTANT-TURN-CONSTRAINTS-AND-RECEIPTS.md) | 助手指令限制、回执与按需对话 | 有效，补充 0142、0151、0153 和 0154 |
+
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

@@ -36,7 +36,7 @@ export function naturalTargetFilter(value: string): NaturalTargetFilter | undefi
   if (inside) { excluded.push(...naturalNames(inside[2]!)); text = inside[1]! + inside[3]!; }
   const tail = /^(.*?)[，,]\s*(.+?)除外$/u.exec(text);
   if (tail) { excluded.push(...naturalNames(tail[2]!)); text = tail[1]!; }
-  const match = /^(?:(.+?)(?:里|内|中)的?)?((?:(?:所有|全部|空白|正文为空|没(?:有)?连线|未连接|未分组|还没分组|且|并且|的|\s))*?)(节点|卡片|文本框)(?:[，,]?\s*(?:除了|排除)(.+?)(?:以外|之外|除外)?)?$/u.exec(text);
+  const match = /^(?:(.+?)(?:里|内|中)的?)?((?:(?:所有|全部|空白|正文为空|没(?:有)?连线|未连接|未分组|还没分组|且|并且|的|\s))*?)(节点|卡片?|文本框)(?:[，,]?\s*(?:除了|排除)(.+?)(?:以外|之外|除外)?)?$/u.exec(text);
   const title = /^(?:(.+?)(?:里|内|中)的?)?标题(?:含有|包含|含)[「『“"](.+?)[」』”"]的?(节点|卡片|文本框)$/u.exec(text);
   if (title) return { group: title[1] && naturalName(title[1]), titleContains: title[2],
     presentation: title[3] === '卡片' ? 'card' : title[3] === '文本框' ? 'text-box' : undefined, exclude: excluded };
@@ -44,7 +44,7 @@ export function naturalTargetFilter(value: string): NaturalTargetFilter | undefi
   return {
     group: match[1] && naturalName(match[1]), empty: /空白|正文为空/u.test(match[2]!),
     disconnected: /没(?:有)?连线|未连接/u.test(match[2]!), ungrouped: /未分组|还没分组/u.test(match[2]!),
-    presentation: match[3] === '卡片' ? 'card' : match[3] === '文本框' ? 'text-box' : undefined,
+    presentation: /^卡/u.test(match[3]!) ? 'card' : match[3] === '文本框' ? 'text-box' : undefined,
     exclude: [...excluded, ...(match[4] ? naturalNames(match[4].replace(/(?:以外|之外|除外)$/u, '')) : [])],
   };
 }
@@ -86,6 +86,13 @@ export function extendedCanvasOperation(text: string): ExtendedCanvasOperation |
   }
   if ((match = /^(?:把|将)?\s*(刚才那条|上一条|这条)(?:连线|线)?(?:的)?标签(?:改成|改为|设为)\s*(.*)$/u.exec(text))) {
     return { kind: 'line-update', names: [], label: naturalName(match[2]!), reference: match[1] === '这条' ? 'selection' : 'previous' };
+  }
+  if ((match = /^(?:在|给|把)?\s*((?:当前)?选中(?:的)?(?:连线|连接线|线)|这条(?:连线|连接线|线))\s*(?:上)?\s*(?:(?:添加|写上|加上?)(?:一段)?(?:文字|标签|备注)|(?:的)?(?:文字|标签|备注)(?:改成|改为|设为))\s*[：:]?\s*[「『“"]([^」』”"]*)[」』”"]$/u.exec(text))) {
+    return { kind: 'line-update', names: [], label: match[2]!, reference: 'selection' };
+  }
+  if ((match = /^(?:把|将)?\s*(?:当前)?选中(?:的)?(?:连线|连接线|线)(?:的)?颜色\s*(?:改成|改为|设为)\s*(.+)$/u.exec(text))) {
+    const color = naturalColor(match[1]!);
+    if (color) return { kind: 'line-update', names: [], color, reference: 'selection' };
   }
   if ((match = /^(?:把|将)?\s*(刚才那条|上一条|这条)(?:连线|线)?(?:的)?(?:颜色)?(?:改成|改为|换成)\s*(.+)$/u.exec(text))) {
     const color = naturalColor(match[2]!);

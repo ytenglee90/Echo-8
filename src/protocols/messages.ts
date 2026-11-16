@@ -22,6 +22,7 @@ export interface ApplicationQueryMap {
   'diagnostics.state': ValidatedMessage;
   'editor.openPanes': ValidatedMessage;
   'editor.state': ValidatedMessage;
+  'history.state': MessageContract<undefined, { undoCount: number; redoCount: number; nextUndo?: string; nextRedo?: string }>;
   'localSemanticProvider.state': ValidatedMessage;
   'palette.colorPicker.state': ValidatedMessage;
   'pluginCenter.state': ValidatedMessage;

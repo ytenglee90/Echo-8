@@ -52,6 +52,7 @@ export interface AnnotationUpdateRequest {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'annotation.create': CommandContract<AnnotationCreateRequest, { id: string }>;
     'annotation.update': CommandContract<AnnotationUpdateRequest, { revision: number }>;
   }
 }

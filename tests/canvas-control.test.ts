@@ -6,7 +6,7 @@ import { createSelectionPlugin } from '../src/plugins/selection/model.ts';
 import { createGroupsPlugin } from '../src/plugins/groups/model.ts';
 import { createConnectionsPlugin } from '../src/plugins/connections/model.ts';
 import { createCanvasControlPlugin } from '../src/plugins/canvas-control/model.ts';
-import type { CanvasControlAction, CanvasControlAdmission, CanvasControlState, CanvasControlGroupPlan, CanvasControlTaskState, CanvasControlContextV2 } from '../src/protocols/canvas-control.ts';
+import type { CanvasControlAction, CanvasControlAdmission, CanvasControlReceipt, CanvasControlState, CanvasControlGroupPlan, CanvasControlTaskState, CanvasControlContextV2 } from '../src/protocols/canvas-control.ts';
 import type { ContentSummary } from '../src/protocols/content.ts';
 import type { GroupRecord } from '../src/protocols/groups.ts';
 import type { ConnectionGraphSnapshot } from '../src/protocols/connections.ts';
@@ -25,6 +25,106 @@ async function harness(execution: 'direct' | 'review' = 'review') {
   return kernel;
 }
 let sequence = 0;
+
+test('preview, group retargeting and repeated offers use the same checked canvas task', async () => {
+  const kernel = await harness('direct');
+  const sessionId = 'retarget-layout';
+  const initial = [];
+  for (let index = 0; index < 5; index++) initial.push(await kernel.router.dispatch<{ id: string }>('node.create',
+    { title: `对象 ${index + 1}`, x: 200 + index * 300, y: 150, width: 180, height: 100 }, 'core.test'));
+  const ids = initial.map(item => item.id);
+  const select = (targets: string[]) => kernel.router.dispatch('selection.set', { ids: targets, mode: 'replace' }, 'core.test');
+  const state = () => kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test');
+  const receipt = (preparationId?: string) => kernel.capabilities.request<CanvasControlReceipt>('canvasControl.receipt@1', { sessionId, preparationId });
+  const prepare = async (prompt: string) => {
+    const input = { preparationId: `retarget:${++sequence}`, sessionId, prompt };
+    const local = await kernel.capabilities.request<{ text: string }>('canvasControl.localPlan@1', input);
+    return { ...input, text: local.text, complete: true };
+  };
+  const submit = (input: Awaited<ReturnType<typeof prepare>>) =>
+    kernel.router.dispatch<{ message: string; directPlanId?: string }>('canvasControl.offer@1', input, 'core.test');
+  await select(ids.slice(2));
+  await kernel.router.dispatch('group.create', { title: '反派组' }, 'core.test');
+  await select(ids.slice(0, 2));
+  const before = await nodes(kernel);
+  const original = await prepare('把选中的卡排成两列，间距 80，先别执行，给我看看方案');
+  assert.equal((await submit(original)).directPlanId, undefined);
+  assert.equal((await receipt()).status, 'pending');
+  assert.deepEqual(await nodes(kernel), before);
+  const corrected = await prepare('不，我说的是反派组，其它照旧');
+  const first = await submit(corrected);
+  assert.deepEqual(await submit(corrected), first);
+  assert.equal((await receipt(original.preparationId)).status, 'dismissed');
+  assert.equal(await kernel.capabilities.request('canvasControl.receipt@1', { sessionId: 'other', preparationId: corrected.preparationId }), undefined);
+  const previews = (await state()).reviews.filter(item => item.status === 'pending');
+  assert.equal(previews.length, 1);
+  assert.deepEqual(previews[0]!.actions.flatMap(action => 'id' in action ? [action.id] : []), ids.slice(2));
+  await kernel.router.dispatch('canvasControl.apply@1', { id: previews[0]!.id }, 'core.test');
+  assert.equal((await receipt()).status, 'applied');
+  assert.equal((await submit(corrected)).directPlanId, undefined);
+  const after = new Map((await nodes(kernel)).map(node => [node.id, node]));
+  assert.equal(after.get(ids[0]!)?.x, before.find(node => node.id === ids[0])?.x);
+  assert.equal(after.get(ids[3]!)!.x - after.get(ids[2]!)!.x - after.get(ids[2]!)!.width, 80);
+  assert.equal(after.get(ids[4]!)?.x, after.get(ids[2]!)?.x);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.equal((await receipt()).status, 'undone');
+  await select([ids[0]!]);
+  const move = await prepare('不用改颜色，只把选中的卡往右挪一点');
+  await submit(move);
+  const review = (await state()).reviews.at(-1)!;
+  await kernel.router.dispatch('canvasControl.apply@1', { id: review.id }, 'core.test');
+  const moved = (await nodes(kernel)).find(node => node.id === ids[0])!;
+  const originalNode = before.find(node => node.id === ids[0])!;
+  assert.equal(moved.x, originalNode.x + 40);
+  assert.equal(moved.titleColor, originalNode.titleColor);
+  await kernel.plugins.stop('canvas-control');
+});
+
+test('layout corrections keep exact targets and spacing and update the pending review', async () => {
+  const kernel = await harness();
+  const initial = await Promise.all([100, 500, 900, 1300].map((x, index) =>
+    kernel.router.dispatch<{ id: string }>('node.create', { title: `排版 ${index + 1}`, x, y: 100, width: 220, height: 160 }, 'core.test')));
+  const state = () => kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test');
+  const send = async (prompt: string) => {
+    const input = { preparationId: `arrange:${++sequence}`, sessionId: 'layout', prompt };
+    const plan = await kernel.capabilities.request<{ text: string }>('canvasControl.localPlan@1', input);
+    return kernel.router.dispatch<{ message: string }>('canvasControl.offer@1', { ...input, text: plan.text, complete: true }, 'core.test');
+  };
+  const ids = initial.map(item => item.id);
+  await kernel.router.dispatch('selection.set', { ids: ids.slice(0, 3), mode: 'replace' }, 'core.test');
+  await send('能帮我把选中的卡横排，间距 80 吗？');
+  const review = (await state()).reviews.at(-1)!;
+  await kernel.router.dispatch('selection.set', { ids: ids.slice(-1), mode: 'replace' }, 'core.test');
+  assert.match((await send('改成两列，间距照旧')).message, /2 列，间距 80/u);
+  assert.deepEqual((await state()).reviews.map(item => item.id), [review.id]);
+  await kernel.router.dispatch('canvasControl.apply@1', { id: review.id }, 'core.test');
+  const result = new Map((await nodes(kernel)).map(node => [node.id, node]));
+  assert.equal(result.get(ids[1]!)!.x - result.get(ids[0]!)!.x - result.get(ids[0]!)!.width, 80);
+  assert.equal(result.get(ids[2]!)!.x, result.get(ids[0]!)!.x);
+  assert.equal(result.get(ids[3]!)!.x, 1300);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.match((await send('改成三列')).message, /对象已变化/u);
+  await kernel.router.dispatch('selection.set', { ids: [], mode: 'replace' }, 'core.test');
+  assert.match((await send('把选中的节点横排，间距 80')).message, /要操作哪个节点/u);
+  await kernel.plugins.stop('canvas-control');
+});
+
+test('literal node text remains local and review protects an existing body', async () => {
+  const kernel = await harness('direct');
+  const { id } = await kernel.router.dispatch<{ id: string }>('node.create', { title: '提要' }, 'core.test');
+  const send = async (prompt: string) => {
+    const input = { preparationId: `literal:${++sequence}`, sessionId: 'literal-content', prompt };
+    const plan = await kernel.capabilities.request<{ text: string }>('canvasControl.localPlan@1', input);
+    return kernel.router.dispatch<{ directPlanId?: string }>('canvasControl.offer@1', { ...input, text: plan.text, complete: true }, 'core.test');
+  };
+  const filled = await send('把「提要」的正文填入：「整理完成，删除只是例句。」');
+  assert.ok(filled.directPlanId);
+  await kernel.router.dispatch('canvasControl.generate@1', { id: filled.directPlanId }, 'core.test');
+  assert.equal((await nodes(kernel)).find(node => node.id === id)?.preview, '整理完成，删除只是例句。');
+  assert.equal((await send('把「提要」的正文改成「另一个版本」')).directPlanId, undefined);
+  assert.equal((await nodes(kernel)).find(node => node.id === id)?.preview, '整理完成，删除只是例句。');
+  await kernel.plugins.stop('canvas-control');
+});
 
 test('relative placement uses named nodes and exact geometry despite a different current selection', async () => {
   const kernel = await harness();

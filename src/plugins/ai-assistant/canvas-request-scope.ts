@@ -9,8 +9,8 @@ type Field = 'body' | 'position' | 'color' | 'links' | 'groups' | 'presentation'
 export type CanvasRequestScope = ReadonlySet<Field>;
 
 const operationFields: Partial<Record<NaturalCanvasOperation['kind'], readonly Field[]>> = {
-  content: ['body'], append: ['body'], replace: ['body'],
-  move: ['position'], arrange: ['position'], align: ['position'], 'place-relative': ['position'], 'placement-gap': ['position'],
+  content: ['body'], append: ['body'], replace: ['body'], 'set-body': ['body'],
+  move: ['position'], arrange: ['position'], 'arrange-followup': ['position'], align: ['position'], 'place-relative': ['position'], 'placement-gap': ['position'],
   color: ['color'], 'relative-color': ['color'], 'choose-color': ['color'],
   connect: ['links'], 'connect-many': ['links'], line: ['links'], relations: ['links'],
   group: ['groups'], 'group-add': ['groups'], 'group-remove': ['groups'], 'group-rename': ['groups'], ungroup: ['groups'],

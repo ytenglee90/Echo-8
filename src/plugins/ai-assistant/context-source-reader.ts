@@ -229,7 +229,9 @@ export async function readTailEvidenceBlock(
 /** Transfer requests need the complete answer. A clipped suffix is not a usable draft. */
 export async function readCanvasDraftEvidence(
   context: PluginContext, source: AIContextSource, maxLength: number, maxTokens: number, signal: AbortSignal,
+  latestExchangeOnly = false,
 ): Promise<EvidenceBlock | undefined> {
+  if (maxLength <= 0 || maxTokens <= 0 || source.length <= 0) return undefined;
   const probeStart = Math.max(0, source.length - maxLength - 800);
   const result = await readContextSource(context, { sourceId: source.sourceId, start: probeStart, length: source.length - probeStart }, signal);
   if (result.source?.revision !== source.revision) throw new Error('对话已变化，请重新准备上下文');
@@ -237,6 +239,7 @@ export async function readCanvasDraftEvidence(
   const turns = [...text.matchAll(/^\[(用户|助手)(?:[ \t]*·[^\]\r\n]+)?\][ \t]*\r?$/gmu)];
   const latest = turns.findLastIndex((turn, index) => turn[1] === '助手' &&
     !omitCanvasReply(turn[0], text.slice(turn.index! + turn[0].length, turns[index + 1]?.index).trim()));
+  if (latestExchangeOnly && latest !== turns.length - 1) return undefined;
   if (latest < 0) return probeStart > 0 ? emptyEvidenceBlock() : undefined;
   const answer = turns[latest]!;
   const end = turns[latest + 1]?.index ?? text.length;

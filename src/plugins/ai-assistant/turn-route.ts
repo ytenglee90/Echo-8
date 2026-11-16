@@ -2,7 +2,8 @@ import type { AIOperation, AIPreparedContext } from '../../protocols/ai.ts';
 import type { CanvasControlPlan } from '../../protocols/canvas-control.ts';
 import type { CanvasAgentQueryResult } from '../../protocols/canvas-agent.ts';
 import {
-  asksForCanvasContinuation, canvasCommandText, canvasControlPurpose, isGeometryOnlyCanvasTask,
+  asksForCanvasContinuation, canvasCommandText, canvasControlPurpose, canvasIntentText, canvasRequestDisposition,
+  isCanvasRepeatCreation, isCanvasStatusFollowup, isGeometryOnlyCanvasTask,
   naturalCanvasOperation, needsCanvasActionPlanning, needsCanvasCreationPlanning,
   needsCanvasSearchInterpretation, requestsCanvasHistory, reusesCanvasDraft,
 } from '../../services/ai-task-route.ts';
@@ -10,6 +11,8 @@ import { naturalAIOperation } from './operations.ts';
 import { exactHistoryRequest } from './conversation-recall.ts';
 import { structuredFieldTask, type FieldTarget } from './structured-fields.ts';
 import { cardRestructureTask, type RestructureBinding } from './card-restructure.ts';
+import type { BoundCanvasWrite } from './bound-canvas-write.ts';
+import { nativeCanvasIntent } from '../../services/native-canvas-intent.ts';
 
 const OBJECT = /画布|卡(?:片)?|节点|文本框|群组|选区|连线|这条线/u;
 const ANALYSIS = /总结|概括|归纳|对比|比较|分析|检查|核对|找出|根据|结合|参考/u;
@@ -21,10 +24,14 @@ export function mixedCanvasWrite(prompt: string) {
   return match && ANALYSIS.test(canvasCommandText(match[1]!)) ? { readPrompt: match[1]!, destination: match[2]! } : undefined;
 }
 const DISCUSSION = /(?:怎么|如何|怎样|是否|有什么|有哪些|建议|能否|能不能|可不可以)/u;
+const IMPLICIT_CANVAS_QUESTION = /(?:这|那)(?:两|二|三|四|五|几|\d+)张.{0,12}(?:怎么排|如何排列)|(?:哪张|哪条).{0,10}(?:太暗|太亮|颜色)/u;
 
 export function classifyAITurn(prompt: string, explicit?: AIOperation, requested: AIOperation = 'general') {
   const text = canvasCommandText(prompt).replace(/「[^」\r\n]+」|『[^』\r\n]+』|“[^”\r\n]+”|"[^"\r\n]+"/gu, ' □ ').trim();
   const local = naturalCanvasOperation(prompt);
+  const disposition = canvasRequestDisposition(prompt);
+  const native = disposition === 'normal' ? nativeCanvasIntent(prompt) : undefined;
+  const repeatCreation = isCanvasRepeatCreation(prompt);
   const contentOperation = naturalAIOperation(prompt);
   const interpretedSearch = needsCanvasSearchInterpretation(prompt);
   const itemList = /^(?:(?:请|帮我)\s*)?(?:只|仅)?应用\s*第?\s*(\d+(?:\s*(?:[、，,和及与]|以及)\s*第?\s*\d+)*)\s*项[。！!]?$/u.exec(text);
@@ -32,7 +39,8 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const fieldTask = structuredFieldTask(prompt);
   const restructureTask = cardRestructureTask(prompt);
   const canvas = OBJECT.test(text) || /@\[|@node:/u.test(prompt);
-  const prospective = /^(?:如果|假如|假设|先别|先不要|不要|别)/u.test(text.replace(/^请\s*/u, ''));
+  const prospective = disposition === 'read-only' || disposition === 'preview' && !local ||
+    !local && /^(?:如果|假如|假设|要是|先别|先不要|不要|别|不用|暂不)/u.test(canvasIntentText(text));
   const combined = !prospective && ANALYSIS.test(text) &&
     /(?:[，,；;]|之后|后|然后|再|并|并且)(?:\s*(?:把|将)?(?:结果|总结|命中项)?\s*)[^。！？?]{0,30}/u.test(text) &&
     APPLY.test(text.slice(text.search(/总结|概括|归纳|对比|比较|分析|检查|核对|找出|根据|结合|参考/u))) &&
@@ -42,7 +50,7 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const mixed = !local && !createsResultNode && (combined || writeDestination);
   const referencedMove = /^(?:把|将)?\s*(?:刚才那张|刚才那个|这张卡|它)\s*(?:再)?(?:挪|移)/u.test(text);
   const restore = /^(?:请\s*|帮我\s*)?恢复第\s*\d+\s*轮/u.test(text);
-  const writeCommand = local || applyItems || fieldTask || restructureTask || interpretedSearch || restore || needsCanvasCreationPlanning(prompt) ||
+  const writeCommand = local || native || applyItems || fieldTask || restructureTask || interpretedSearch || restore || repeatCreation || needsCanvasCreationPlanning(prompt) ||
     (!contentOperation && needsCanvasActionPlanning(prompt)) || referencedMove || /^(?:请\s*|帮我\s*)?(?:带我去|跳到)\S/u.test(text);
   const openCanvasTask = !prospective && canvas && /^(?:请\s*|帮我\s*)?(?:给|把|将|恢复|同步|按|沿|找出)/u.test(text) &&
     APPLY.test(text) && !DISCUSSION.test(text);
@@ -50,22 +58,23 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const indirectTask = !prospective && !DISCUSSION.test(text) &&
     (/^(?:请\s*|帮我\s*)?让.{1,90}(?:资料|正文|设定).{0,50}(?:更完整|补充|建立联系)/u.test(text) ||
       /落实到画布|^让(?:当前)?画布.{0,12}出现|换成.{0,60}关系改成/u.test(text));
-  const operation = explicit ?? (writeCommand || mixed || (!contentOperation && openCanvasTask) || indirectTask ? 'canvas-control'
+  const operation = isCanvasStatusFollowup(prompt) || disposition === 'read-only' || disposition === 'preview' && !local ? 'general'
+    : prospective && (!explicit || explicit === 'canvas-control') ? contentOperation ?? 'general' : explicit ?? (writeCommand || mixed || (!contentOperation && openCanvasTask) || indirectTask ? 'canvas-control'
     : requested !== 'general' ? requested : contentOperation ?? 'general');
   const category = operation === 'canvas-control' ? mixed && !interpretedSearch ? 'mixed' : 'operation' : 'chat';
   const history = requestsCanvasHistory(prompt) || exactHistoryRequest(text);
   const draft = category !== 'chat' && !history && reusesCanvasDraft(prompt);
-  const continuation = asksForCanvasContinuation(prompt);
+  const continuation = local?.kind === 'arrange-followup' || asksForCanvasContinuation(prompt);
   const geometryOnly = category === 'operation' && !history && isGeometryOnlyCanvasTask(prompt);
   const lookupOnly = category === 'operation' && (interpretedSearch ||
     Boolean(local && ['find', 'relations', 'filter', 'search', 'narrow', 'shortest-path', 'audit-names'].includes(local.kind)));
-  const mechanical = geometryOnly || lookupOnly || (category === 'operation' && !history && !draft && !continuation &&
+  const mechanical = geometryOnly || lookupOnly || Boolean(category === 'operation' && native) || local?.kind === 'arrange-followup' || (category === 'operation' && !history && !draft && !continuation &&
     Boolean(local && ['color', 'background', 'theme', 'line', 'connect', 'rename', 'presentation', 'group', 'group-add', 'group-remove', 'ungroup'].includes(local.kind)));
   const clarification = !explicit && !writeCommand && !mixed && /^(?:(?:请|帮我)\s*)?(?:处理|弄|改)一下\s*(?:这个|它|这张卡|这张卡片)?[。！!]?$/u.test(text)
     ? '你希望我在画布上修改什么，还是先讨论怎么改？' : undefined;
   return {
-    category, operation, local, history, draft, continuation, mechanical, geometryOnly, interpretedSearch, lookupOnly,
-    readCanvas: category !== 'chat' || canvas || /(?:这两张|这三张|它们).{0,10}(?:怎么连|如何连接)/u.test(text),
+    category, operation, local, disposition, repeatCreation, native: category === 'operation' ? native : undefined, history, draft, continuation, mechanical, geometryOnly, interpretedSearch, lookupOnly,
+    readCanvas: category !== 'chat' || canvas || IMPLICIT_CANVAS_QUESTION.test(text) || /(?:这两张|这三张|它们).{0,10}(?:怎么连|如何连接)/u.test(text),
     purpose: category === 'mixed' ? 'general' as const : canvasControlPurpose(prompt),
     clarification, applyItems, fieldTask, restructureTask,
   } as const;
@@ -78,10 +87,17 @@ export interface TurnAssembly {
   localInstructions?: string[];
   localSourceIds?: string[];
   expectedSelectionCount?: number;
+  nativeSelection?: string[];
+  conversationDraft?: { firstSentence?: string; maxCharacters?: number };
+  contentTargetId?: string;
+  explicitCanvasIds?: string[];
+  canvasDraftBound?: boolean;
+  boundCanvasWrite?: BoundCanvasWrite;
   recoveryPrompt?: string;
   destinationId?: string;
   readIds?: string[];
   clarify?: string;
+  localReply?: string;
   fields?: FieldTarget[];
   field?: string;
   fixedPlan?: CanvasControlPlan;
@@ -105,4 +121,9 @@ export function turnAssembly(prepared: AIPreparedContext): TurnAssembly {
 
 export function canvasTurnId(prepared: AIPreparedContext): string {
   return turnAssembly(prepared).ownerId ?? prepared.id;
+}
+
+export function isCanvasReceiptTurn(prepared: AIPreparedContext): boolean {
+  const assembly = turnAssembly(prepared);
+  return Boolean(assembly.localReply || assembly.route.native);
 }

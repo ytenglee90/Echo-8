@@ -8,7 +8,7 @@ export function canvasControlPurpose(prompt: string): CanvasControlPurpose {
   prompt = canvasCommandText(prompt);
   const fields = [
     /颜色|改色|配色|#[0-9a-f]{6}/iu.test(prompt) ? 'appearance' : '',
-    /移动|坐标|位置|对齐|排(?:成|列)|[向往][上下左右]/u.test(prompt) ? 'move' : '',
+    /移动|坐标|位置|对齐|横排|横着排|排(?:成|列)|[向往][上下左右]/u.test(prompt) ? 'move' : '',
     /分组|群组|连线|连接|连到|连起|连上|实线|虚线|线型|插入/u.test(prompt) ? 'structure' : '',
     /正文|续写|改写|设定|人物设计/u.test(prompt) ? 'content' : '',
     /新建|创建|生成/u.test(prompt) ? 'creation' : '',
@@ -50,7 +50,7 @@ export function canvasRequestsAllNodes(prompt: string): boolean {
 export type NaturalCanvasOperation =
   | ExtendedCanvasOperation
   | { kind: 'batch'; names: string[]; steps: NaturalCanvasOperation[] }
-  | { kind: 'content'; names: string[] }
+  | { kind: 'content'; names: string[]; replaceBody?: true }
   | { kind: 'narrow'; names: string[] }
   | { kind: 'relative-color'; names: string[]; direction: 'lighter' | 'darker' }
   | { kind: 'choose-color'; names: string[]; background?: boolean }
@@ -69,9 +69,12 @@ export type NaturalCanvasOperation =
   | { kind: 'theme'; names: string[]; theme: 'light' | 'dark' }
   | { kind: 'group' | 'group-add' | 'group-remove' | 'group-rename'; names: string[]; title?: string }
   | { kind: 'replace' | 'append'; names: string[]; text: string; old?: string; occurrence?: number | 'all' }
+  | { kind: 'set-body'; names: string[]; text: string }
   | { kind: 'filter'; names: string[]; empty: boolean; disconnected: boolean; target?: string }
   | { kind: 'search'; names: string[]; terms: string[]; ungrouped: boolean }
-  | { kind: 'move' | 'arrange'; names: string[]; x?: number; y?: number; layout?: 'horizontal' | 'vertical' | 'grid' }
+  | { kind: 'move'; names: string[]; x?: number; y?: number }
+  | { kind: 'arrange'; names: string[]; layout: 'horizontal' | 'vertical' | 'grid'; columns?: number; gap?: number; exclude?: string[]; expectedCount?: number }
+  | { kind: 'arrange-followup'; names: []; columns?: number; gap?: number; group?: string }
   | { kind: 'place-relative'; names: [string, string]; side: 'above' | 'below' | 'left' | 'right'; gap: number }
   | { kind: 'placement-gap'; names: []; gap: number };
 
@@ -147,12 +150,31 @@ function parseConnection(text: string): NaturalCanvasOperation | undefined {
   return { kind: 'connect', names: selection && pair[0] !== '它们' ? ['这两个'] : pair, line: styles[0] ? lineStyle(styles[0]) : undefined, eitherDirection: true };
 }
 
-function canvasIntentText(prompt: string): string {
+export function canvasIntentText(prompt: string): string {
   const request = prompt.trim().replace(/^@画布操作(?=\s|$)\s*/u, '');
-  const politeQuestion = /^(?:能不能|可以)帮我/u.test(request);
-  return (politeQuestion ? request.replace(/[？?]$/u, '') : request)
-    .replace(/^(?:(?:请你|请|能不能帮我|可以帮我|麻烦你|麻烦|帮我|给我)\s*[，,]?\s*)+/u, '')
+  const politeQuestion = /^(?:能(?:不能)?|可以|可不可以)\s*帮我/u.test(request);
+  return (politeQuestion ? request.replace(/(?:可以吗|行吗|吗|么)?[？?]?$/u, '') : request)
+    .replace(/^(?:(?:请你|请|(?:能(?:不能)?|可以|可不可以)\s*帮我|麻烦你|麻烦|帮我|给我)\s*[，,]?\s*)+/u, '')
     .replace(/^(?:我想|我希望)\s*(?=把|将|建|创建|在画布|用(?:实线|虚线))/u, '');
+}
+
+const previewClause = /(?:^|[，,；;。])\s*(?:先(?:别|不要|不)(?:执行|应用|动(?:手|它们)?)(?=$|[，,；;。！？!?])|先(?:给我)?(看(?:看)?(?:一下)?(?:方案|预览)|预览)|(?:只(?:给我)?|给我)看(?:看)?(?:一下)?(?:方案|预览))/u;
+const readOnlyClause = /(?:^|[，,；;。])\s*(?:只(?:是)?(?:想)?(?:看(?!看?(?:一下)?(?:方案|预览))|问|讨论|聊)|(?:先)?(?:别|不要|不用|暂不)(?:(?:修改|改动|改)(?:画布)?(?=$|[，,；;。！？!?])|动(?:这|那|选中)|操作画布)|不改(?=$|[，,；;。！？!?]))/u;
+const preserveColor = /^(?:不用|不必|不要|别)\s*(?:改(?:颜色|色)|动颜色)\s*[，,；;]\s*(?:只(?:要|需)?|仅(?:需)?)\s*(.+)$/u;
+
+export function canvasRequestDisposition(prompt: string): 'normal' | 'preview' | 'read-only' {
+  const masked = canvasIntentText(prompt).replace(new RegExp(NATURAL_QUOTED_NAME, 'gu'), '□');
+  if (readOnlyClause.test(masked) || /(?:^|[，,；;。])\s*(?:先别动|不要动)(?=[。！？!?]*$)/u.test(masked)) return 'read-only';
+  return previewClause.test(masked) ? 'preview' : 'normal';
+}
+
+export function isCanvasStatusFollowup(prompt: string): boolean {
+  return /^(?:(?:刚才|上次|上一轮)(?:的)?(?:那)?(?:批|次|份|项|个)?|(?:这|那)(?:批|项|份))(?:画布)?(?:操作|计划|改动)?(?:到底|究竟|实际|现在)?(?:(?:有没有|是否)(?:执行|应用|完成|做完)(?:了)?|(?:已经)?(?:执行|应用|完成|做完)(?:了)?(?:吗|没有|没))[。！？!?]*$/u
+    .test(canvasIntentText(prompt).replace(/\s+/gu, ''));
+}
+
+export function isCanvasRepeatCreation(prompt: string): boolean {
+  return /^再(?:创建|新建|建|做)(?:一(?:份|个|张)|一次)[。！!]?$/u.test(canvasIntentText(prompt));
 }
 
 function relativePlacement(command: string): Extract<NaturalCanvasOperation, { kind: 'place-relative' }> | undefined {
@@ -182,7 +204,7 @@ export function asksForCanvasContinuation(prompt: string): boolean {
 }
 
 /** A named write destination is an action even when its body needs a model. */
-export function canvasContentTarget(prompt: string): { names: string[] } | undefined {
+export function canvasContentTarget(prompt: string): { names: string[]; replaceBody?: true } | undefined {
   const text = canvasIntentText(prompt).trim().replace(/[。！!]$/u, '');
   if (/^(?:不要|先别|先不要|别|如果|如何|怎么)/u.test(text) || /[？?]$/u.test(text)) return undefined;
   let match = /^(?:在|往|向|给)\s*(.+?)(?:里|内|中|上)[，,\s]*(?:设计|创作|写|填|生成|补充|续写|完善)/u.exec(text);
@@ -190,9 +212,13 @@ export function canvasContentTarget(prompt: string): { names: string[] } | undef
   match = /^(.+?(?:卡|卡片|节点|文本框))(?:里|内|中)[，,\s]*(?:设计|创作|写|填|生成|补充|续写|完善)/u.exec(text)
     ?? /^(?:设计|创作|写|生成|补充).+?[，,；;]\s*(?:再|然后)?(?:填入|写入|写进|放进)\s*(.+?(?:卡|卡片|节点|文本框))(?:里|内|中)?$/u.exec(text);
   if (match) return { names: [name(match[1]!)] };
+  match = /^给\s*(.+?(?:卡片?|节点|文本框))\s*(?:设计|创作|续写|补充|写|生成)(?=\s*\S)/u.exec(text);
+  if (match) return { names: [name(match[1]!)] };
   match = /^(?:填入|填充|补全|完善|填好)\s*(.{1,120}?)(?:[，,].*)?$/u.exec(text);
   if (match) return { names: [name(match[1]!)] };
   if (/^(?:填进去|写进去|填进刚才的卡|填入刚才的节点)$/u.test(text)) return { names: ['刚才创建的节点'] };
+  match = /^(?:把|将)\s*(.+?)的(?:正文|全文|内容)\s*(?:写成|重写为|改写成|替换为|换成)\s*\S/u.exec(text);
+  if (match) return { names: [name(match[1]!)], replaceBody: true };
   match = /^(?:把|将)\s*(.+?)(?:的正文|的内容)?\s*(?:填成|填上|补全为|写成)[，,\s]*.+$/u.exec(text);
   if (match && /卡|节点|文本框|刚才|这个|它/u.test(match[1]!)) return { names: [name(match[1]!)] };
   match = /^(?:把|将)\s*.+?(?:填入|写入|写进)\s*(.+?(?:卡|节点|文本框))(?:里|内|中)?$/u.exec(text);
@@ -201,8 +227,24 @@ export function canvasContentTarget(prompt: string): { names: string[] } | undef
 }
 
 export function naturalCanvasOperation(prompt: string): NaturalCanvasOperation | undefined {
-  const command = canvasIntentText(prompt);
+  let command = canvasIntentText(prompt);
+  const disposition = canvasRequestDisposition(prompt);
+  if (disposition === 'read-only') return undefined;
+  const protectedMove = preserveColor.exec(command);
+  if (protectedMove) {
+    const action = parseCanvasOperation(protectedMove[1]!);
+    return action?.kind === 'move' ? action : undefined;
+  }
   const literals = new RegExp(NATURAL_QUOTED_NAME, 'gu');
+  if (disposition === 'preview') {
+    const preview = previewClause.exec(command.replace(literals, match => '□'.repeat(match.length)));
+    if (!preview?.index) return undefined;
+    command = command.slice(0, preview.index).trim();
+    // Parse only a complete arrangement/move or another supported mutation.
+    const action = parseCanvasOperation(command.replace(/^(这几张(?:卡片?|节点)?|这些卡(?:片)?)\s*(?=排(?:成)?一[行排]|横着排)/u, ''));
+    if (action?.kind === 'arrange' || action?.kind === 'move' || action?.kind === 'place-relative') return action;
+    return undefined;
+  }
   const masked = command.replace(literals, match => '□'.repeat(match.length));
   const separators = [...masked.matchAll(/[，,；;。]\s*(?:再把|再将|然后把|然后将|再从|然后从|然后|再)|\s*(?:然后|接着|并且|并)\s*(?=把|将|从|改成|改为|换成|切成|向|往|连到)/gu)];
   if (separators.length && separators.length < 8) {
@@ -226,6 +268,24 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
   const text = command.replace(/[。！？!?]$/u, '').trim();
   let match: RegExpExecArray | null;
   if (/^(?:如果|假如|假设|要是|先别|先不要|不要|别|不用|暂不|如何|怎么|怎样|解释|分析|总结|对比|比较)/u.test(text)) return undefined;
+  if ((match = /^(?:(?:不|说错了)[，,。\s]+)?(?:我说的是|我指的是|对象(?:改成|换成|是)|(?:改|换)成)\s*(.{1,120}?(?:群组|组))[，,；;\s]+(?:其他|其它|其余|排列方式和间距)(?:都)?(?:照旧|不变|保持不变)$/u.exec(text))) {
+    const group = match[1]!.trim().replace(/([」』”"])\s*(?:群组|组)$/u, '$1');
+    return { kind: 'arrange-followup', names: [], group: name(group) };
+  }
+  const conciseLayout = /^(?:(?:把|将)\s*(.+?)\s*)?(?:改成|改为|换成|排(?:列)?成|排(?=\s*一[行排])|横排|横着排)(?:\s*(一行|一排|[一二两三四五六七八九十]|[1-9]\d?)(列)?)?(?:[，,\s]*(?:间距|间隔)\s*(?:为|设为)?\s*(\d{1,4})(?:\s*(?:px|像素))?)?(?:[，,\s]*间距(?:不变|照旧))?(?:[，,]\s*(.{1,120}?)\s*(?:留在|保持)原位)?$/iu.exec(text);
+  if (conciseLayout) {
+    const [, operand, number, column, spacing, exclude] = conciseLayout;
+    const columns = column && number ? (Number(number) || ('一二三四五六七八九十'.indexOf(number === '两' ? '二' : number) + 1)) : undefined;
+    const gap = spacing === undefined ? undefined : Number(spacing);
+    if (columns && columns <= 80 && !operand && /^(?:改|换)/u.test(text) && !exclude) return { kind: 'arrange-followup', names: [], columns, gap };
+    if ((/横排|横着排/u.test(text) || number === '一行' || number === '一排' || columns && columns <= 80) && !/^(?:改|换)/u.test(text)) {
+      const target = operand?.trim().replace(/^(?:当前)?选中(?:的)?(?:卡|项)$/u, '选中节点');
+      const counted = /^这([两二三四五六七八九十]|[1-9]\d?)张(?:卡片?|节点)?$/u.exec(target ?? '')?.[1];
+      const expectedCount = counted ? Number(counted) || ('一二三四五六七八九十'.indexOf(counted === '两' ? '二' : counted) + 1) : undefined;
+      return { kind: 'arrange', names: !target || expectedCount ? ['选中节点'] : naturalTargetFilter(target) ? [target] : names(target),
+        layout: columns ? 'grid' : 'horizontal', columns, gap, exclude: exclude ? names(exclude) : undefined, expectedCount };
+    }
+  }
   if ((match = /^(?:沿(?:着)?连线\s*)?(?:查找|查看|查|找|追查|高亮)\s*(?:从)?(.+?)\s*到\s*(.+?)\s*的(有向)?最短路径(?:[，,]?\s*(?:并|再)?高亮)?$/u.exec(text))) {
     return { kind: 'shortest-path', names: [name(match[1]!), name(match[2]!)], directed: Boolean(match[3]) };
   }
@@ -278,6 +338,9 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
   if ((match = /^(?:把|将)(.+?)(?:正文|里|内|中)(?:的)?[「『“"](.+?)[」』”"](?:换成|替换成|替换为|改成)[「『“"](.*?)[」』”"](?:[，,]\s*(?:(?:只)?(?:改|替换)?第\s*(\d+)\s*处|(全部|所有|每一处)(?:都改)?))?$/u.exec(text))) {
     const target = name(match[1]!);
     return { kind: 'replace', names: naturalTargetFilter(target) ? [target] : names(match[1]!), old: match[2], text: match[3]!, occurrence: match[4] ? Number(match[4]) : match[5] ? 'all' : undefined };
+  }
+  if ((match = /^(?:把|将)\s*(.+?)(?:的)?(?:正文|内容)\s*(?:填成|填写为|填入|改成|写成|设为)\s*[：:]?\s*[「『“"]([^」』”"]+)[」』”"]$/u.exec(text))) {
+    return { kind: 'set-body', names: [name(match[1]!)], text: match[2]! };
   }
   const extended = extendedCanvasOperation(text);
   if (extended) return extended;

@@ -58,11 +58,13 @@ test('AI request preparation pruning removes expired work and bounds retained pr
 test('a cancelled old preparation cannot replace the new turn or report a late error', async () => {
   let prepare: ((payload: PreparePayload) => unknown) | undefined;
   const jobs: Array<{ resolve(value: AIPreparedContext): void; reject(error: Error): void }> = [];
+  const deadlines: number[] = [];
   const signals: Array<{ name: string; value?: unknown }> = [];
   const context = {
     commands: { register(input: { type: string; handle: typeof prepare }) { if (input.type === 'ai.context.prepare') prepare = input.handle; } },
     signals: { subscribe() {}, emit(name: string, value?: unknown) { signals.push({ name, value }); } },
-    tasks: { schedule() {
+    tasks: { schedule({ timeoutMs }: { timeoutMs: number }) {
+      deadlines.push(timeoutMs);
       const result = new Promise<AIPreparedContext>((resolve, reject) => jobs.push({ resolve, reject }));
       return { id: 'job:' + jobs.length, result, cancel() {} };
     } },
@@ -75,9 +77,10 @@ test('a cancelled old preparation cannot replace the new turn or report a late e
     readMemoryIndexes: () => ({}), readAssistantInstances: () => [],
   };
   registerAIRequestRuntime(context, runtime);
-  const input: PreparePayload = { sessionId: 'session:1', prompt: '你好', operation: 'general' };
+  const input: PreparePayload = { sessionId: 'session:1', prompt: '把这两张都弄成蓝色', operation: 'general' };
   prepare!(input);
   prepare!({ ...input, prompt: '人物卡怎么设计？' });
+  assert.deepEqual(deadlines, [300_000, 120_000]);
   jobs[0]!.reject(new Error('旧任务迟到的失败'));
   const next = prepared('new', Date.now() + 60_000);
   jobs[1]!.resolve(next);

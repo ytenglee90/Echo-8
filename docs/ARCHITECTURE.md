@@ -1,5 +1,9 @@
 # Echo-8 Architecture
 
+The assistant recognizes explicit preview and read-only constraints before dispatch. Canvas control owns arrangement retargeting and bounded session receipts exposed by `canvasControl.receipt@1`, with duplicate submissions resolved against the original preparation identity. Nearby follow-ups can use one exchange and internal transcript directories extend on verified append events. Explicit short-answer limits inform generation and continuation budgets (ADR-0155).
+
+Explicit draft revisions use revision-checked original ranges from a bounded conversation directory. Standalone conversation can bypass document retrieval. Versioned native assistant commands route locally to the owning clipboard, annotation, connection, palette and history commands. Their transcript receipts are durable and stay outside canvas undo. Pending layout corrections preserve the captured targets and spacing (ADR-0154).
+
 The assistant tries established local commands, then uses the on-device language model to classify natural instructions and parses only supported operation parameters. `language.embed@1` shares the existing local model worker independently of the search index. `canvasControl.localPlan@2` binds operations to real objects and uses the existing review, transaction, and undo path. Conversation does not request a cloud intent classification round. Failure follow-ups check the last matching canvas task locally when possible, and transcript context retains the deduplication rules in ADR-0152 (ADR-0153).
 
 The assistant routes each turn locally, gates canvas writes in native and JSON tool transport, and prepares mixed tasks with distinct evidence and mutation targets. The conversation owner locates old confirmed and suggested values through revision-scoped transcript ranges. Canvas control retains verified placement state and handles partial application through `canvasControl.applyItems@1` and the existing owner transaction (ADR-0151).

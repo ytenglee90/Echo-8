@@ -11,7 +11,7 @@ import type {
   AISessionRecord,
 } from '../../protocols/ai.ts';
 import { explicitAtOperation, stripOperationCommands } from './command-parser.ts';
-import { classifyAIContextIntent } from './context-intent.ts';
+import { classifyAIContextIntent, isNearConversationFollowup, isStandaloneConversation } from './context-intent.ts';
 import type { PreparePayload } from './command-payloads.ts';
 import {
   readContextCatalog,
@@ -35,7 +35,7 @@ import {
 } from './memory-retrieval.ts';
 import { extractTerms } from './memory-terms.ts';
 import { sessionTranscriptSourceId } from './transcript-storage.ts';
-import { canvasCommandText, isFocusedCanvasContentTask } from '../../services/ai-task-route.ts';
+import { canvasCommandText, isCanvasStatusFollowup, isFocusedCanvasContentTask } from '../../services/ai-task-route.ts';
 import { readParagraphTarget } from './paragraph-target.ts';
 import { operationCreatesWriteback } from './operations.ts';
 import { bindNaturalWriteback, naturalWritebackIntent, readBoundWriteback, writebackTaskInstructions } from './natural-writeback.ts';
@@ -44,11 +44,12 @@ import { bindNaturalSourceScope, naturalResultDestination } from './natural-sour
 import { planFullSourceSummary } from './full-source-summary.ts';
 import { classifyAITurn, mixedCanvasWrite, rememberTurnAssembly, type AITurnRoute, type TurnAssembly } from './turn-route.ts';
 import { canvasTitleAliases, normalizeCanvasTitle } from '../../services/canvas-titles.ts';
-import { exactHistoryRequest, recallConversation } from './conversation-recall.ts';
+import { conversationDraftRequest, exactHistoryRequest, readConversationDraft, recallConversation } from './conversation-recall.ts';
+import { nativeCanvasUsesSelection } from '../../services/native-canvas-intent.ts';
 import { OPERATION_LOG_STAGE_V2, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
 import { prepareStructuredFields } from './structured-fields.ts';
 import { prepareCardRestructure } from './card-restructure.ts';
-import { checkCanvasRecovery, recoverCanvasRequest } from './canvas-recovery.ts';
+import { canvasReceiptReply, checkCanvasRecovery, readCanvasReceipt, recoverCanvasRequest } from './canvas-recovery.ts';
 import { interpretLocalTurn } from './local-turn-routing.ts';
 
 export interface AIContextBudget {
@@ -78,6 +79,19 @@ export async function prepareAIContext(
   turnRoute?: AITurnRoute,
 ): Promise<AIPreparedContext> {
   let route = turnRoute ?? classifyAITurn(payload.prompt, explicitAtOperation(payload.prompt) ?? payload.operation);
+  const repeatCreation = route.repeatCreation && route.category === 'operation';
+  if (isCanvasStatusFollowup(payload.prompt) || repeatCreation) {
+    const receipt = await readCanvasReceipt(context, session.id, signal);
+    const creation = repeatCreation ? receipt?.repeatableCreation : undefined;
+    const createdAt = Date.now();
+    report(1);
+    return rememberTurnAssembly({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId,
+      prompt: payload.prompt, operation: creation ? 'canvas-control' : 'general', contextIntent: 'conversation', contextMode: 'explicit-only',
+      sources: [], totalCharacters: payload.prompt.length, estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000,
+    }, { route, ...(creation ? { localInstructions: [creation] }
+      : { localReply: repeatCreation ? '请说出要再创建哪张卡片，或提供新卡片的标题。' : canvasReceiptReply(receipt) }) });
+  }
+  if (route.disposition !== 'normal') payload = { ...payload, operation: route.operation };
   const recoveryPrompt = route.category === 'chat' && !explicitAtOperation(payload.prompt)
     ? await recoverCanvasRequest(context, session, payload.prompt, signal) : undefined;
   if (recoveryPrompt) {
@@ -119,17 +133,71 @@ export async function prepareAIContext(
     preparationId, sessionId: session.id, prompt: payload.prompt,
     sourceIds: payload.references?.filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
   }, signal) : undefined;
-  if (local.instructions || local.clarification || route.clarification || route.applyItems || (route.category === 'operation' && (!contentTarget || contentBinding?.needsChoice) && (route.local || route.interpretedSearch) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length)) {
+  if (route.native || local.instructions || local.clarification || route.clarification || route.applyItems || (route.category === 'operation' && (!contentTarget || contentBinding?.needsChoice) && (route.local || route.interpretedSearch) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length)) {
+    const nativeSelection = route.native && nativeCanvasUsesSelection(route.native)
+      ? (await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal)).ids : undefined;
     const createdAt = Date.now();
     report(1);
     return completePreparation({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
       operation: payload.operation, providerProfileId: payload.providerProfileId, contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
-      estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000 });
+      estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000 }, { nativeSelection,
+      ...(route.native ? { localSourceIds: payload.references?.filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId) } : {}) });
+  }
+  if (route.category === 'chat' && !route.readCanvas && payload.operation === 'general' && !payload.references?.length &&
+    !payload.memorySourceIds?.length && isStandaloneConversation(payload.prompt)) {
+    const createdAt = Date.now();
+    report(1);
+    return completePreparation({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+      operation: 'general', contextIntent: 'conversation', contextMode: 'explicit-only', providerProfileId: payload.providerProfileId,
+      webSearchEnabled: payload.webSearchEnabled, promptTemplateId: payload.promptTemplateId, sources: [], totalCharacters: payload.prompt.length,
+      estimatedTokens: estimateAITokens(payload.prompt), createdAt, expiresAt: createdAt + 10 * 60_000 });
   }
   const resolvedBudget = budgetOverride
     ? { budget: budgetOverride, modelContextWindowTokens: undefined }
     : await resolveAIContextBudget(context, payload.providerProfileId, signal);
   const budget = resolvedBudget.budget;
+  if (route.category === 'chat' && !route.readCanvas && session.turns > 0 && !payload.references?.length &&
+    !payload.memorySourceIds?.length && isNearConversationFollowup(payload.prompt)) {
+    const source = (await readContextSource(context, { sourceId: sessionTranscriptSourceId(session), start: 0, length: 0 }, signal)).source;
+    const promptTokens = estimateAITokens(payload.prompt);
+    const block = source && await readCanvasDraftEvidence(context, source,
+      Math.min(budget.transcriptWindow, budget.characterLimit - payload.prompt.length), budget.tokenLimit - promptTokens, signal, true);
+    if (source && block?.text) {
+      const createdAt = Date.now();
+      report(1);
+      return completePreparation({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId,
+        prompt: payload.prompt, operation: payload.operation, providerProfileId: payload.providerProfileId,
+        webSearchEnabled: payload.webSearchEnabled, promptTemplateId: payload.promptTemplateId,
+        contextMode: 'explicit-only', contextIntent: 'conversation', createdAt, expiresAt: createdAt + 10 * 60_000,
+        totalCharacters: payload.prompt.length + block.length, estimatedTokens: promptTokens + estimateAITokens(block.text),
+        sources: [{ ...source, ...block, reason: 'recent-conversation' }],
+      });
+    }
+  }
+  const draftRequest = route.category === 'chat' && session.turns > 0 && !payload.references?.length && !payload.memorySourceIds?.length &&
+    previousProposal?.status !== 'pending' ? conversationDraftRequest(payload.prompt) : undefined;
+  if (draftRequest) {
+    const source = (await readContextSource(context, { sourceId: sessionTranscriptSourceId(session), start: 0, length: 0 }, signal)).source;
+    const promptTokens = estimateAITokens(payload.prompt);
+    const found = source && await readConversationDraft(context, source, draftRequest,
+      budget.characterLimit - payload.prompt.length, budget.tokenLimit - promptTokens, signal);
+    if (found?.draft || found?.clarify) {
+      const original = found.draft;
+      const firstSentence = draftRequest.keepFirstSentence && original
+        ? (original.text.match(/^.*?[。！？!?][」』”’"]?/u)?.[0] ?? original.text.split(/\r?\n/u)[0]) : undefined;
+      const exceeds = firstSentence && draftRequest.maxCharacters !== undefined && Array.from(firstSentence).length > draftRequest.maxCharacters;
+      const clarify = exceeds ? '要保留的首句已经超过要求的字数。要保留原句还是放宽字数限制？' : found.clarify;
+      const createdAt = Date.now();
+      report(1);
+      return completePreparation({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId,
+        prompt: payload.prompt, operation: payload.operation, providerProfileId: payload.providerProfileId, promptTemplateId: payload.promptTemplateId,
+        contextMode: 'explicit-only', contextIntent: 'analysis', createdAt, expiresAt: createdAt + 10 * 60_000,
+        totalCharacters: payload.prompt.length + (original?.length ?? 0), estimatedTokens: promptTokens + (original?.estimatedTokens ?? 0),
+        sources: source && original && !clarify ? [{ ...source, start: original.start, length: original.length, text: original.text,
+          estimatedTokens: original.estimatedTokens, title: '当前对话中已定位的草稿', reason: 'conversation-memory', complete: true, boundary: 'range' }] : [],
+      }, { clarify, ...(original && !clarify ? { conversationDraft: { firstSentence, maxCharacters: draftRequest.maxCharacters } } : {}) });
+    }
+  }
   const mechanicalCanvasTask = route.mechanical;
   const continuingCanvasTask = route.continuation;
   const canvasHistory = route.category !== 'chat' && route.history;
@@ -152,7 +220,8 @@ export async function prepareAIContext(
     ...parseExplicitReferences(unboundPrompt),
     ...(contentBinding?.ids ?? []),
   ])];
-  const destination = naturalResultDestination(canvasCommandText(stripOperationCommands(payload.prompt)), payload.operation);
+  const commandText = canvasCommandText(stripOperationCommands(payload.prompt));
+  const destination = route.disposition === 'normal' ? naturalResultDestination(commandText, payload.operation) : { input: commandText };
   const command = destination.input;
   const editIntent = operationCreatesWriteback(payload.operation) ? naturalWritebackIntent(command.trim()) : undefined;
   const conversationalFollowup = editIntent?.kind === 'followup' && (!previousProposal?.suggestedTarget?.range || previousProposal.status === 'dismissed');
@@ -302,6 +371,7 @@ export async function prepareAIContext(
     else if (!add(evidence)) throw new Error('目标正文超过本轮预算。');
   }
   const previousDraft = naturalEdit?.kind === 'followup' && previousProposal?.status === 'pending' ? previousProposal.text : undefined;
+  const explicitCanvasIds: string[] = [];
   const taskInstructions = naturalEdit ? writebackTaskInstructions(payload.prompt, naturalEdit.kind === 'followup' ? previousProposal?.taskInstructions : []) : undefined;
   const carriedInstructions = taskInstructions?.filter(instruction => !payload.prompt.includes(instruction)).join('\n') ?? '';
   remainingCharacters -= carriedInstructions.length;
@@ -314,6 +384,7 @@ export async function prepareAIContext(
     const source = catalog.find((candidate) => candidate.sourceId === reference ||
       candidate.title.toLocaleLowerCase('zh-CN') === reference.toLocaleLowerCase('zh-CN'));
     if (!source) throw new Error(`没有找到 @ 引用：“${reference}”`);
+    if (payload.operation === 'canvas-control') explicitCanvasIds.push(source.sourceId);
     if (explicit.length === 1 && paragraph && (operationCreatesWriteback(payload.operation) || payload.operation === 'canvas-control')) {
       const target = await readParagraphTarget(context, source, Number(paragraph[1]), signal);
       if (!add({ ...source, start: target.contextStart, length: target.text.length, text: target.text, reason: 'explicit-reference', boundary: 'range', complete: true })) throw new Error('目标段落超过本轮正文预算，请缩小修改范围');
@@ -369,6 +440,7 @@ export async function prepareAIContext(
         readCharacters: recalled.evidence.reduce((total, entry) => total + entry.length, 0) },
     } satisfies OperationStageUpdateV2);
   }
+  let canvasDraftBound = false;
   if (transcriptMeta?.length && useTranscript && !exactHistoryFound && !clarify) {
     const draft = useDraft ? await readCanvasDraftEvidence(context, transcriptMeta, remainingCharacters, remainingTokens, signal) : undefined;
     const block = draft ?? await readTailEvidenceBlock(
@@ -378,7 +450,7 @@ export async function prepareAIContext(
       remainingTokens,
       signal,
     );
-    if (block.text) add({ ...transcriptMeta, ...block, reason: 'recent-conversation' });
+    if (block.text) canvasDraftBound = add({ ...transcriptMeta, ...block, reason: 'recent-conversation' }) && draft?.complete === true;
     else if (draft) {
       sources.push({ ...transcriptMeta, ...draft, complete: false, reason: 'recent-conversation' });
       clarify = '上一版草稿超出本轮可用范围。请指定要填入的段落。';
@@ -617,7 +689,8 @@ export async function prepareAIContext(
       staleCandidates: staleMemoryMatches.length,
       staleCandidatesRecovered: staleCandidatesRecovered.size,
     },
-  }, { destinationId, readIds, clarify });
+  }, { destinationId, readIds, clarify, contentTargetId: contentBinding?.ids.length === 1 ? contentBinding.ids[0] : undefined,
+    explicitCanvasIds, canvasDraftBound });
 }
 
 export function deriveAIContextBudget(contextWindowTokens?: number): Readonly<AIContextBudget> {

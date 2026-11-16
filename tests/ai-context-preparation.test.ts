@@ -6,6 +6,7 @@ import type {
   AIContextSearchContribution,
   AIContextSource,
   AIMemoryIndexRecord,
+  AIPreparedContext,
   AISessionRecord,
 } from '../src/protocols/ai.ts';
 import {
@@ -18,6 +19,10 @@ import { collectFullSourceSummary } from '../src/plugins/ai-assistant/full-sourc
 import { classifyAITurn, turnAssembly } from '../src/plugins/ai-assistant/turn-route.ts';
 import { explicitAtOperation } from '../src/plugins/ai-assistant/command-parser.ts';
 import { recoverCanvasRequest } from '../src/plugins/ai-assistant/canvas-recovery.ts';
+import { interpretLocalTurn, LOCAL_LANGUAGE_TIMEOUT_MS, mayUseLocalLanguage } from '../src/plugins/ai-assistant/local-turn-routing.ts';
+import { buildBoundCanvasWritePlan, resolveBoundCanvasWrite } from '../src/plugins/ai-assistant/bound-canvas-write.ts';
+import { conversationDraftRequest, invalidateConversationDirectories, noteConversationAppend, readConversationDraft } from '../src/plugins/ai-assistant/conversation-recall.ts';
+import { chunkImportedTranscript, internalTranscriptSourceId } from '../src/plugins/ai-assistant/transcript-storage.ts';
 
 function session(): AISessionRecord {
   return {
@@ -98,7 +103,32 @@ test('the local turn classification distinguishes advice, action, mixed work, an
     ['制作是什么意思', 'chat'], ['不要生成内容', 'chat'],
     ['如果创建一张世界观会怎样？', 'chat'], ['不要创建一张世界观', 'chat'],
   ]) assert.equal(classifyAITurn(prompt!, explicitAtOperation(prompt!)).category, category, prompt);
+  assert.equal(classifyAITurn('先别改色，告诉我哪张太暗').readCanvas, true);
+  assert.equal(classifyAITurn('这三张怎么排比较好？').readCanvas, true);
+  assert.equal(classifyAITurn('能帮我把这三张横着排吗？').local?.kind, 'arrange');
+  assert.equal(classifyAITurn('请不要剪切选中节点', 'canvas-control').category, 'chat');
   assert.match(classifyAITurn('帮我处理一下这张卡').clarification ?? '', /你希望/u);
+});
+
+test('a stalled local classifier reports its own deadline before cloud generation', async (t) => {
+  const deadline = new AbortController();
+  t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => {
+    assert.equal(milliseconds, LOCAL_LANGUAGE_TIMEOUT_MS);
+    return deadline.signal;
+  });
+  const context = {
+    capabilities: {
+      async request(key: string, _input: unknown, signal: AbortSignal) {
+        assert.equal(key, 'language.embed@1');
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+        return { ready: false, reason: 'unavailable' };
+      },
+    },
+  } as unknown as PluginContext;
+  const prompt = '把这两张都弄成蓝色';
+  const interpretation = interpretLocalTurn(context, prompt, classifyAITurn(prompt), new AbortController().signal);
+  deadline.abort(new DOMException('Timed out', 'TimeoutError'));
+  await assert.rejects(interpretation, /本地语义模型未能及时就绪/u);
 });
 
 test('canvas failure follow-ups resume only the nearest user action from the current transcript', async () => {
@@ -188,6 +218,34 @@ test('mixed summary binds selected sources separately from the uniquely named de
   assert.deepEqual(prepared.sources.map(item => item.text), ['甲来源。', '乙来源。', '丙来源。', '']);
 });
 
+test('bound generation requires complete requested evidence at the verified revisions', () => {
+  const target = { id: 'node:a', title: '武器卡', revision: 1, nodeRevision: 1, length: 3,
+    x: 0, y: 0, width: 300, height: 200, color: '#999999', presentation: 'card' as const };
+  const reference = { ...target, id: 'node:b', title: '原料卡', length: 2 };
+  const state = { nodes: [target, reference], total: 2, groups: [], connections: [], available: { nodes: true, groups: true, connections: true } };
+  const prompt = '在武器卡里写一段来历';
+  const prepared: AIPreparedContext = {
+    id: 'context1', sessionId: 'session:1', prompt, operation: 'canvas-control', totalCharacters: 10, estimatedTokens: 10,
+    createdAt: 0, expiresAt: 1000, sources: [{
+      sourceId: target.id, provider: 'text-node', kind: 'text', title: target.title, revision: 1,
+      start: 0, length: 3, text: '旧正文', reason: 'explicit-reference', complete: true,
+    }],
+  };
+  const assembly = { route: classifyAITurn(prompt), contentTargetId: target.id, explicitCanvasIds: [target.id] };
+  const write = resolveBoundCanvasWrite(prepared, assembly, state);
+  assert.ok(write);
+  assert.deepEqual(buildBoundCanvasWritePlan(write, '{"text":"续写正文"}').actions, [{
+    type: 'update-node', id: target.id, edit: { start: 3, deleteCount: 0, insert: '\n\n续写正文', expectedRevision: 1 },
+  }]);
+  assert.throws(() => buildBoundCanvasWritePlan(write, '{"text":"正文","id":"node:b"}'), /写入范围/u);
+  assembly.explicitCanvasIds.push(reference.id);
+  assert.equal(resolveBoundCanvasWrite(prepared, assembly, state), undefined);
+  prepared.sources.push({ ...prepared.sources[0]!, sourceId: reference.id, title: reference.title, length: 1, text: '铜' });
+  assert.equal(resolveBoundCanvasWrite(prepared, assembly, state), undefined);
+  prepared.sources[1] = { ...prepared.sources[1]!, length: 2, text: '铜片', revision: 2 };
+  assert.equal(resolveBoundCanvasWrite(prepared, assembly, state), undefined);
+});
+
 test('field work supplies only incomplete cards, restores an exact historical field, and reports age evidence', async () => {
   const context = preparationContext({
     'node:transcript': { title: '当前对话', text: '[用户]\n确认人物身份为钟匠。\n[助手]\n收到。\n' },
@@ -197,6 +255,7 @@ test('field work supplies only incomplete cards, restores an exact historical fi
   });
   Object.assign(context.capabilities, { request: async (key: string) => {
     if (key === 'groups.list@1') return [{ title: '人物组', memberIds: ['node:a', 'node:b'] }];
+    if (key === 'content.summariesById@1') return [{ id: 'node:a' }, { id: 'node:b' }];
     throw new Error('Capability unavailable: ' + key);
   } });
   const prepare = (prompt: string) => prepareAIContext(context, session(), {}, { sessionId: 'session:1', operation: 'canvas-control', prompt },
@@ -510,8 +569,102 @@ test('ordinary conversation skips automatic memory and search retrieval by inten
   );
 
   assert.equal(prepared.contextIntent, 'conversation');
-  assert.deepEqual(prepared.sources.map((item) => item.sourceId), ['node:transcript']);
-  assert.equal(prepared.memoryRetrieval?.candidatesMatched, 0);
+  assert.deepEqual(prepared.sources, []);
+});
+
+test('standalone definitions do not start the local classifier or read the document catalog', async () => {
+  const unused = () => { throw new Error('standalone question opened local resources'); };
+  const context = { capabilities: { request: unused, requestAll: unused } } as unknown as PluginContext;
+  const prepared = await prepareAIContext(context, { ...session(), turns: 40 }, {}, {
+    sessionId: 'session:1', prompt: '什么是第三人称限知？', operation: 'general', promptTemplateId: 'template:custom',
+  }, new AbortController().signal, () => undefined);
+  assert.equal(prepared.contextIntent, 'conversation');
+  assert.equal(prepared.promptTemplateId, 'template:custom');
+  assert.deepEqual(prepared.sources, []);
+});
+
+test('a confirmed second draft remains verbatim and scoped after 100 unrelated exchanges', async () => {
+  const draft = '午夜的钟响了。\n她推开花房的门，看到苔藓爬过石阶。';
+  const transcript = '[用户]\n给我写两个开头\n[助手]\n第一版：\n雨从天边落下来。\n\n**第二版**：\n' + draft +
+    '\n[用户]\n第二个更好，先留着\n[助手]\n好的。\n' + Array.from({ length: 100 }, (_, index) => `[用户]\n周末问题 ${index}\n[助手]\n周末答复 ${index}\n`).join('');
+  const prepared = await prepareAIContext(preparationContext({ 'node:transcript': { title: '当前对话', text: transcript } }),
+    { ...session(), turns: 102 }, {}, { sessionId: 'session:1', prompt: '刚才那个压到 200 字，第一句保留', operation: 'general' },
+    new AbortController().signal, () => undefined);
+  assert.deepEqual(prepared.sources.map(source => source.text), [draft]);
+  assert.equal(prepared.sources[0]!.start, transcript.indexOf(draft));
+  assert.deepEqual(turnAssembly(prepared).conversationDraft, { firstSentence: '午夜的钟响了。', maxCharacters: 200 });
+});
+
+test('a nearby follow-up reads only the latest exchange and canvas status uses its local receipt', async () => {
+  const transcript = '[用户]\n旧问题\n[助手]\n旧回答\n[用户]\n什么是反讽？\n[助手]\n字面与实际的意思有反差。';
+  const local = preparationContext({ 'node:transcript': { title: '对话', text: transcript } });
+  const originalRead = local.capabilities.requestAll.bind(local.capabilities);
+  const calls: string[] = [];
+  const context = { ...local, capabilities: {
+    request: async (key: string) => {
+      calls.push(key);
+      if (key === 'canvasControl.receipt@1') return { preparationId: 'last-plan', status: 'undone', message: '已应用' };
+      throw new Error(`Capability unavailable: ${key}`);
+    },
+    requestAll: async (key: string, payload?: unknown) => {
+      calls.push(key);
+      if (key !== 'context.read@1') throw new Error(`unexpected capability: ${key}`);
+      return originalRead(key, payload);
+    },
+  } } as unknown as PluginContext;
+  const prepare = (prompt: string) => prepareAIContext(context, { ...session(), turns: 2 }, {},
+    { sessionId: 'session:1', prompt, operation: 'general' }, AbortSignal.timeout(5000), () => undefined);
+  const followup = await prepare('举个例子说明一下');
+  assert.equal(followup.contextMode, 'explicit-only');
+  assert.deepEqual(followup.sources.map(item => item.text), ['[用户]\n什么是反讽？\n[助手]\n字面与实际的意思有反差。']);
+  assert.ok(calls.every(key => key === 'context.read@1' || key === 'ai.provider.catalog@1'));
+  calls.length = 0;
+  const receipt = await prepare('刚才那批到底执行了吗');
+  assert.match(turnAssembly(receipt).localReply ?? '', /已经撤销/u);
+  assert.deepEqual(calls, ['canvasControl.receipt@1']);
+  assert.deepEqual(receipt.sources, []);
+  const preview = classifyAITurn('这几张卡排一行，先别执行，给我看看方案');
+  assert.equal(preview.disposition, 'preview');
+  assert.equal(preview.local?.kind, 'arrange');
+  const readOnly = '只看，不改，把这些卡的关系说一下';
+  assert.equal(classifyAITurn(readOnly, 'canvas-control').category, 'chat');
+  assert.equal(mayUseLocalLanguage(readOnly, classifyAITurn(readOnly)), false);
+  assert.equal(classifyAITurn('把那段缩短一点，保留我的口吻，不要修改人物年龄。').disposition, 'normal');
+});
+
+test('an internal transcript extension scans the appended range and reads the exact old draft', async () => {
+  const draft = '午夜的钟响了。她推开门。';
+  let transcript = '[用户]\n请给我两个开头\n[助手]\n第一版：\n深夜下雨。\n第二版：\n' + draft + '\n' +
+    ('[用户]\n其它问题\n[助手]\n' + '其它答案。'.repeat(150) + '\n').repeat(60);
+  let revision = 1;
+  const sessionId = 'incremental';
+  const sourceId = internalTranscriptSourceId(sessionId);
+  const readOffsets: number[] = [];
+  const currentSession = () => ({ ...session(), id: sessionId, transcriptSourceId: undefined, transcriptRevision: revision, transcriptLength: transcript.length });
+  const context = { store: {
+    readValue: currentSession,
+    readKeyRange: (_namespace: string, from: string) => {
+      readOffsets.push(Number(from.slice(-16)));
+      return Object.fromEntries(chunkImportedTranscript(sessionId, transcript).map(({ key, chunk }) => [key, chunk]));
+    },
+  } } as unknown as PluginContext;
+  const request = conversationDraftRequest('把第二版压到 200 字，第一句别动')!;
+  assert.deepEqual(request, { number: 2, topic: undefined, keepFirstSentence: true, maxCharacters: 200 });
+  const read = () => readConversationDraft(context, { ...source(sourceId, '对话', transcript), revision }, request,
+    2000, 2000, AbortSignal.timeout(5000));
+  assert.equal((await read()).draft?.text, draft);
+  assert.ok(readOffsets.length > 2);
+  const appendStart = transcript.length;
+  transcript += '\n[用户]\n后来又聊了一件事。\n[助手]\n新的答复。\n';
+  revision++;
+  noteConversationAppend(context, currentSession(), revision);
+  readOffsets.length = 0;
+  assert.equal((await read()).draft?.text, draft);
+  assert.deepEqual(readOffsets, [appendStart, transcript.indexOf(draft)]);
+  invalidateConversationDirectories(context);
+  readOffsets.length = 0;
+  assert.equal((await read()).draft?.text, draft);
+  assert.equal(readOffsets[0], 0);
 });
 
 test('AI context preparation marks explicit memory-state changes for review without writing data', async () => {

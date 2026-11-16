@@ -2,6 +2,7 @@ import type { PluginContext } from '../../core/contracts.ts';
 import type { AIContextSource, AIInlineReference, AIPreparedSource } from '../../protocols/ai.ts';
 import type { CanvasControlPlan } from '../../protocols/canvas-control.ts';
 import type { GroupRecord } from '../../protocols/groups.ts';
+import type { ContentSummary } from '../../protocols/content.ts';
 import type { ContentSearchResultV2 } from '../../protocols/search.ts';
 import { yieldToMainThread } from '../../services/async-control.ts';
 import { canvasTitleAliases, normalizeCanvasTitle } from '../../services/canvas-titles.ts';
@@ -10,13 +11,13 @@ import { readContextSource } from './context-source-reader.ts';
 import { recallConversation } from './conversation-recall.ts';
 
 const FIELDS = '身份|职业|年龄|外貌|动机|姓名|性格|出身|阵营|地点|时间|口头禅';
-const COMPLETE = new RegExp(String.raw`^(?:给|为)\s*(.+?组)(?:里|内|中的?)?\s*缺(?:少)?\s*(${FIELDS})\s*的(?:卡片?|节点|文本框)\s*(?:补上|补全|填写)\s*\2(?:[。！!])?$`, 'u');
+const COMPLETE = new RegExp(String.raw`^(?:给|为)\s*(.+?组)(?:里|内|中的?)?\s*缺(?:少)?\s*(${FIELDS})\s*的(卡片?|节点|文本框)\s*(?:补上|补全|填写)\s*\2(?:[。！!])?$`, 'u');
 const RESTORE = new RegExp(String.raw`^恢复第\s*(\d+)\s*轮(?:的)?(.{1,80}?)(?:的)?(${FIELDS})(?:[，,]\s*保留[^。！？]+)?[。！!]?$`, 'u');
-const CHECK = new RegExp(String.raw`^(?:检查|查找|找出)\s*(.+?组)(?:里|内|中的?)?\s*缺(?:少)?\s*(${FIELDS})\s*的(?:卡片?|节点|文本框)[。！!]?$`, 'u');
+const CHECK = new RegExp(String.raw`^(?:检查|查找|找出)\s*(.+?组)(?:里|内|中的?)?\s*缺(?:少)?\s*(${FIELDS})\s*的(卡片?|节点|文本框)[。！!]?$`, 'u');
 const SCAN_OLD = new RegExp(String.raw`^(.{1,60}?)(?:的)?(${FIELDS})(?:改了|已经更改|已更新)[，,]\s*(?:找出|查找|查一下)(?:还)?(?:写着|提到|包含)旧\2的(?:卡片?|节点|文本框)[。！!]?$`, 'u');
 const MAX_BODY = 8_192;
 
-export type FieldTask = { kind: 'complete' | 'check'; group: string; field: string } |
+export type FieldTask = { kind: 'complete' | 'check'; group: string; field: string; presentation?: ContentSummary['presentation'] } |
   { kind: 'restore'; target: string; field: string; turn: number } | { kind: 'age-conflicts'; group?: string } |
   { kind: 'scan-old'; target: string; field: string };
 export interface FieldTarget { id: string; start: number; deleteCount: number; expectedRevision: number; prefix: string }
@@ -35,9 +36,9 @@ export function structuredFieldTask(prompt: string): FieldTask | undefined {
   const scanOld = SCAN_OLD.exec(text);
   if (scanOld) return { kind: 'scan-old', target: scanOld[1]!, field: scanOld[2]! };
   const complete = COMPLETE.exec(text);
-  if (complete) return { kind: 'complete', group: complete[1]!, field: complete[2]! };
-  const check = CHECK.exec(text);
-  if (check) return { kind: 'check', group: check[1]!, field: check[2]! };
+  const groupFields = complete ?? CHECK.exec(text);
+  if (groupFields) return { kind: complete ? 'complete' : 'check', group: groupFields[1]!, field: groupFields[2]!,
+    presentation: groupFields[3] === '文本框' ? 'text-box' : groupFields[3] === '节点' ? undefined : 'card' };
   const restore = RESTORE.exec(text);
   if (restore) return { kind: 'restore', turn: Number(restore[1]), target: restore[2]!.replace(/的$/u, ''), field: restore[3]! };
   return undefined;
@@ -117,9 +118,16 @@ export async function prepareStructuredFields(
     .filter(group => normalizeCanvasTitle(group.title) === normalizeCanvasTitle(task.group!)) : [];
   if (task.group && groups.length !== 1) return { clarify: `请指定唯一的「${task.group}」群组。` };
   const members = groups[0] && new Set(groups[0].memberIds);
-  const candidates = members ? scope.filter(source => members.has(source.sourceId)) : scope;
+  let candidates = members ? scope.filter(source => members.has(source.sourceId)) : scope;
   if (!candidates.length || candidates.length > 80) return { clarify: '请指定含有 1 至 80 张可读取卡片的群组。' };
   if (task.kind === 'age-conflicts') return checkAges(context, candidates, signal);
+  if (task.presentation) {
+    const summaries = await context.capabilities.request<ContentSummary[]>('content.summariesById@1',
+      { nodeIds: candidates.map(item => item.sourceId) }, signal);
+    const matching = new Set(summaries.filter(item => (item.presentation ?? 'card') === task.presentation).map(item => item.id));
+    candidates = candidates.filter(source => matching.has(source.sourceId));
+    if (!candidates.length) return { clarify: `「${task.group}」中没有符合要求的${task.presentation === 'card' ? '卡片' : '文本框'}。` };
+  }
   const field = task.field;
   const fields: FieldTarget[] = [], sources: AIPreparedSource[] = [];
   for (const [index, source] of candidates.entries()) {

@@ -19,6 +19,7 @@ export interface NaturalControlState {
   createdIds?: string[];
   pendingTask?: { goal: string; question: string };
   lastPlacement?: CanvasRelativePlacement;
+  lastArrangement?: ControlArrangement;
   unfinishedConnection?: { from: string; line?: 'solid' | 'dashed'; expiresAt: number };
 }
 export interface NaturalControlResult {
@@ -36,18 +37,61 @@ export interface NaturalControlResult {
   replacement?: ContentReplaceRequest;
   unresolvedTarget?: boolean;
   placement?: CanvasRelativePlacement;
+  arrangement?: ControlArrangement;
+  pendingArrangement?: { id: string; arrangement: ControlArrangement };
+  replacesArrangement?: string;
+  repeatableCreation?: string;
+}
+
+export interface ControlArrangement {
+  ids: string[];
+  layout: 'horizontal' | 'vertical' | 'grid';
+  columns: number;
+  gap: number;
+  excludedIds?: string[];
+  groupId?: string;
+}
+
+export function updateArrangement(last: ControlArrangement, change: { columns?: number; gap?: number }): ControlArrangement {
+  return { ...last, layout: change.columns === undefined ? last.layout : 'grid',
+    columns: change.columns ?? last.columns, gap: change.gap ?? last.gap };
+}
+
+export function arrangeControlNodes(nodes: ContentSummary[], arrangement: ControlArrangement): CanvasControlAction[] {
+  const byId = new Map(nodes.map(node => [node.id, node] as const));
+  const ordered = arrangement.ids.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
+  if (ordered.length !== arrangement.ids.length || ordered.length === 0) throw new Error('排列对象已变化，请重新选中目标。');
+  const { columns, gap } = arrangement;
+  const widths: number[] = [], heights: number[] = [];
+  ordered.forEach((node, index) => {
+    const column = index % columns, row = Math.floor(index / columns);
+    widths[column] = Math.max(widths[column] ?? 0, node.width);
+    heights[row] = Math.max(heights[row] ?? 0, node.height);
+  });
+  const offsets = (sizes: number[], start: number) => sizes.map(size => { const offset = start; start += size + gap; return offset; });
+  const xs = offsets(widths, Math.min(...ordered.map(node => node.x)));
+  const ys = offsets(heights, Math.min(...ordered.map(node => node.y)));
+  return ordered.map(({ id }, index) => ({ type: 'update-node', id, x: xs[index % columns], y: ys[Math.floor(index / columns)] }));
 }
 
 const answer = (message: string): NaturalControlResult => ({ plan: { version: 1, actions: [], answer: message } });
 const unresolvedTarget = (message: string): NaturalControlResult => ({ ...answer(message), unresolvedTarget: true });
 const CHARACTER_CARD_BODY = ['姓名：', '身份：', '外貌：', '性格：', '目标：', '人物关系：'].join('\n');
 const recentCreation = /^(?:新节点|刚(?:才)?(?:新建|创建|建)(?:的)?(?:那(?:一)?(?:个|张))?(?:节点|卡片|角色卡|人物卡|文本框))$/u;
-const pronoun = /^(?:它|新节点|刚建的节点|刚才(?:那个|那张|找到的|选中的|创建的)(?:节点|卡片|卡)?|这个|这一个|这张(?:卡片|卡)?|这两个|这几个|这些|它们|这批|刚才的|刚才那批|刚才筛出的(?:空白)?节点|(?:当前)?选中(?:的)?(?:(?:两|2)个)?(?:节点|卡片)?|选区)$/u;
+const pronoun = /^(?:它|新节点|刚建的节点|刚才(?:那个|那张|找到的|选中的|创建的)(?:节点|卡片|卡)?|这个|这一个|这张(?:卡片|卡)?|这两个|这几个|这些|它们|这批|刚才的|刚才那批|刚才筛出的(?:空白)?节点|(?:当前)?选中(?:的)?(?:(?:两|2)个)?(?:节点|卡片?|文本框)?|选区)$/u;
 
 export async function resolveNaturalOperation(
   context: PluginContext, request: CanvasControlAdmission, operation: NaturalCanvasOperation,
   previous: NaturalControlState, chosen: ReadonlyMap<string, string>, signal?: AbortSignal,
 ): Promise<NaturalControlResult> {
+  if (operation.kind === 'arrange-followup' && !operation.group) {
+    const last = previous.lastArrangement;
+    if (!last) return answer('没有可继续的排列，或原对象已变化。请重新选定目标。');
+    const arrangement = updateArrangement(last, operation);
+    const nodes = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: arrangement.ids }, signal);
+    return { plan: { version: 1, actions: arrangeControlNodes(nodes, arrangement) },
+      targets: arrangement.groupId ? [...arrangement.ids, arrangement.groupId] : arrangement.ids, arrangement };
+  }
   const [catalogs, owners] = await Promise.all([
     context.capabilities.requestAll<AIContextCatalogContribution>('context.catalog@1', undefined, signal),
     readControlOwners(context, signal),
@@ -60,6 +104,7 @@ export async function resolveNaturalOperation(
   if (operation.kind === 'audit-names') return auditCanvasNames(allowedSources);
   if (operation.kind === 'group-columns') return planGroupColumns(context, groups, allowedSources, operation.lead, operation.keep, signal);
   const nodeEdges = (owners.graph?.connections ?? []).filter(edge => edge.from.kind !== 'junction' && edge.to.kind !== 'junction');
+  const usableEdges = (owners.graph?.connections ?? []).filter(edge => canReadEndpoint(edge.from.nodeId) && canReadEndpoint(edge.to.nodeId));
   const edges = nodeEdges.filter(edge => canReadEndpoint(edge.from.nodeId) && canReadEndpoint(edge.to.nodeId));
   const title = (id: string) => sources.get(id)?.title ?? groups.find(group => group.id === id)?.title ?? id;
   const nodeTitles = new Map<string, string[]>();
@@ -98,6 +143,26 @@ export async function resolveNaturalOperation(
     return matches.length === 1 ? matches[0] : undefined;
   };
   const validMembers = (ids: string[]) => ids.every(id => sources.has(id) && sources.get(id)?.automaticRetrieval !== false);
+  if (operation.kind === 'arrange-followup' && operation.group) {
+    const last = previous.lastArrangement;
+    if (!last) return answer('没有可继续的排列。请说出要重新排列的群组和列数。');
+    const title = normalize(operation.group);
+    const exact = groups.filter(group => normalize(group.title) === title);
+    const alternate = /组$/u.test(title) ? title.replace(/(?:群组|组)$/u, '') : title + '组';
+    const matches = exact.length ? exact : groups.filter(group => normalize(group.title) === alternate);
+    if (matches.length !== 1) return answer(`没有找到唯一群组「${operation.group}」，请提供完整群组名称。`);
+    const group = matches[0]!;
+    const ids = group.memberIds.filter(id => !last.excludedIds?.includes(id));
+    if (!ids.length || ids.length > 80 || !validMembers(ids)) {
+      return answer('这个群组没有可排列的节点、超过 80 项，或含有需要明确引用的节点。');
+    }
+    const nodes = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: ids }, signal);
+    if (nodes.length !== ids.length) return answer('群组成员已变化，请重新指定范围。');
+    nodes.sort((left, right) => last.layout === 'horizontal' ? left.x - right.x || left.y - right.y : left.y - right.y || left.x - right.x);
+    const arrangement = { ...last, ids: nodes.map(node => node.id), groupId: group.id,
+      columns: last.layout === 'horizontal' ? nodes.length : last.columns };
+    return { plan: { version: 1, actions: arrangeControlNodes(nodes, arrangement) }, targets: [...ids, group.id], arrangement, next: { ids } };
+  }
   const filterTargets = async (value: string): Promise<string[] | NaturalControlResult> => {
     const filter = naturalTargetFilter(value);
     if (!filter) return [];
@@ -147,7 +212,8 @@ export async function resolveNaturalOperation(
       const useSelection = /^(?:(?:当前)?选中|选区|这两个$|这几个$|这张(?:卡片|卡)?$)/u.test(name);
       const selectedIds = useSelection ? selected.ids : recentCreation.test(name) ? previous.createdIds ?? previous.ids :
         previous.ids.length ? previous.ids : selected.ids;
-      const fallback = !selectedIds.length && operation.kind === 'arrange' ? [...sources.values()].filter(source => source.automaticRetrieval !== false).map(source => source.sourceId) : selectedIds;
+      const fallback = !selectedIds.length && operation.kind === 'arrange' && !useSelection && /^(?:@画布操作\s+)?(?:水平|垂直|宫格|网格)?(?:排列|整理|排布)(?:一下)?节点[。！!]?$/u.test(request.prompt.trim())
+        ? [...sources.values()].filter(source => source.automaticRetrieval !== false).map(source => source.sourceId) : selectedIds;
       const drafts = new Set(previous.draftTitles?.values());
       const ids = [...new Set(name === '这两个' && operation.kind === 'connect' ? fallback : fallback.flatMap(id => groups.find(group => group.id === id)?.memberIds ?? [id]))]
         .filter(id => drafts.has(id) || (sources.has(id) && (useSelection || sources.get(id)?.automaticRetrieval !== false)));
@@ -306,7 +372,16 @@ export async function resolveNaturalOperation(
     if (operation.kind === 'connect' && operation.names.length === 2 && result.length !== 1) return answer(`「${name}」需要指向一个节点，请明确端点名称。`);
     ids.push(...result);
   }
-  const unique = [...new Set(ids)];
+  const excluded = new Set<string>();
+  if (operation.kind === 'arrange' && operation.expectedCount !== undefined && new Set(ids).size !== operation.expectedCount) {
+    return answer(`本轮指定 ${operation.expectedCount} 张卡，请选中同样数量后重试。`);
+  }
+  if (operation.kind === 'arrange') for (const operand of operation.exclude ?? []) {
+    const resolved = await read(operand);
+    if (!Array.isArray(resolved)) return resolved;
+    for (const id of resolved) excluded.add(id);
+  }
+  const unique = [...new Set(ids)].filter(id => !excluded.has(id));
   if (operation.kind === 'shortest-path') {
     if (unique.length !== 2) return answer('请指定两个不同的路径端点。');
     const allowed = new Set(allowedSources.map(source => source.sourceId));
@@ -349,10 +424,11 @@ export async function resolveNaturalOperation(
   if (operation.kind === 'line-update') {
     let candidates = unique.length === 2 ? edges.filter(edge => edge.from.nodeId === unique[0] && edge.to.nodeId === unique[1]) : [];
     if (!operation.names.length) {
-      if (operation.reference === 'previous') candidates = edges.filter(edge => edge.id === previous.lineId);
+      const editable = operation.reverse || operation.remove ? edges : usableEdges;
+      if (operation.reference === 'previous') candidates = editable.filter(edge => edge.id === previous.lineId);
       else {
         const selected = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
-        candidates = edges.filter(edge => selected.ids.includes(edge.id));
+        candidates = editable.filter(edge => selected.ids.includes(edge.id));
       }
     }
     if (candidates.length !== 1) return answer('没有命中唯一连线，请选中一条连线或明确端点及方向。');
@@ -443,6 +519,10 @@ export async function resolveNaturalOperation(
     })), unique, { ids: unique });
   }
   if (operation.kind === 'presentation') return makePlan(unique.map(id => ({ type: 'update-node', id, presentation: operation.presentation, color: operation.color })), unique, { ids: unique });
+  if (operation.kind === 'set-body') {
+    if (unique.length !== 1) return answer('请指定一个需要填写正文的节点。');
+    return makePlan([{ type: 'update-node', id: unique[0]!, text: operation.text }], unique, { ids: unique });
+  }
   if (operation.kind === 'append') return makePlan(unique.map(id => ({ type: 'update-node', id, append: operation.text })), unique, { ids: unique });
   if (operation.kind === 'replace') {
     if (operation.occurrence !== undefined) {
@@ -511,11 +591,14 @@ export async function resolveNaturalOperation(
   if (operation.kind === 'move' || operation.kind === 'arrange') {
     if (unique.length > 80) return answer('目标超过 80 项，请分批移动或排列。');
     const nodes = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: unique }, signal);
-    const x = Math.min(...nodes.map(node => node.x)), y = Math.min(...nodes.map(node => node.y));
-    const width = Math.max(...nodes.map(node => node.width)) + 60, height = Math.max(...nodes.map(node => node.height)) + 60;
-    const columns = operation.layout === 'horizontal' ? nodes.length : operation.layout === 'vertical' ? 1 : Math.ceil(Math.sqrt(nodes.length));
-    return makePlan(nodes.map((node, index) => ({ type: 'update-node', id: node.id, x: operation.kind === 'move' ? node.x + (operation.x ?? 0) : x + index % columns * width,
-      y: operation.kind === 'move' ? node.y + (operation.y ?? 0) : y + Math.floor(index / columns) * height })), unique, { ids: unique });
+    if (operation.kind === 'move') return makePlan(nodes.map(node => ({ type: 'update-node', id: node.id,
+      x: node.x + (operation.x ?? 0), y: node.y + (operation.y ?? 0) })), unique, { ids: unique });
+    if (!nodes.length) return answer('没有找到可以排列的节点。');
+    nodes.sort((a, b) => operation.layout === 'horizontal' ? a.x - b.x || a.y - b.y : a.y - b.y || a.x - b.x);
+    const columns = operation.columns ?? (operation.layout === 'horizontal' ? nodes.length : operation.layout === 'vertical' ? 1 : Math.ceil(Math.sqrt(nodes.length)));
+    const arrangement = { ids: nodes.map(node => node.id), layout: operation.layout, columns, gap: operation.gap ?? 60,
+      ...(excluded.size ? { excludedIds: [...excluded] } : {}) };
+    return { ...makePlan(arrangeControlNodes(nodes, arrangement), unique, { ids: unique }), arrangement };
   }
   return answer('请明确要处理的画布对象。');
 }

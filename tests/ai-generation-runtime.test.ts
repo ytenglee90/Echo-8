@@ -96,7 +96,7 @@ test('AI continuation requests resume a truncated answer and merge without repea
   };
   const next = continuationRequest(request, '第一部分，这里是一段需要衔接的完整内容');
   assert.equal(next.temperature, 0.35);
-  assert.equal(next.maxOutputTokens, 2_400);
+  assert.equal(next.maxOutputTokens, request.maxOutputTokens);
   assert.equal(next.tools, undefined);
   assert.deepEqual(next.messages.at(-2), { role: 'assistant', content: '第一部分，这里是一段需要衔接的完整内容' });
   assert.match(next.messages.at(-1)?.content ?? '', /只从中断处继续/u);
@@ -153,6 +153,10 @@ test('default AI output budgets keep simple answers short and preserve explicit 
   assert.equal(defaultOutputTokenBudget({ operation: 'general', prompt: '这个功能是什么？', sources: [] }), 2_400);
   assert.equal(defaultOutputTokenBudget({ operation: 'analyze', prompt: '分析这项方案', sources: [] }), 4_096);
   assert.equal(defaultOutputTokenBudget({ operation: 'general', prompt: '请全面逐项分析并给出完整报告', sources: [] }), 8_192);
+  assert.equal(defaultOutputTokenBudget({ operation: 'summarize', prompt: '概括成 80 字，先给结论', sources: [] }), 320);
+  assert.equal(defaultOutputTokenBudget({ operation: 'general', prompt: '一句话解释什么是人物弧光', sources: [] }), 224);
+  assert.equal(defaultOutputTokenBudget({ operation: 'general', prompt: '只给三条，每条一句话', sources: [] }), 492);
+  assert.equal(defaultOutputTokenBudget({ operation: 'general', prompt: '解释「概括成 80 字」的意思', sources: [] }), 2_400);
 });
 
 test('AI generation runtime infers length truncation for compatible providers that omit finish_reason', () => {

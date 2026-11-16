@@ -16,6 +16,7 @@ import type {
   AIStatusSignal,
 } from '../../protocols/ai.ts';
 import { useLocalTextHistory } from '../../ui/use-local-text-history.ts';
+import { canCompileLocalCreation } from './local-turn-routing.ts';
 import { classifyAITurn } from './turn-route.ts';
 import type { AIComposerProps } from './AIComposer.tsx';
 import {
@@ -72,8 +73,8 @@ export function useAIComposerController({
   const [prompt, setPrompt] = useState('');
   const acceptsWriteback = Boolean(pendingWritebackId && /^(?:就用这版[，,]\s*)?(?:替换进去|用这版替换原文|应用这份草稿)[。！!]?$/u.test(prompt.trim()));
   const route = useMemo(() => classifyAITurn(prompt, explicitAtOperation(prompt)), [prompt]);
-  const canRunLocally = Boolean(route.operation === 'general' || acceptsWriteback || route.local || route.applyItems || route.clarification ||
-    route.fieldTask && route.fieldTask.kind !== 'complete' || naturalMemoryDirective(prompt));
+  const canRunLocally = Boolean(route.operation === 'general' || acceptsWriteback || route.local || route.native || route.repeatCreation || route.applyItems || route.clarification ||
+    route.fieldTask && route.fieldTask.kind !== 'complete' || naturalMemoryDirective(prompt) || canCompileLocalCreation(prompt, route));
   const promptHistory = useLocalTextHistory(prompt, setPrompt);
   const {
     change: changePrompt,
