@@ -3,7 +3,7 @@ import { MAX_ANNOTATION_BODY_LENGTH, type AnnotationRecord, type AnnotationTarge
 import type { AIContextCatalogContribution } from '../../protocols/ai.ts';
 import type { AppearanceReadContribution } from '../../protocols/appearance.ts';
 import type { CanvasControlNativeRequest } from '../../protocols/canvas-control.ts';
-import type { ConnectionGraphSnapshot } from '../../protocols/connections.ts';
+import { isTitleConnection, type ConnectionGraphSnapshot } from '../../protocols/connections.ts';
 import type { GroupRecord } from '../../protocols/groups.ts';
 import type { SelectionResolution, SelectionSnapshot } from '../../protocols/selection.ts';
 import { canvasTitleAliases, normalizeCanvasTitle } from '../../services/canvas-titles.ts';
@@ -85,6 +85,35 @@ export async function prepareNativeCanvasAction(context: PluginContext, input: C
     }, expanded, cut);
   }
   if (intent.kind === 'junction') {
+    if (intent.scope === 'canvas') {
+      const readEdges = async () => {
+        const [graph, catalogs, groups] = await Promise.all([
+          context.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1'),
+          context.capabilities.requestAll<AIContextCatalogContribution>('context.catalog@1'),
+          context.capabilities.request<GroupRecord[]>('groups.list@1').catch(() => []),
+        ]);
+        const readable = new Set(catalogs.flatMap(catalog => catalog.sources)
+          .filter(source => source.kind === 'text' && (source.automaticRetrieval !== false || input.sourceIds?.includes(source.sourceId)))
+          .map(source => source.sourceId));
+        for (const group of groups) if (group.memberIds.every(id => readable.has(id))) readable.add(group.id);
+        return graph.connections.filter(edge => isTitleConnection(edge) === (intent.line === 'dashed') &&
+          readable.has(edge.from.nodeId) && readable.has(edge.to.nodeId));
+      };
+      const edges = await readEdges();
+      const label = intent.line === 'dashed' ? '虚线' : '实线';
+      if (!edges.length) throw new Error(`没有找到可添加中转点的${label}。请选中需要处理的连线。`);
+      if (edges.length > 10_000) throw new Error('一次最多处理 10000 条连接线，请分批选择。');
+      const references = edges.map(edge => ({ id: edge.id, revision: edge.revision }));
+      return action(`给 ${edges.length} 条${label}添加一个共用中转点`, async () => {
+        const live = await readEdges();
+        const revisions = new Map(live.map(edge => [edge.id, edge.revision]));
+        if (live.length !== edges.length || edges.some(edge => revisions.get(edge.id) !== edge.revision)) {
+          throw new Error('这批连接线或可操作范围已变化，请重新发送要求。');
+        }
+        const result = await context.commands.invoke('connection.addJunctionForEdges@1', { connections: references, shared: true });
+        return `已为 ${edges.length} 条${label}添加 ${result.ids.length} 个共用中转点，可一次撤销。`;
+      }, edges.map(edge => edge.id));
+    }
     const current = await selection();
     const graph = await context.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
     const chosen = new Set(current.ids);

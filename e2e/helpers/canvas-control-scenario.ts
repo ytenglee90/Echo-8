@@ -14,6 +14,49 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 
 export function canvasControlScenarios(url: string): void {
   test.beforeEach(async ({page})=>installLocalLanguageAssets(page));
+  for (const verb of ['造', '建', '新建', '创建']) test(`reported card batch with ${verb} groups blanks and connects roles offline`, async ({ page }) => {
+    await page.goto(url);
+    await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+    await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    await page.context().setOffline(true);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill(verb + '一张角色，一张人物，4张空白卡，空白卡群组，角色连接到人物。');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 8 项操作');
+    const cards = page.getByRole('article', { name: /文本节点：(角色|人物|空白 [1-4])$/u });
+    await expect(cards).toHaveCount(6);
+    await expect(page.locator('.group-frame')).toHaveCount(1);
+    await expect(page.locator('.connection-path:not(.title-connection)')).toHaveCount(1);
+    await expect(ai.getByLabel('本轮 Token 用量')).toHaveText('本轮 Token：输入 0 · 输出 0');
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(cards).toHaveCount(0);
+    await expect(page.locator('.group-frame')).toHaveCount(0);
+    await page.getByRole('button', { name: '重做', exact: true }).click();
+    await expect(cards).toHaveCount(6);
+    await expect(page.locator('.group-frame')).toHaveCount(1);
+  });
+  test('numbered dashed connections and all-dashed shared junctions use zero cloud tokens', async ({ page }) => {
+    await page.goto(url);
+    await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+    await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    await page.context().setOffline(true);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const send = async (prompt: string, expected: string) => {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(ai.getByRole('status')).toContainText(expected);
+    };
+    await send('造一张角色，一张人物，4张空白卡，空白卡群组，角色连接到人物。', '已直接完成 8 项操作');
+    await send('空白 1、2、3、4虚线连接到人物', '已直接完成 4 项操作');
+    await expect(page.locator('.connection-path.title-connection')).toHaveCount(4);
+    await send('所有虚线，添加一个中转点', '已为 4 条虚线添加 1 个共用中转点');
+    await expect(page.locator('.connection-junction')).toHaveCount(1);
+    await expect(page.locator('.connection-path:not(.title-connection)')).toHaveCount(1);
+    await expect(ai.getByLabel('本轮 Token 用量')).toHaveText(Array(3).fill('本轮 Token：输入 0 · 输出 0'));
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(page.locator('.connection-junction')).toHaveCount(0);
+    await expect(page.locator('.connection-path.title-connection')).toHaveCount(4);
+  });
 
   test('preview-only layout and status follow-ups remain local through apply and undo', async ({ page }) => {
     await page.goto(url);

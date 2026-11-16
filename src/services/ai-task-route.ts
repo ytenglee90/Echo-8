@@ -103,6 +103,7 @@ function ungroupTarget(value: string): NaturalCanvasOperation {
 const connectionOperand = `(${quotedName}|[^「」『』“”"，,？?\r\n]+?)`;
 const connectionStyle = String.raw`(?:(?:[，,\s]*(?:使用|用)\s*|[，,\s]+)(实线|虚线))?`;
 const directedConnection = new RegExp(`^(?:把|将)?\\s*${connectionOperand}\\s*(?:连接到|连到|连向|连接至|接到)\\s*${connectionOperand}${connectionStyle}$`, 'u');
+const styledDirectedConnection = new RegExp(`^(?:把|将)?\\s*${connectionOperand}\\s*(实线|虚线)\\s*(?:连接到|连到|连向|连接至|接到)\\s*${connectionOperand}${connectionStyle}$`, 'u');
 const drawLine = String.raw`(?:加|画|拉|接|连)(?:上)?(?:一)?条\s*(实线|虚线|连线|线)`;
 const fromConnection = new RegExp(String.raw`^从\s*${connectionOperand}\s*${drawLine}\s*到\s*${connectionOperand}$`, 'u');
 const betweenConnection = new RegExp(String.raw`^从\s*${connectionOperand}\s*到\s*${connectionOperand}\s*${drawLine}$`, 'u');
@@ -118,12 +119,21 @@ function parseConnection(text: string): NaturalCanvasOperation | undefined {
   if (/^(?:如何|怎么|怎样|能否|能不能|可不可以|可以|如果|先别|不要|别|新建|创建|新增|生成|总结|分析|解释|对比|比较|检查|查看|查询)/u.test(text)) return undefined;
   const continueFromPrevious = /^(?:连到|接到|连向|指向)/u.test(text);
   if (continueFromPrevious) text = '它' + text.replace(/^指向/u, '连向');
+  const styled = styledDirectedConnection.exec(text);
   let match = directedConnection.exec(text) ?? pointingConnection.exec(text) ?? betweenConnection.exec(text);
-  if (match) {
-    const destination = name(match[2]!);
-    const heading = match[2]!.trim() === destination ? /^(.*?)(?:的)?标题(?:栏)?$/u.exec(destination) : null;
-    const line = match[3] === '实线' || match[3] === '虚线' ? lineStyle(match[3]) : heading ? 'dashed' : undefined;
-    return { kind: 'connect', names: [name(match[1]!), heading?.[1]?.trim() || destination], line,
+  if (styled || match) {
+    const source = (styled ?? match)![1]!;
+    const target = styled?.[3] ?? match![2]!;
+    const destination = name(target);
+    const heading = target.trim() === destination ? /^(.*?)(?:的)?标题(?:栏)?$/u.exec(destination) : null;
+    if (styled?.[4] && styled[2] !== styled[4]) return undefined;
+    const style = styled?.[2] ?? match?.[3];
+    const line = style === '实线' || style === '虚线' ? lineStyle(style) : heading ? 'dashed' : undefined;
+    const numbered = numberedOperands(source);
+    const from = numbered.length > 1 ? numbered : names(source);
+    const to = heading?.[1]?.trim() || destination;
+    if (from.length > 1) return { kind: 'connect-many', names: [to, ...from], topology: 'fan', direction: 'in', line: line ?? 'solid' };
+    return { kind: 'connect', names: [name(source), to], line,
       ...(continueFromPrevious ? { continueFromPrevious } : {}) };
   }
   match = fromConnection.exec(text);

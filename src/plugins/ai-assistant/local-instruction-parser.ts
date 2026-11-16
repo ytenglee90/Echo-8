@@ -8,6 +8,7 @@ const QUOTED = new RegExp(NATURAL_QUOTED_NAME, 'gu');
 const strip = (text: string) => text.trim().replace(/^(?:(?:请你?|帮我|给我|麻烦你?|再|然后|接着)\s*)+/u, '').replace(/[。！!]+$/u, '').trim();
 const quote = (text: string) => `「${text}」`;
 const literal = (text: string) => text.trim().replace(/^[「『“"]|[」』”"]$/gu, '').trim();
+export const LOCAL_GROUP_CLAUSE = /^(.+?)(?:一起)?(?:分组|打组|打个组|成组|建组|(?:组成(?:一个)?|合成(?:一个)?)?群组|归到一块儿?|归到一起|归成一组|放到一组|放在同一组|合在一组|合成一组|编成一组|归在一组|分在一堆|收进一组)$/u;
 
 function localNumber(text: string): number | undefined {
   if (/^\d+$/u.test(text)) return Number(text);
@@ -76,7 +77,8 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
     if (!match) return undefined;
     const count = localNumber(match[1]!);
     if (!count || count > 80) return undefined;
-    let title = match[3]!.trim().replace(/^(?:(?:名为|叫|叫做)\s*)/u, '').replace(/(?:放)?(?:在这儿|在这里|放这里|就好|就行|吧)$/u, '').trim();
+    const named = /^(?:名为|叫做|叫)\s*|[「『“"]/u.test(match[3]!);
+    let title = match[3]!.trim().replace(/^(?:(?:名为|叫做|叫)\s*)/u, '').replace(/(?:放)?(?:在这儿|在这里|放这里|就好|就行|吧)$/u, '').trim();
     const presentation = /文本框/u.test(title) ? '文本框' : '节点';
     if (/[「『“"]/u.test(title)) {
       const quoted = new RegExp(`^(${NATURAL_QUOTED_NAME})(?:的)?(?:卡片?|节点|文本框)?$`, 'u').exec(title);
@@ -85,7 +87,8 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
     } else title = title.replace(/的(?:卡片?|节点|文本框)$/u, '');
     if (!title || title.length > 100 || /[\r\n]|(?:并|再)(?:写|填|设计|补)|正文|内容|写上|填上|带上/u.test(title) ||
       !/[「『“"]/u.test(match[3]!) && /连接|连到|指向|打组|分组|改成|改为|用虚线/u.test(title)) return undefined;
-    if (/^(?:空白(?:的)?|空白(?:卡片?|节点)|卡片?|节点)$/u.test(title)) title = /空白/u.test(title) ? '空白' : '新节点';
+    const requestedTitle = title;
+    if (!named && /^(?:空白(?:的)?|空白(?:的)?(?:卡片?|节点)|卡片?|节点)$/u.test(title)) title = /空白/u.test(title) ? '空白' : '新节点';
     const titles: string[] = [];
     for (let index = 0; index < count; index++) {
       let candidate = count === 1 ? title : `${title} ${index + 1}`;
@@ -96,6 +99,7 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
       context.created.push(candidate);
     }
     context.aliases.set(title, [...(context.aliases.get(title) ?? []), ...titles]);
+    if (requestedTitle !== title) context.aliases.set(requestedTitle, [...(context.aliases.get(requestedTitle) ?? []), ...titles]);
     return titles.map(name => /^(?:角色卡|人物卡)$/u.test(name) ? `新建一张${name}` : `新建一个叫${quote(name)}的${presentation}`);
   }
   // Existing exact grammars retain their own semantics and target boundaries.
@@ -123,7 +127,7 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
     if (layout && layoutNames?.length) return [`${renderOperands(layoutNames)}排成${/横|水平/u.test(layout[0]) ? '横排' : '竖排'}`];
   }
   if (kind === 'connect') {
-    const directed = /^(?:把|将|让)?(.+?)(?:连接到|连到|接到|连接|连向|指向)(.+?)(?:用|使用)?(虚线|实线|断线)?$/u.exec(text);
+    const directed = /^(?:把|将|让)?(.+?)(?:连接到|连接至|连到|接到|连接|连向|指向)(.+?)(?:用|使用)?(虚线|实线|断线)?$/u.exec(text);
     if (directed) {
       const from = operands(directed[1]!, context), to = operands(directed[2]!, context);
       if (from?.length && to?.length === 1) return from.map(name => `${renderOperands([name])}连到${renderOperands(to)}用${directed[3] === '虚线' || directed[3] === '断线' ? '虚线' : '实线'}`);
@@ -133,7 +137,7 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
     if (names?.length === 2) return [`把${renderOperands(names)}连起来`];
   }
   if (kind === 'group') {
-    const match = /^(.+?)(?:一起)?(?:分组|打组|打个组|归到一块儿?|归到一起|归成一组|放到一组|放在同一组|合在一组|合成一组|编成一组|归在一组|分在一堆|收进一组)$/u.exec(text);
+    const match = LOCAL_GROUP_CLAUSE.exec(text);
     const names = match && operands(match[1]!, context);
     if (names?.length) return [`${renderOperands(names)}分组`];
   }

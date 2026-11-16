@@ -411,8 +411,9 @@ export async function resolveNaturalOperation(
     if (unique.length !== operation.names.length) return answer('每个端点需要命中一个不同节点，请明确端点名称。');
     const actions: CanvasControlAction[] = [];
     for (let index = 1; index < unique.length; index += 1) {
-      const from = unique[operation.topology === 'fan' ? 0 : index - 1]!;
-      const to = unique[index]!;
+      const anchor = operation.topology === 'fan' ? 0 : index - 1;
+      const from = unique[operation.direction === 'in' ? index : anchor]!;
+      const to = unique[operation.direction === 'in' ? anchor : index]!;
       const directed = edges.filter(edge => edge.from.nodeId === from && edge.to.nodeId === to);
       if (directed.some(edge => isTitleConnection(edge) === (operation.line === 'dashed'))) continue;
       if (directed.length > 1) return answer('端点之间有多条连线，请先明确要修改的线。');

@@ -3,7 +3,8 @@ import { naturalColor, naturalName, NATURAL_QUOTED_NAME } from './natural-canvas
 
 export type NativeCanvasIntent =
   | { kind: 'copy' | 'cut'; expectedCount?: number; expectedKind?: 'text-node' | 'group' }
-  | { kind: 'paste' | 'undo' | 'redo' | 'junction' }
+  | { kind: 'paste' | 'undo' | 'redo' }
+  | { kind: 'junction'; scope?: 'canvas'; line?: 'solid' | 'dashed' }
   | { kind: 'preferences'; property: 'toolbarBackground' | 'annotationColor' | 'editorChromeBackground' | 'editorBackground'; color: string; label: string }
   | { kind: 'annotation-create'; name?: string; body?: string }
   | { kind: 'annotation-update'; body: string }
@@ -24,6 +25,8 @@ export function nativeCanvasIntent(prompt: string): NativeCanvasIntent | undefin
     ...(/这两张/u.test(text) ? { expectedCount: 2 } : /这三张/u.test(text) ? { expectedCount: 3 } : {}),
     ...(/节点|卡片|卡|两张|三张/u.test(text) ? { expectedKind: 'text-node' } : /群组/u.test(text) ? { expectedKind: 'group' } : {}) };
   if (/^(?:粘贴|黏贴|贴上)(?:一下|到(?:当前)?画布(?:上)?|(?:剪贴板(?:中|里)的)?(?:节点|卡片|内容))?$/u.test(text)) return { kind: 'paste' };
+  const canvasJunction = /^(?:给|为|在)?\s*(?:所有|全部)(?:的)?\s*(虚线|实线)(?:连接线|连线)?(?:上)?\s*[，,：:]?\s*(?:添加|增加|加上?|插入)\s*(?:一|1)个\s*(?:共用|共享)?中转点$/u.exec(text);
+  if (canvasJunction) return { kind: 'junction', scope: 'canvas', line: canvasJunction[1] === '虚线' ? 'dashed' : 'solid' };
   if (/^(?:在|给)?\s*(?:(?:当前)?选中(?:的)?(?:连接线|连线|线)|这(?:一|几)?条(?:连接线|连线|线))\s*(?:上)?\s*(?:添加|增加|加上?|插入)\s*(?:一?个)?\s*中转点$/u.test(text)) return { kind: 'junction' };
   const appearance = /^(?:把|将)?\s*(?:全局)?(导航栏|工具栏|顶部栏|编辑器背景|编辑器栏|全局标注|默认标注|全局批注|默认批注)(?:的?(?:背景)?(?:颜色|色))?\s*(?:设为|改成|改为|调成|换成)\s*([^，。；!?！？\n]+)$/u.exec(text);
   if (appearance) {
@@ -53,5 +56,6 @@ export function nativeCanvasIntent(prompt: string): NativeCanvasIntent | undefin
 }
 
 export function nativeCanvasUsesSelection(intent: NativeCanvasIntent): boolean {
-  return !(['paste', 'undo', 'redo', 'preferences'].includes(intent.kind) || (intent.kind === 'annotation-create' && intent.name));
+  return !(['paste', 'undo', 'redo', 'preferences'].includes(intent.kind) ||
+    (intent.kind === 'junction' && intent.scope === 'canvas') || (intent.kind === 'annotation-create' && intent.name));
 }

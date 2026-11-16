@@ -16,6 +16,12 @@ import { serializeProject, parseProject } from '../src/plugins/import-export/cod
 import type { ProjectSource } from '../src/protocols/files.ts';
 import { createAIProviderPlugin } from '../src/plugins/ai-provider/model.ts';
 import { buildProviderRequest } from '../src/plugins/ai-provider/provider-transport.ts';
+import { interpretLocalTurn } from '../src/plugins/ai-assistant/local-turn-routing.ts';
+import { classifyAITurn } from '../src/plugins/ai-assistant/turn-route.ts';
+import type { PluginContext } from '../src/core/contracts.ts';
+import { prepareNativeCanvasAction } from '../src/plugins/canvas-control/native-actions.ts';
+import { nativeCanvasIntent } from '../src/services/native-canvas-intent.ts';
+import { isTitleConnection } from '../src/protocols/connections.ts';
 
 async function harness(execution: 'direct' | 'review' = 'review') {
   const kernel = new ApplicationKernel([createTextNodePlugin(), createSelectionPlugin(), createConnectionsPlugin(), createGroupsPlugin(), createCanvasControlPlugin()]);
@@ -25,6 +31,98 @@ async function harness(execution: 'direct' | 'review' = 'review') {
   return kernel;
 }
 let sequence = 0;
+
+test('reported creation creates exactly six cards, groups the four blanks and connects role to person in one undo', async () => {
+  const kernel = await harness('direct');
+  const before = await nodes(kernel);
+  const beforeIds = new Set(before.map(card => card.id));
+  const signal = new AbortController().signal;
+  const language = { capabilities: { request() { throw new Error('classifier must stay unused'); } },
+    diagnostics: { warn() { throw new Error('classifier must stay unused'); } } } as unknown as PluginContext;
+  const prompt = '造一张角色，一张人物，4张空白卡，空白卡群组，角色连接到人物。';
+  const instructions = (await interpretLocalTurn(language, prompt, classifyAITurn(prompt), signal)).instructions!;
+  const admission = { preparationId: 'reported-group', sessionId: 'reported-group', prompt };
+  const local = await kernel.capabilities.request<{ text: string }>('canvasControl.localPlan@2', { ...admission, instructions }, signal);
+  const offer = await kernel.router.dispatch<{ directPlanId: string }>('canvasControl.offer@1', { ...admission, text: local.text, complete: true }, 'core.test');
+  assert.ok(offer.directPlanId);
+  await kernel.router.dispatch('canvasControl.generate@1', { id: offer.directPlanId }, 'core.test');
+  const cards = (await nodes(kernel)).filter(card => !beforeIds.has(card.id));
+  assert.deepEqual(cards.map(card => card.title).sort(), ['角色', '人物', '空白 1', '空白 2', '空白 3', '空白 4'].sort());
+  const blanks = cards.filter(card => /^空白 [1-4]$/u.test(card.title)).map(card => card.id).sort();
+  const groups = await kernel.capabilities.request<GroupRecord[]>('groups.list@1');
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0]!.memberIds.slice().sort(), blanks);
+  const graph = await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
+  assert.equal(graph.connections.length, 1);
+  assert.equal(graph.connections[0]!.from.nodeId, cards.find(card => card.title === '角色')!.id);
+  assert.equal(graph.connections[0]!.to.nodeId, cards.find(card => card.title === '人物')!.id);
+  const review = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;
+  assert.equal(review.verification?.status, 'verified');
+  assert.equal(review.actions.length, 8);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.deepEqual((await nodes(kernel)).map(card => card.id).sort(), before.map(card => card.id).sort());
+  assert.equal((await kernel.capabilities.request<GroupRecord[]>('groups.list@1')).length, 0);
+  assert.equal((await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections.length, 0);
+  await kernel.router.dispatch('history.redo', undefined, 'core.test');
+  assert.deepEqual((await nodes(kernel)).map(card => card.id).sort(), [...cards, ...before].map(card => card.id).sort());
+  const source = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
+  const reopened = await parseProject(await serializeProject(source));
+  assert.ok(cards.every(card => reopened.document.namespaces.textNode[card.id]));
+  assert.equal(Object.keys(reopened.document.namespaces.groups).length, 1);
+  assert.equal(Object.keys(reopened.document.namespaces.connections).length, 1);
+  await kernel.plugins.stop('canvas-control');
+});
+
+test('numbered incoming dashed links and a shared junction are local and reject stale references atomically', async () => {
+  const kernel = await harness('direct');
+  const create = (title: string, automaticContext?: boolean) =>
+    kernel.router.dispatch<{ id: string }>('node.create', { title, automaticContext }, 'core.test');
+  const person = await create('人物');
+  const blank = [];
+  for (let index = 1; index <= 4; index++) blank.push(await create(`空白 ${index}`));
+  const hidden = await create('不参与自动操作', false);
+  const hiddenEdge = await kernel.router.dispatch<{ id: string }>('connection.create', {
+    from: { nodeId: hidden.id, side: 'title' }, to: { nodeId: person.id, side: 'title' },
+  }, 'core.test');
+  const prompt = '空白 1、2、3、4虚线连接到人物';
+  const input = { preparationId: 'numbered-incoming', sessionId: 'numbered-incoming', prompt };
+  const local = await kernel.capabilities.request<{ text: string }>('canvasControl.localPlan@1', input);
+  const plan = parseCanvasControlPlan(local.text);
+  assert.equal(plan.actions.length, 4);
+  for (const action of plan.actions) {
+    assert.equal(action.type, 'create-connection');
+    assert.ok(action.type === 'create-connection' && action.line === 'dashed' && action.to === person.id &&
+      blank.some(card => card.id === action.from));
+  }
+  const offer = await kernel.router.dispatch<{ directPlanId: string }>('canvasControl.offer@1', { ...input, text: local.text, complete: true }, 'core.test');
+  await kernel.router.dispatch('canvasControl.generate@1', { id: offer.directPlanId }, 'core.test');
+  const graph = () => kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
+  const original = await graph();
+  assert.equal(original.connections.filter(isTitleConnection).length, 5);
+  const nativeContext = { capabilities: kernel.capabilities, commands: {
+    invoke: (type: string, payload: unknown) => kernel.router.dispatch(type, payload, 'core.test'),
+  } } as unknown as PluginContext;
+  const intent = nativeCanvasIntent('所有虚线，添加一个中转点')!;
+  const action = await prepareNativeCanvasAction(nativeContext, { ...input, preparationId: 'shared-junction', prompt: '所有虚线，添加一个中转点' }, intent);
+  assert.equal(action.ids.length, 4);
+  assert.ok(!action.ids.includes(hiddenEdge.id));
+  assert.match(await action.apply(), /4 条虚线添加 1 个共用中转点/u);
+  const joined = await graph();
+  assert.equal(joined.junctions.length, 1);
+  assert.equal(joined.connections.length, 6);
+  assert.deepEqual(joined.connections.find(edge => edge.id === hiddenEdge.id), original.connections.find(edge => edge.id === hiddenEdge.id));
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.deepEqual(await graph(), original);
+  const stale = await prepareNativeCanvasAction(nativeContext, input, intent);
+  const changed = original.connections.find(edge => action.ids.includes(edge.id))!;
+  await kernel.router.dispatch('connection.setLabel', { id: changed.id, expectedRevision: changed.revision, label: '已变化' }, 'core.test');
+  await assert.rejects(() => stale.apply(), /范围已变化/u);
+  await assert.rejects(() => kernel.router.dispatch('connection.addJunctionForEdges@1', {
+    connections: [{ id: changed.id, revision: changed.revision }], shared: true,
+  }, 'core.test'), /连接线已变化/u);
+  assert.equal((await graph()).junctions.length, 0);
+  await kernel.plugins.stop('canvas-control');
+});
 
 test('preview, group retargeting and repeated offers use the same checked canvas task', async () => {
   const kernel = await harness('direct');

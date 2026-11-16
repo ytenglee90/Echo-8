@@ -177,6 +177,35 @@ test('local counted creation keeps both operands and never interprets a quoted c
   assert.deepEqual(turnAssembly(prepared).localInstructions, ['新建一个叫「角色，删除人物卡」的节点']);
 });
 
+test('reported counted creation resolves the original blank-card label and noun group instruction without a classifier', async () => {
+  let classifierCalls = 0;
+  const context = preparationContext({});
+  const request = context.capabilities.request.bind(context.capabilities);
+  context.capabilities.request = async (key, input, signal) => {
+    if (key === 'language.embed@1') classifierCalls++;
+    return request(key, input, signal);
+  };
+  for (const verb of ['造', '建', '新建', '创建']) {
+    const prompt = verb + '一张角色，一张人物，4张空白卡，空白卡群组，角色连接到人物。';
+    const prepared = await prepareAIContext(context, session(), {},
+      { sessionId: session().id, prompt, operation: classifyAITurn(prompt).operation },
+      new AbortController().signal, () => undefined);
+    const assembly = turnAssembly(prepared);
+    assert.equal(prepared.operation, 'canvas-control');
+    assert.equal(prepared.prompt, prompt);
+    assert.equal(assembly.clarify, undefined);
+    assert.deepEqual(assembly.localInstructions, [
+      '新建一个叫「角色」的节点', '新建一个叫「人物」的节点',
+      ...[1, 2, 3, 4].map(number => `新建一个叫「空白 ${number}」的节点`),
+      '「空白 1」和「空白 2」和「空白 3」和「空白 4」分组', '角色连接到人物',
+    ]);
+  }
+  assert.equal(classifierCalls, 0);
+  const literal = await interpretLocalTurn(context, '造一张叫「空白卡」的卡，一张人物', classifyAITurn('造一张叫「空白卡」的卡，一张人物'),
+    new AbortController().signal);
+  assert.equal(literal.instructions?.[0], '新建一个叫「空白卡」的节点');
+});
+
 test('original decisions and suggestions remain distinguishable after 1, 15, 100 and 300 turns', async () => {
   const earliest = '我确认主角职业是钟匠。';
   const latest = '我确认把主角职业改成守夜人。';

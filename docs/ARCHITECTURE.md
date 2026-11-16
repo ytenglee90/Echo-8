@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+Counted creation preserves the original generic-card operand for later local clauses. Directed numbered fan-in links keep explicit line styles and endpoint direction. The connection owner exposes `connection.addJunctionForEdges@1` for revision-checked geometry planning, reused by the toolbar and bounded assistant commands for a shared junction (ADR-0156).
+
 The assistant recognizes explicit preview and read-only constraints before dispatch. Canvas control owns arrangement retargeting and bounded session receipts exposed by `canvasControl.receipt@1`, with duplicate submissions resolved against the original preparation identity. Nearby follow-ups can use one exchange and internal transcript directories extend on verified append events. Explicit short-answer limits inform generation and continuation budgets (ADR-0155).
 
 Explicit draft revisions use revision-checked original ranges from a bounded conversation directory. Standalone conversation can bypass document retrieval. Versioned native assistant commands route locally to the owning clipboard, annotation, connection, palette and history commands. Their transcript receipts are durable and stay outside canvas undo. Pending layout corrections preserve the captured targets and spacing (ADR-0154).

@@ -1,7 +1,7 @@
 import type { PluginContext } from '../../core/contracts.ts';
 import type { LocalLanguageResult } from '../../protocols/local-language.ts';
 import { predictLocalIntent } from '../../services/local-intent-semantics.ts';
-import { compileLocalClause, isLocalDiscussion, localInstructionContext, splitLocalInstruction } from './local-instruction-parser.ts';
+import { compileLocalClause, isLocalDiscussion, LOCAL_GROUP_CLAUSE, localInstructionContext, splitLocalInstruction } from './local-instruction-parser.ts';
 import { isAbortError, isCapabilityUnavailable } from './runtime-errors.ts';
 import type { AITurnRoute } from './turn-route.ts';
 import { isNearConversationFollowup, isStandaloneConversation } from './context-intent.ts';
@@ -35,7 +35,7 @@ async function classifyLocally(context: PluginContext, texts: string[], signal: 
   return undefined;
 }
 
-const describesGroup = (clause: string) => /(?:打组|分组)$/u.test(clause);
+const describesGroup = (clause: string) => LOCAL_GROUP_CLAUSE.test(clause);
 const describesLink = (clause: string) => /连接|指向|连到/u.test(clause);
 
 function localTurnInput(prompt: string, route: AITurnRoute) {

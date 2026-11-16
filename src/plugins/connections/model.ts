@@ -25,6 +25,7 @@ import {
   normalizeConnectionLabelSize,
   type ConnectionCreatePlanRequest,
   type ConnectionAddJunctionBatchRequest,
+  type ConnectionAddJunctionEdgesRequest,
   type ConnectionAppearanceSnapshot,
   type ConnectionEndpoint,
   type ConnectionMutationPlan,
@@ -131,6 +132,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.connectSelectedEndpoints',
         'connection.addJunction',
         'connection.addJunctionBatch@1',
+        'connection.addJunctionForEdges@1',
         'connection.addJunctionFromContext',
         'connection.addJunctionAtPointer',
         'connection.moveJunction',
@@ -142,7 +144,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
         'connection.toggleTitleSelected',
         'connection.toolbarToggle@1',
       ],
-      dispatches: ['canvas.camera.commit', 'selection.moveEntities', 'selection.set', 'selection.clear', 'interaction.begin', 'interaction.end', 'connection.addJunction', 'connection.addJunctionBatch@1', 'connection.moveJunction', 'connection.moveJunctions', 'connection.removeSelectedJunctions', 'connection.toggleSelected', 'connection.toggleTitleSelected'],
+      dispatches: ['canvas.camera.commit', 'selection.moveEntities', 'selection.set', 'selection.clear', 'interaction.begin', 'interaction.end', 'connection.addJunction', 'connection.addJunctionBatch@1', 'connection.addJunctionForEdges@1', 'connection.moveJunction', 'connection.moveJunctions', 'connection.removeSelectedJunctions', 'connection.toggleSelected', 'connection.toggleTitleSelected'],
       asks: ['editor.openPanes'],
       events: [
         'entity.deleted',
@@ -350,6 +352,46 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
           } };
         },
       });
+      context.commands.register<ConnectionAddJunctionEdgesRequest, { ids: string[] }>({
+        type: 'connection.addJunctionForEdges@1',
+        validate: (value): value is ConnectionAddJunctionEdgesRequest => isRecord(value) &&
+          (value.shared === undefined || typeof value.shared === 'boolean') &&
+          isAddJunctionRequest({ ...value, x: 0, y: 0 }),
+        handle: async (payload) => {
+          const all = Object.values(readConnections());
+          const byId = new Map(all.map(edge => [edge.id, edge]));
+          if (new Set(payload.connections.map(edge => edge.id)).size !== payload.connections.length) throw new Error('连接线选择不能重复');
+          const edges = payload.connections.map(reference => {
+            const edge = byId.get(reference.id);
+            if (!edge || edge.revision !== reference.revision) throw new Error('连接线已变化，请重新选择后添加中转点');
+            return edge;
+          });
+          const shared = canShareConnectionJunction(edges);
+          if (payload.shared && !shared) throw new Error('这些连线没有同一方向的公共端点，或线型不同。请明确要共用一个中转点的连线。');
+          const nodeIds = [...new Set(all.flatMap(edge => [edge.from.nodeId, edge.to.nodeId]))];
+          const nodes = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds });
+          const points = Object.values(readJunctions());
+          const geometry = new Map<string, ConnectionNodeGeometry>([
+            ...nodes, ...await readTargets(), ...points.map(point => ({ ...junctionGeometry(point), kind: 'junction' as const })),
+          ].map(node => [node.id, node]));
+          const rendered = connectionGraphPoints(all, geometry);
+          const batches = shared ? [edges] : edges.map(edge => [edge]);
+          const result = await context.commands.invoke('connection.addJunctionBatch@1', { junctions: batches.map(batch => {
+            const centers = batch.map(edge => {
+              const curve = rendered.get(edge.id);
+              if (!curve) throw new Error('连线端点已经变化，请重新选择');
+              return connectionCurveMidpoint(curve.from, curve.to);
+            });
+            return {
+              x: centers.reduce((sum, point) => sum + point.x, 0) / centers.length,
+              y: centers.reduce((sum, point) => sum + point.y, 0) / centers.length,
+              connections: batch.map(edge => ({ id: edge.id, revision: edge.revision })),
+            };
+          }) });
+          await context.commands.invoke('selection.set', { ids: result.ids, mode: 'replace' });
+          return { result };
+        },
+      });
       context.commands.register<{ kind: 'body' | 'title' | 'junction' | 'disconnect' }, { id?: string; ids?: string[]; removed?: number }>({
         type: 'connection.toolbarToggle@1',
         validate: (value): value is { kind: 'body' | 'title' | 'junction' | 'disconnect' } => isRecord(value) && ['body', 'title', 'junction', 'disconnect'].includes(String(value.kind)),
@@ -364,24 +406,9 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
             if (selectedPoints.length && selectedPoints.length === selectedIds.size) return { result: await context.commands.invoke('connection.removeSelectedJunctions') };
             if (!edges.length) throw new Error('请选中要拆分的连接线，或要解除的中转点');
             if (edges.length > 10_000) throw new Error('一次最多处理 10000 条连接线，请分批选择');
-            const nodeIds = [...new Set(all.flatMap(edge => [edge.from.nodeId, edge.to.nodeId]))];
-            const nodes = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds });
-            const geometry = new Map<string, ConnectionNodeGeometry>([...nodes, ...await readTargets(), ...points.map(point => ({ ...junctionGeometry(point), kind: 'junction' as const }))].map(node => [node.id, node]));
-            const rendered = connectionGraphPoints(all, geometry);
-            const batches = canShareConnectionJunction(edges) ? [edges] : edges.map(edge => [edge]);
-            const result = await context.commands.invoke('connection.addJunctionBatch@1', { junctions: batches.map(batch => {
-              const centers = batch.map(edge => {
-                const curve = rendered.get(edge.id);
-                if (!curve) throw new Error('连线端点已经变化，请重新选择');
-                return connectionCurveMidpoint(curve.from, curve.to);
-              });
-              return {
-                x: centers.reduce((sum, point) => sum + point.x, 0) / centers.length,
-                y: centers.reduce((sum, point) => sum + point.y, 0) / centers.length,
-                connections: batch.map(edge => ({ id: edge.id, revision: edge.revision })),
-              };
-            }) });
-            await context.commands.invoke('selection.set', { ids: result.ids, mode: 'replace' });
+            const result = await context.commands.invoke('connection.addJunctionForEdges@1', {
+              connections: edges.map(edge => ({ id: edge.id, revision: edge.revision })),
+            });
             return { result: { id: result.ids[0], ids: result.ids } };
           }
           let removed = edges.filter(edge => kind === 'disconnect' || isTitleConnection(edge) === (kind === 'title'));
