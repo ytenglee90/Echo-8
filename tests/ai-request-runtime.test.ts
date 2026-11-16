@@ -77,7 +77,7 @@ test('a cancelled old preparation cannot replace the new turn or report a late e
     readMemoryIndexes: () => ({}), readAssistantInstances: () => [],
   };
   registerAIRequestRuntime(context, runtime);
-  const input: PreparePayload = { sessionId: 'session:1', prompt: '把这两张都弄成蓝色', operation: 'general' };
+  const input: PreparePayload = { sessionId: 'session:1', prompt: '把这两张配成海港的感觉', operation: 'general' };
   prepare!(input);
   prepare!({ ...input, prompt: '人物卡怎么设计？' });
   assert.deepEqual(deadlines, [300_000, 120_000]);

@@ -16,6 +16,7 @@ import { auditCanvasNames, findCanvasText, planGroupColumns, shortestCanvasPath 
 
 export interface NaturalControlState {
   ids: string[]; lineId?: string; groupId?: string; pendingLine?: string; draftTitles?: ReadonlyMap<string, string>;
+  frozenSelection?: string[];
   createdIds?: string[];
   pendingTask?: { goal: string; question: string };
   lastPlacement?: CanvasRelativePlacement;
@@ -208,7 +209,8 @@ export async function resolveNaturalOperation(
       return group && validMembers(group.memberIds) ? group.memberIds : answer('当前没有可沿用的群组。');
     }
     if (pronoun.test(name) || recentCreation.test(name)) {
-      const selected = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
+      const selected = previous.frozenSelection ? { ids: previous.frozenSelection } :
+        await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
       const useSelection = /^(?:(?:当前)?选中|选区|这两个$|这几个$|这张(?:卡片|卡)?$)/u.test(name);
       const selectedIds = useSelection ? selected.ids : recentCreation.test(name) ? previous.createdIds ?? previous.ids :
         previous.ids.length ? previous.ids : selected.ids;

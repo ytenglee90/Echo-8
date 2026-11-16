@@ -77,7 +77,7 @@ export function extendedCanvasOperation(text: string): ExtendedCanvasOperation |
   }
   if ((match = /^(?:选中|选择|框选)\s*(.+)$/u.exec(text))) return { kind: 'select', names: naturalTargetFilter(match[1]!) ? [match[1]!] : naturalNames(match[1]!), selectionMode: 'replace' };
   if ((match = /^(?:把|将)?\s*(.+?)(?:也选上|加入选择|加入选区)$/u.exec(text))) return { kind: 'select', names: naturalNames(match[1]!), selectionMode: 'add' };
-  if ((match = new RegExp(`^(?:把|将)?\\s*${operand}\\s*(?:改名为|改名成|标题改成|标题改为)\\s*(.+)$`, 'u').exec(text))) {
+  if ((match = new RegExp(`^(?:把|将)?\\s*${operand}\\s*(?:改名为|改名成|(?:的\\s*)?标题改(?:成|为))\\s*(.+)$`, 'u').exec(text))) {
     return { kind: 'rename', names: [naturalName(match[1]!)], title: naturalName(match[2]!) };
   }
   if ((match = /^(?:删除|删掉|移除节点)\s*(.+)$/u.exec(text))) return { kind: 'remove', names: naturalTargetFilter(match[1]!) ? [match[1]!] : naturalNames(match[1]!) };
@@ -109,6 +109,10 @@ export function extendedCanvasOperation(text: string): ExtendedCanvasOperation |
     return { kind: 'create', names: [naturalName(match[1]!)], side: /左/u.test(match[2]!) ? 'left' : /右/u.test(match[2]!) ? 'right' : match[2] === '上方' ? 'above' : 'below', title: naturalName(match[3]!), presentation: match[4] === '文本框' ? 'text-box' : 'card' };
   }
   if ((match = /^(?:新建|创建)(?:一张|一个)?(?:叫|名为)\s*(.+?)(?:的)?(卡片|文本框|节点)$/u.exec(text))) {
+    return { kind: 'create', names: [], title: naturalName(match[1]!), presentation: match[2] === '文本框' ? 'text-box' : 'card' };
+  }
+  if ((match = new RegExp(`^(?:新建|创建|新增|造|建|做|添加)(?:一[个张份]|[个张])?\\s*(?![零一二两三四五六七八九十百\\d]+[个张份])(${NATURAL_QUOTED_NAME}|[^\\s，,。；;！？?!「『“"]{1,80}?)(?:的)?(节点|卡片|卡|文本框)$`, 'u').exec(text))) {
+    if (/(?:和|以及|再来)[零一二两三四五六七八九十百\d]+[个张份]/u.test(match[1]!)) return undefined;
     return { kind: 'create', names: [], title: naturalName(match[1]!), presentation: match[2] === '文本框' ? 'text-box' : 'card' };
   }
   if ((match = new RegExp(String.raw`^(?:新建|创建|建|加|添加|来|放)(?:(?:一|1)?[个张])?(空白(?:的)?)?(节点|卡片|文本框)(?:[，,：:\s]*(?:就叫|叫|名为|命名为)\s*(${NATURAL_QUOTED_NAME}|[^\s，,。；;！？?!]{1,80}))?$`, 'u').exec(text))) {

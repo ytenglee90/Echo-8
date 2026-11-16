@@ -65,6 +65,10 @@ declare module './commands.ts' {
     'annotation.setPanelRect': ValidatedCommand;
     'canvas.camera.commit': ValidatedCommand;
     'canvas.focusSelection': ValidatedCommand;
+    'canvas.zoomIn': ValidatedCommand;
+    'canvas.zoomOut': ValidatedCommand;
+    'canvas.resetZoom': ValidatedCommand;
+    'selection.all': ValidatedCommand;
     'canvas.tool.hand': ValidatedCommand;
     'canvas.tool.select': ValidatedCommand;
     'clipboard.copy': ValidatedCommand;

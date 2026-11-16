@@ -188,6 +188,29 @@ export async function commitUpload(env, project, body) {
 }
 
 export async function routeBookRequest(request, env, url, identity, helpers) {
+  if (url.pathname === '/v2/assistant-preferences') {
+    if (url.searchParams.get('account') !== identity.sub) throw fail(403, '账号已经切换，请重新载入个人偏好');
+    if (request.method === 'GET') {
+      const current = await env.DB.prepare('SELECT revision, body_json FROM account_assistant_preferences WHERE user_id=?').bind(identity.sub).first();
+      return json({ revision: Number(current?.revision ?? 0),
+        preferences: current ? JSON.parse(current.body_json) : { schemaVersion: 1, enabled: true, learning: false, entries: [] } });
+    }
+    if (request.method !== 'PUT') throw fail(405, '不支持的操作');
+    const body = await helpers.readJson(request);
+    if (!body || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0 ||
+      Object.keys(body).some(key => !['expectedRevision', 'preferences'].includes(key)) ||
+      !validAssistantPreferences(body.preferences)) throw fail(400, 'AI 个人偏好格式无效');
+    const data = JSON.stringify(body.preferences);
+    if (encoder.encode(data).length > 128 * 1024) throw fail(400, 'AI 个人偏好超过容量上限');
+    const now = Date.now(), revision = body.expectedRevision;
+    const result = revision === 0
+      ? await env.DB.prepare('INSERT OR IGNORE INTO account_assistant_preferences(user_id, revision, body_json, updated_at) VALUES (?, 1, ?, ?)')
+        .bind(identity.sub, data, now).run()
+      : await env.DB.prepare('UPDATE account_assistant_preferences SET revision=revision+1, body_json=?, updated_at=? WHERE user_id=? AND revision=?')
+        .bind(data, now, identity.sub, revision).run();
+    if (!result.meta?.changes) throw fail(409, '其他设备已修改 AI 个人偏好，请重新载入', 'assistant_preferences_conflict');
+    return json({ revision: revision + 1, preferences: body.preferences });
+  }
   if (url.pathname === '/v2/preferences') {
     const current = await env.DB.prepare('SELECT revision, body_json FROM account_preferences WHERE user_id=?').bind(identity.sub).first();
     if (request.method === 'GET') return json({ revision: Number(current?.revision ?? 0), preferences: current ? JSON.parse(current.body_json) : null });
@@ -281,4 +304,31 @@ export async function routeBookRequest(request, env, url, identity, helpers) {
     return json({ ...result, storage: helpers.storageUsage(env, measurement) });
   }
   throw fail(405, '不支持的操作');
+}
+
+function validAssistantPreferences(value) {
+  if (!value || value.schemaVersion !== 1 || typeof value.enabled !== 'boolean' || typeof value.learning !== 'boolean' ||
+    !Array.isArray(value.entries) || value.entries.length > 300 ||
+    Object.keys(value).some(key => !['schemaVersion', 'enabled', 'learning', 'entries'].includes(key))) return false;
+  const ids = new Set(), keys = new Set();
+  for (const entry of value.entries) {
+    if (!entry || typeof entry.id !== 'string' || !entry.id || entry.id.length > 120 || ids.has(entry.id) || typeof entry.enabled !== 'boolean' ||
+      entry.bookId !== undefined && (typeof entry.bookId !== 'string' || !entry.bookId || entry.bookId.length > 200) ||
+      entry.origin !== undefined && !['manual', 'explicit', 'feedback'].includes(entry.origin)) return false;
+    ids.add(entry.id);
+    let key;
+    if (entry.kind === 'phrase' && typeof entry.phrase === 'string' && entry.phrase.length <= 80 && !/[\r\n]/u.test(entry.phrase) &&
+      ['group', 'horizontal', 'vertical'].includes(entry.action) && ['active', 'candidate'].includes(entry.status) &&
+      Number.isInteger(entry.evidence) && entry.evidence >= 1 && entry.evidence <= 100 &&
+      Object.keys(entry).every(field => ['id', 'enabled', 'bookId', 'origin', 'kind', 'phrase', 'action', 'status', 'evidence'].includes(field))) {
+      const phrase = entry.phrase.normalize('NFKC').trim().replace(/[。！!]+$/gu, '').toLocaleLowerCase('zh-CN');
+      if (!phrase) return false;
+      key = JSON.stringify([entry.bookId ?? '', entry.kind, phrase, entry.status]);
+    } else if (entry.kind === 'gap' && Number.isInteger(entry.gap) && entry.gap >= 0 && entry.gap <= 2_000 &&
+      Object.keys(entry).every(field => ['id', 'enabled', 'bookId', 'origin', 'kind', 'gap'].includes(field))) key = JSON.stringify([entry.bookId ?? '', entry.kind]);
+    else return false;
+    if (keys.has(key)) return false;
+    keys.add(key);
+  }
+  return true;
 }

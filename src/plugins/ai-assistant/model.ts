@@ -100,6 +100,7 @@ import { registerAIQueryRuntime } from './query-runtime.ts';
 import { registerAIMemoryManagementRuntime } from './memory-management-runtime.ts';
 import { PERSONAL_AI_MEMORY_DIRECTORY_KEY } from './memory-protocol.ts';
 import { registerAIAssistantUI } from './ui-runtime.ts';
+import { PERSONAL_PREFERENCES_CHANGED, registerPersonalPreferences } from './personal-preferences.ts';
 import {
   isAssistantIdPayload,
   isAssistantInstanceState,
@@ -162,6 +163,7 @@ export function createAIAssistantPlugin(
   toolbar?: unknown,
   memoryDeleteDialog?: unknown,
   requestInspectionDialog?: unknown,
+  personalPreferencesPanel?: unknown,
 ): PluginDefinition {
   const preparations = new Map<string, PreparedGeneration>();
   const preparationTasks = new Map<string, TaskHandle<AIPreparedContext>>();
@@ -215,6 +217,7 @@ export function createAIAssistantPlugin(
           'composerHeight',
           'view',
           'activeSessionId',
+          'personalPreferencesOpen',
         ],
       },
       requiresCapabilities: [
@@ -231,7 +234,8 @@ export function createAIAssistantPlugin(
         'entity.deletePlan@1',
       ],
       optionalCapabilities: [
-        'language.embed@1', 'canvasControl.localPlan@2',
+        'language.embed@1', 'canvasControl.localPlan@2', 'canvasControl.prepareCompound@1', 'canvasControl.completeCompound@1',
+        'account.assistantPreferences@1',
         'groups.list@1',
         'content.search@2',
         'ai.provider.taskUsage@1',
@@ -286,6 +290,7 @@ export function createAIAssistantPlugin(
         'ai.session.save',
         'ai.session.memory.commit',
         'ai.context.prepare',
+        'ai.personal.open@1', 'ai.personal.close@1', 'ai.personal.refresh@1', 'ai.personal.update@1', 'ai.personal.export@1',
         'ai.context.discard',
         'ai.generation.start',
         'ai.generation.retry',
@@ -313,6 +318,8 @@ export function createAIAssistantPlugin(
       ],
       dispatches: [
         'canvasControl.offer@1', 'canvasControl.native@1', 'canvasControl.generate@1', 'canvasControl.applyItems@1', 'diagnostics.operationLog.open@1',
+        'ai.personal.update@1',
+        'canvasControl.revisePending@1',
         'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings', 'retrieval.open@1',
         'ai.context.prepare',
         'aiProvider.profile.activate', 'ai.promptTemplate.restorePersonal', 'system.preferences.set',
@@ -320,6 +327,7 @@ export function createAIAssistantPlugin(
         'editor.open',
       ],
       events: [
+        'system.ui.surface.revealed',
         'ai.session.initialized',
         'ai.assistant.focused',
         'ai.assistant.deleted',
@@ -340,12 +348,14 @@ export function createAIAssistantPlugin(
         'ai.prompt.configuration.changed',
       ],
       queries: [
+        'ai.personal.state@1',
         'ai.task.usage@1',
         'ai.request.inspection@1',
         'ai.state', 'ai.catalog', 'ai.transcript', 'ai.pendingPreparation',
         'ai.memoryIndexes', 'ai.memoryCatalog', 'ai.memory.deleteConfirmation', 'ai.promptTemplates',
       ],
       asks: [
+        'account.assistantPreferenceScope@1', 'ai.personal.state@1',
         'ai.task.usage@1',
         'ai.request.inspection@1',
         'ai.state',
@@ -360,6 +370,7 @@ export function createAIAssistantPlugin(
         'system.preferences.get',
       ],
       signals: [
+        PERSONAL_PREFERENCES_CHANGED, 'cloudSync.updated',
         'canvasControl.resume@1',
         'canvasControl.result@1',
         'system.operationLog.stage@1',
@@ -385,7 +396,7 @@ export function createAIAssistantPlugin(
         'content.reference.drop',
         'bookLibrary.updated',
       ],
-      ui: ['ai.open-button', 'ai.panel', 'ai.memory.deleteConfirm', 'ai.request-inspection'],
+      ui: ['ai.open-button', 'ai.panel', 'ai.memory.deleteConfirm', 'ai.request-inspection', 'ai.personal.settings'],
       actions: ['ai.open-action', 'ai.open-new-assistant-action', 'ai.open-provider-settings-action', 'ai.save-session-action'],
       shortcuts: [
         'ai.open-shortcut',
@@ -398,6 +409,7 @@ export function createAIAssistantPlugin(
         'store.own.read',
         'store.own.write',
         'ui.top.contribute',
+        'ui.right.contribute',
         'ui.overlay.contribute',
         'ui.modal.contribute',
         'ui.action.register',
@@ -1383,7 +1395,9 @@ export function createAIAssistantPlugin(
           };
         },
       });
+      const personalPreferences = registerPersonalPreferences(context, personalPreferencesPanel);
       registerAIRequestRuntime(context, {
+        planPersonalTurn: personalPreferences.plan,
         preparations,
         preparationTasks,
         generationTasks,
@@ -1439,6 +1453,7 @@ export function createAIAssistantPlugin(
       });
 
       registerAIGenerationRuntime(context, {
+        planPersonalTurn: personalPreferences.plan,
         taskForSession: taskUsage.taskFor,
         preparations,
         tasks: generationTasks,

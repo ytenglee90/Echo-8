@@ -1,13 +1,15 @@
 import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
 import { CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, type CanvasControlAdmission, type CanvasControlNativeRequest, type CanvasControlOffer, type CanvasControlReceipt, type CanvasControlReview, type CanvasControlState } from '../../protocols/canvas-control.ts';
 import type { AppearanceEntityRef, AppearanceReadContribution, AppearanceUpdatePlan } from '../../protocols/appearance.ts';
+import type { CanvasCompoundRequest, CanvasCompoundTarget, CanvasControlPlan } from '../../protocols/canvas-control.ts';
+import { resolveNaturalBatch } from './natural-batch.ts';
 import type { ContentReplacePlan } from '../../protocols/search.ts';
 import { OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2, type OperationStatus, type OperationStageUpdate, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
 import { asksForCanvasContinuation, canvasCommandText, canvasRequestDisposition, canvasRequestsAllNodes, isCanvasRepeatCreation, naturalCanvasOperation, needsCanvasSearchInterpretation, type NaturalCanvasOperation } from '../../services/ai-task-route.ts';
 import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
 import { defineManifest } from '../manifest.ts';
-import { captureControlSnapshot, controlInstruction, controlContextV2, type ControlSnapshot } from './context.ts';
+import { captureControlSnapshot, controlInstruction, controlContextV2, deletionImpact, readControlOwners, type ControlSnapshot } from './context.ts';
 import { controlTaskState, readControlReviewStatus, readTaskMarkers, type StoredControlReview } from './task-state.ts';
 import { lineStyleFollowup, localLinePlan, localOperation, localPlan } from './local-operations.ts';
 import { discoverControlTargets } from './target-discovery.ts';
@@ -29,16 +31,17 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       sessionOnlyWorkspace: { [CONTROL_UI_NAMESPACE]: true },
       requiresCapabilities: ['content.summaries@1', 'content.summariesById@1', 'selection.read@1', 'selection.resolve@1', 'selection.entities@1', 'canvasControl.nodesPlan@1'],
       optionalCapabilities: ['content.createPlan@1', 'content.search@2', 'context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'context.semanticSearch@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'annotations.list@1', 'clipboard.state@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
-      providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.context@3', 'canvasControl.localPlan@1', 'canvasControl.localPlan@2', 'canvasControl.taskState@1', 'canvasControl.receipt@1', 'canvasControl.searchPlan@1'],
-      commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.native@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.applyItems@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
+      providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.context@3', 'canvasControl.localPlan@1', 'canvasControl.localPlan@2', 'canvasControl.taskState@1', 'canvasControl.receipt@1', 'canvasControl.searchPlan@1', 'canvasControl.prepareCompound@1', 'canvasControl.completeCompound@1'],
+      commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.native@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.applyItems@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.revisePending@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
       dispatches: ['canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'selection.set', 'selection.delete', 'canvas.focusSelection', 'palette.setPreferences', 'palette.applyAppearance',
-        'clipboard.copy', 'clipboard.paste', 'annotation.create', 'annotation.update', 'annotation.delete', 'connection.toolbarToggle@1', 'connection.addJunctionForEdges@1', 'history.undo', 'history.redo'],
+        'clipboard.copy', 'clipboard.paste', 'annotation.create', 'annotation.update', 'annotation.delete', 'connection.toolbarToggle@1', 'connection.addJunctionForEdges@1', 'history.undo', 'history.redo',
+        'system.action.execute', 'canvas.zoomIn', 'canvas.zoomOut', 'canvas.resetZoom', 'selection.all', 'selection.clear', 'minimap.open', 'minimap.close', 'palette.applyPresetColors@1'],
       queries: ['canvasControl.state@1'],
-      asks: ['history.state'],
+      asks: ['history.state', 'system.actions'],
       events: ['document.replaced', 'history.changed', 'canvas.appearance.changed', 'canvasControl.background.applied@1'], signals: [CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, 'canvasControl.updated@1', 'appearance.color.preview', OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2],
       ui: ['canvas-control.panel', 'canvas-control.toolbar'], actions: ['canvas-control.open-action'],
       shortcuts: ['canvas-control.open-shortcut'],
-      permissions: ['store.own.read', 'store.own.write', 'content.context.read', 'history.manage', 'ui.top.contribute', 'ui.overlay.contribute', 'ui.action.register', 'ui.shortcut.register'],
+      permissions: ['store.own.read', 'store.own.write', 'content.context.read', 'history.manage', 'ui.top.contribute', 'ui.overlay.contribute', 'ui.action.register', 'ui.action.execute', 'ui.shortcut.register'],
     }),
     start(context) {
       const snapshots = new Map<string, ControlSnapshot>();
@@ -50,6 +53,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       const receipts = new Map<string, CanvasControlReceipt & { sessionId: string; prompt: string; reviewId?: string }>();
       const lastNatural = new Map<string, NaturalControlState>();
       const localResults = new Map<string, NaturalControlResult>();
+      const compoundDrafts = new Map<string, { plan: CanvasControlPlan; markers: string[] }>();
       const agentSessions = new Map<string, AgentDiscoverySession>();
       let navigation: CanvasControlState['navigation'];
       let choice: { input: CanvasControlAdmission; name: string; ids: string[]; chosen: Map<string, string> } | undefined;
@@ -300,6 +304,84 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         }
         return result ?? { handled: false };
       } });
+      context.capabilities.provide({ key: 'canvasControl.prepareCompound@1', invoke: async (input: CanvasCompoundRequest, signal) => {
+        if (!isNativeRequest(input) || canvasRequestDisposition(input.prompt) === 'read-only' || !Array.isArray(input.steps) ||
+          input.steps.length < 2 || input.steps.length > 16) throw new Error('组合画布请求无效');
+        const markers: string[] = [];
+        const targets: CanvasCompoundTarget[] = [];
+        const selected = input.selectedIds ?? (await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal)).ids;
+        const steps = input.steps.map<NaturalCanvasOperation>(step => {
+          if ('instruction' in step && typeof step.instruction === 'string' && step.instruction.length <= 600) {
+            const operation = naturalCanvasOperation(step.instruction);
+            if (operation && !['content', 'batch', 'find', 'select', 'filter', 'relations', 'narrow'].includes(operation.kind)) return operation;
+          } else if ('target' in step && typeof step.target === 'string' && step.target.trim() && step.target.length <= 120 && typeof step.replace === 'boolean') {
+            const marker = createId('compound-text');
+            markers.push(marker);
+            return { kind: 'content', names: [step.target], replaceBody: step.replace ? true : undefined };
+          }
+          throw new Error('组合画布步骤不受支持，请拆开确认。');
+        });
+        if (!markers.length || markers.length === steps.length) throw new Error('组合计划缺少正文或画布操作');
+        const result = await resolveNaturalBatch(steps, { ids: [], frozenSelection: selected }, async (step, previous) => {
+          if (step.kind !== 'content') return resolveNaturalOperation(context, input, step, previous, new Map(), signal);
+          const bound = await resolveNaturalOperation(context, input, { kind: 'find', names: step.names }, previous, new Map(), signal);
+          const id = bound.focus?.length === 1 ? bound.focus[0] : undefined;
+          if (bound.choice || !id) return { plan: { version: 2, actions: [], answer: `请明确「${step.names[0]}」对应的正文节点。` } };
+          const node = (await context.capabilities.request<import('../../protocols/content.ts').ContentSummary[]>('content.summariesById@1', { nodeIds: [id] }, signal))[0];
+          const marker = markers[targets.length]!;
+          targets.push({ title: node?.title ?? step.names[0]!, ...(step.replaceBody && node ? { sourceId: id, sourceLength: node.length } : {}),
+            replace: step.replaceBody === true });
+          return { plan: { version: 2, actions: [{ type: 'update-node', id, ...(step.replaceBody || !node ? { text: marker } : { append: marker }) }] },
+            targets: [id], next: { ids: [id] } };
+        });
+        if (result.choice) return { clarification: `「${result.choice.name}」有多个匹配，请用 @ 指定对象，画布尚未修改。` };
+        if (!result.plan.actions.length || targets.length !== markers.length) {
+          return { clarification: result.plan.answer ?? '组合任务缺少明确的目标，画布尚未修改。' };
+        }
+        if (markers.some(marker => !result.plan.actions.some(action => (action.type === 'update-node' || action.type === 'create-node') &&
+          (action.text === marker || action.append === marker)))) throw new Error('组合正文目标在步骤之间发生冲突');
+        const refs = new Set(result.plan.actions.flatMap(action => 'ref' in action ? [action.ref] : []));
+        const snapshot = await captureControlSnapshot(context, { ...input, sourceIds: (result.targets ?? []).filter(id => !refs.has(id)) },
+          'selection', signal, undefined, true);
+        snapshot.execution = execution();
+        snapshot.localDirect = true;
+        const deletes = new Set(result.plan.actions.flatMap(action => action.type === 'delete' ? action.ids : []));
+        if (deletes.size) {
+          const owners = await readControlOwners(context, signal);
+          const related = owners.graph?.connections.filter(edge => deletes.has(edge.from.nodeId) || deletes.has(edge.to.nodeId)) ?? [];
+          if (related.length > 80) throw new Error('删除会影响超过 80 条连线，请单独预览删除范围。');
+          snapshot.graph.connections = [...new Map([...snapshot.graph.connections, ...related].map(edge => [edge.id, edge])).values()];
+          const { groups, graph } = owners;
+          if (graph && groups) snapshot.deletionImpact = new Map([...deletes].map(id => [id, deletionImpact(new Set([id]), groups, graph)]));
+        }
+        validateControlScope(result.plan, snapshot);
+        await planControlApplication(context, snapshot, result.plan, signal);
+        snapshots.set(input.preparationId, snapshot);
+        compoundDrafts.set(input.preparationId, { plan: result.plan, markers });
+        while (snapshots.size > 8) snapshots.delete(snapshots.keys().next().value!);
+        while (compoundDrafts.size > 8) compoundDrafts.delete(compoundDrafts.keys().next().value!);
+        return { targets };
+      } });
+      context.capabilities.provide({ key: 'canvasControl.completeCompound@1', invoke: (input: CanvasControlAdmission & { texts: string[] }) => {
+        const snapshot = snapshots.get(input.preparationId);
+        const draft = compoundDrafts.get(input.preparationId);
+        if (!isAdmission(input) || !snapshot || !draft || snapshot.prompt !== input.prompt || snapshot.sessionId !== input.sessionId ||
+          snapshot.expiresAt < Date.now() || !Array.isArray(input.texts) || input.texts.length !== draft.markers.length ||
+          input.texts.some(text => typeof text !== 'string' || !text.trim()) ||
+          input.texts.reduce((total, text) => total + text.length, 0) > 100_000) throw new Error('组合计划已过期或正文结果无效');
+        const inserts = new Map(draft.markers.map((marker, index) => [marker, input.texts[index]!]));
+        const plan: CanvasControlPlan = { ...draft.plan, actions: draft.plan.actions.map(action => {
+          if (action.type !== 'create-node' && action.type !== 'update-node') return action;
+          if (action.text !== undefined && inserts.has(action.text)) return { ...action, text: inserts.get(action.text)! };
+          if (action.append !== undefined && inserts.has(action.append)) return { ...action, append: inserts.get(action.append)! };
+          return action;
+        }) };
+        validateControlScope(plan, snapshot);
+        compoundDrafts.delete(input.preparationId);
+        localResults.set(input.preparationId, { plan });
+        while (localResults.size > 8) localResults.delete(localResults.keys().next().value!);
+        return { text: JSON.stringify(plan) };
+      } });
       context.capabilities.provide({ key: 'canvasControl.bindContent@1', invoke: async (input: CanvasControlAdmission, signal) => {
         if (!isAdmission(input)) throw new Error('画布控制请求无效');
         const operation = naturalCanvasOperation(input.prompt);
@@ -546,6 +628,10 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           titles[edge.id] = `${titles[edge.from.nodeId] ?? edge.from.nodeId} → ${titles[edge.to.nodeId] ?? edge.to.nodeId}`;
         }
         const review: CanvasControlReview = { id, sessionId: input.sessionId, createdAt: Date.now(), status: 'pending', actions: plan.actions, titles, planVersion: plan.version };
+        const deletes = new Set(plan.actions.flatMap(action => action.type === 'delete' ? action.ids : []));
+        if (deletes.size) review.affectedConnections = snapshot.graph.connections
+          .filter(edge => !deletes.has(edge.id) && (deletes.has(edge.from.nodeId) || deletes.has(edge.to.nodeId)))
+          .map(edge => edge.label || `${titles[edge.from.nodeId] ?? '关联节点'} → ${titles[edge.to.nodeId] ?? '关联节点'}`);
         if (local?.replacement) {
           const { hits, replacement } = local.replacement;
           review.replacement = { count: hits.length, nodeCount: new Set(hits.map(hit => hit.nodeId)).size,
@@ -677,6 +763,35 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         } finally { applying.delete(id); }
       };
       context.commands.register({ type: 'canvasControl.apply@1', validate: isPlanId, handle: input => applyReview(input.id) });
+      context.commands.register({ type: 'canvasControl.revisePending@1',
+        validate: (value): value is { sessionId: string; change: 'cancel' | 'keep-nodes' } => isRecord(value) &&
+          typeof value.sessionId === 'string' && (value.change === 'cancel' || value.change === 'keep-nodes'),
+        handle: ({ sessionId, change }) => {
+          const candidates = [...reviews.values()].filter(draft => draft.review.sessionId === sessionId &&
+            draft.review.status === 'pending' && !generating.has(draft.review.id) && draft.snapshot.expiresAt >= Date.now());
+          if (candidates.length !== 1) return { result: { message: candidates.length
+            ? '有多份待应用计划，请在画布控制中选定要调整的那份。' : '当前对话没有待应用的画布计划。' } };
+          const draft = candidates[0]!;
+          if (change === 'keep-nodes') {
+            if (draft.native || !draft.review.actions.some(action => action.type === 'delete')) {
+              return { result: { message: '待应用计划中没有可单独移除的删除步骤。' } };
+            }
+            const actions = draft.review.actions.filter(action => action.type !== 'delete');
+            if (actions.length) {
+              validateControlScope({ version: draft.review.planVersion ?? 2, actions }, draft.snapshot);
+              draft.review.actions = actions;
+              draft.review.affectedConnections = undefined;
+              draft.snapshot.deletionImpact = undefined;
+              draft.review.error = undefined;
+              publish();
+              return { result: { message: '已从预览移除删除步骤，其余操作仍待应用。' } };
+            }
+          }
+          draft.review.status = 'dismissed';
+          logPlan(draft.review.id, 'dismissed');
+          publish();
+          return { result: { message: '已取消待应用计划。' } };
+        } });
       context.commands.register({ type: 'canvasControl.applyItems@1', validate: isItemSelection, handle: input => {
         const candidates = 'id' in input ? [input.id] : [...reviews.values()].filter(draft =>
           draft.review.sessionId === input.sessionId && draft.review.status === 'pending' && draft.snapshot.expiresAt >= Date.now()).map(draft => draft.review.id);
@@ -711,7 +826,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       } });
       context.events.subscribe('document.replaced', () => {
         for (const [id, draft] of reviews) if (draft.review.status === 'pending') logPlan(id, 'expired');
-        snapshots.clear(); reviews.clear(); lastPlacementBySession.clear(); localResults.clear(); localInterpretations.clear(); agentSessions.clear(); receipts.clear(); lastNatural.clear(); navigation = undefined;
+        snapshots.clear(); reviews.clear(); lastPlacementBySession.clear(); localResults.clear(); compoundDrafts.clear(); localInterpretations.clear(); agentSessions.clear(); receipts.clear(); lastNatural.clear(); navigation = undefined;
         if (background) clearBackground(); else publish();
       });
       context.events.subscribe('history.changed', publish);

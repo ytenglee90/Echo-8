@@ -40,9 +40,12 @@ export async function resolveNaturalBatch(
         else {
           const target = actions[existing]!;
           if (target.type !== 'create-node' && target.type !== 'update-node') return fail('组合步骤的对象类型冲突。');
-          if (action.edit || action.append || action.text !== undefined) return fail('同一节点的连续正文编辑请逐次预览。');
+          const incomingBody = action.edit || action.append !== undefined || action.text !== undefined;
+          const previousBody = target.edit || target.append !== undefined || target.text !== undefined;
+          if (incomingBody && previousBody || action.edit && target.type === 'create-node') return fail('同一节点的连续正文编辑请逐次预览。');
           actions[existing] = target.type === 'update-node' ? { ...target, ...action } : {
             ...target,
+            text: action.text ?? action.append ?? target.text,
             title: action.title ?? target.title,
             x: action.x ?? target.x,
             y: action.y ?? target.y,
@@ -55,9 +58,17 @@ export async function resolveNaturalBatch(
       } else if (action.type === 'create-connection') {
         actions.push({ ...action, ref: resolveId(action.ref), from: resolveId(action.from), to: resolveId(action.to) });
       } else if (action.type === 'create-group' || action.type === 'update-group') {
+        if (action.type === 'create-group') {
+          const key = action.title.normalize('NFKC').trim().toLocaleLowerCase();
+          if (draftTitles.has(key)) return fail(`组合操作的群组名称「${action.title}」与本轮对象重名。`);
+          draftTitles.set(key, resolveId(action.ref));
+        }
         actions.push(action.type === 'create-group' ? { ...action, ref: resolveId(action.ref), members: action.members.map(resolveId) } :
           { ...action, ...(action.members ? { members: action.members.map(resolveId) } : {}) });
       } else actions.push(action);
+    }
+    for (const action of actions) if (action.type === 'update-node' && action.title !== undefined) {
+      draftTitles.set(action.title.normalize('NFKC').trim().toLocaleLowerCase(), action.id);
     }
     result.targets?.forEach(id => targets.add(id));
     state = { ...state, ...result.next, ...(created.length ? { ids: created } : {}) };

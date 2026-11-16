@@ -73,7 +73,7 @@ export function useAIComposerController({
   const [prompt, setPrompt] = useState('');
   const acceptsWriteback = Boolean(pendingWritebackId && /^(?:就用这版[，,]\s*)?(?:替换进去|用这版替换原文|应用这份草稿)[。！!]?$/u.test(prompt.trim()));
   const route = useMemo(() => classifyAITurn(prompt, explicitAtOperation(prompt)), [prompt]);
-  const canRunLocally = Boolean(route.operation === 'general' || acceptsWriteback || route.local || route.native || route.repeatCreation || route.applyItems || route.clarification ||
+  const canRunLocally = Boolean(route.operation === 'general' || route.operation === 'canvas-control' || acceptsWriteback || route.local || route.native || route.repeatCreation || route.applyItems || route.clarification ||
     route.fieldTask && route.fieldTask.kind !== 'complete' || naturalMemoryDirective(prompt) || canCompileLocalCreation(prompt, route));
   const promptHistory = useLocalTextHistory(prompt, setPrompt);
   const {
@@ -290,6 +290,10 @@ export function useAIComposerController({
   }, [assistantId, client, run]);
 
   const composerProps: AIComposerProps = {
+    routeHint: prompt.trim() ? [route.compound ? '组合画布任务' : route.category !== 'chat' ? '画布操作' :
+      route.readCanvas ? '画布只读' : route.revisePending ? '本地预览' : '问答',
+      route.excludesHistory ? '本轮不用历史' : route.history || assistant?.memorySourceIds?.length ? '使用历史记忆' : undefined]
+      .filter(Boolean).join(' · ') : undefined,
     textareaRef,
     assistantId,
     value: prompt,

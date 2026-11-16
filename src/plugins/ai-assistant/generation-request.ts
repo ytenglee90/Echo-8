@@ -298,7 +298,7 @@ export async function buildGenerateRequest(
     maxOutputTokens: Math.max(64, Math.min(16_384, Math.round(maxOutputTokens))),
     messages,
     ...(responseSchema ? { responseSchema } : {}),
-    usageContext: { taskId: prepared.sessionId, sessionId: prepared.sessionId, purpose: prepared.operation === 'canvas-control' ? 'plan' : 'answer', outputKind: prepared.operation === 'canvas-control' ? 'plan' : 'answer', inputBreakdown },
+    usageContext: { taskId: prepared.sessionId, sessionId: prepared.sessionId, purpose: prepared.operation === 'canvas-control' && !boundCanvasWrite ? 'plan' : 'answer', outputKind: prepared.operation === 'canvas-control' && !boundCanvasWrite ? 'plan' : 'answer', inputBreakdown },
   };
 }
 

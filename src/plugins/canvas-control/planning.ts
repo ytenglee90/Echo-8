@@ -3,7 +3,7 @@ import type { CanvasControlAction, CanvasControlNodePlan, CanvasControlGroupPlan
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { EntityDeletePlan } from '../../protocols/selection.ts';
 import { assertNotAborted } from '../../services/async-control.ts';
-import { readControlOwners, optionalControlOwner, type ControlSnapshot } from './context.ts';
+import { deletionImpact, readControlOwners, optionalControlOwner, type ControlSnapshot } from './context.ts';
 
 export function validateControlScope(plan: CanvasControlPlan, snapshot: ControlSnapshot): void {
   const refs = new Set(plan.actions.flatMap(action => 'ref' in action ? [action.ref] : []));
@@ -18,6 +18,7 @@ export function validateControlScope(plan: CanvasControlPlan, snapshot: ControlS
       Object.keys(action).every(key => key === 'type' || key === 'id' || key === 'line');
     const namedNodeChange = action.type === 'update-node' && snapshot.namedTargetIds?.includes(action.id) && snapshot.nodes.some(node => node.id === action.id);
     if ('id' in action && !snapshot.writable.has(action.id) && !scopedLineChange && !namedNodeChange) throw new Error('AI 计划修改了当前控制范围外的对象');
+    if ('id' in action && deleted.has(action.id)) throw new Error('同一组计划同时修改和删除了一个对象，请明确要保留哪项操作');
     if (action.type === 'delete' && action.ids.some(id => !snapshot.writable.has(id))) throw new Error('AI 计划删除了当前控制范围外的对象');
     const references = 'members' in action ? action.members ?? [] : 'from' in action || 'to' in action ? [action.from, action.to].filter((id): id is string => id !== undefined) : [];
     if (references.some(id => (!known.has(id) && !refs.has(id)) || deleted.has(id))) throw new Error('操作计划引用了不存在、范围外或待删除对象');
@@ -77,6 +78,9 @@ export async function planControlApplication(context: PluginContext, snapshot: C
   const deletions = plan.actions.flatMap(action => action.type === 'delete' ? action.ids : []);
   if (deletions.length) {
     if (!owners.groups || !owners.graph) throw new Error('删除前请启用群组和连线插件，以便完整清理对象关系');
+    if (snapshot.deletionImpact && deletions.some(id => snapshot.deletionImpact!.get(id) !== deletionImpact(new Set([id]), groups, graph))) {
+      throw new Error('待删除对象的关联连线或群组已经变化，请重新预览。');
+    }
     const plans = await context.capabilities.requestAll<EntityDeletePlan>('entity.deletePlan@1', { ids: deletions }, signal);
     parts.push(...plans.map(part => ({ ...part, created: {} })));
   }

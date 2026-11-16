@@ -18,6 +18,9 @@ import { createAIProviderPlugin } from '../src/plugins/ai-provider/model.ts';
 import { buildProviderRequest } from '../src/plugins/ai-provider/provider-transport.ts';
 import { interpretLocalTurn } from '../src/plugins/ai-assistant/local-turn-routing.ts';
 import { classifyAITurn } from '../src/plugins/ai-assistant/turn-route.ts';
+import { compoundGenerateRequest, readCompoundOutput } from '../src/plugins/ai-assistant/compound-turn.ts';
+import type { CanvasCompoundPreparation } from '../src/protocols/canvas-control.ts';
+import type { AIPreparedContext } from '../src/protocols/ai.ts';
 import type { PluginContext } from '../src/core/contracts.ts';
 import { prepareNativeCanvasAction } from '../src/plugins/canvas-control/native-actions.ts';
 import { nativeCanvasIntent } from '../src/services/native-canvas-intent.ts';
@@ -31,6 +34,47 @@ async function harness(execution: 'direct' | 'review' = 'review') {
   return kernel;
 }
 let sequence = 0;
+
+test('compound prose, rename, edge and deletion are one reviewed transaction and one undo', async () => {
+  const kernel = await harness('direct');
+  const [a, b, c, unrelated] = await Promise.all(['A', 'B', 'C', 'D'].map(title =>
+    kernel.router.dispatch<{ id: string }>('node.create', { title, body: title === 'B' ? '原文' : '' }, 'core.test')));
+  const oldEdge = await kernel.router.dispatch<{ id: string }>('connection.create', {
+    from: { nodeId: c!.id, side: 'right' }, to: { nodeId: unrelated!.id, side: 'left' },
+  }, 'core.test');
+  const prompt = '把 A 的标题改成「序章」，给 B 写一段介绍，把 A 连到 B，最后删除 C';
+  const route = classifyAITurn(prompt);
+  assert.ok(route.compound && !route.compound.clarification);
+  const input = { preparationId: 'compound-ok', sessionId: 'compound', prompt };
+  const preparation = await kernel.capabilities.request<CanvasCompoundPreparation>('canvasControl.prepareCompound@1',
+    { ...input, steps: route.compound.steps });
+  assert.ok(preparation.targets, preparation.clarification);
+  assert.deepEqual(preparation.targets?.map(target => target.title), ['B']);
+  const request = compoundGenerateRequest({ sessionId: input.sessionId, sources: [] } as unknown as AIPreparedContext, route.compound.requests, preparation.targets!);
+  const body = JSON.stringify(request.messages);
+  assert.doesNotMatch(body, /序章|删除 C|连到 B/u);
+  assert.throws(() => readCompoundOutput('{"texts":["正文"],"actions":[]}', 1), /画布尚未修改/u);
+  const final = await kernel.capabilities.request<{ text: string }>('canvasControl.completeCompound@1',
+    { ...input, texts: readCompoundOutput('{"texts":["人物介绍"]}', 1) });
+  await kernel.router.dispatch('canvasControl.offer@1', { ...input, ...final, complete: true }, 'core.test');
+  const view = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;
+  assert.equal(view.status, 'pending');
+  assert.equal(view.actions.length, 4);
+  assert.equal(view.affectedConnections?.length, 1);
+  assert.ok((await nodes(kernel)).some(node => node.id === c!.id));
+  await kernel.router.dispatch('canvasControl.apply@1', { id: view.id }, 'core.test');
+  const text = async () => (await kernel.capabilities.request<{ text: string }>('content.read@1', { nodeId: b!.id })).text;
+  assert.match(await text(), /^原文\s*人物介绍$/u);
+  assert.equal((await nodes(kernel)).find(item => item.id === a!.id)?.title, '序章');
+  assert.ok(!(await nodes(kernel)).some(item => item.id === c!.id));
+  assert.equal((await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections[0]?.from.nodeId, a!.id);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.equal(await text(), '原文');
+  assert.equal((await nodes(kernel)).find(item => item.id === a!.id)?.title, 'A');
+  assert.ok((await nodes(kernel)).some(item => item.id === c!.id));
+  assert.equal((await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections[0]?.id, oldEdge.id);
+  await kernel.plugins.stop('canvas-control');
+});
 
 test('reported creation creates exactly six cards, groups the four blanks and connects role to person in one undo', async () => {
   const kernel = await harness('direct');

@@ -1,5 +1,9 @@
 # Echo-8 Architecture
 
+Assistant mixed turns bind a bounded sequence of local canvas changes before asking a model for prose. The canvas owner preflights, reviews, and commits the combined plan as one undoable transaction. Account-owned phrases and preferences are a separate versioned resource in the existing personal data Worker. See ADR-0158.
+
+Assistant canvas control is local-only, including appearance, annotations, views and selection. Missing targets and unsupported commands never fall back to cloud planning or embeddings. Complete local grammar runs before the optional on-device classifier. Explicit prose generation may use the provider only after local destination binding; strict text-only responses are combined with locally constructed actions, then revision-checked through the existing controller and owner transactions. Governed local action names reuse the registered action catalog; model and cloud-service actions are excluded. See ADR-0157, which supersedes earlier assistant cloud-planning paths while retaining their public contracts.
+
 Counted creation preserves the original generic-card operand for later local clauses. Directed numbered fan-in links keep explicit line styles and endpoint direction. The connection owner exposes `connection.addJunctionForEdges@1` for revision-checked geometry planning, reused by the toolbar and bounded assistant commands for a shared junction (ADR-0156).
 
 The assistant recognizes explicit preview and read-only constraints before dispatch. Canvas control owns arrangement retargeting and bounded session receipts exposed by `canvasControl.receipt@1`, with duplicate submissions resolved against the original preparation identity. Nearby follow-ups can use one exchange and internal transcript directories extend on verified append events. Explicit short-answer limits inform generation and continuation budgets (ADR-0155).

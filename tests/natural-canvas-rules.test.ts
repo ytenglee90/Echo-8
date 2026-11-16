@@ -34,7 +34,7 @@ test('natural operation catalog covers every content task without treating quote
   assert.equal(inferAtOperation('新建角色节点怎么做？'), 'general');
   assert.equal(inferAtOperation('新建角色节点的方法有哪些'), 'general');
   assert.equal(inferAtOperation('先别新建角色节点'), 'general');
-  assert.equal(naturalCanvasOperation('新建角色节点'), undefined);
+  assert.equal(naturalCanvasOperation('新建角色节点')?.kind, 'create');
   assert.equal(naturalCanvasOperation('在画布上生成六个节点'), undefined);
   assert.equal(inferAtOperation('在画布上生成六个节点'), 'canvas-control');
   assert.deepEqual(naturalCanvasOperation('创建一张角色卡'), {

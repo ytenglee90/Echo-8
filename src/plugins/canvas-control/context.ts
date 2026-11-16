@@ -13,11 +13,21 @@ export interface ControlSnapshot extends CanvasControlAdmission {
   writable: Set<string>;
   relatedLineIds?: Set<string>;
   namedTargetIds?: string[];
+  deletionImpact?: Map<string, string>;
   nodes: ContentSummary[];
   groups: GroupRecord[];
   graph: ConnectionGraphSnapshot;
   available: { groups: boolean; connections: boolean };
   origin: { x: number; y: number };
+}
+
+export function deletionImpact(ids: Set<string>, groups: GroupRecord[], graph: ConnectionGraphSnapshot): string {
+  return JSON.stringify([
+    graph.connections.filter(edge => ids.has(edge.id) || ids.has(edge.from.nodeId) || ids.has(edge.to.nodeId))
+      .map(edge => [edge.id, edge.revision]).sort(),
+    groups.filter(group => ids.has(group.id) || group.memberIds.some(id => ids.has(id)))
+      .map(group => [group.id, group.revision]).sort(),
+  ]);
 }
 export async function captureControlSnapshot(context: PluginContext, request: CanvasControlAdmission, scope: 'selection' | 'canvas', signal?: AbortSignal, discovery?: { names: string[]; relations: boolean; recentLineIds: string[] }, namedOnly = false): Promise<ControlSnapshot> {
   const [catalogs, owners] = await Promise.all([

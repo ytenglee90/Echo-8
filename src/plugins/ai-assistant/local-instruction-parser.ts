@@ -36,6 +36,20 @@ export function splitLocalInstruction(prompt: string): string[] {
     text.replace(/\u0000(\d+)\u0000/gu, (_match, index: string) => literals[Number(index)] ?? '')).map(strip).filter(Boolean);
 }
 
+/** Split requested prose from an independently executable creation instruction. */
+export function canvasCreationWithText(prompt: string): { instruction: string; content: string } | undefined {
+  const text = prompt.trim().replace(/^@画布操作\s+/u, '');
+  const masked = text.replace(QUOTED, value => '□'.repeat(value.length));
+  if (!/^(?:(?:请|帮我)\s*)?(?:新建|创建|新增|建|做|造|来)/u.test(masked)) return undefined;
+  const split = /[，,；;]?\s*(?:并且?|然后|再|同时)?\s*(?:(?:为|给)(?:她|他|它|每张卡|每个节点)\s*)?(?:写上|填上|写|撰写|创作|设计|生成|补充)(?=\S)/u.exec(masked);
+  if (!split?.index) return undefined;
+  const instruction = text.slice(0, split.index).trim();
+  const content = text.slice(split.index).replace(/^[，,；;]\s*/u, '').trim();
+  if (!instruction || !content || isLocalDiscussion(text)) return undefined;
+  if (/(?:然后|再|并且?|顺便|同时)(?:把|将|给|新建|创建|删除|移动|连接|分组|改色)/u.test(masked.slice(split.index + split[0].length))) return undefined;
+  return { instruction, content };
+}
+
 export interface LocalInstructionContext {
   aliases: Map<string, string[]>;
   used: Set<string>;
@@ -85,7 +99,7 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
       if (!quoted) return undefined;
       title = literal(quoted[1]!);
     } else title = title.replace(/的(?:卡片?|节点|文本框)$/u, '');
-    if (!title || title.length > 100 || /[\r\n]|(?:并|再)(?:写|填|设计|补)|正文|内容|写上|填上|带上/u.test(title) ||
+    if (!title || title.length > 100 || /[\r\n]/u.test(title) || !named && /(?:并|再)(?:写|填|设计|补)|正文|内容|写上|填上|带上/u.test(title) ||
       !/[「『“"]/u.test(match[3]!) && /连接|连到|指向|打组|分组|改成|改为|用虚线/u.test(title)) return undefined;
     const requestedTitle = title;
     if (!named && /^(?:空白(?:的)?|空白(?:的)?(?:卡片?|节点)|卡片?|节点)$/u.test(title)) title = /空白/u.test(title) ? '空白' : '新节点';

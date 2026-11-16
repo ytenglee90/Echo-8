@@ -10,9 +10,9 @@ async function command(page: Page, label: string) {
   await panel.getByRole('option', { name: new RegExp(`^${label}`, 'u') }).first().click();
 }
 
-async function account(browser: Browser) {
+async function account(browser: Browser, workerVersion = 6) {
   const db = new SQLiteD1();
-  const env = { DB: db, DATA_WORKER_VERSION: '6', STORAGE_MODE: 'd1', INSTALLATION_ID: 'preferences-browser-installation', DATA_SIGNING_SECRET: 'browser-preferences-test-secret', ALLOWED_ORIGIN: 'http://localhost:3000' };
+  const env = { DB: db, DATA_WORKER_VERSION: String(workerVersion), STORAGE_MODE: 'd1', INSTALLATION_ID: 'preferences-browser-installation', DATA_SIGNING_SECRET: 'browser-preferences-test-secret', ALLOWED_ORIGIN: 'http://localhost:3000' };
   const contexts: Awaited<ReturnType<Browser['newContext']>>[] = [];
   const device = async (user = 'alice') => {
     const context = await browser.newContext(); contexts.push(context);
@@ -20,7 +20,7 @@ async function account(browser: Browser) {
     const token = await signDataToken({ sub: user, aud: env.INSTALLATION_ID, installationId: env.INSTALLATION_ID, scope: ['projects:read', 'projects:write'] }, env.DATA_SIGNING_SECRET, 600);
     await page.route('**/api/cloud/status', route => route.fulfill({ json: {
       configured: true, authenticated: true, user: { id: user }, accounts: [],
-      installations: [{ id: env.INSTALLATION_ID, accountId: 'preferences-account', accountName: '个人账户', workerUrl: 'https://preferences-data.test', workerVersion: 6, latestWorkerVersion: 6, upgradeAvailable: false, status: 'ready' }],
+      installations: [{ id: env.INSTALLATION_ID, accountId: 'preferences-account', accountName: '个人账户', workerUrl: 'https://preferences-data.test', workerVersion, latestWorkerVersion: workerVersion, upgradeAvailable: false, status: 'ready' }],
     } }));
     await page.route('**/api/cloud/token', route => route.fulfill({ json: { installationId: env.INSTALLATION_ID, workerUrl: 'https://preferences-data.test', token: token.token, expiresAt: Date.now() + 600_000 } }));
     await page.route('https://preferences-data.test/**', async route => {
@@ -37,11 +37,59 @@ async function account(browser: Browser) {
     return page;
   };
   const stored = () => db.sqlite.prepare("SELECT revision, body_json FROM account_preferences WHERE user_id='alice'").get();
-  return { device, stored, close: async () => { await Promise.all(contexts.map(context => context.close())); db.sqlite.close(); } };
+  const assistant = () => db.sqlite.prepare("SELECT body_json FROM account_assistant_preferences WHERE user_id='alice'").get();
+  return { device, stored, assistant, close: async () => { await Promise.all(contexts.map(context => context.close())); db.sqlite.close(); } };
 }
 
 const interval = (page: Page) => page.getByRole('combobox', { name: '自动保存当前目标的间隔' });
 const retention = (page: Page) => page.getByRole('combobox', { name: '恢复副本自动保留数量' });
+test('assistant phrases are learned from a correction, confirmed in settings, and loaded on another device', async ({ browser }) => {
+  const a = await account(browser, 8);
+  try {
+    const openPreferences = async (page: Page) => {
+      await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: 'AI 个人用语与偏好', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'AI 个人用语与偏好', exact: true });
+      await expect(panel.getByRole('checkbox', { name: '从反馈学习' })).toBeEnabled();
+      return panel;
+    };
+    const first = await a.device();
+    let panel = await openPreferences(first);
+    await panel.getByRole('checkbox', { name: '从反馈学习' }).click();
+    await expect(panel.getByRole('checkbox', { name: '从反馈学习' })).toBeChecked();
+    await expect.poll(() => JSON.parse(String(a.assistant()?.body_json)).learning).toBe(true);
+    await panel.getByRole('button', { name: '关闭个人用语与偏好' }).click();
+    await first.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    const assistant = first.getByRole('region', { name: 'AI 助手', exact: true });
+    await assistant.locator('.ai-composer textarea').fill('收一下');
+    await assistant.locator('.ai-composer textarea').press('Enter');
+    await expect(assistant.getByText('收一下', { exact: true })).toBeVisible();
+    await assistant.locator('.ai-composer textarea').fill('我说的「收一下」是编组');
+    await assistant.locator('.ai-composer textarea').press('Enter');
+    await expect.poll(() => JSON.parse(String(a.assistant()?.body_json)).entries).toMatchObject([{ phrase: '收一下', status: 'candidate', evidence: 1 }]);
+    await command(first, '书籍与恢复设置');
+    panel = await openPreferences(first);
+    await panel.getByRole('button', { name: '确认生效', exact: true }).click();
+    await expect.poll(() => JSON.parse(String(a.assistant()?.body_json)).entries).toMatchObject([{ phrase: '收一下', status: 'active' }]);
+    const second = await a.device();
+    let restored = await openPreferences(second);
+    await expect(restored.getByText('「收一下」→ 给选中节点编组', { exact: true })).toBeVisible();
+    const download = second.waitForEvent('download');
+    await restored.getByRole('button', { name: '导出全部', exact: true }).click();
+    expect((await download).suggestedFilename()).toMatch(/\.json$/u);
+    await restored.getByRole('button', { name: '关闭个人用语与偏好' }).click();
+    await command(second, '全选画布节点');
+    await second.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    const restoredAssistant = second.getByRole('region', { name: 'AI 助手', exact: true });
+    await restoredAssistant.locator('.ai-composer textarea').fill('收一下');
+    await restoredAssistant.locator('.ai-composer textarea').press('Enter');
+    await expect(second.locator('.group-frame')).toHaveCount(1);
+    await command(second, '书籍与恢复设置');
+    restored = await openPreferences(second);
+    await restored.getByRole('button', { name: '删除', exact: true }).click();
+    await expect.poll(() => JSON.parse(String(a.assistant()?.body_json)).entries).toEqual([]);
+  } finally { await a.close(); }
+});
+
 async function keep(page: Page, value: string) {
   await retention(page).selectOption(value);
   await page.getByRole('group', { name: '确认清理恢复副本' }).getByRole('button', { name: '确认更改', exact: true }).click();

@@ -30,6 +30,7 @@ import type {} from '../../protocols/shortcut-sync.ts';
 import { planShortcutSync, shortcutFingerprint, type ShortcutAccountState, type RemoteShortcuts } from './shortcut-sync.ts';
 import { addPendingBookChange, type PendingBookChange } from './pending-book.ts';
 import { registerPersistencePreferenceSync } from './persistence-preferences-sync.ts';
+import { isAssistantPreferences, type AssistantPreferenceAccount, type AssistantPreferenceSnapshot } from '../../protocols/assistant-preferences.ts';
 import { availableCloudProjectName } from './project-name.ts';
 export { externalizeCloudCommit, hydrateRemoteDocument } from './legacy-transport.ts';
 
@@ -97,7 +98,8 @@ export function createCloudSyncPlugin(
         'system.persistence.confirmBackup',
       ],
       events: ['transaction.committed', 'document.replaced', 'shortcuts.changed'],
-      queries: ['cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation'],
+      queries: ['cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation', 'account.assistantPreferenceScope@1'],
+      providesCapabilities: ['account.assistantPreferences@1'],
       asks: [
         'system.preferences.get', 'system.personalAssets.get', 'system.project.source', 'system.project.catalog', 'system.document.revision',
         'system.persistence', 'cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation', 'shortcuts.state',
@@ -196,6 +198,32 @@ export function createCloudSyncPlugin(
           throw error;
         }
       };
+      const preferenceScope = (): AssistantPreferenceAccount | undefined => state.user ? {
+        userId: state.user.id, installationId: local.installationId, bookId: local.projectId,
+        available: state.installations.some(item => item.id === local.installationId && item.status === 'ready' && item.workerVersion >= 8),
+      } : undefined;
+      context.queries.register({ type: 'account.assistantPreferenceScope@1', handle: preferenceScope });
+      context.capabilities.provide({ key: 'account.assistantPreferences@1', invoke: async (input: {
+        account: AssistantPreferenceAccount;
+        write?: { expectedRevision: number; preferences: import('../../protocols/assistant-preferences.ts').AssistantPreferences };
+      }, signal) => {
+        const checkScope = () => {
+          const current = preferenceScope();
+          if (!current?.available || current.userId !== input.account.userId || current.installationId !== input.account.installationId) {
+            throw new Error('账号或个人数据服务已经变化，请重新载入');
+          }
+          signal?.throwIfAborted();
+        };
+        checkScope();
+        const response = await dataRequest<AssistantPreferenceSnapshot>('/v2/assistant-preferences?account=' + encodeURIComponent(input.account.userId), {
+          ...(input.write ? jsonInit(input.write, 'PUT') : { method: 'GET' }), signal,
+        });
+        checkScope();
+        if (!Number.isSafeInteger(response.revision) || response.revision < 0 || !isAssistantPreferences(response.preferences)) {
+          throw new Error('账户返回的 AI 偏好格式无效');
+        }
+        return response;
+      } });
       const refreshStorageUsage = async () => {
         const installation = state.installations.find(
           (item) => item.id === local.installationId && item.status === 'ready',

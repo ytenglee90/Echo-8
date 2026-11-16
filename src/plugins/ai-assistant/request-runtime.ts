@@ -26,6 +26,7 @@ import {
   type PreparePayload,
 } from './command-payloads.ts';
 import { prepareAIContext } from './context-preparation.ts';
+import type { PersonalTurn } from './personal-preferences.ts';
 import {
   readContextSourceRevision,
   revalidatePreparedSources,
@@ -53,10 +54,12 @@ export type PreparedGeneration = AIPreparedContext & {
   userEntryLength?: number;
   userTurn?: number;
   replayRequest?: PreparePayload;
+  selectionAtSend?: string[];
   appliedItemsMessage?: string;
 };
 
 export interface AIRequestRuntimeOptions {
+  planPersonalTurn?(prompt: string, sessionId: string, previousPrompt?: string): PersonalTurn | undefined;
   preparations: Map<string, PreparedGeneration>;
   preparationTasks: Map<string, TaskHandle<AIPreparedContext>>;
   generationTasks: Map<string, TaskHandle<AIGenerateResult>>;
@@ -101,7 +104,7 @@ export function registerAIRequestRuntime(
   context.commands.register<PreparePayload, { taskId: string }>({
     type: 'ai.context.prepare',
     validate: isPreparePayload,
-    handle: (payload) => {
+    handle: async (payload) => {
       const session = options.readSessions()[payload.sessionId];
       if (!session) throw new Error('AI 对话已经不存在');
       const boundAssistant = payload.assistantId
@@ -111,10 +114,16 @@ export function registerAIRequestRuntime(
       if (payload.assistantId && !boundAssistant) throw new Error('当前 AI 助手窗口已经不存在');
       const explicit = explicitAtOperation(payload.prompt);
       const route = classifyAITurn(payload.prompt, explicit, payload.operation);
-      const mayLoadLocalLanguage = !explicit && !naturalMemoryDirective(payload.prompt) && mayUseLocalLanguage(payload.prompt, route);
+      const personalTurn = !explicit && !route.compound && !route.native && !route.applyItems ? options.planPersonalTurn?.(
+        payload.prompt, session.id, options.lastPrepareRequestBySession.get(session.id)?.prompt,
+      ) : undefined;
+      const selectionAtSend = route.compound || personalTurn?.instruction || route.operation === 'canvas-control' && /选中|选区/u.test(payload.prompt)
+        ? (await context.capabilities.request<{ ids: string[] }>('selection.read@1').catch(() => undefined))?.ids : undefined;
+      const mayLoadLocalLanguage = !personalTurn && (!explicit || explicit === 'canvas-control') && !naturalMemoryDirective(payload.prompt) && mayUseLocalLanguage(payload.prompt, route);
       const normalizedPayload: PreparePayload = {
         ...payload,
-        operation: route.operation === 'general' && route.disposition === 'normal' && !explicit && naturalWritebackIntent(canvasCommandText(payload.prompt).trim())
+        operation: personalTurn?.instruction ? 'canvas-control' : personalTurn?.reply ? 'general' :
+          route.operation === 'general' && route.disposition === 'normal' && !explicit && naturalWritebackIntent(canvasCommandText(payload.prompt).trim())
           ? 'rewrite' : route.operation,
         ...(boundAssistant
           ? {
@@ -135,7 +144,7 @@ export function registerAIRequestRuntime(
         sessionId: session.id,
       } satisfies AIStatusSignal);
       const preparationId = createId('ai-context');
-      const local = route.clarification || route.applyItems || route.native || (route.category === 'operation' && route.local && route.local.kind !== 'content');
+      const local = route.operation === 'canvas-control' || route.clarification || route.applyItems || route.native;
       context.signals.emit(OPERATION_LOG_STAGE_V2, {
         id: preparationId, relatedId: preparationId, phase: 'ai-routing', state: 'completed',
         detail: { step: 'route', route: normalizedPayload.operation !== 'canvas-control' ? 'conversation' :
@@ -160,6 +169,8 @@ export function registerAIRequestRuntime(
           Object.values(options.readProposals?.() ?? {}).filter(proposal => proposal.sessionId === session.id).sort((a, b) => b.createdAt - a.createdAt)[0],
           preparationId,
           route,
+          personalTurn,
+          selectionAtSend,
         ),
       });
       options.preparationTasks.set(session.id, task);
@@ -168,6 +179,7 @@ export function registerAIRequestRuntime(
           if (options.preparationTasks.get(session.id) !== task) return;
           options.preparationTasks.delete(session.id);
           (prepared as PreparedGeneration).replayRequest = normalizedPayload;
+          (prepared as PreparedGeneration).selectionAtSend = selectionAtSend;
           options.preparations.set(prepared.id, prepared);
           options.lastMemoryUseBySession.set(prepared.sessionId, {
             sourceIds: prepared.sources

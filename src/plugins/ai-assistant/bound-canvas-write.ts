@@ -3,10 +3,14 @@ import type { AIPreparedContext } from '../../protocols/ai.ts';
 import type { CanvasAgentQueryResult } from '../../protocols/canvas-agent.ts';
 import type { CanvasControlPlan } from '../../protocols/canvas-control.ts';
 import { canvasCommandText } from '../../services/ai-task-route.ts';
+import { naturalCanvasOperation } from '../../services/ai-task-route.ts';
+import { compileLocalInstructions } from './local-turn-routing.ts';
+import { classifyAITurn } from './turn-route.ts';
 import type { FieldTarget } from './structured-fields.ts';
 import type { TurnAssembly } from './turn-route.ts';
 
 export type BoundCanvasWrite =
+  | { kind: 'create'; plan: CanvasControlPlan; titles: string[] }
   | { kind: 'write'; target: FieldTarget; instruction: string }
   | { kind: 'fields'; targets: FieldTarget[]; field: string; sourceNumbers: number[] };
 
@@ -14,7 +18,19 @@ export function resolveBoundCanvasWrite(
   prepared: AIPreparedContext, assembly: TurnAssembly, state: CanvasAgentQueryResult | undefined,
 ): BoundCanvasWrite | undefined {
   const { route, fields, field, destinationId, readIds, contentTargetId } = assembly;
-  if (!state || route.category === 'chat' || assembly.restructure || assembly.recoveryPrompt) return undefined;
+  if (!state || route.category === 'chat' || assembly.recoveryPrompt) return undefined;
+
+  if (route.creationText) {
+    const instruction = route.creationText.instruction;
+    const compiled = compileLocalInstructions(instruction, classifyAITurn(instruction));
+    const steps = (compiled?.instructions ?? [instruction]).map(naturalCanvasOperation);
+    if (!steps.length || steps.length > 80 || steps.some(step => step?.kind !== 'create' || step.names.length)) return undefined;
+    const actions = steps.map((step, index) => {
+      if (step?.kind !== 'create') throw new Error('新建目标尚未明确');
+      return { type: 'create-node' as const, ref: `local-text-${index}`, title: step.title, presentation: step.presentation };
+    });
+    return { kind: 'create', plan: { version: 2, actions }, titles: actions.map(action => action.title) };
+  }
 
   const explicit = prepared.sources.filter(source => source.reason === 'explicit-reference');
   const resolve = (id: string) => {
@@ -23,6 +39,21 @@ export function resolveBoundCanvasWrite(
       item.kind === 'text' && item.complete === true && item.revision === node?.revision);
     return node && source ? { node, source, whole: source.start === 0 && source.length === node.length } : undefined;
   };
+  if (assembly.restructure) {
+    const binding = assembly.restructure;
+    if (!binding.ids.every(id => resolve(id)?.whole)) return undefined;
+    // Multiple destinations cannot silently guess how each existing edge should be reconnected.
+    if (binding.reconnect && binding.titles.length !== 1) return undefined;
+    const actions: CanvasControlPlan['actions'] = binding.titles.map((title, index) => ({
+      type: 'create-node', ref: `local-text-${index}`, title,
+    }));
+    if (binding.reconnect) for (const edge of assembly.relations ?? []) {
+      const from = binding.ids.includes(edge.from), to = binding.ids.includes(edge.to);
+      if (from !== to) actions.push({ type: 'update-connection', id: edge.id,
+        ...(from ? { from: 'local-text-0' } : { to: 'local-text-0' }) });
+    }
+    return { kind: 'create', plan: { version: 2, actions }, titles: binding.titles };
+  }
   if (fields?.length && field && fields.every(target => {
     const resolved = resolve(target.id);
     return resolved?.whole && target.expectedRevision === resolved.node.revision &&
@@ -71,6 +102,7 @@ function appendTo(node: CanvasAgentQueryResult['nodes'][number], instruction: st
 
 export function boundCanvasWriteInstructions(write: BoundCanvasWrite): string {
   const rules = '应用已核对本轮写入目标和范围，并将本地提交。只输出 JSON，不要调用画布工具或输出操作计划。';
+  if (write.kind === 'create') return `${rules} 按以下标题的顺序生成正文：${JSON.stringify(write.titles)}。只输出 {"texts":["正文", "..."]}，不要返回标题、对象 ID、坐标或其他操作字段。`;
   return write.kind === 'fields'
     ? `${rules} 按来源编号 ${write.sourceNumbers.join('、')} 的顺序，为每张卡填写一行「${write.field}」的值。输出 {"texts":["字段值", "..."]}，每个元素只含值。`
     : `${rules} ${write.instruction} 输出 {"text":"可直接写入的正文"}，正文从内容本身开始。`;
@@ -82,6 +114,13 @@ export function buildBoundCanvasWritePlan(write: BoundCanvasWrite, output: strin
   try { value = JSON.parse(output.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/iu, '$1')); }
   catch (error) { throw new Error('模型没有返回符合本轮写入范围的正文，请重试', { cause: error }); }
   if (!isRecord(value) || Object.keys(value).length !== 1) throw invalid();
+  if (write.kind === 'create') {
+    const texts = value.texts;
+    if (!Array.isArray(texts) || texts.length !== write.titles.length || texts.some(text => typeof text !== 'string' || !text.trim())) throw invalid();
+    let index = 0;
+    return { ...write.plan, actions: write.plan.actions.map(action => action.type === 'create-node'
+      ? { ...action, text: (texts[index++] as string).trim() } : { ...action }) };
+  }
   const targets = write.kind === 'fields' ? write.targets : [write.target];
   const texts: unknown = write.kind === 'fields' ? value.texts : [value.text];
   if (!Array.isArray(texts) || texts.length !== targets.length) throw invalid();

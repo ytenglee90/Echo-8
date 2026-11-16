@@ -21,6 +21,7 @@ export interface AIComposerProps {
   dropReady: boolean;
   status: AIStatusSignal['state'];
   sendDisabled: boolean;
+  routeHint?: string;
   mentionMenuId: string;
   mentionMenuOpen: boolean;
   mentionSuggestions: readonly AIMentionSuggestion[];
@@ -51,6 +52,7 @@ export function AIComposer({
   dropReady,
   status,
   sendDisabled,
+  routeHint,
   mentionMenuId,
   mentionMenuOpen,
   mentionSuggestions,
@@ -93,6 +95,7 @@ export function AIComposer({
           onResizeKey(event.key === 'ArrowUp' ? 'up' : 'down', event.shiftKey);
         }}
       />
+      {routeHint && <small className="ai-composer-route">{routeHint}</small>}
       <div className="ai-composer-input">
         <textarea
           ref={textareaRef}

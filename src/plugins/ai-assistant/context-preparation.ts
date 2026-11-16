@@ -40,6 +40,9 @@ import { readParagraphTarget } from './paragraph-target.ts';
 import { operationCreatesWriteback } from './operations.ts';
 import { bindNaturalWriteback, naturalWritebackIntent, readBoundWriteback, writebackTaskInstructions } from './natural-writeback.ts';
 import { naturalMemoryDirective } from './memory-suggestion.ts';
+import type { CanvasCompoundPreparation } from '../../protocols/canvas-control.ts';
+import { turnAssembly } from './turn-route.ts';
+import type { PersonalTurn } from './personal-preferences.ts';
 import { bindNaturalSourceScope, naturalResultDestination } from './natural-source-scope.ts';
 import { planFullSourceSummary } from './full-source-summary.ts';
 import { classifyAITurn, mixedCanvasWrite, rememberTurnAssembly, type AITurnRoute, type TurnAssembly } from './turn-route.ts';
@@ -51,6 +54,7 @@ import { prepareStructuredFields } from './structured-fields.ts';
 import { prepareCardRestructure } from './card-restructure.ts';
 import { canvasReceiptReply, checkCanvasRecovery, readCanvasReceipt, recoverCanvasRequest } from './canvas-recovery.ts';
 import { interpretLocalTurn } from './local-turn-routing.ts';
+import { requestsCanvasTextGeneration } from './canvas-execution-policy.ts';
 
 export interface AIContextBudget {
   characterLimit: number;
@@ -77,18 +81,95 @@ export async function prepareAIContext(
   previousProposal?: AIProposalRecord,
   preparationId = createId('ai-context'),
   turnRoute?: AITurnRoute,
+  personalTurn?: PersonalTurn,
+  selectionAtSend?: string[],
 ): Promise<AIPreparedContext> {
   let route = turnRoute ?? classifyAITurn(payload.prompt, explicitAtOperation(payload.prompt) ?? payload.operation);
+  if (personalTurn) {
+    const instruction = personalTurn.instruction;
+    const createdAt = Date.now();
+    report(1);
+    return rememberTurnAssembly({
+      id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+      operation: instruction ? 'canvas-control' : 'general', contextMode: 'explicit-only', contextIntent: 'conversation', sources: [],
+      totalCharacters: payload.prompt.length, estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000,
+    }, { route: instruction ? classifyAITurn(instruction, 'canvas-control') : route, personalTurn,
+      ...(instruction ? { localInstructions: [instruction], expectedSelectionCount: personalTurn.expectedSelectionCount } : { localReply: personalTurn.reply }) });
+  }
+  if (route.excludesHistory) {
+    payload = { ...payload, contextMode: 'explicit-only', memorySourceIds: undefined };
+    memoryIndexes = {};
+  }
+  if (route.compound) {
+    const compound = route.compound;
+    const sourceIds = [...new Set([...(payload.references ?? []).filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
+      ...parseExplicitReferences(payload.prompt)])];
+    if (compound.deferred) {
+      const createdAt = Date.now();
+      report(1);
+      return rememberTurnAssembly({
+        id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+        operation: 'canvas-control', contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length, estimatedTokens: 0,
+        createdAt, expiresAt: createdAt + 10 * 60_000,
+      }, { route: { ...route, category: 'operation' }, localSourceIds: sourceIds,
+        localInstructions: compound.steps.flatMap(step => 'instruction' in step ? [step.instruction] : []) });
+    }
+    const binding = compound.clarification ? { clarification: compound.clarification } :
+      await context.capabilities.request<CanvasCompoundPreparation>('canvasControl.prepareCompound@1', {
+        preparationId, sessionId: session.id, prompt: payload.prompt, steps: compound.steps, sourceIds, selectedIds: selectionAtSend,
+      }, signal);
+    const createdAt = Date.now();
+    let evidence: AIPreparedContext | undefined;
+    let clarify = binding.clarification;
+    if (binding.targets) {
+      const generation = compound.requests.join('\n');
+      const generationRefs = new Set([...(payload.references ?? []).filter(reference => generation.includes(reference.token)).map(reference => reference.sourceId),
+        ...parseExplicitReferences(generation)]);
+      const evidenceIds = [...new Set([...generationRefs, ...binding.targets.flatMap(target => target.sourceId ? [target.sourceId] : [])])];
+      for (const id of evidenceIds) {
+        const metadata = await readContextSource(context, { sourceId: id, start: 0, length: 0 }, signal);
+        if (metadata.source?.automaticRetrieval === false && !generationRefs.has(id)) {
+          clarify = '该正文已关闭自动使用。请在创作要求中明确引用它，或提供要改写的片段。';
+          break;
+        }
+      }
+      const history = route.history || Boolean(payload.memorySourceIds?.length);
+      if (!clarify && (history || evidenceIds.length)) {
+        const evidencePrompt = [generation, ...evidenceIds.map(id => `@node:${id}`)].join('\n');
+        const evidenceRoute = { ...classifyAITurn(evidencePrompt, 'general'), category: 'operation' as const, purpose: 'content' as const,
+          history, compound: undefined, local: undefined, native: undefined, mechanical: false, geometryOnly: false, fieldTask: undefined,
+          restructureTask: undefined, creationText: undefined, excludesHistory: route.excludesHistory };
+        evidence = await prepareAIContext(context, session, memoryIndexes, { ...payload, prompt: evidencePrompt, operation: 'general', references: undefined,
+          contextMode: history ? payload.contextMode : 'explicit-only' }, signal, report, budgetOverride, undefined, preparationId, evidenceRoute);
+        clarify = turnAssembly(evidence).clarify;
+        if (history && !evidence.sources.some(source => source.reason === 'conversation-memory' && source.text)) {
+          clarify ??= '没有找到本轮所需的历史原文，请指定记忆或引用资料，画布尚未修改。';
+        }
+        if (binding.targets.some(target => target.sourceId && target.sourceLength && !evidence?.sources.some(source =>
+          source.sourceId === target.sourceId && source.start === 0 && source.length === target.sourceLength))) {
+          clarify ??= '改写目标的完整正文超出本轮范围，请指定要改写的段落，画布尚未修改。';
+        }
+      }
+    }
+    report(1);
+    return rememberTurnAssembly({
+      ...evidence, id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+      operation: 'canvas-control', providerProfileId: payload.providerProfileId, contextMode: 'explicit-only',
+      sources: evidence?.sources.filter(source => source.reason !== 'recent-conversation') ?? [],
+      totalCharacters: evidence?.totalCharacters ?? payload.prompt.length, estimatedTokens: evidence?.estimatedTokens ?? 0,
+      createdAt, expiresAt: createdAt + 10 * 60_000,
+    }, { route, clarify, compoundTargets: binding.targets });
+  }
   const repeatCreation = route.repeatCreation && route.category === 'operation';
-  if (isCanvasStatusFollowup(payload.prompt) || repeatCreation) {
-    const receipt = await readCanvasReceipt(context, session.id, signal);
+  if (route.revisePending || isCanvasStatusFollowup(payload.prompt) || repeatCreation) {
+    const receipt = route.revisePending ? undefined : await readCanvasReceipt(context, session.id, signal);
     const creation = repeatCreation ? receipt?.repeatableCreation : undefined;
     const createdAt = Date.now();
     report(1);
     return rememberTurnAssembly({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId,
       prompt: payload.prompt, operation: creation ? 'canvas-control' : 'general', contextIntent: 'conversation', contextMode: 'explicit-only',
       sources: [], totalCharacters: payload.prompt.length, estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000,
-    }, { route, ...(creation ? { localInstructions: [creation] }
+    }, { route, ...(route.revisePending ? {} : creation ? { localInstructions: [creation] }
       : { localReply: repeatCreation ? '请说出要再创建哪张卡片，或提供新卡片的标题。' : canvasReceiptReply(receipt) }) });
   }
   if (route.disposition !== 'normal') payload = { ...payload, operation: route.operation };
@@ -98,11 +179,11 @@ export async function prepareAIContext(
     route = { ...classifyAITurn(payload.prompt, 'canvas-control'), continuation: true };
     payload = { ...payload, operation: 'canvas-control' };
     context.signals.emit(OPERATION_LOG_STAGE_V2, { id: preparationId, relatedId: preparationId,
-      phase: 'ai-routing', state: 'completed', detail: { step: 'route', route: 'model', reason: 'model-plan' } } satisfies OperationStageUpdateV2);
+      phase: 'ai-routing', state: 'completed', detail: { step: 'route', route: 'local', reason: 'local-rule' } } satisfies OperationStageUpdateV2);
   }
   const local = recoveryPrompt
     ? { clarification: await checkCanvasRecovery(context, session.id, recoveryPrompt, signal) }
-    : !explicitAtOperation(payload.prompt) && !naturalMemoryDirective(payload.prompt)
+    : (!explicitAtOperation(payload.prompt) || explicitAtOperation(payload.prompt) === 'canvas-control') && !naturalMemoryDirective(payload.prompt)
       ? await interpretLocalTurn(context, payload.prompt, route, signal) : {};
   if (local.instructions) {
     route = { ...classifyAITurn(local.instructions[0]!, 'canvas-control'), purpose: 'general', geometryOnly: false };
@@ -133,15 +214,20 @@ export async function prepareAIContext(
     preparationId, sessionId: session.id, prompt: payload.prompt,
     sourceIds: payload.references?.filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
   }, signal) : undefined;
-  if (route.native || local.instructions || local.clarification || route.clarification || route.applyItems || (route.category === 'operation' && (!contentTarget || contentBinding?.needsChoice) && (route.local || route.interpretedSearch) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length)) {
+  if (route.native || local.instructions || local.clarification || route.clarification || route.applyItems ||
+    (route.creationText && !route.history && !payload.references?.length && !parseExplicitReferences(payload.prompt).length) ||
+    (route.category === 'operation' && !route.history && !route.fieldTask && !requestsCanvasTextGeneration(route) &&
+      !payload.references?.length && !parseExplicitReferences(payload.prompt).length) ||
+    (route.category === 'operation' && (!contentTarget || contentBinding?.needsChoice) && (route.local || route.interpretedSearch) && !payload.references?.length && !parseExplicitReferences(payload.prompt).length)) {
     const nativeSelection = route.native && nativeCanvasUsesSelection(route.native)
-      ? (await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal)).ids : undefined;
+      ? selectionAtSend ?? (await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal)).ids : undefined;
     const createdAt = Date.now();
     report(1);
     return completePreparation({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
       operation: payload.operation, providerProfileId: payload.providerProfileId, contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
       estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000 }, { nativeSelection,
-      ...(route.native ? { localSourceIds: payload.references?.filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId) } : {}) });
+      localSourceIds: [...new Set([...(payload.references ?? []).filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
+        ...parseExplicitReferences(payload.prompt)])] });
   }
   if (route.category === 'chat' && !route.readCanvas && payload.operation === 'general' && !payload.references?.length &&
     !payload.memorySourceIds?.length && isStandaloneConversation(payload.prompt)) {
@@ -416,7 +502,7 @@ export async function prepareAIContext(
   report(0.25);
 
   const transcriptMeta = catalog.find((source) => source.sourceId === transcriptSourceId);
-  const exactHistory = !clarify && transcriptMeta?.length && exactHistoryRequest(payload.prompt);
+  const exactHistory = !route.excludesHistory && !clarify && transcriptMeta?.length && exactHistoryRequest(payload.prompt);
   let exactHistoryFound = false;
   if (transcriptMeta && exactHistory) {
     const started = performance.now();
@@ -585,10 +671,14 @@ export async function prepareAIContext(
         const query = { terms, query: stripOperationCommands(payload.prompt), maxResults: 12,
           ...(selectedMemorySet.size ? { sourceIds: [...selectedMemorySet].slice(0, 100) } : {}) };
         try {
-          retrievalDetails = await context.capabilities.request<SemanticRetrievalResult>('context.semanticSearch@3', {
-            ...query, lexicalHits: new Set(contributions.flatMap(part => part.hits.map(hit => hit.source.sourceId))).size,
-          }, signal);
-          semantic = retrievalDetails.contributions;
+          if (route.category !== 'chat') {
+            semantic = await context.capabilities.requestAll<AIContextSearchContribution>('context.localSemanticSearch@1', query, signal);
+          } else {
+            retrievalDetails = await context.capabilities.request<SemanticRetrievalResult>('context.semanticSearch@3', {
+              ...query, lexicalHits: new Set(contributions.flatMap(part => part.hits.map(hit => hit.source.sourceId))).size,
+            }, signal);
+            semantic = retrievalDetails.contributions;
+          }
         } catch (error) {
           if (!isCapabilityUnavailable(error, 'context.semanticSearch@3')) throw error;
           semantic = await context.capabilities.requestAll<AIContextSearchContribution>('context.localSemanticSearch@1', query, signal);

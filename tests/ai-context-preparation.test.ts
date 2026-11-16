@@ -125,7 +125,7 @@ test('a stalled local classifier reports its own deadline before cloud generatio
       },
     },
   } as unknown as PluginContext;
-  const prompt = '把这两张都弄成蓝色';
+  const prompt = '把这两张配成海港的感觉';
   const interpretation = interpretLocalTurn(context, prompt, classifyAITurn(prompt), new AbortController().signal);
   deadline.abort(new DOMException('Timed out', 'TimeoutError'));
   await assert.rejects(interpretation, /本地语义模型未能及时就绪/u);
@@ -610,6 +610,16 @@ test('standalone definitions do not start the local classifier or read the docum
   assert.equal(prepared.contextIntent, 'conversation');
   assert.equal(prepared.promptTemplateId, 'template:custom');
   assert.deepEqual(prepared.sources, []);
+});
+
+test('a definition containing canvas terminology and a one-turn history veto never read selected memories', async () => {
+  const unavailable = () => { throw new Error('a standalone question opened local sources'); };
+  const context = { capabilities: { request: unavailable, requestAll: unavailable } } as unknown as PluginContext;
+  const result = await prepareAIContext(context, session(), {}, {
+    sessionId: 'session:1', prompt: '这次别用历史，什么是群组？', operation: 'general', memorySourceIds: ['node:memory'],
+  }, new AbortController().signal, () => undefined);
+  assert.deepEqual(result.sources, []);
+  assert.equal(result.contextIntent, 'conversation');
 });
 
 test('a confirmed second draft remains verbatim and scoped after 100 unrelated exchanges', async () => {

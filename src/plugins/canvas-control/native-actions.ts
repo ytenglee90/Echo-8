@@ -1,4 +1,4 @@
-import type { PluginContext } from '../../core/contracts.ts';
+import type { PluginContext, RegisteredAction } from '../../core/contracts.ts';
 import { MAX_ANNOTATION_BODY_LENGTH, type AnnotationRecord, type AnnotationTarget } from '../../protocols/annotations.ts';
 import type { AIContextCatalogContribution } from '../../protocols/ai.ts';
 import type { AppearanceReadContribution } from '../../protocols/appearance.ts';
@@ -30,6 +30,31 @@ export async function prepareNativeCanvasAction(context: PluginContext, input: C
     return current;
   };
   const action = (label: string, apply: () => Promise<string>, ids: string[] = [], review = false) => ({ label, ids, review, apply });
+  if (intent.kind === 'action') {
+    const find = async () => (await context.queries.ask<RegisteredAction[]>('system.actions')).filter(item =>
+      item.label === intent.label && /^(?:canvas|selection|group|connection|annotation|palette|minimap|layout|editor|search|clipboard|history)\./u.test(item.command));
+    const candidates = await find();
+    if (candidates.length !== 1) throw new Error('没有找到唯一可用的本地画布命令，请在命令面板中选择。');
+    const target = candidates[0]!;
+    return action(intent.label, async () => {
+      if (!(await find()).some(item => item.owner === target.owner && item.id === target.id)) throw new Error('本地命令已停用，请重新选择。');
+      await context.commands.invoke('system.action.execute', { owner: target.owner, id: target.id });
+      return `已提交本地命令「${intent.label}」。`;
+    });
+  }
+  if (intent.kind === 'view') {
+    const commands = { 'zoom-in': 'canvas.zoomIn', 'zoom-out': 'canvas.zoomOut', 'reset-zoom': 'canvas.resetZoom',
+      focus: 'canvas.focusSelection', 'select-all': 'selection.all', 'clear-selection': 'selection.clear',
+      'minimap-open': 'minimap.open', 'minimap-close': 'minimap.close' } as const;
+    return action('调整画布视图或选区', async () => {
+      await context.commands.invoke(commands[intent.action]);
+      return '已更新画布视图或选区。';
+    });
+  }
+  if (intent.kind === 'preset') return action('应用配色方案', async () => {
+    await context.commands.invoke('palette.applyPresetColors@1', { id: intent.id });
+    return '已应用配色方案。';
+  });
   if (intent.kind === 'undo' || intent.kind === 'redo') {
     const undo = intent.kind === 'undo';
     const label = undo ? '撤销' : '重做';

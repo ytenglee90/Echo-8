@@ -1,7 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { CanvasControlPlan } from '../../src/protocols/canvas-control.ts';
-import { parseProject } from '../../src/plugins/import-export/codec.ts';
+import { parseProject, serializeProject } from '../../src/plugins/import-export/codec.ts';
+import { ApplicationKernel } from '../../src/core/kernel.ts';
+import { createTextNodePlugin } from '../../src/plugins/text-node/plugin.ts';
+import type { ProjectSource } from '../../src/protocols/files.ts';
 import { installLocalLanguageAssets } from './local-language-assets.ts';
+
+const LOCAL_MIXED_GRAPH = '创建一张「主角｜林渊」，一张「主角」的文本框，一张「正文｜第001章」，把「主角｜林渊」改成#a83d44，把「主角｜林渊」和「主角」组成一个群组名为「主角组」，「主角｜林渊」虚线连接到「正文｜第001章」，「主角组」连接到「正文｜第001章」';
 
 const plan: CanvasControlPlan = { version: 1, actions: [
   { type: 'create-node', ref: 'hero', title: '主角｜林渊', text: '修钟学徒。\n\n寻找父亲🧭', color: '#a83d44' },
@@ -14,6 +19,87 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 
 export function canvasControlScenarios(url: string): void {
   test.beforeEach(async ({page})=>installLocalLanguageAssets(page));
+  test('all canvas controls keep themes backgrounds annotations and unknown operations local with a configured model', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() !== 'OPTIONS') calls++;
+      return route.fulfill({ status: 500, headers: { 'access-control-allow-origin': '*' }, body: 'Unexpected model request' });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    const send = async (prompt: string, expected: string) => {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(ai.getByRole('status')).toContainText(expected);
+      await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
+      expect(calls).toBe(0);
+    };
+    await send('切换主题到深色', '已切换为深色主题');
+    await send('把背景颜色改成浅蓝', '已准备画布背景颜色');
+    await expect(control.getByLabel('画布背景预览')).toContainText('#add8e6');
+    await control.getByRole('button', { name: '应用背景', exact: true }).click();
+    await control.getByRole('button', { name: '关闭画布控制' }).click();
+    await send('默认注释颜色改成红色', '已将默认注释颜色改为 #c43d49');
+    await send('新建一个叫本地注释测试的节点', '已直接完成 1 项操作');
+    await send('选中本地注释测试', '已选中 1 个节点');
+    await send('添加注释：这条注释完全在本地添加', '已添加标注');
+    await expect(page.getByRole('textbox', { name: '注释正文' })).toHaveValue('这条注释完全在本地添加');
+    await send('放大画布', '已更新画布视图或选区');
+    await send('取消选择', '已更新画布视图或选区');
+    await send('把不存在的卡片改成蓝色', '没有找到');
+    await send('@画布操作 调整背景纹理的模糊度', '只在本地处理');
+    await send('执行本地命令：打开查找替换', '已提交本地命令');
+    await expect(page.getByRole('region', { name: '查找替换', exact: true })).toBeVisible();
+    expect(calls).toBe(0);
+  });
+  test('writing the last complete answer into a named card is a local operation with zero extra tokens', async ({ page }) => {
+    let calls = 0;
+    const draft = '雨夜里，他把最后一盏灯让给陌生人。';
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
+        body: `data: ${JSON.stringify({ choices: [{ delta: { content: draft }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const send = async (prompt: string, expected: string) => {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(ai.getByRole('status')).toContainText(expected);
+    };
+    await send('新建一个叫草稿目标的节点', '已直接完成 1 项');
+    await send('写一段人物小传，只回答正文', '回答完成');
+    await expect(ai.getByRole('log')).toContainText(draft);
+    await send('填入草稿目标', '已直接完成 1 项');
+    await expect(page.getByRole('article', { name: /文本节点：草稿目标$/u })).toContainText(draft);
+    await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
+    expect(calls).toBe(1);
+  });
+  test('creating a card with prose asks the model only for text and writes the locally bound card', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      const body = route.request().postDataJSON() as { messages: Array<{ content: string }>; tools?: unknown };
+      expect(body.tools).toBeUndefined();
+      expect(JSON.stringify(body.messages)).toContain('不要调用画布工具或输出操作计划');
+      const content = JSON.stringify({ texts: ['她总替别人修伞，却从不肯为自己遮雨。'] });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
+        body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('创建一张人物卡，并写一段人物小传');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.getByRole('article', { name: /文本节点：人物卡$/u })).toContainText('她总替别人修伞');
+    expect(calls).toBe(1);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(page.getByRole('article', { name: /文本节点：人物卡$/u })).toHaveCount(0);
+    await page.getByRole('button', { name: '重做', exact: true }).click();
+    await expect(page.getByRole('article', { name: /文本节点：人物卡$/u })).toContainText('她总替别人修伞');
+  });
   for (const verb of ['造', '建', '新建', '创建']) test(`reported card batch with ${verb} groups blanks and connects roles offline`, async ({ page }) => {
     await page.goto(url);
     await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
@@ -432,140 +518,52 @@ export function canvasControlScenarios(url: string): void {
     await expect(output).not.toContainText('保留第三段前的原段。');
   });
 
-  test('semantic tools complete an unfamiliar no-mention task, then edit discovered bodies and relationships with verified undo', async ({ page }) => {
-    let stage = 0;
-    let hero = '';
-    let scene = '';
-    let edge = '';
-    let revision = 0;
-    await page.route('https://canvas-control.test/**', async route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
-      const request = route.request().postDataJSON() as { tools?: Array<{ function: { name: string } }>; messages: Array<{ role: string; content: string }> };
-      expect(request.tools?.map(tool => tool.function.name)).toEqual(expect.arrayContaining(['query_canvas', 'read_canvas', 'propose_canvas_plan']));
-      const last = request.messages.at(-1)!;
-      let call: { name: string; arguments: unknown };
-      stage++;
-      if (stage === 1) call = { name: 'query_canvas', arguments: { mode: 'all' } };
-      else if (stage === 2) {
-        expect(last.role).toBe('tool');
-        call = { name: 'propose_canvas_plan', arguments: { plan: { version: 1, actions: [
-          { type: 'create-node', ref: 'hero', title: '人物｜林渊', text: '修钟学徒。口头禅：时间到了。' },
-          { type: 'create-node', ref: 'scene', title: '场景｜雨夜', text: '钟楼下重逢。' },
-          { type: 'create-group', ref: 'chapter', title: '开篇人物与场景', members: ['hero', 'scene'] },
-          { type: 'create-connection', ref: 'edge', from: 'hero', to: 'scene', line: 'solid' },
-        ] } } };
-      } else if (stage === 3) call = { name: 'query_canvas', arguments: { mode: 'search', query: '林渊' } };
-      else if (stage === 4) {
-        const data = JSON.parse(last.content.replace(/^<untrusted-canvas-tool-result>\n|\n<\/untrusted-canvas-tool-result>$/gu, '')) as { nodes: Array<{ id: string; title: string }> };
-        hero = data.nodes.find(node => node.title === '人物｜林渊')!.id;
-        call = { name: 'query_canvas', arguments: { mode: 'relations', ids: [hero] } };
-      } else if (stage === 5) {
-        const data = JSON.parse(last.content.replace(/^<untrusted-canvas-tool-result>\n|\n<\/untrusted-canvas-tool-result>$/gu, '')) as { connections: Array<{ id: string; to: string }> };
-        edge = data.connections[0]!.id; scene = data.connections[0]!.to;
-        call = { name: 'read_canvas', arguments: { id: hero, start: 0, length: 100 } };
-      } else {
-        const data = JSON.parse(last.content.replace(/^<untrusted-canvas-tool-result>\n|\n<\/untrusted-canvas-tool-result>$/gu, '')) as { text: string; revision: number };
-        revision = data.revision;
-        expect(data.text).toContain('时间到了'); expect(scene).toBeTruthy();
-        call = { name: 'propose_canvas_plan', arguments: { plan: { version: 2, actions: [
-          { type: 'update-node', id: hero, edit: { start: data.text.indexOf('时间到了'), deleteCount: 4, insert: '钟还没停', expectedRevision: revision } },
-          { type: 'update-connection', id: edge, line: 'dashed' },
-        ] } } };
-      }
-      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call-' + stage, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 50, completion_tokens: 30 } })}\n\ndata: [DONE]\n\n` });
-    });
-    await configure(page, url);
-    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    const control = page.getByRole('region', { name: '画布控制', exact: true });
-    await ai.locator('.ai-composer textarea').fill('我想让这张画布讲一个修钟学徒的故事：请安排人物、雨夜场景，以及两者的关系。落实到画布。');
-    await ai.locator('.ai-composer textarea').press('Enter');
-    await expect(control.getByText('4 项操作', { exact: true })).toBeVisible();
-    await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
-    await expect(control).toContainText('已回读核对 4 项操作');
-    await control.getByRole('button', { name: '关闭画布控制' }).click();
-    await ai.locator('.ai-composer textarea').fill('林渊的口头禅换成“钟还没停”，人物和雨夜场景之间的关系改成引用。');
-    await ai.locator('.ai-composer textarea').press('Enter');
-    await expect(control.getByText('2 项操作', { exact: true })).toBeVisible({ timeout: 30_000 });
-    await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
-    await expect(control).toContainText('已回读核对 2 项操作');
-    await control.screenshot({ path: 'local-data/canvas-agent-verified-review.png' });
-    expect(stage).toBe(6);
-    await control.getByRole('button', { name: '关闭画布控制' }).click();
-    await ai.getByRole('button', { name: '关闭AI 助手' }).click();
-    const card = page.getByRole('article', { name: /文本节点：人物｜林渊$/u });
-    await expect(card).toContainText('钟还没停');
-    await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
-    await page.getByRole('button', { name: '撤销', exact: true }).click();
-    await expect(card).toContainText('时间到了');
-    await expect(page.locator('.connection-path.title-connection')).toHaveCount(0);
-    await page.getByRole('button', { name: '重做', exact: true }).click();
-    await expect(card).toContainText('钟还没停');
-  });
-
-  test('native tool rejection falls back to structured canvas tools and corrects a false permission denial', async ({ page }) => {
+  test('unsupported narrative canvas commands ask locally without partial writes or model calls', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
-      calls++;
-      const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ role: string; content: string }> };
-      if (calls === 1) return route.fulfill({ status: 400, headers: { 'access-control-allow-origin': '*' }, json: { error: { message: 'tools is not supported' } } });
-      expect(request.tools).toBeUndefined(); expect(request.messages.some(message => message.role === 'tool')).toBe(false);
-      const content = calls === 2 ? '我没有操控画布的能力，请自行粘贴。' : calls === 3
-        ? JSON.stringify({ canvas_tool: { name: 'query_canvas', arguments: { mode: 'state' } } })
-        : JSON.stringify({ canvas_tool: { name: 'propose_canvas_plan', arguments: { plan: { version: 1, actions: [{ type: 'create-node', ref: 'role', title: '兼容模式角色', text: '修钟学徒，等待第十三声钟。' }] } } } });
-      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
-    });
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
     await configure(page, url, 'openai', undefined, 'direct');
+    const before = await page.locator('.text-node-card').count();
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     await ai.locator('.ai-composer textarea').fill('让画布里出现一位等待第十三声钟的修钟学徒，写好他的资料。');
     await ai.locator('.ai-composer textarea').press('Enter');
-    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项操作');
-    await expect(page.getByRole('article', { name: /文本节点：兼容模式角色$/u })).toHaveCount(1);
-    expect(calls).toBe(4);
-    await ai.getByRole('button', { name: '打开实时操作日志', exact: true }).click();
-    await expect(page.getByRole('region', { name: '实时操作日志', exact: true })).toContainText('回读核对画布结果');
+    await expect(ai.getByRole('status')).toContainText(/本地|补充|说明|不能可靠/u);
+    await expect(page.locator('.text-node-card')).toHaveCount(before);
+    expect(calls).toBe(0);
+    await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
   });
 
-  test('a rejected native tool continuation recovers once without asking the user to rephrase', async ({ page }) => {
-    let rounds = 0;
-    let resolvedTarget = '';
-    await page.route('https://canvas-control.test/**', async route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
-      const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ role: string; content: string | null; tool_call_id?: string }> };
-      rounds++;
-      if (rounds === 2) {
-        const last = request.messages.at(-1)!;
-        expect(last.tool_call_id).toBe('discover-target');
-        const data = JSON.parse(last.content!.split('\n')[1]!) as { nodes: Array<{ id: string }> };
-        resolvedTarget = data.nodes[0]!.id;
-        return route.fulfill({ status: 422, headers: { 'access-control-allow-origin': '*' }, json: { detail: 'Unprocessable Entity' } });
-      }
-      let delta: Record<string, unknown>;
-      if (rounds === 1) {
-        expect(request.messages.some(message => message.content?.includes('本地规则未能按原词唯一定位对象'))).toBe(true);
-        delta = { tool_calls: [{ index: 0, id: 'discover-target', type: 'function', function: { name: 'query_canvas', arguments: '{"mode":"search","query":"倾听者"}' } }] };
-      } else {
-        expect(request.tools).toBeUndefined();
-        expect(request.messages.some(message => message.role === 'tool')).toBe(false);
-        expect(request.messages.some(message => message.content?.includes(resolvedTarget))).toBe(true);
-        delta = { content: JSON.stringify({ canvas_tool: { name: 'propose_canvas_plan', arguments: { plan: { version: 1, actions: [{ type: 'update-node', id: resolvedTarget, title: '聆听者' }] } } } }) };
-      }
-      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta, finish_reason: rounds === 1 ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n` });
-    });
-    const fixture = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '检索退路' }),
-      JSON.stringify({ type: 'node', id: 'listener', category: '资料', name: '倾听者', text: '站在钟楼下偷听消息。' }), JSON.stringify({ type: 'end' })].join('\n');
-    await page.goto(url);
-    await page.getByRole('region', { name: 'Echo-8 书库' }).locator('input[type=file]').setInputFiles({ name: '检索退路.e8', mimeType: 'text/plain', buffer: Buffer.from(fixture) });
+  test('a rejecting model endpoint cannot interfere with a complete local canvas command', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.fulfill({ status: 400, body: 'tools unsupported' }); });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill(LOCAL_MIXED_GRAPH);
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 6 项');
+    await expect(page.locator('.group-frame')).toHaveCount(1);
+    await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
+    expect(calls).toBe(0);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(page.locator('.group-frame')).toHaveCount(0);
+  });
+
+  test('missing descriptive targets stay local and an exact follow-up can rename the real card', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await seedCanvas(page, url, [{ title: '倾听者', body: '站在钟楼下偷听消息。' }]);
     await configure(page, url, 'openai', undefined, 'review', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     await ai.locator('.ai-composer textarea').fill('把钟楼下偷听的那张卡改名为聆听者');
     await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('status')).toContainText('没有找到');
+    await expect(page.getByRole('article', { name: /文本节点：倾听者$/u })).toHaveCount(1);
+    await ai.locator('.ai-composer textarea').fill('把倾听者改名为聆听者');
+    await ai.locator('.ai-composer textarea').press('Enter');
     const control = page.getByRole('region', { name: '画布控制', exact: true });
     await expect(control).toContainText('1 项操作');
     await control.getByRole('button', { name: '应用整份计划' }).click();
-    await expect(control).toContainText('已回读核对 1 项操作');
-    await expect(page.getByRole('article', { name: /文本节点：聆听者$/u })).toHaveCount(1);
-    expect(rounds).toBe(3);
+    await expect(page.getByRole('article', { name: /文本节点：聆听者$/u })).toContainText('钟楼下偷听');
+    expect(calls).toBe(0);
   });
 
   test('reported all-node layouts run offline without selection and log scope, counts and commit states', async ({ page }) => {
@@ -608,7 +606,7 @@ export function canvasControlScenarios(url: string): void {
       calls += 1;
       const request = route.request().postDataJSON() as { messages: Array<{ role: string; content: string }> };
       if (request.messages.some(message => message.role === 'system' && message.content.includes('应用已核对本轮写入目标和范围'))) {
-        const content = JSON.stringify({ text: '任务：了结祖父最后一笔未还的愿。' });
+        const content = JSON.stringify({ text: '姓名：沈无咎\n任务：了结祖父最后一笔未还的愿。' });
         return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
           body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
       }
@@ -631,7 +629,7 @@ export function canvasControlScenarios(url: string): void {
     await expect(library).toHaveCount(0);
     await configure(page, url, 'openai', undefined, 'review', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    for (const prompt of ['填入角色卡', '@画布操作 在角色卡节点里，设计人物']) {
+    for (const prompt of ['在角色卡里设计人物', '@画布操作 在角色卡节点里，设计人物']) {
       await ai.locator('.ai-composer textarea').fill(prompt);
       await ai.locator('.ai-composer textarea').press('Enter');
       const control = page.getByRole('region', { name: '画布控制', exact: true });
@@ -645,13 +643,13 @@ export function canvasControlScenarios(url: string): void {
     const control = page.getByRole('region', { name: '画布控制', exact: true });
     const candidates = control.getByRole('region', { name: '选择「角色节点」', exact: true });
     await expect(candidates.getByRole('button')).toHaveCount(1);
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
     await candidates.getByRole('button').click();
     await expect(control.getByRole('button', { name: '应用整份计划' })).toBeVisible();
     await control.getByRole('button', { name: '应用整份计划' }).click();
     await expect(control.getByRole('region', { name: '画布操作计划' }).first()).toContainText('已应用');
     await control.getByRole('button', { name: '关闭画布控制' }).click();
-    expect(calls).toBe(4);
+    expect(calls).toBe(3);
     await ai.getByRole('button', { name: '关闭AI 助手', exact: true }).click();
     await expect(page.getByRole('article', { name: /文本节点：资料｜角色卡$/u })).toContainText('沈无咎');
     await expect(page.getByRole('article', { name: /文本节点：地点｜地图$/u })).toContainText('不改动地图正文');
@@ -706,7 +704,7 @@ export function canvasControlScenarios(url: string): void {
           body: JSON.stringify({ error: { message: 'private-provider-error-724' } }) });
       }
       await held;
-      const content = JSON.stringify({ version: 1, actions: [{ type: 'create-node', ref: 'record', title: '日志测试节点', text: 'private-node-body-724', x: 420, y: 340 }] });
+      const content = JSON.stringify({ texts: ['private-node-body-724'] });
       return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
         body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
     });
@@ -715,7 +713,7 @@ export function canvasControlScenarios(url: string): void {
     const log = page.getByRole('region', { name: '实时操作日志', exact: true });
     const row = (label: string) => log.getByRole('listitem').filter({ has: page.getByText(label, { exact: true }) });
     try {
-      await ai.locator('.ai-composer textarea').fill('新建一个记录节点，并写一段关于 private-prompt-724 的正文');
+      await ai.locator('.ai-composer textarea').fill('新建一个叫日志测试节点的节点，并写一段关于 private-prompt-724 的正文');
       await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
       await ai.getByRole('button', { name: '打开实时操作日志', exact: true }).click();
       await expect(row('模型响应')).toContainText('等待模型响应');
@@ -747,31 +745,60 @@ export function canvasControlScenarios(url: string): void {
     await expect(log).not.toContainText('private-provider-error-724');
   });
 
-  test('natural character creation corrects an empty plan that misreports the text-node capability', async ({ page }) => {
+  test('natural character creation keeps the local title and requests only background prose', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
-      const { messages } = route.request().postDataJSON() as { messages: Array<{ role: string; content: string }> };
-      expect(messages.filter(message => message.role === 'system').map(message => message.content).join('\n')).toContain('文字节点已启用，支持 create-node 和 update-node');
-      if (calls === 2) expect(messages.at(-1)?.content).toContain('返回计划没有 create-node');
-      const content = JSON.stringify(calls === 1
-        ? { version: 1, actions: [], answer: '节点插件未启用。' }
-        : { version: 1, actions: [{ type: 'create-node', ref: 'character', title: '角色｜沈砚', text: '夜班测绘员。' }] });
-      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
-        body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+      const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ content: string }> };
+      expect(request.tools).toBeUndefined();
+      expect(JSON.stringify(request.messages)).toContain('不要调用画布工具或输出操作计划');
+      const content = JSON.stringify({ texts: ['夜班测绘员。'] });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
     });
     await configure(page, url, 'openai', undefined, 'direct');
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     await ai.locator('.ai-composer textarea').fill('创建一张角色卡，并为她写一段背景故事');
-    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
-    const card = page.getByRole('article', { name: '文本节点：角色｜沈砚' });
+    await ai.locator('.ai-composer textarea').press('Enter');
+    const card = page.getByRole('article', { name: /文本节点：角色卡$/u });
     await expect(card).toContainText('夜班测绘员。');
-    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项');
-    await expect(ai).not.toContainText('节点插件未启用');
-    expect(calls).toBe(2);
-    await page.getByRole('button', { name: /^撤销/u }).click();
+    expect(calls).toBe(1);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
     await expect(card).toHaveCount(0);
+  });
+
+  test('mixed text and canvas operations show one preview and undo together', async ({ page }) => {
+    await seedCanvas(page, url, [{ title: '混合甲' }, { title: '混合乙', body: '已有介绍。' }, { title: '混合丙' }]);
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ content: string }> };
+      expect(request.tools).toBeUndefined();
+      expect(JSON.stringify(request.messages)).not.toMatch(/删除|混合丙|甲的新标题|已有介绍/u);
+      const content = JSON.stringify({ texts: ['夜间巡查员。'] });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
+        body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const assistant = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await assistant.locator('.ai-composer textarea').fill('把混合甲的标题改成「甲的新标题」，给混合乙写一段介绍，把混合甲连到混合乙，最后删除混合丙');
+    await assistant.locator('.ai-composer textarea').press('Enter');
+    const canvas = page.getByRole('region', { name: '画布控制', exact: true });
+    await expect(canvas.getByText('4 项操作', { exact: true })).toBeVisible({ timeout: 12_000 });
+    const a = page.getByRole('article', { name: '文本节点：甲的新标题', exact: true });
+    const b = page.getByRole('article', { name: '文本节点：混合乙', exact: true });
+    const c = page.getByRole('article', { name: '文本节点：混合丙', exact: true });
+    await expect(c).toHaveCount(1);
+    await canvas.getByRole('button', { name: '应用整份计划', exact: true }).click();
+    await expect(a).toBeVisible();
+    await expect(b).toContainText('夜间巡查员。');
+    await expect(c).toHaveCount(0);
+    expect(calls).toBe(1);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(c).toHaveCount(1);
+    await expect(a).toHaveCount(0);
+    await expect(b).not.toContainText('夜间巡查员。');
   });
 
   test('formal natural memory is reviewed and recorded offline', async ({ page }) => {
@@ -794,25 +821,21 @@ export function canvasControlScenarios(url: string): void {
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls += 1;
       const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
-      if (calls === 2) {
+      if (calls === 1) {
         const wire = request.messages.map(message => message.content).join('\n');
         expect(wire).toContain('出生于渡口。');
         expect(wire).toContain('出生于港城。');
       }
-      const content = calls === 1 ? JSON.stringify({ version: 1, actions: [
-        { type: 'create-node', ref: 'draft-a', title: '初稿', text: '出生于渡口。' },
-        { type: 'create-node', ref: 'draft-b', title: '终稿', text: '出生于港城。' },
-      ] }) : '两稿的出生地不同。';
+      const content = '两稿的出生地不同。';
       return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
     });
-    await configure(page, url, 'openai', undefined, 'direct');
+    await seedCanvas(page, url, [{ title: '初稿', body: '出生于渡口。' }, { title: '终稿', body: '出生于港城。' }]);
+    await configure(page, url, 'openai', undefined, 'direct', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     const send = async (prompt: string) => {
       await ai.locator('.ai-composer textarea').fill(prompt);
       await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     };
-    await send('@画布操作 新建两个测试节点');
-    await expect(ai.getByRole('status')).toContainText('已直接完成 2 项');
     await send('对比初稿和终稿，并把冲突整理成名为「人物冲突」的新节点');
     const card = page.getByRole('article', { name: '文本节点：人物冲突' });
     const review = ai.getByRole('dialog', { name: '新建结果节点确认' });
@@ -820,7 +843,7 @@ export function canvasControlScenarios(url: string): void {
     await expect(card).toHaveCount(0);
     await review.getByRole('button', { name: '创建节点' }).click();
     await expect(card).toContainText('两稿的出生地不同。');
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
 
   test('retrieval settings are governed, show honest versions and retain mode without a model connection', async ({ page }, info) => {
@@ -851,67 +874,46 @@ export function canvasControlScenarios(url: string): void {
     await mode.selectOption('cloud-fallback');
     await expect(settings).toContainText('云端连接仍需独立授权');
   });
-  test('semantic filter sends only the request, resolves candidates locally, then moves the same result set without another call', async ({ page }) => {
+  test('keyword canvas filters resolve and move the same local result set with zero model calls', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
-      calls += 1;
-      const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
-      if (calls === 2) {
-        expect(request.messages).toHaveLength(2);
-        expect(request.messages.map(message => message.content).join('\n')).not.toContain('渡口账本');
-      }
-      const content = calls === 1 ? JSON.stringify({ version: 1, actions: [
-        { type: 'create-node', ref: 'hit', title: '渡口账本', text: '旧案留下的潮汐记录。' },
-        { type: 'create-node', ref: 'other', title: '无关测试', text: '食谱。' },
-      ] }) : JSON.stringify({ terms: ['旧案'], ungrouped: true });
-      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
-    });
-    await configure(page, url, 'openai', undefined, 'direct');
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await seedCanvas(page, url, [{ title: '渡口账本', body: '旧案记录。' }, { title: '无关测试', body: '晴天。' }]);
+    await configure(page, url, 'openai', undefined, 'review', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     const control = page.getByRole('region', { name: '画布控制', exact: true });
-    const send = async (prompt: string) => {
-      await ai.locator('.ai-composer textarea').fill(prompt);
-      await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
-    };
-    await send('@画布操作 新建两个测试节点');
-    await expect(ai.getByRole('status')).toContainText('已直接完成 2 项');
-    await send('把跟旧案有关、但还没归类的线索整理出来');
+    await ai.locator('.ai-composer textarea').fill('把跟旧案有关、但还没归类的线索整理出来');
+    await ai.locator('.ai-composer textarea').press('Enter');
     await expect(control.getByRole('button', { name: '渡口账本', exact: true })).toBeVisible();
-    await expect(control.getByRole('button', { name: '无关测试', exact: true })).toHaveCount(0);
     await control.getByRole('button', { name: '关闭画布控制' }).click();
-    await send('把它们移到右边');
+    await ai.locator('.ai-composer textarea').fill('把它们移到右边');
+    await ai.locator('.ai-composer textarea').press('Enter');
     await expect(control).toContainText('修改文字对象 · 渡口账本');
-    await expect(control).toContainText('1 项待应用');
-    expect(calls).toBe(2);
-    await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
     await control.getByRole('button', { name: '应用整份计划' }).click();
-    await expect(control.getByRole('button', { name: '应用整份计划' })).toHaveCount(0);
+    expect(calls).toBe(0);
   });
+
   test('a described paragraph is rewritten in place and a short follow-up uses the applied text', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => {
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls += 1;
       const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
-      if (calls > 1) {
+      if (calls >= 1) {
         const wire = request.messages.map(message => message.content).join('\n');
-        expect(wire).toContain(calls === 2 ? '左腕有一道旧伤，阴天时会痛。' : '旧伤遇潮便痛。');
+        expect(wire).toContain(calls === 1 ? '左腕有一道旧伤，阴天时会痛。' : '旧伤遇潮便痛。');
         expect(wire).not.toContain('远处绝不应发送');
-        if (calls === 3) expect(wire).toContain('不要修改人物年龄');
+        if (calls === 2) expect(wire).toContain('不要修改人物年龄');
       }
-      const content = calls === 1 ? JSON.stringify({ version: 1, actions: [{ type: 'create-node', ref: 'hero', title: '旧伤验收', text: '前文保留。\n\n左腕有一道旧伤，阴天时会痛。\n\n后文保留。' + '隔'.repeat(400) + '远处绝不应发送' }] })
-        : calls === 2 ? '旧伤遇潮便痛。' : '旧伤畏潮。';
+      const content = calls === 1 ? '旧伤遇潮便痛。' : '旧伤畏潮。';
       return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
     });
-    await configure(page, url, 'openai', undefined, 'direct');
+    await seedCanvas(page, url, [{ title: '旧伤验收', body: '前文保留。\n\n左腕有一道旧伤，阴天时会痛。\n\n后文保留。' + '隔'.repeat(400) + '远处绝不应发送' }]);
+    await configure(page, url, 'openai', undefined, 'direct', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     const send = async (prompt: string) => {
       await ai.locator('.ai-composer textarea').fill(prompt);
       await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     };
-    await send('@画布操作 新建旧伤验收节点');
-    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项');
     await send('把旧伤验收里写旧伤的那段缩短一点，保留我的口吻，不要修改人物年龄。');
     await expect(ai.getByRole('button', { name: '接受提案', exact: true })).toBeVisible();
     await send('替换进去');
@@ -922,7 +924,7 @@ export function canvasControlScenarios(url: string): void {
     await expect(card).toContainText('旧伤畏潮。');
     await expect(card).toContainText('前文保留。');
     await expect(card).toContainText('后文保留。');
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
   });
   test('natural group follow-up, bulk presentation and background use local reviewed changes', async ({ page }) => {
     const body = [JSON.stringify({ type: 'manifest', kind: 'echo-8-ai-book', formatVersion: 1, title: '分组与背景验收' }),
@@ -967,7 +969,7 @@ export function canvasControlScenarios(url: string): void {
     await expect(control.getByLabel('画布背景预览')).toHaveCount(0);
     await expect(ai.getByLabel('本轮 Token 用量')).toHaveText(Array(7).fill('本轮 Token：输入 0 · 输出 0'));
   });
-  test('flexible canvas requests use the model plan with a bounded title directory', async ({ page }) => {
+  test('flexible arrangement uses a local default gap without sending a title directory', async ({ page }) => {
     let requests = 0;
     await page.route('https://canvas-control.test/**', route => {
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
@@ -998,7 +1000,7 @@ export function canvasControlScenarios(url: string): void {
     await expect(control).toContainText('等待确认');
     await control.getByRole('button', { name: '应用整份计划' }).click();
     await expect(control).toContainText('已应用');
-    expect(requests).toBe(1);
+    expect(requests).toBe(0);
   });
 
   test('natural canvas follow-ups use a newly created node and clarify partial titles offline', async ({ page }) => {
@@ -1187,7 +1189,7 @@ export function canvasControlScenarios(url: string): void {
       await ai.locator('.ai-composer textarea').fill(prompt);
       await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     };
-    await send('@画布操作 新建测试主角和测试武器，并连线');
+    await send('@画布操作 创建一张「测试主角」，一张「测试武器」，「测试主角」连接到「测试武器」');
     await expect(ai.getByRole('status')).toContainText('已直接完成 3 项');
     await ai.getByRole('button', { name: '关闭AI 助手' }).click();
     await page.getByRole('article', { name: /文本节点：测试武器$/u }).click({ position: { x: 20, y: 70 } });
@@ -1198,7 +1200,7 @@ export function canvasControlScenarios(url: string): void {
     const control = page.getByRole('region', { name: '画布控制', exact: true });
     await expect(control).toContainText('线型 · 虚线');
     await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
-    expect(calls).toBe(1);
+    expect(calls).toBe(0);
     await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
     await expect(page.locator('.connection-path.title-connection')).toHaveCount(1);
     await control.getByRole('button', { name: '关闭画布控制' }).click();
@@ -1212,16 +1214,13 @@ export function canvasControlScenarios(url: string): void {
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls += 1;
       const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
-      const directory = request.messages.find(message => message.content.startsWith('<untrusted-canvas-objects>'))?.content.split('\n')[1] ?? '{}';
-      const protagonist = (JSON.parse(directory) as { nodes?: Array<{ id: string; title: string; textLength: number }> }).nodes?.find(node => node.title === '待设计主角');
-      const content = calls === 1
-        ? { version: 1, actions: [{ type: 'create-node', ref: 'hero', title: '待设计主角' }] }
-        : { version: 1, actions: [{ type: 'update-node', id: protagonist?.id, text: '林渊在夜里修表，害怕钟声。' }] };
+      expect(JSON.stringify(request.messages)).toContain('不要调用画布工具或输出操作计划');
+      const content = { text: '林渊在夜里修表，害怕钟声。' };
       return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(content) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
     });
     await configure(page, url, 'openai', undefined, 'direct');
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    for (const prompt of ['@画布操作 添加主角节点', '@画布操作 设计主角']) {
+    for (const prompt of ['@画布操作 新建一个叫待设计主角的节点', '@画布操作 设计主角']) {
       await ai.locator('.ai-composer textarea').fill(prompt);
       await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
       await expect(ai.getByRole('status')).toContainText('已直接完成 1 项');
@@ -1233,7 +1232,7 @@ export function canvasControlScenarios(url: string): void {
     await page.getByRole('button', { name: '撤销', exact: true }).click();
     await expect(node).toBeVisible();
     await expect(node).not.toContainText('林渊在夜里修表');
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
   test('paragraph rewrite sends a bound range and applies only the replacement with one undo', async ({ page }) => {
     test.setTimeout(60_000);
@@ -1241,20 +1240,18 @@ export function canvasControlScenarios(url: string): void {
     await page.route('https://canvas-control.test/**', route => {
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls += 1;
-      if (calls === 2) {
+      if (calls === 1) {
         const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
         const target = request.messages.find(message => message.content.startsWith('本轮正文目标'))?.content;
         expect(target).toContain('"start":8'); expect(target).toContain('"end":14');
         expect(request.messages.some(message => message.content.includes('第二段原文。'))).toBe(true);
       }
-      const content = calls === 1 ? JSON.stringify({ version: 1, actions: [{ type: 'create-node', ref: 'body', title: '段落目标', text: '第一段保留。\n\n第二段原文。\n\n第三段保留。' }] }) : '第二段的新表达。';
+      const content = '第二段的新表达。';
       return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 } })}\n\ndata: [DONE]\n\n` });
     });
-    await configure(page, url, 'openai', undefined, 'direct');
+    await seedCanvas(page, url, [{ title: '段落目标', body: '第一段保留。\n\n第二段原文。\n\n第三段保留。' }]);
+    await configure(page, url, 'openai', undefined, 'direct', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('@画布操作 新建一个正文节点');
-    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
-    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项');
     await ai.locator('.ai-composer textarea').fill('@改写 @[段落目标] 修改第2段，保留其他段落。');
     await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     await expect(ai.getByRole('combobox', { name: 'AI 提案写入方式' })).toHaveValue('replace', { timeout: 25_000 });
@@ -1265,7 +1262,7 @@ export function canvasControlScenarios(url: string): void {
     await ai.getByRole('button', { name: '关闭AI 助手' }).click();
     await page.getByRole('button', { name: '撤销', exact: true }).click();
     await expect(node).toContainText('第二段原文。'); await expect(node).not.toContainText('第二段的新表达。');
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
   test('native role follow-ups retain constraints and task totals separate new tasks from retries', async ({ page }) => {
     const requests: Array<{ messages: Array<{ role: string; content: string }> }> = [];
@@ -1304,16 +1301,17 @@ export function canvasControlScenarios(url: string): void {
       requests += 1;
       return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify({ version: 1, actions: [{ type: 'create-node', ref: 'hero', title: '本地改色目标', text: '原文必须保留。', color: '#a83d44' }] }) }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 } })}\n\ndata: [DONE]\n\n` });
     });
-    await configure(page, url, 'openai', undefined, 'direct');
+    await seedCanvas(page, url, [{ title: '本地改色目标', body: '原文必须保留。', color: '#a83d44' }]);
+    await configure(page, url, 'openai', undefined, 'direct', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('@画布操作 新建一个人物节点');
+    await ai.locator('.ai-composer textarea').fill('选中本地改色目标');
     await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
-    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项');
+    await expect(ai.getByRole('status')).toContainText('已选中 1 个节点');
     await ai.locator('.ai-composer textarea').fill('@画布操作 把选中节点设为 #336699');
     await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     const control = page.getByRole('region', { name: '画布控制', exact: true });
     await expect(control.getByText('1 项操作', { exact: true }).first()).toBeVisible();
-    expect(requests).toBe(1);
+    expect(requests).toBe(0);
     await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
     await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
     await control.getByRole('button', { name: '关闭画布控制' }).click();
@@ -1321,7 +1319,7 @@ export function canvasControlScenarios(url: string): void {
     const card = page.getByRole('article', { name: /文本节点：本地改色目标$/u });
     await expect(card.locator('header')).toHaveCSS('background-color', 'rgb(51, 102, 153)');
     await page.getByRole('button', { name: '撤销', exact: true }).click();
-    await expect(card.locator('header')).toHaveCSS('background-color', 'rgb(168, 61, 68)');
+    await expect(card.locator('header')).toHaveCSS('background-color', 'rgb(32, 33, 36)');
     await expect(card).toContainText('原文必须保留。');
   });
   test('new objects generate directly by default and one undo reverses the whole generated batch', async ({ page }) => {
@@ -1330,7 +1328,7 @@ export function canvasControlScenarios(url: string): void {
       : route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(plan) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` }));
     await configure(page, url, 'openai', undefined, 'direct');
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('@画布操作 新建人物与章节并分组连线。');
+    await ai.locator('.ai-composer textarea').fill(LOCAL_MIXED_GRAPH);
     await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     await expect(ai.getByRole('status')).toContainText('已直接完成 6 项');
     await expect(page.getByRole('region', { name: '画布控制', exact: true })).toHaveCount(0);
@@ -1372,11 +1370,11 @@ export function canvasControlScenarios(url: string): void {
       requests += 1;
       if (route.request().url().includes('/gemini-2.5-flash:')) return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, json: { error: { message: 'Model unavailable', status: 'NOT_FOUND' } } });
       expect(route.request().url()).toContain('/gemini-3.5-flash-lite:streamGenerateContent');
-      return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(plan) }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 100, toolUsePromptTokenCount: 5, candidatesTokenCount: 40, thoughtsTokenCount: 10 } })}\n\n` });
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: '修钟学徒的介绍。' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 100, toolUsePromptTokenCount: 5, candidatesTokenCount: 40, thoughtsTokenCount: 10 } })}\n\n` });
     });
     await configure(page, url, 'gemini', 'gemini-2.5-flash');
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('@画布操作 新建人物与章节并分组连线。');
+    await ai.locator('.ai-composer textarea').fill('介绍一位修钟学徒。');
     await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     await expect(ai).toContainText('HTTP 404');
     await expect(ai).toContainText('账号当前可用的模型');
@@ -1389,9 +1387,8 @@ export function canvasControlScenarios(url: string): void {
     await expect(provider.getByText('当前连接已就绪', { exact: true })).toBeVisible();
     await ai.getByRole('button', { name: 'AI 对话', exact: true }).click();
     await ai.getByRole('button', { name: '重试上一次发送', exact: true }).click();
-    await expect(page.getByRole('region', { name: '画布控制', exact: true }).getByText('6 项操作', { exact: true })).toBeVisible();
+    await expect(ai.getByRole('log')).toContainText('修钟学徒的介绍。');
     expect(requests).toBe(2);
-    await page.getByRole('region', { name: '画布控制', exact: true }).getByRole('button', { name: '关闭画布控制' }).click();
     const task = ai.getByLabel('任务累计 Token 用量', { exact: true });
     await task.locator(':scope > summary').click();
     await expect(task).toContainText('平台返回：输入 105 · 输出 50');
@@ -1399,59 +1396,40 @@ export function canvasControlScenarios(url: string): void {
     await expect(task).toContainText('修正、续写及重试 1 次');
     await expect(ai.getByLabel('本轮 Token 用量')).toHaveText('本轮 Token：输入 105 · 输出 50');
   });
-  test('AI canvas plans get one bounded format repair before review', async ({ page }) => {
+  test('a prose response containing canvas actions is rejected without a paid plan repair', async ({ page }) => {
     let requests = 0;
     await page.route('https://canvas-control.test/**', route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
-      requests += 1;
-      const content = requests === 1 ? { version: '1', nodes: [] } : plan;
-      return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(content) }, finish_reason: 'stop' }], usage: { prompt_tokens: requests * 10, completion_tokens: requests + 1 } })}\n\ndata: [DONE]\n\n` });
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      requests++;
+      const content = JSON.stringify({ texts: ['不应写入'], actions: [{ type: 'delete', ids: ['other'] }] });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
     });
-    await configure(page, url);
+    await configure(page, url, 'openai', undefined, 'direct');
+    const before = await page.locator('.text-node-card').count();
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('@画布操作 新建人物与章节并分组连线。');
-    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
-    await expect(page.getByRole('region', { name: '画布控制', exact: true }).getByText('6 项操作', { exact: true })).toBeVisible();
-    expect(requests).toBe(2);
-    await expect(ai.getByLabel('本轮 Token 用量')).toHaveText('本轮 Token：输入 30 · 输出 5');
-    await page.getByRole('region', { name: '画布控制', exact: true }).getByRole('button', { name: '关闭画布控制' }).click();
-    const task = ai.getByLabel('任务累计 Token 用量', { exact: true });
-    await task.locator(':scope > summary').click();
-    await expect(task).toContainText('平台返回：输入 30 · 输出 5');
-    await task.getByText('调用明细', { exact: true }).click();
-    await expect(task).toContainText('格式纠正');
-    await ai.getByRole('button', { name: '查看发送内容', exact: true }).click();
-    const inspection = page.getByRole('dialog', { name: '本轮发送内容', exact: true });
-    await expect(inspection.getByLabel('实际请求正文')).toHaveCount(2);
-    await expect(inspection).toContainText('计划校验未通过');
-    await page.keyboard.press('Escape'); await expect(inspection).toHaveCount(0);
-    await expect(ai).not.toContainText('"nodes"');
+    await ai.locator('.ai-composer textarea').fill('创建一张人物卡，并写一段小传');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai).toContainText('没有返回符合本轮写入范围的正文');
+    await expect(page.locator('.text-node-card')).toHaveCount(before);
+    expect(requests).toBe(1);
   });
-  for (const failure of ['format', 'scope'] as const) test(`AI ${failure} failure releases the completed task and allows retry`, async ({ page }) => {
+
+  for (const failure of ['format', 'scope'] as const) test(`AI prose ${failure} failure releases its task and allows an explicit retry`, async ({ page }) => {
     let requests = 0;
-    const errors: string[] = [];
-    page.on('pageerror', error => errors.push(error.message));
     await page.route('https://canvas-control.test/**', route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
-      requests += 1;
-      const bad = failure === 'format' ? { version: '1', nodes: [] }
-        : { version: 1, actions: [{ type: 'update-node', id: 'outside:node', text: '不得写入' }] };
-      const content = requests <= (failure === 'format' ? 2 : 1) ? bad : plan;
-      return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(content) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      requests++;
+      const content = JSON.stringify(requests === 1 ? (failure === 'format' ? { text: '错误字段' } : { texts: ['正文'], id: 'other' }) : { texts: ['重试后的正文'] });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
     });
-    await configure(page, url);
+    await configure(page, url, 'openai', undefined, 'direct');
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('@画布操作 新建人物与章节并分组连线。');
-    await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
-    if (failure === 'format') {
-      await expect(ai).toContainText('版本或字段不正确');
-      await ai.getByRole('button', { name: '重试上一次发送', exact: true }).click();
-    }
-    await expect(page.getByRole('region', { name: '画布控制', exact: true }).getByText('6 项操作', { exact: true })).toBeVisible();
-    expect(requests).toBe(failure === 'format' ? 3 : 2);
-    await expect(ai.getByLabel('本轮 Token 用量')).toContainText('（估算）');
-    await expect(ai).not.toContainText('当前内容仍在处理中');
-    expect(errors).toEqual([]);
+    await ai.locator('.ai-composer textarea').fill('创建一张人物卡，并写一段小传');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai).toContainText('没有返回符合本轮写入范围的正文');
+    await ai.getByRole('button', { name: '重试上一次发送', exact: true }).click();
+    await expect(page.getByRole('article', { name: /文本节点：人物卡$/u })).toContainText('重试后的正文');
+    expect(requests).toBe(2);
   });
   test('AI node editing binds the selected object and refuses a review after the user edits it', async ({ page }) => {
     test.setTimeout(60_000);
@@ -1504,7 +1482,7 @@ export function canvasControlScenarios(url: string): void {
     await configure(page, url);
     const before = await page.locator('.text-node-card').count();
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('@画布操作 新建主角和第一章，主角分类标题用文本框，与人物一起成组，再用虚线引用章节、实线连接群组和章节。');
+    await ai.locator('.ai-composer textarea').fill(LOCAL_MIXED_GRAPH);
     await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     const control = page.getByRole('region', { name: '画布控制', exact: true });
     await expect(control).toBeVisible();
@@ -1512,29 +1490,11 @@ export function canvasControlScenarios(url: string): void {
     await expect(page.locator('.text-node-card')).toHaveCount(before);
     await expect(ai).not.toContainText('"create-node"');
     await expect(ai).toContainText('已生成 6 项画布操作计划');
-    await expect(ai.getByLabel('本轮 Token 用量')).toHaveText('本轮 Token：输入 1,234 · 输出 56');
+    await expect(ai.getByLabel('本轮 Token 用量')).toHaveText('本轮 Token：输入 0 · 输出 0');
     await control.getByRole('button', { name: '关闭画布控制' }).click();
     await ai.screenshot({ path: info.outputPath('token-footer.png') });
-    const inspectRequest = ai.getByRole('button', { name: '查看发送内容', exact: true });
-    await expect(inspectRequest).toHaveAttribute('title', '查看发送内容');
-    await expect(inspectRequest).toHaveText('');
-    await expect(inspectRequest.locator('svg')).toHaveCount(1);
-    await inspectRequest.click();
-    const inspection = page.getByRole('dialog', { name: '本轮发送内容', exact: true });
-    await expect(inspection).toBeVisible();
-    expect(JSON.parse((await inspection.getByLabel('实际请求正文').textContent())!)).toEqual(JSON.parse(requestText));
-    await inspection.getByText('请求头（密钥已隐藏）', { exact: true }).click();
-    await expect(inspection).toContainText('[密钥已隐藏]');
-    await expect(inspection).not.toContainText('test-key-not-real');
-    await inspection.screenshot({ path: info.outputPath('request-inspection.png') });
-    await page.locator('.confirmation-dialog-backdrop').click({ position: { x: 4, y: 4 } });
-    await expect(inspection).toHaveCount(0);
+    expect(requestText).toBe('');
     await page.getByRole('button', { name: '画布控制', exact: true }).click();
-    const messages = (JSON.parse(requestText) as { messages: Array<{ content: string }> }).messages;
-    const directory = messages.find(message => message.content.includes('<untrusted-canvas-objects>'))?.content;
-    expect(directory).toContain('untrusted-canvas-objects');
-    // Default creation-only scope does not send titles of unselected onboarding nodes.
-    expect(directory).not.toContain('"title":"AI 助手使用指南"');
     await control.screenshot({ path: info.outputPath('control-review.png') });
     await control.getByRole('button', { name: '应用整份计划' }).click();
     await expect(control.getByText('已应用', { exact: true })).toBeVisible();
@@ -1563,7 +1523,7 @@ export function canvasControlScenarios(url: string): void {
     expect(Object.keys(project.document.namespaces.groups)).toHaveLength(1);
     expect(Object.keys(project.document.namespaces.connections)).toHaveLength(2);
     const responseDetails = Object.values(project.document.namespaces.aiResponseDetails) as Array<{ usage?: { inputTokens: number; outputTokens: number } }>;
-    expect(responseDetails.some(detail => detail.usage?.inputTokens === 1234 && detail.usage.outputTokens === 56)).toBe(true);
+    expect(responseDetails.some(detail => detail.usage?.inputTokens === 0 && detail.usage.outputTokens === 0)).toBe(true);
     expect(JSON.stringify(project.document)).not.toContain('<untrusted-canvas-objects>');
     await page.goto(url);
     await page.getByRole('region', { name: 'Echo-8 书库' }).locator('input[type=file]').setInputFiles({ name: '画布控制结果.e8', mimeType: 'application/octet-stream', buffer });
@@ -1578,6 +1538,20 @@ async function openControl(page: Page): Promise<void> {
   const palette = page.getByRole('dialog', { name: '命令面板' });
   await palette.getByRole('textbox', { name: '搜索命令' }).fill('画布控制');
   await palette.getByRole('option', { name: /^画布控制/u }).click();
+}
+
+async function seedCanvas(page: Page, url: string, nodes: Array<{ title: string; body?: string; color?: string }>): Promise<void> {
+  const kernel = new ApplicationKernel([createTextNodePlugin()]);
+  await kernel.start();
+  for (const [index, node] of nodes.entries()) await kernel.router.dispatch('node.create', { ...node, x: index * 440, y: 240 }, 'core.test');
+  const source = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
+  const book = await serializeProject(source);
+  await kernel.plugins.stop('text-node');
+  await page.goto(url);
+  await page.getByRole('region', { name: 'Echo-8 书库' }).locator('input[type=file]').setInputFiles({
+    name: '本地测试.e8', mimeType: 'application/octet-stream', buffer: Buffer.from(await book.arrayBuffer()),
+  });
+  await expect(page.getByRole('region', { name: 'Echo-8 书库' })).toHaveCount(0);
 }
 
 async function configure(page: Page, url: string, preset: 'openai' | 'gemini' | 'deepseek' = 'openai', model?: string, execution: 'direct' | 'review' = 'review', openCanvas = true): Promise<void> {

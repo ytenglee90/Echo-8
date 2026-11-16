@@ -172,3 +172,11 @@ CREATE TABLE IF NOT EXISTS account_preferences (
 );
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (4, unixepoch() * 1000);
+CREATE TABLE IF NOT EXISTS account_assistant_preferences (
+  user_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL,
+  body_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (5, unixepoch() * 1000);

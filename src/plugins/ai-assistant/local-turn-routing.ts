@@ -5,7 +5,7 @@ import { compileLocalClause, isLocalDiscussion, LOCAL_GROUP_CLAUSE, localInstruc
 import { isAbortError, isCapabilityUnavailable } from './runtime-errors.ts';
 import type { AITurnRoute } from './turn-route.ts';
 import { isNearConversationFollowup, isStandaloneConversation } from './context-intent.ts';
-import { isCanvasStatusFollowup } from '../../services/ai-task-route.ts';
+import { canvasIntentText, isCanvasStatusFollowup } from '../../services/ai-task-route.ts';
 import { conversationDraftRequest } from './conversation-recall.ts';
 import { isCanvasFailureFollowup } from './canvas-recovery.ts';
 
@@ -39,13 +39,15 @@ const describesGroup = (clause: string) => LOCAL_GROUP_CLAUSE.test(clause);
 const describesLink = (clause: string) => /连接|指向|连到/u.test(clause);
 
 function localTurnInput(prompt: string, route: AITurnRoute) {
-  if (route.applyItems || route.fieldTask || route.restructureTask || route.history || route.category === 'mixed' ||
+  const clauses = splitLocalInstruction(canvasIntentText(prompt));
+  const startsWithCreation = CREATE_PREFIX.test(clauses[0] ?? '');
+  const compoundCreation = startsWithCreation && clauses.length > 1 &&
+    !clauses.slice(1).some(clause => /^(?:叫|就叫|名为|命名为|标题(?:是|为))/u.test(clause));
+  if (route.applyItems || route.fieldTask || route.restructureTask || route.creationText || route.history || route.category === 'mixed' ||
     route.disposition !== 'normal' || route.repeatCreation || isCanvasStatusFollowup(prompt) || isCanvasFailureFollowup(prompt) ||
-    route.clarification || !['general', 'canvas-control'].includes(route.operation) || route.local || route.native ||
+    route.clarification || !['general', 'canvas-control'].includes(route.operation) || route.local && !compoundCreation || route.native ||
     route.interpretedSearch || isLocalDiscussion(prompt) ||
     route.category === 'chat' && (isStandaloneConversation(prompt) || isNearConversationFollowup(prompt) || conversationDraftRequest(prompt)) || prompt.length > 2000) return undefined;
-  const clauses = splitLocalInstruction(prompt);
-  const startsWithCreation = CREATE_PREFIX.test(clauses[0] ?? '');
   if (startsWithCreation && clauses.some(clause => /^(?:并|同时|再)?(?:为[^，。]{0,20})?(?:写|撰写|填|补写|设计|生成)(?:一段|一份|一篇|正文|内容|背景)/u.test(clause))) return undefined;
   const exactCreations = startsWithCreation && clauses.every((clause, index) =>
     CREATE_PREFIX.test(clause) || index > 0 && (COUNT_PREFIX.test(clause) || describesGroup(clause) || describesLink(clause)));
@@ -54,11 +56,37 @@ function localTurnInput(prompt: string, route: AITurnRoute) {
 
 export function mayUseLocalLanguage(prompt: string, route: AITurnRoute): boolean {
   const input = localTurnInput(prompt, route);
-  return Boolean(input && !input.exactCreations && input.clauses.length > 0 && input.clauses.length <= 16);
+  return Boolean(input && !compileWithoutModel(input) && input.clauses.length > 0 && input.clauses.length <= 16);
 }
 
 export function canCompileLocalCreation(prompt: string, route: AITurnRoute): boolean {
-  return localTurnInput(prompt, route)?.exactCreations === true;
+  const input = localTurnInput(prompt, route);
+  return Boolean(input && compileWithoutModel(input)?.instructions);
+}
+
+/** Compile complete clauses before preparing even the optional on-device model. */
+function compileWithoutModel(input: NonNullable<ReturnType<typeof localTurnInput>>): LocalTurnInterpretation | undefined {
+  if (!input.clauses.length || input.clauses.length > 16) return undefined;
+  const slots = localInstructionContext();
+  const instructions: string[] = [];
+  for (const clause of input.clauses) {
+    const creation = CREATE_PREFIX.test(clause) || slots.created.length > 0 && COUNT_PREFIX.test(clause);
+    const kinds = creation ? ['create'] as const : ['color', 'move', 'connect', 'group', 'ungroup', 'line', 'rename', 'remove', 'presentation'] as const;
+    let compiled: string[] | undefined;
+    for (const kind of kinds) {
+      compiled = compileLocalClause(clause, kind, slots);
+      if (compiled?.length) break;
+    }
+    if (!compiled?.length) return undefined;
+    instructions.push(...compiled);
+    if (instructions.length > 80) return { clarification: '这次超过 80 项操作，请分批发送。' };
+  }
+  return { instructions, expectedSelectionCount: slots.expectedSelectionCount };
+}
+
+export function compileLocalInstructions(prompt: string, route: AITurnRoute): LocalTurnInterpretation | undefined {
+  const input = localTurnInput(prompt, route);
+  return input && compileWithoutModel(input);
 }
 
 /** The current user text is the only authority. No canvas body is classified. */
@@ -68,6 +96,8 @@ export async function interpretLocalTurn(context: PluginContext, prompt: string,
   if (!input.clauses.length || input.clauses.length > 16) {
     return input.startsWithCreation ? { clarification: '请将本次画布操作拆成几组发送。' } : {};
   }
+  const compiled = compileWithoutModel(input);
+  if (compiled) return compiled;
   if (input.exactCreations) return interpretLocalClauses(context, prompt, route, input, signal);
   const deadline = AbortSignal.timeout(LOCAL_LANGUAGE_TIMEOUT_MS);
   try {

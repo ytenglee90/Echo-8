@@ -170,7 +170,9 @@ test('fresh canvas requests use selection without past plans, while a follow-up 
         { goal: '把现有卡移动到上方', status: 'undone', actions: [{ x: 100 }], targets: [], actionCount: 1 }] } } : {}) };
   } }, diagnostics: { warn: () => undefined } } as unknown as PluginContext;
   const prepared = { ...preparedContext(), operation: 'general' as const, contextMode: 'explicit-only' as const, sources: [], memoryRetrieval: undefined };
-  const first = await buildGenerateRequest(context, { ...prepared, prompt: '解释一下场景卡怎么设计' }, promptCatalog());
+  const independent = await buildGenerateRequest(context, { ...prepared, prompt: '解释一下场景卡怎么设计' }, promptCatalog());
+  assert.equal(independent.tools, undefined);
+  const first = await buildGenerateRequest(context, { ...prepared, prompt: '解释一下选中的场景卡怎么设计' }, promptCatalog());
   const next = await buildGenerateRequest(context, { ...prepared, prompt: '刚才那张再移一点' }, promptCatalog());
   assert.deepEqual(modes, ['selection', 'state']);
   assert.doesNotMatch(JSON.stringify(first.messages), /latestTask|旧计划/u);

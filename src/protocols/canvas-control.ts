@@ -37,6 +37,10 @@ export interface CanvasControlAdmission {
 }
 export interface CanvasControlOffer extends CanvasControlAdmission { text: string; complete: boolean }
 export interface CanvasControlNativeRequest extends CanvasControlAdmission { selectedIds?: string[] }
+export type CanvasCompoundStep = { instruction: string } | { target: string; replace: boolean };
+export interface CanvasCompoundRequest extends CanvasControlAdmission { steps: CanvasCompoundStep[]; selectedIds?: string[] }
+export interface CanvasCompoundTarget { title: string; sourceId?: string; sourceLength?: number; replace: boolean }
+export interface CanvasCompoundPreparation { targets?: CanvasCompoundTarget[]; clarification?: string }
 export const CANVAS_CONTROL_RESUME = 'canvasControl.resume@1';
 export const CANVAS_CONTROL_RESULT = 'canvasControl.result@1';
 export interface CanvasControlResume extends CanvasControlAdmission { sourceIds: string[] }
@@ -87,6 +91,7 @@ export interface CanvasControlReview {
   createdAt: number;
   status: 'pending' | 'applied' | 'dismissed';
   actions: CanvasControlAction[];
+  affectedConnections?: string[];
   titles: Record<string, string>;
   error?: string;
 }
@@ -114,10 +119,13 @@ declare module './commands.ts' {
     'canvasControl.applyItems@1': CommandContract<{ id: string; items: number[] } | { sessionId: string; items: number[] }, { createdIds: string[] }>;
     'canvasControl.commit@1': CommandContract<{ id: string; token: string }, { createdIds: string[]; created?: Record<string, string> }>;
     'canvasControl.dismiss@1': CommandContract<{ id: string }>;
+    'canvasControl.revisePending@1': CommandContract<{ sessionId: string; change: 'cancel' | 'keep-nodes' }, { message: string }>;
   }
 }
 declare module './messages.ts' {
   interface ApplicationCapabilityMap {
+    'canvasControl.prepareCompound@1': MessageContract<CanvasCompoundRequest, CanvasCompoundPreparation>;
+    'canvasControl.completeCompound@1': MessageContract<CanvasControlAdmission & { texts: string[] }, { text: string }>;
     'canvasControl.bindContent@1': MessageContract<CanvasControlAdmission, { ids: string[]; needsChoice: boolean }>;
     'canvasControl.searchPlan@1': MessageContract<CanvasControlAdmission & { terms: string[]; ungrouped: boolean }, { text: string }>;
     'canvasControl.context@2': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;

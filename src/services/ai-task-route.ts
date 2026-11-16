@@ -215,6 +215,8 @@ export function asksForCanvasContinuation(prompt: string): boolean {
 
 /** A named write destination is an action even when its body needs a model. */
 export function canvasContentTarget(prompt: string): { names: string[]; replaceBody?: true } | undefined {
+  if (/^\s*@画布操作\s+(?:(?:请|帮我)\s*)?(?:设计|创作|写|撰写|续写|改写)\s*\S/u.test(prompt) &&
+    !/[？?]\s*$/u.test(prompt) && !/然后|再把|并且|分组|连线|删除|改色/u.test(canvasCommandText(prompt))) return { names: ['选中的节点'] };
   const text = canvasIntentText(prompt).trim().replace(/[。！!]$/u, '');
   if (/^(?:不要|先别|先不要|别|如果|如何|怎么)/u.test(text) || /[？?]$/u.test(text)) return undefined;
   let match = /^(?:在|往|向|给)\s*(.+?)(?:里|内|中|上)[，,\s]*(?:设计|创作|写|填|生成|补充|续写|完善)/u.exec(text);
@@ -271,6 +273,8 @@ export function naturalCanvasOperation(prompt: string): NaturalCanvasOperation |
     if (steps.every(step => step !== undefined)) return { kind: 'batch', names: [], steps };
     return undefined;
   }
+  const explicitContent = /^\s*@画布操作\s+/u.test(prompt) ? canvasContentTarget(prompt) : undefined;
+  if (explicitContent) return { kind: 'content', ...explicitContent };
   return parseCanvasOperation(command.replace(/^(?:再|然后|接着)\s*(?=把|将|给|换|改|往|向|移|连|接到|指向|排|归到|切|转)/u, ''));
 }
 
@@ -332,6 +336,12 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
     return { kind: 'arrange', names: [match[1]!.trim()], layout };
   }
   if (/^(?:排列|整理|排布)(?:一下)?(?:节点|选中节点)$/u.test(text)) return { kind: 'arrange', names: ['它们'], layout: 'grid' };
+  if ((match = /^(?:把|将)?(.+?)(?:摆|排)(?:得)?整齐(?:些|一点)?(?:[，,]\s*(?:两张卡片|节点|卡片)(?:之间)?留白)?$/u.exec(text))) {
+    return { kind: 'arrange', names: names(match[1]!), layout: 'horizontal', gap: 60 };
+  }
+  if ((match = /^(?:把|将|找出|筛选|查找)\s*(?:跟|和|与)?(.+?)(?:有关|相关)[、，,\s]*(?:但)?(?:还没归类|未归类|未分组|还没分组)?(?:的)?(?:线索|节点|卡片)?(?:整理出来|找出来|筛出来|列出来)$/u.exec(text))) {
+    return { kind: 'search', names: [], terms: [name(match[1]!)], ungrouped: /还没归类|未归类|未分组|还没分组/u.test(text) };
+  }
   if ((match = /^([^，,；;。]+?)(?:除外|排除在外)$/u.exec(text)) && !/^(?:找出|筛选|高亮)/u.test(text)) return { kind: 'narrow', names: names(match[1]!) };
   if ((match = /^(?:(?:把|将)?(.+?)(?:的(?:颜色|标题栏))?)?(?:颜色)?再(浅|深)(?:一)?点$/u.exec(text))) {
     return { kind: 'relative-color', names: [match[1] ? name(match[1]) : '它们'], direction: match[2] === '浅' ? 'lighter' : 'darker' };
@@ -379,13 +389,14 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
     const color = naturalColor(match[2]!);
     if (color) {
       const target = name(match[1]!);
-      if (/^(?:画布背景|背景色|背景)$/u.test(target)) return { kind: 'background', names: [], color };
+      if (/^(?:画布)?背景(?:颜色|色)?$/u.test(target)) return { kind: 'background', names: [], color };
       const group = /^(.*?)组?(?:里|内|中)的(?:文字)?节点$/u.exec(target);
       if (naturalTargetFilter(target)) return { kind: 'color', names: [target], color };
       return { kind: 'color', names: group ? [target.replace(/(?:里|内|中)的(?:文字)?节点$/u, '')] : names(match[1]!), color, members: Boolean(group) };
     }
   }
-  if ((match = /^(?:把|将)?(?:应用)?主题\s*(?:切到|切换到|改成|改为|换成)\s*(深色|浅色|亮色|暗色)(?:模式|主题)?$/u.exec(text) ??
+  if ((match = /^(?:把|将)?(?:应用)?主题\s*(?:切到|切换到|改成|改为|设为|设置为|换成)\s*(深色|浅色|亮色|暗色)(?:模式|主题)?$/u.exec(text) ??
+    /^(?:切换|修改|更改)(?:应用)?主题(?:到|为|成)\s*(深色|浅色|亮色|暗色)(?:模式|主题)?$/u.exec(text) ??
     /^(?:切到|切换到|换成|启用|打开)\s*(深色|浅色|亮色|暗色)(?:应用)?(?:主题|模式)$/u.exec(text))) return { kind: 'theme', names: [], theme: /深|暗/u.test(match[1]!) ? 'dark' : 'light' };
   if ((match = /^(?:把|将)?\s*(.+?)\s*(?:切成|切换为|切换成|转成|转为|转换成|换成|改成)\s*(文本框|文字框|卡片|文字节点)$/u.exec(text))) {
     const group = /^(.*?)(?:里|内|中)的(?:文字)?节点$/u.exec(match[1]!);
@@ -443,6 +454,8 @@ export function needsCanvasActionPlanning(prompt: string): boolean {
   const text = canvasIntentText(canvasCommandText(prompt).replace(new RegExp(NATURAL_QUOTED_NAME, 'gu'), ' □ '));
   if (/[？?]\s*$/u.test(text) || /^(?:如何|怎么|怎样|能否|能不能|可以|如果|先别|不要|别)/u.test(text) ||
     /(?:怎么做|如何做|的方法|的步骤|有哪些方式)/u.test(text)) return false;
+  if (/主题|背景|注释|批注|标注|导航栏|工具栏|编辑器|小地图|视图|缩放|选区/u.test(text) &&
+    /^(?:把|将|给|为|在|改|调|切换|设|打开|关闭|添加|增加|删除|移除|清空|取消|放大|缩小|重置)/u.test(text)) return true;
   const imperative = /^(?:在(?:当前)?画布上|(?:再|接着|然后)?(?:把|将|给|让|新建|创建|添加|移动|调整|连接|整理|排列))/u.test(text);
   if (imperative && /节点|卡片|文本框|画布|标题栏|群组|拉线|连线|连接到|连接起来|连起来|对齐|分组|归组|留白|横着排|竖着排/u.test(text)) return true;
   if (imperative && /(?:挪|移|摆|放|排)(?:动)?(?:到|在).{1,120}(?:上方|下方|上头|下头|旁边|左边|右边|底下)/u.test(text) &&

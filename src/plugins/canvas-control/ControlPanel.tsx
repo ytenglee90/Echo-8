@@ -93,6 +93,10 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
             {review.id === activeReview?.id ? <label className="canvas-control-item"><input type="checkbox" disabled={busy} checked={selectedItems.includes(index + 1)}
               onChange={event => toggleItem(review.id, index + 1, event.target.checked)} />{example}</label> : example}
           </li>)}</ol></>}
+        {Boolean(review.affectedConnections?.length) && <details>
+          <summary>删除将影响 {review.affectedConnections!.length} 条关联连线</summary>
+          <ul>{review.affectedConnections!.map((label, index) => <li key={index}>{label}</li>)}</ul>
+        </details>}
         <ol>{review.actions.map((action, index) => <li key={index}>
           {review.id === activeReview?.id && review.actions.length > 1 ? <label className="canvas-control-item">
             <input type="checkbox" checked={selectedItems.includes(index + 1)} disabled={busy}
