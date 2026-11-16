@@ -1,7 +1,7 @@
 import { isRecord } from '../../core/contracts.ts';
 import type { AIGenerateRequest, AIPreparedContext } from '../../protocols/ai.ts';
 import type { CanvasCompoundStep, CanvasCompoundTarget } from '../../protocols/canvas-control.ts';
-import { canvasIntentText, naturalCanvasOperation } from '../../services/ai-task-route.ts';
+import { canvasContentTarget, canvasIntentText, naturalCanvasOperation, reusesCanvasDraft } from '../../services/ai-task-route.ts';
 import { NATURAL_QUOTED_NAME } from '../../services/natural-canvas-rules.ts';
 import { compileLocalClause, localInstructionContext } from './local-instruction-parser.ts';
 
@@ -18,6 +18,20 @@ const separator = new RegExp(`[，,；;。\\n]+\\s*(?=(?:(?:然后|接着|最后
 const prose = /^(?:(根据|参考|结合|按照)(.{1,120}?)[，,]?\s*)?(?:给|为)\s*(.+?)\s*(?:的?正文\s*)?(写上|写出|写|生成|创作|撰写|补写|重写|改写|润色)\s*(.+)$/u;
 const allowed = new Set(['create', 'rename', 'set-body', 'append', 'connect', 'connect-many', 'delete', 'remove', 'move', 'arrange', 'color', 'group', 'ungroup', 'presentation', 'line']);
 
+function readProseStep(clause: string): { target: string; replace: boolean; request: string } | undefined {
+  const body = prose.exec(clause);
+  if (body) {
+    const target = body[3]!.trim().replace(/^[「『“"]|[」』”"]$/gu, '').trim();
+    return { target: /^(?:她|他)$/u.test(target) ? '它' : target, replace: /重写|改写|润色/u.test(body[4]!),
+      request: (body[1] ? body[1] + body[2] + '，' : '') + body[4] + body[5] };
+  }
+  const content = canvasContentTarget(clause);
+  if (content?.names.length === 1 && !content.destinationAlias && !reusesCanvasDraft(clause)) {
+    return { target: content.names[0]!, replace: content.replaceBody === true, request: clause };
+  }
+  return undefined;
+}
+
 export function readCompoundTurn(prompt: string): CompoundTurn | undefined {
   const literals: string[] = [];
   const instruction = canvasIntentText(prompt).replace(/^(?:先(?:给我)?(?:预览|看方案)|(?:这次|本轮)?\s*(?:别|不要|不用)(?:用|使用|查|参考)?(?:长期记忆|历史(?:记忆|记录)?))[，,；;。]\s*/u, '');
@@ -27,9 +41,9 @@ export function readCompoundTurn(prompt: string): CompoundTurn | undefined {
     .trim().replace(/^[，,；;。\s]+|[，,；;。！!\s]+$/gu, '')
     .replace(/^(?:然后|接着|最后|再|并且?|同时|顺便|先(?=把|将|给|为|新建|创建|连接|删除))\s*/u, '')).filter(Boolean);
   if (clauses.length < 2) return undefined;
-  const bodies = clauses.map(clause => prose.exec(clause));
+  const bodies = clauses.map(readProseStep);
   if (clauses.length === 2 && /^(?:新建|创建|新增|建|做|造|来)/u.test(clauses[0]!) &&
-    /^(?:她|他|它|每张卡|每个节点)$/u.test(bodies[1]?.[3]?.trim() ?? '')) return undefined;
+    /^(?:它|每张卡|每个节点)$/u.test(bodies[1]?.target ?? '')) return undefined;
   if (!bodies.some(Boolean) || bodies.every(Boolean) || !clauses.some((clause, index) => !bodies[index] &&
     /^(?:把|将|删除|删掉|移除|新建|创建|连接|在)/u.test(clause))) return undefined;
   const fail = (message: string): CompoundTurn => ({ steps: [], requests: [], clarification: message });
@@ -40,10 +54,9 @@ export function readCompoundTurn(prompt: string): CompoundTurn | undefined {
   for (const [index, clause] of clauses.entries()) {
     const body = bodies[index];
     if (body) {
-      const target = body[3]!.trim().replace(/^[「『“"]|[」』”"]$/gu, '').trim();
-      if (!target || target.length > 120) return fail(`请明确第 ${index + 1} 步的正文写入对象。`);
-      steps.push({ target: /^(?:她|他)$/u.test(target) ? '它' : target, replace: /重写|改写|润色/u.test(body[4]!) });
-      requests.push(`${body[1] ? body[1] + body[2] + '，' : ''}${body[4]}${body[5]}`);
+      if (!body.target || body.target.length > 120) return fail(`请明确第 ${index + 1} 步的正文写入对象。`);
+      steps.push({ target: body.target, replace: body.replace });
+      requests.push(body.request);
       continue;
     }
     const exact = naturalCanvasOperation(clause);

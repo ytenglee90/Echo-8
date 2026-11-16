@@ -111,7 +111,7 @@ export function registerPersonalPreferences(context: PluginContext, panel?: unkn
     },
   });
   if (panel) context.ui.contribute({ id: PANEL, slot: 'right.primary', kind: 'view', label: '个人用语与偏好', component: panel,
-    settings: { version: 1, label: 'AI 个人用语与偏好', icon: 'settings', order: 46, openCommand: 'ai.personal.open@1' }, priority: 80 });
+    settings: { version: 1, label: 'AI 偏好', icon: 'sparkles', order: 46, openCommand: 'ai.personal.open@1' }, priority: 80 });
   context.signals.subscribe('cloudSync.updated', () => { void refresh(); });
   context.resources.track('other', () => { stopped = true; scopeRequest++; task?.cancel(); task = undefined; });
   void refresh();

@@ -290,10 +290,6 @@ export function useAIComposerController({
   }, [assistantId, client, run]);
 
   const composerProps: AIComposerProps = {
-    routeHint: prompt.trim() ? [route.compound ? '组合画布任务' : route.category !== 'chat' ? '画布操作' :
-      route.readCanvas ? '画布只读' : route.revisePending ? '本地预览' : '问答',
-      route.excludesHistory ? '本轮不用历史' : route.history || assistant?.memorySourceIds?.length ? '使用历史记忆' : undefined]
-      .filter(Boolean).join(' · ') : undefined,
     textareaRef,
     assistantId,
     value: prompt,

@@ -318,7 +318,8 @@ test('a geometry-only request skips both the selected memory and unrelated conve
 
 test('focused card writing keeps the live draft and skips an extra archive from the same chat', async () => {
   const context = preparationContext({
-    'node:transcript': { title: '当前对话', text: '[用户]\n人物卡设计内容\n[助手]\n最新草稿。' },
+    'node:transcript': { title: '当前对话', text: '[用户]\n人物卡设计内容\n[助手]\n最新草稿。\n' +
+      '[用户]\n你是谁\n[助手]\n我是画布助手。\n[用户]\n连接两张卡\n[助手 · 上午 · 画布操作]\n没有找到目标。' },
     'node:hero': { title: '人物卡', text: '姓名：\n身份：' },
     'node:archive': { title: '本对话归档', text: '[用户]\n旧版草稿。' },
   });
@@ -328,10 +329,10 @@ test('focused card writing keeps the live draft and skips an extra archive from 
   } });
   const prepared = await prepareAIContext(context, { ...session(), turns: 2 }, {
     'node:archive': { ...memory('node:archive', '本对话归档'), sessionId: 'session:1' },
-  }, { sessionId: 'session:1', operation: 'canvas-control', prompt: '填入人物卡', memorySourceIds: ['node:archive'] },
+  }, { sessionId: 'session:1', operation: 'canvas-control', prompt: '填入到人物卡中', memorySourceIds: ['node:archive'] },
   new AbortController().signal, () => undefined, deriveAIContextBudget());
   assert.deepEqual(prepared.sources.map(source => source.sourceId), ['node:hero', 'node:transcript']);
-  assert.match(prepared.sources[1]!.text, /最新草稿/u);
+  assert.equal(prepared.sources[1]!.text, '[用户]\n人物卡设计内容\n[助手]\n最新草稿。');
 });
 
 test('a fill request keeps a long last draft intact, and reports a draft that does not fit', async () => {
@@ -612,6 +613,25 @@ test('standalone definitions do not start the local classifier or read the docum
   assert.deepEqual(prepared.sources, []);
 });
 
+test('standalone greetings, identity and unrelated definitions open no local source with selected memories', async () => {
+  const unused = () => { throw new Error('identity question opened local sources'); };
+  const context = { capabilities: { request: unused, requestAll: unused } } as unknown as PluginContext;
+  for (const prompt of ['你是谁', '你用的什么模型？', '你好，今天怎么样？', '什么是三角函数？']) {
+    const prepared = await prepareAIContext(context, { ...session(), turns: 40 },
+      { 'node:memory': memory('node:memory', '历史剧本对话') }, {
+        sessionId: 'session:1', prompt, operation: 'general', memorySourceIds: ['node:memory'], webSearchEnabled: true,
+      }, new AbortController().signal, () => undefined);
+    assert.equal(prepared.prompt, prompt);
+    assert.equal(prepared.contextIntent, 'conversation');
+    assert.equal(prepared.selectedMemorySourceIds, undefined);
+    assert.equal(prepared.webSearchEnabled, prompt === '什么是三角函数？' ? true : undefined);
+    assert.deepEqual(prepared.sources, []);
+  }
+  assert.equal(classifyAIContextIntent('你还记得我是谁吗？', 'general', {
+    hasExplicitSource: false, hasSelectedMemory: false,
+  }), 'memory-recall');
+});
+
 test('a definition containing canvas terminology and a one-turn history veto never read selected memories', async () => {
   const unavailable = () => { throw new Error('a standalone question opened local sources'); };
   const context = { capabilities: { request: unavailable, requestAll: unavailable } } as unknown as PluginContext;
@@ -652,7 +672,7 @@ test('a nearby follow-up reads only the latest exchange and canvas status uses i
     },
   } } as unknown as PluginContext;
   const prepare = (prompt: string) => prepareAIContext(context, { ...session(), turns: 2 }, {},
-    { sessionId: 'session:1', prompt, operation: 'general' }, AbortSignal.timeout(5000), () => undefined);
+    { sessionId: 'session:1', prompt, operation: 'general', memorySourceIds: ['memory:unrelated'] }, AbortSignal.timeout(5000), () => undefined);
   const followup = await prepare('举个例子说明一下');
   assert.equal(followup.contextMode, 'explicit-only');
   assert.deepEqual(followup.sources.map(item => item.text), ['[用户]\n什么是反讽？\n[助手]\n字面与实际的意思有反差。']);

@@ -314,11 +314,14 @@ export function registerAIGenerationRuntime(
           assembly.localReply = LOCAL_CANVAS_CONTENT_TARGET;
           return { text: assembly.localReply, provider: 'local', model: '本地操作澄清', usage: { inputTokens: 0, outputTokens: 0 } };
         }
-        if (assembly.boundCanvasWrite?.kind === 'write' && route.draft && assembly.canvasDraftBound) {
-          const draft = prepared.sources.filter(source => source.reason === 'recent-conversation' && source.complete === true)
+        if (route.draft) {
+          const draft = assembly.canvasDraftBound ? prepared.sources.filter(source => source.reason === 'recent-conversation' && source.complete === true)
             .flatMap(source => nativeConversation(source.text, prepared.prompt, true, true, true))
-            .findLast(message => message.role === 'assistant')?.content;
-          if (!draft?.trim()) throw new Error('没有找到可原样写入的完整草稿，请指定正文。');
+            .findLast(message => message.role === 'assistant')?.content : undefined;
+          if (assembly.boundCanvasWrite?.kind !== 'write' || !draft?.trim()) {
+            assembly.localReply = '没有找到可原样写入的完整草稿。请贴出要写入的正文，或指定上一段草稿。';
+            return { text: assembly.localReply, provider: 'local', model: '本地操作澄清', usage: { inputTokens: 0, outputTokens: 0 } };
+          }
           await revalidatePreparedSources(context, prepared.sources, { signal,
             allowUnchangedRangeRevisionAdvanceFor: new Set(prepared.sources.filter(source => source.kind === 'conversation').map(source => source.sourceId)),
           });

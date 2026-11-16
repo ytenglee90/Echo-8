@@ -331,7 +331,7 @@ test('ordinary abbreviated canvas requests resolve numbered cards, title links a
   assert.equal((await groups()).length, 0);
   const existingIds = new Set((await nodes(kernel)).map(node => node.id));
   assert.ok([weapon, role, ...numbered].every(item => existingIds.has(item.id)));
-  assert.deepEqual(naturalCanvasOperation('设计武器，填入武器卡中'), { kind: 'content', names: ['武器卡'] });
+  assert.deepEqual(naturalCanvasOperation('设计武器，填入武器卡中'), { kind: 'content', names: ['武器卡'], writeGeneratedText: true });
   await kernel.plugins.stop('canvas-control');
 });
 

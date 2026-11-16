@@ -11,7 +11,7 @@ import type {
   AISessionRecord,
 } from '../../protocols/ai.ts';
 import { explicitAtOperation, stripOperationCommands } from './command-parser.ts';
-import { classifyAIContextIntent, isNearConversationFollowup, isStandaloneConversation } from './context-intent.ts';
+import { classifyAIContextIntent, isAssistantIdentityQuestion, isNearConversationFollowup, isSocialGreeting, isStandaloneConversation } from './context-intent.ts';
 import type { PreparePayload } from './command-payloads.ts';
 import {
   readContextCatalog,
@@ -35,7 +35,7 @@ import {
 } from './memory-retrieval.ts';
 import { extractTerms } from './memory-terms.ts';
 import { sessionTranscriptSourceId } from './transcript-storage.ts';
-import { canvasCommandText, isCanvasStatusFollowup, isFocusedCanvasContentTask } from '../../services/ai-task-route.ts';
+import { canvasCommandText, canvasDraftTopic, isCanvasStatusFollowup, isFocusedCanvasContentTask } from '../../services/ai-task-route.ts';
 import { readParagraphTarget } from './paragraph-target.ts';
 import { operationCreatesWriteback } from './operations.ts';
 import { bindNaturalWriteback, naturalWritebackIntent, readBoundWriteback, writebackTaskInstructions } from './natural-writeback.ts';
@@ -100,6 +100,23 @@ export async function prepareAIContext(
     payload = { ...payload, contextMode: 'explicit-only', memorySourceIds: undefined };
     memoryIndexes = {};
   }
+  if (route.category === 'chat' && route.operation === 'general' && !route.readCanvas && !payload.references?.length &&
+    isStandaloneConversation(payload.prompt)) {
+    const social = isAssistantIdentityQuestion(payload.prompt) || isSocialGreeting(payload.prompt);
+    const selectedIndexes = Object.fromEntries((payload.memorySourceIds ?? []).flatMap(id =>
+      memoryIndexes[id] ? [[id, memoryIndexes[id]]] : []));
+    if (social || matchConversationMemories(payload.prompt, selectedIndexes).matches.length === 0) {
+      const createdAt = Date.now();
+      report(1);
+      return rememberTurnAssembly({
+        id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+        operation: 'general', contextIntent: 'conversation', contextMode: 'explicit-only', providerProfileId: payload.providerProfileId,
+        ...(social ? {} : { webSearchEnabled: payload.webSearchEnabled }), promptTemplateId: payload.promptTemplateId,
+        sources: [], totalCharacters: payload.prompt.length, estimatedTokens: estimateAITokens(payload.prompt),
+        createdAt, expiresAt: createdAt + 10 * 60_000,
+      }, { route });
+    }
+  }
   if (route.compound) {
     const compound = route.compound;
     const sourceIds = [...new Set([...(payload.references ?? []).filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
@@ -133,13 +150,14 @@ export async function prepareAIContext(
           break;
         }
       }
-      const history = route.history || Boolean(payload.memorySourceIds?.length);
+      const history = route.history;
       if (!clarify && (history || evidenceIds.length)) {
         const evidencePrompt = [generation, ...evidenceIds.map(id => `@node:${id}`)].join('\n');
         const evidenceRoute = { ...classifyAITurn(evidencePrompt, 'general'), category: 'operation' as const, purpose: 'content' as const,
           history, compound: undefined, local: undefined, native: undefined, mechanical: false, geometryOnly: false, fieldTask: undefined,
           restructureTask: undefined, creationText: undefined, excludesHistory: route.excludesHistory };
         evidence = await prepareAIContext(context, session, memoryIndexes, { ...payload, prompt: evidencePrompt, operation: 'general', references: undefined,
+          memorySourceIds: history ? payload.memorySourceIds : undefined,
           contextMode: history ? payload.contextMode : 'explicit-only' }, signal, report, budgetOverride, undefined, preparationId, evidenceRoute);
         clarify = turnAssembly(evidence).clarify;
         if (history && !evidence.sources.some(source => source.reason === 'conversation-memory' && source.text)) {
@@ -229,25 +247,16 @@ export async function prepareAIContext(
       localSourceIds: [...new Set([...(payload.references ?? []).filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
         ...parseExplicitReferences(payload.prompt)])] });
   }
-  if (route.category === 'chat' && !route.readCanvas && payload.operation === 'general' && !payload.references?.length &&
-    !payload.memorySourceIds?.length && isStandaloneConversation(payload.prompt)) {
-    const createdAt = Date.now();
-    report(1);
-    return completePreparation({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
-      operation: 'general', contextIntent: 'conversation', contextMode: 'explicit-only', providerProfileId: payload.providerProfileId,
-      webSearchEnabled: payload.webSearchEnabled, promptTemplateId: payload.promptTemplateId, sources: [], totalCharacters: payload.prompt.length,
-      estimatedTokens: estimateAITokens(payload.prompt), createdAt, expiresAt: createdAt + 10 * 60_000 });
-  }
   const resolvedBudget = budgetOverride
     ? { budget: budgetOverride, modelContextWindowTokens: undefined }
     : await resolveAIContextBudget(context, payload.providerProfileId, signal);
   const budget = resolvedBudget.budget;
   if (route.category === 'chat' && !route.readCanvas && session.turns > 0 && !payload.references?.length &&
-    !payload.memorySourceIds?.length && isNearConversationFollowup(payload.prompt)) {
+    isNearConversationFollowup(payload.prompt)) {
     const source = (await readContextSource(context, { sourceId: sessionTranscriptSourceId(session), start: 0, length: 0 }, signal)).source;
     const promptTokens = estimateAITokens(payload.prompt);
     const block = source && await readCanvasDraftEvidence(context, source,
-      Math.min(budget.transcriptWindow, budget.characterLimit - payload.prompt.length), budget.tokenLimit - promptTokens, signal, true);
+      Math.min(budget.transcriptWindow, budget.characterLimit - payload.prompt.length), budget.tokenLimit - promptTokens, signal, { latestExchangeOnly: true });
     if (source && block?.text) {
       const createdAt = Date.now();
       report(1);
@@ -288,12 +297,11 @@ export async function prepareAIContext(
   const continuingCanvasTask = route.continuation;
   const canvasHistory = route.category !== 'chat' && route.history;
   const useDraft = route.draft && contentBinding?.ids.length === 1;
-  const focusedContent = contentBinding?.ids.length === 1 && session.turns > 0 && isFocusedCanvasContentTask(payload.prompt);
-  const selectedMemorySourceIds = mechanicalCanvasTask ? [] : [...new Set(payload.memorySourceIds ?? [])]
-    .filter(sourceId => !focusedContent || memoryIndexes[sourceId]?.sessionId !== session.id);
+  const focusedContent = contentBinding?.ids.length === 1 && !route.history && isFocusedCanvasContentTask(payload.prompt);
+  const selectedMemorySourceIds = mechanicalCanvasTask || route.draft || focusedContent ? [] : [...new Set(payload.memorySourceIds ?? [])];
   const selectedMemorySet = new Set(selectedMemorySourceIds);
   const memoryArtifactOwner = new Map<string, string>();
-  for (const memory of mechanicalCanvasTask ? [] : Object.values(memoryIndexes)) {
+  for (const memory of mechanicalCanvasTask || route.draft ? [] : Object.values(memoryIndexes)) {
     memoryArtifactOwner.set(memory.sourceId, memory.sourceId);
     if (memory.indexNodeId) memoryArtifactOwner.set(memory.indexNodeId, memory.sourceId);
     if (memory.hubNodeId) memoryArtifactOwner.set(memory.hubNodeId, memory.sourceId);
@@ -528,20 +536,22 @@ export async function prepareAIContext(
   }
   let canvasDraftBound = false;
   if (transcriptMeta?.length && useTranscript && !exactHistoryFound && !clarify) {
-    const draft = useDraft ? await readCanvasDraftEvidence(context, transcriptMeta, remainingCharacters, remainingTokens, signal) : undefined;
-    const block = draft ?? await readTailEvidenceBlock(
+    const draft = useDraft ? await readCanvasDraftEvidence(context, transcriptMeta, remainingCharacters, remainingTokens, signal,
+      { topic: canvasDraftTopic(payload.prompt) }) : undefined;
+    const block = useDraft ? draft : await readTailEvidenceBlock(
       context,
       transcriptMeta,
       Math.min(mechanicalCanvasTask ? 1_000 : budget.transcriptWindow, remainingCharacters),
       remainingTokens,
       signal,
     );
-    if (block.text) canvasDraftBound = add({ ...transcriptMeta, ...block, reason: 'recent-conversation' }) && draft?.complete === true;
+    if (block?.text) canvasDraftBound = add({ ...transcriptMeta, ...block, reason: 'recent-conversation' }) && draft?.complete === true;
     else if (draft) {
       sources.push({ ...transcriptMeta, ...draft, complete: false, reason: 'recent-conversation' });
       clarify = '上一版草稿超出本轮可用范围。请指定要填入的段落。';
     }
   }
+  if (useDraft && !canvasDraftBound && !clarify) clarify = '没有找到可原样写入的完整草稿。请贴出要写入的正文，或指定上一段草稿。';
 
   const memoryMatchSet = matchConversationMemories(payload.prompt, exactHistoryFound && !selectedMemorySet.size ? {} : scopedMemoryIndexes, selectedMemorySet);
   const memoryMatches = memoryMatchSet.matches;

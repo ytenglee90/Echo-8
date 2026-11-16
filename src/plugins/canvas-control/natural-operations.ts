@@ -189,7 +189,7 @@ export async function resolveNaturalOperation(
     }
     return ids;
   };
-  const read = async (name: string): Promise<string[] | NaturalControlResult> => {
+  const read = async (name: string, destinationAlias?: string): Promise<string[] | NaturalControlResult> => {
     const key = normalize(name);
     const draftId = previous.draftTitles?.get(key);
     if (draftId) return [draftId];
@@ -231,6 +231,13 @@ export async function resolveNaturalOperation(
     if (exact.length > 1) return chooseNode(name, exact, `找到了 ${exact.length} 个「${name}」。请在画布控制里点选目标，继续原操作。`);
     const group = lookupGroup(name);
     if (group) return validMembers(group.memberIds) ? group.memberIds : answer('群组包含未授权自动检索的节点，请明确指定范围。');
+    if (destinationAlias) {
+      const destinationDraft = previous.draftTitles?.get(normalize(destinationAlias));
+      if (destinationDraft) return [destinationDraft];
+      const destination = lookup(destinationAlias).exact;
+      if (destination.length === 1) return destination;
+      if (destination.length > 1) return chooseNode(destinationAlias, destination, '有多个同名目标，请选出要操作的节点。');
+    }
     if (partial.length > 80) return answer('相近的节点超过 80 个，请补充标题或群组名。');
     if (partial.length) return chooseNode(name, partial, '找到了标题相近的节点，请点选后继续原操作。');
     return unresolvedTarget(`本轮允许查找的画布范围内，没有找到名为「${name}」的节点。`);
@@ -367,8 +374,12 @@ export async function resolveNaturalOperation(
     ...answer('上次指定的起点已失效，请重新指定起点。'), next: { ids: [] },
   };
   const ids: string[] = unfinished ? [unfinished.from] : [];
-  for (const name of unfinished ? operation.names.slice(1) : operation.names) {
-    const result = await read(name);
+  for (const [index, name] of operation.names.entries()) {
+    if (unfinished && index === 0) continue;
+    const destinationAlias = (operation.kind === 'connect' && index === 1) ||
+      ((operation.kind === 'connect-many' || operation.kind === 'find') && index === 0)
+      ? operation.destinationAlias : undefined;
+    const result = await read(name, destinationAlias);
     if (!Array.isArray(result)) return result;
     if ((operation.kind === 'place-relative' || operation.kind === 'shortest-path') && result.length !== 1) return answer(`「${name}」需要指向一张卡，请选中它或补充名称。`);
     if (operation.kind === 'connect' && operation.names.length === 2 && result.length !== 1) return answer(`「${name}」需要指向一个节点，请明确端点名称。`);

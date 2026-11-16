@@ -226,7 +226,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         }
         let result: NaturalControlResult;
         if (operation.kind === 'content') {
-          result = await resolveNaturalOperation(context, input, { kind: 'find', names: operation.names }, previous, chosen, signal);
+          result = await resolveNaturalOperation(context, input, { ...operation, kind: 'find' }, previous, chosen, signal);
           if (result.focus?.length && !result.choice) {
             trace('completed', { step: 'targets', matched: result.focus.length, reason: 'model-plan' });
             return { handled: false as const, sourceIds: result.focus };
@@ -386,7 +386,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         if (!isAdmission(input)) throw new Error('画布控制请求无效');
         const operation = naturalCanvasOperation(input.prompt);
         if (operation?.kind !== 'content') return { ids: [], needsChoice: false };
-        const result = await resolveNaturalOperation(context, input, { kind: 'find', names: operation.names }, lastNatural.get(input.sessionId) ?? { ids: [] }, new Map(), signal);
+        const result = await resolveNaturalOperation(context, input, { ...operation, kind: 'find' }, lastNatural.get(input.sessionId) ?? { ids: [] }, new Map(), signal);
         return { ids: result.choice ? [] : result.focus ?? [], needsChoice: Boolean(result.choice || !result.focus?.length) };
       } });
       context.capabilities.provide({ key: 'canvasControl.searchPlan@1', invoke: async (input: CanvasControlAdmission & { terms: string[]; ungrouped: boolean }, signal) => {

@@ -43,19 +43,68 @@ async function account(browser: Browser, workerVersion = 6) {
 
 const interval = (page: Page) => page.getByRole('combobox', { name: '自动保存当前目标的间隔' });
 const retention = (page: Page) => page.getByRole('combobox', { name: '恢复副本自动保留数量' });
+
+test('assistant preferences keep switches compact and open a responsive form on demand', async ({ browser }, info) => {
+  const a = await account(browser, 8);
+  try {
+    const page = await a.device();
+    const center = page.getByRole('region', { name: '设置中心', exact: true });
+    const nav = center.getByRole('navigation', { name: '设置分类' });
+    const panel = center.getByRole('region', { name: 'AI 个人用语与偏好', exact: true });
+    await nav.getByRole('button', { name: 'AI 偏好', exact: true }).click();
+    const learning = panel.getByRole('switch', { name: '从反馈学习' });
+    await expect(learning).toBeEnabled();
+    const label = await panel.getByText('从反馈学习', { exact: true }).boundingBox();
+    const toggle = await learning.boundingBox();
+    expect(toggle!.width).toBeLessThanOrEqual(36);
+    expect(toggle!.height).toBeLessThanOrEqual(22);
+    expect(toggle!.x).toBeGreaterThan(label!.x + label!.width);
+    await expect(panel.getByRole('form')).toHaveCount(0);
+    await expect(panel.getByText('还没有条目', { exact: true })).toBeVisible();
+    await center.screenshot({ path: info.outputPath('ai-preferences-empty.png') });
+
+    await panel.getByRole('button', { name: '添加条目', exact: true }).click();
+    const editor = panel.getByRole('form', { name: '添加条目' });
+    const phrase = editor.getByRole('textbox', { name: '个人用语' });
+    await expect(phrase).toBeFocused();
+    await expect(editor.getByRole('button', { name: '添加', exact: true })).toBeDisabled();
+    await phrase.fill('收一下');
+    await center.screenshot({ path: info.outputPath('ai-preferences-editor.png') });
+    await editor.getByRole('button', { name: '添加', exact: true }).click();
+    const entry = panel.getByText('「收一下」→ 给选中节点编组', { exact: true });
+    await expect(entry).toBeVisible();
+
+    await nav.getByRole('button', { name: '外观', exact: true }).click();
+    await center.getByRole('button', { name: /^B 暗调/u }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await nav.getByRole('button', { name: 'AI 偏好', exact: true }).click();
+    await expect(entry).toBeVisible();
+    await panel.getByRole('button', { name: '编辑', exact: true }).click();
+    const edit = panel.getByRole('form', { name: '编辑条目' });
+    await expect(edit.getByRole('textbox', { name: '个人用语' })).toBeFocused();
+    const kind = await edit.getByRole('combobox', { name: '条目类型' }).boundingBox();
+    const scope = await edit.getByRole('combobox', { name: '适用范围' }).boundingBox();
+    expect(scope!.y).toBeGreaterThan(kind!.y + kind!.height);
+    expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await center.screenshot({ path: info.outputPath('ai-preferences-narrow-dark.png') });
+    await edit.getByRole('button', { name: '取消', exact: true }).click();
+    await expect(panel.getByRole('button', { name: '添加条目', exact: true })).toBeFocused();
+  } finally { await a.close(); }
+});
+
 test('assistant phrases are learned from a correction, confirmed in settings, and loaded on another device', async ({ browser }) => {
   const a = await account(browser, 8);
   try {
     const openPreferences = async (page: Page) => {
-      await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: 'AI 个人用语与偏好', exact: true }).click();
+      await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: 'AI 偏好', exact: true }).click();
       const panel = page.getByRole('region', { name: 'AI 个人用语与偏好', exact: true });
-      await expect(panel.getByRole('checkbox', { name: '从反馈学习' })).toBeEnabled();
+      await expect(panel.getByRole('switch', { name: '从反馈学习' })).toBeEnabled();
       return panel;
     };
     const first = await a.device();
     let panel = await openPreferences(first);
-    await panel.getByRole('checkbox', { name: '从反馈学习' }).click();
-    await expect(panel.getByRole('checkbox', { name: '从反馈学习' })).toBeChecked();
+    await panel.getByRole('switch', { name: '从反馈学习' }).click();
+    await expect(panel.getByRole('switch', { name: '从反馈学习' })).toHaveAttribute('aria-checked', 'true');
     await expect.poll(() => JSON.parse(String(a.assistant()?.body_json)).learning).toBe(true);
     await panel.getByRole('button', { name: '关闭个人用语与偏好' }).click();
     await first.getByRole('button', { name: /^打开 AI 助手/u }).click();
@@ -73,6 +122,7 @@ test('assistant phrases are learned from a correction, confirmed in settings, an
     const second = await a.device();
     let restored = await openPreferences(second);
     await expect(restored.getByText('「收一下」→ 给选中节点编组', { exact: true })).toBeVisible();
+    await restored.getByText('导入与导出', { exact: true }).click();
     const download = second.waitForEvent('download');
     await restored.getByRole('button', { name: '导出全部', exact: true }).click();
     expect((await download).suggestedFilename()).toMatch(/\.json$/u);

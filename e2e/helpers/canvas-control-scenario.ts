@@ -56,11 +56,12 @@ export function canvasControlScenarios(url: string): void {
   test('writing the last complete answer into a named card is a local operation with zero extra tokens', async ({ page }) => {
     let calls = 0;
     const draft = '雨夜里，他把最后一盏灯让给陌生人。';
+    const unrelated = '正弦和余弦是三角函数。';
     await page.route('https://canvas-control.test/**', route => {
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
-        body: `data: ${JSON.stringify({ choices: [{ delta: { content: draft }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+        body: `data: ${JSON.stringify({ choices: [{ delta: { content: calls === 1 ? draft : unrelated }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
     });
     await configure(page, url, 'openai', undefined, 'direct');
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
@@ -70,12 +71,73 @@ export function canvasControlScenarios(url: string): void {
       await expect(ai.getByRole('status')).toContainText(expected);
     };
     await send('新建一个叫草稿目标的节点', '已直接完成 1 项');
+    await send('新建一个叫「草稿目标中」的节点', '已直接完成 1 项');
+    await send('写入到草稿目标中', '没有找到可原样写入的完整草稿');
+    expect(calls).toBe(0);
     await send('写一段人物小传，只回答正文', '回答完成');
     await expect(ai.getByRole('log')).toContainText(draft);
-    await send('填入草稿目标', '已直接完成 1 项');
+    await send('写入到草稿目标中', '已直接完成 1 项');
     await expect(page.getByRole('article', { name: /文本节点：草稿目标$/u })).toContainText(draft);
+    const literal = page.getByRole('article', { name: /文本节点：草稿目标中$/u });
+    await expect(literal).not.toContainText(draft);
+    await send('什么是三角函数？', '回答完成');
+    await expect(ai.getByRole('log')).toContainText(unrelated);
+    await send('把上面那段人物小传填入草稿目标中', '已直接完成 1 项');
+    await expect(literal).toContainText(draft);
     await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
+    expect(calls).toBe(2);
+  });
+  test('the reported character sequence connects the named nodes and writes directly into the role card', async ({ page }) => {
+    let calls = 0;
+    const biography = '林见秋在社区护理站值夜班。';
+    const followup = '写一段人物小传，然后写入到角色中';
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      const body = route.request().postDataJSON() as { messages: Array<{ role: string; content: string }>; tools?: unknown };
+      expect(body.tools).toBeUndefined();
+      const original = body.messages.at(-1);
+      const askingIdentity = original?.content.endsWith('\n你是谁');
+      if (askingIdentity) {
+        expect(body.messages.filter(message => message.role !== 'system')).toEqual([original]);
+        expect(JSON.stringify(body.messages)).not.toMatch(/林见秋|人物连接到角色中|设计出人物小传/u);
+      } else {
+        expect(original).toEqual({ role: 'user', content: '用户要求（原文）：\n' + (calls === 1 ? '角色中，设计出人物小传' : followup) });
+        expect(JSON.stringify(body.messages)).toContain('应用已核对本轮写入目标和范围');
+      }
+      const content = askingIdentity ? '我是 Echo-8 的画布助手。' : JSON.stringify({ text: biography });
+      const chunk = JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
+        body: ['data: ' + chunk, 'data: [DONE]', ''].join('\n\n') });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const input = ai.locator('.ai-composer textarea');
+    await input.fill('建一个角色，一个人物，四个空白，空白群组，人物连接到角色中。');
+    await input.press('Enter');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 8 项操作');
+    await expect(page.locator('.connection-path:not(.title-connection)')).toHaveCount(1);
+    await expect(page.locator('.group-frame')).toHaveCount(1);
+    expect(calls).toBe(0);
+    await input.fill('角色中，设计出人物小传');
+    await input.press('Enter');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项操作');
+    const role = page.getByRole('article', { name: /文本节点：角色$/u });
+    await expect(role).toContainText(biography);
+    await expect(page.getByRole('article', { name: /文本节点：人物$/u })).not.toContainText(biography);
     expect(calls).toBe(1);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(role).not.toContainText(biography);
+    await expect(page.locator('.connection-path:not(.title-connection)')).toHaveCount(1);
+    await input.fill(followup);
+    await input.press('Enter');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项操作');
+    await expect(role).toContainText(biography);
+    await input.fill('你是谁');
+    await expect(ai.locator('.ai-composer')).not.toContainText('使用历史记忆');
+    await input.press('Enter');
+    await expect(ai.getByRole('status')).toContainText('回答完成');
+    expect(calls).toBe(3);
   });
   test('creating a card with prose asks the model only for text and writes the locally bound card', async ({ page }) => {
     let calls = 0;
@@ -782,7 +844,7 @@ export function canvasControlScenarios(url: string): void {
     });
     await configure(page, url, 'openai', undefined, 'direct', false);
     const assistant = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await assistant.locator('.ai-composer textarea').fill('把混合甲的标题改成「甲的新标题」，给混合乙写一段介绍，把混合甲连到混合乙，最后删除混合丙');
+    await assistant.locator('.ai-composer textarea').fill('把混合甲的标题改成「甲的新标题」，在混合乙里写一段介绍，把混合甲连到混合乙，最后删除混合丙');
     await assistant.locator('.ai-composer textarea').press('Enter');
     const canvas = page.getByRole('region', { name: '画布控制', exact: true });
     await expect(canvas.getByText('4 项操作', { exact: true })).toBeVisible({ timeout: 12_000 });

@@ -67,7 +67,7 @@ export type ExtendedCanvasOperation =
   | { kind: 'line-update'; names: string[]; reverse?: boolean; label?: string; color?: string; remove?: boolean; reference?: 'previous' | 'selection' }
   | { kind: 'align'; names: string[]; alignment: 'left' | 'right' | 'top' | 'bottom' | 'horizontal-center' | 'vertical-center' }
   | { kind: 'create'; names: string[]; title: string; presentation: 'card' | 'text-box'; side?: 'left' | 'right' | 'above' | 'below'; template?: 'character' | 'blank-character' }
-  | { kind: 'connect-many'; names: string[]; topology: 'fan' | 'chain'; line: 'solid' | 'dashed'; direction?: 'in' };
+  | { kind: 'connect-many'; names: string[]; topology: 'fan' | 'chain'; line: 'solid' | 'dashed'; direction?: 'in'; destinationAlias?: string };
 
 export function extendedCanvasOperation(text: string): ExtendedCanvasOperation | undefined {
   const operand = `(${NATURAL_QUOTED_NAME}|.+?)`;

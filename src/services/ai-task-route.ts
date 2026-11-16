@@ -29,12 +29,11 @@ export function isFocusedCanvasContentTask(prompt: string): boolean {
 }
 
 export function requestsCanvasHistory(prompt: string): boolean {
-  return /历史|记忆|回顾|最早|从头|完整对话|之前(?:定|说|确认|决定|的设定)|上次(?:定|说|确认|决定|的设定)|以前(?:定|说|确认|决定|的设定)/u.test(canvasCommandText(prompt));
+  return /历史|记忆|回顾|最早|从头|完整对话|之前(?:定|说|确认|决定|的设定)|上次(?:定|说|确认|决定|的设定)|以前(?:定|说|确认|决定|的设定)|(?:根据|参考|结合|按照)(?:我们)?(?:之前|上次|以前)/u.test(canvasCommandText(prompt));
 }
 
 export function reusesCanvasDraft(prompt: string): boolean {
-  return /^(?:@画布操作\s+)?(?:(?:请|帮我)\s*)?填(?:入|充|好)/u.test(prompt.trim()) ||
-    /(?:上一版|上份草稿|刚才(?:的|那段|那份))[^。！？\r\n]{0,100}(?:填入|写进|写入)/u.test(canvasCommandText(prompt));
+  return Boolean(canvasDraftDestination(canvasIntentText(prompt).replace(/[。！!]$/u, '')));
 }
 
 /** Reference titles are data, never routing commands or creative-intent cues. */
@@ -50,19 +49,20 @@ export function canvasRequestsAllNodes(prompt: string): boolean {
 export type NaturalCanvasOperation =
   | ExtendedCanvasOperation
   | { kind: 'batch'; names: string[]; steps: NaturalCanvasOperation[] }
-  | { kind: 'content'; names: string[]; replaceBody?: true }
+  | ({ kind: 'content' } & CanvasContentTarget)
   | { kind: 'narrow'; names: string[] }
   | { kind: 'relative-color'; names: string[]; direction: 'lighter' | 'darker' }
   | { kind: 'choose-color'; names: string[]; background?: boolean }
   | { kind: 'choose-theme'; names: string[] }
-  | { kind: 'find' | 'ungroup'; names: string[]; byMembers?: boolean }
+  | { kind: 'find'; names: string[]; destinationAlias?: string }
+  | { kind: 'ungroup'; names: string[]; byMembers?: boolean }
   | { kind: 'relations'; names: string[]; direction?: 'in' | 'out' }
   | { kind: 'shortest-path'; names: [string, string]; directed: boolean }
   | { kind: 'sync-text'; names: []; before: string; after?: string }
   | { kind: 'audit-names'; names: [] }
   | { kind: 'group-columns'; names: []; lead?: string; keep: string[] }
   | { kind: 'presentation'; names: string[]; presentation: 'card' | 'text-box'; color?: string; members?: boolean }
-  | { kind: 'connect'; names: string[]; line?: 'solid' | 'dashed'; eitherDirection?: boolean; continueFromPrevious?: boolean }
+  | { kind: 'connect'; names: string[]; line?: 'solid' | 'dashed'; eitherDirection?: boolean; continueFromPrevious?: boolean; destinationAlias?: string }
   | { kind: 'line'; names: string[]; line: 'solid' | 'dashed'; reference?: 'previous' | 'selection' }
   | { kind: 'color'; names: string[]; color: string; members?: boolean }
   | { kind: 'background'; names: string[]; color: string }
@@ -82,6 +82,7 @@ const name = (value: string) => value.trim().replace(/^@\[([^\]]+)\](?:\([^)]+\)
 // Quoted titles and inline references are single operands, including any list separators.
 const quotedName = String.raw`「[^」\r\n]+」|『[^』\r\n]+』|“[^”\r\n]+”|"[^"\r\n]+"|@\[[^\]\r\n]+\](?:\([^\)\r\n]*\))?`;
 const listPart = new RegExp(`${quotedName}|以及|[、，,和与跟]|(?:(?!以及)[^「『“"@、，,和与跟])+|.`, 'gu');
+const locative = /^(.+?)\s*(?:里面|里边|里|内|中|上)$/u;
 function names(value: string): string[] {
   const parts = [''];
   for (const [part] of value.matchAll(listPart)) {
@@ -132,9 +133,11 @@ function parseConnection(text: string): NaturalCanvasOperation | undefined {
     const numbered = numberedOperands(source);
     const from = numbered.length > 1 ? numbered : names(source);
     const to = heading?.[1]?.trim() || destination;
-    if (from.length > 1) return { kind: 'connect-many', names: [to, ...from], topology: 'fan', direction: 'in', line: line ?? 'solid' };
+    const alias = !heading && target.trim() === destination ? locative.exec(destination)?.[1] : undefined;
+    const destinationAlias = alias ? { destinationAlias: alias } : {};
+    if (from.length > 1) return { kind: 'connect-many', names: [to, ...from], topology: 'fan', direction: 'in', line: line ?? 'solid', ...destinationAlias };
     return { kind: 'connect', names: [name(source), to], line,
-      ...(continueFromPrevious ? { continueFromPrevious } : {}) };
+      ...destinationAlias, ...(continueFromPrevious ? { continueFromPrevious } : {}) };
   }
   match = fromConnection.exec(text);
   if (match) return { kind: 'connect', names: [name(match[1]!), name(match[3]!)], line: /实线|虚线/u.test(match[2]!) ? lineStyle(match[2]!) : undefined };
@@ -213,22 +216,71 @@ export function asksForCanvasContinuation(prompt: string): boolean {
   return /继续|刚才|上次|上一(?:个|条|轮|次|张)|这份计划|前(?:一个|一条|一张)|(?:改|换|挪|移|拆|连|用)回来|(?:把|给|改|移动|连接|让)\s*(?:它|这(?:条|张|组|个|些))|^\s*(?:它|这(?:条|张|组|个|些))/u.test(canvasCommandText(prompt));
 }
 
+const draftTransfer = /^(?:(?:把|将)?\s*((?:上一(?:版|段|份|条(?:回答|回复))|上份草稿|(?:刚才|刚刚|上面|前面)(?:的|那|写的|生成的)|这(?:一)?(?:段|份|篇|版|条回答)|它(?=\s*(?:写|填|放)))[^，,。！？：:；;\r\n]{0,100}?))?(填入|填进|填到|填充|填好|写入|写进|写到|放进|放到)\s*(.+)$/u;
+const contentVerb = '(?:设计|创作|撰写|续写|写|填|生成|补充|完善)';
+const locationWord = '(?:里面|里边|里|内|中|上)';
+const namedCard = `(${quotedName}|角色|人物|[^，,。！？；;\r\n]{1,110}?(?:卡片?|节点|文本框))`;
+const locatedCanvasProse = new RegExp(String.raw`^(?:(?:在|往|向|给)\s*${connectionOperand}${locationWord}[，,\s]*|${connectionOperand}${locationWord}\s*[，,]\s*|${namedCard}${locationWord}\s*)${contentVerb}`, 'u');
+const addressedCanvasProse = new RegExp(String.raw`^(?:给|为)\s*${namedCard}\s*${contentVerb}(?=\s*\S)`, 'u');
+const generateThenWrite = /^(?:设计|创作|撰写|写|生成|补充)[^。！？\r\n]+?(?:[，,；;]\s*(?:再|然后)?|然后|并且?)\s*((?:填入|填进|填到|写入|写进|写到|放进|放到).+)$/u;
+const quotedDestination = new RegExp(String.raw`^(${quotedName})(?:\s*(?:里面|里边|里|内|中|上))?$`, 'u');
+
+type CanvasContentTarget = { names: string[]; replaceBody?: true; destinationAlias?: string; writeGeneratedText?: true };
+
+function readDraftTransfer(text: string) {
+  return draftTransfer.exec(text.replace(/^(?:再|接着|然后)\s*/u, ''));
+}
+
+export function canvasDraftTopic(prompt: string): string | undefined {
+  const reference = readDraftTransfer(canvasIntentText(prompt))?.[1];
+  return reference ? /小传|背景故事|人物设定|大纲|简介|开头|结尾|文案|摘要|邮件/u.exec(reference)?.[0] : undefined;
+}
+
+function namedContentTarget(title: string): CanvasContentTarget {
+  const destinationAlias = /^(?:这(?:个|张)|那(?:个|张))\s*(.{1,110}(?:卡片?|节点|文本框))$/u.exec(title)?.[1];
+  return { names: [title], ...(destinationAlias ? { destinationAlias } : {}) };
+}
+
+function canvasDraftDestination(text: string, generated = false): CanvasContentTarget | undefined {
+  if (/^(?:填进去|写进去|填进刚才的卡|填入刚才的节点)$/u.test(text)) return { names: ['刚才创建的节点'] };
+  const match = readDraftTransfer(text);
+  if (!match) return undefined;
+  const action = match[2]!;
+  const operand = match[3]!;
+  const into = /^(?:到|在(?=\s|[「『“"@]))\s*(?=\S)/u;
+  const hasLocation = locative.test(operand) || /^(?:到|在)(?:\s|[「『“"@])/u.test(operand);
+  const target = hasLocation ? operand.replace(into, '') : operand;
+  const quoted = quotedDestination.exec(target);
+  if (quoted) return { names: [name(quoted[1]!)] };
+  const location = locative.exec(target);
+  const title = (location?.[1] ?? target).trim();
+  if (!/^[^「」『』“”"@，,。！？?：:；;\r\n]{1,120}$/u.test(title) || /^(?:当前)?(?:画布|全画布)$/u.test(title)) return undefined;
+  if (location && target === operand && !generated) return { names: [target], destinationAlias: title };
+  if (target === operand && /^(?:写入|填入)$/u.test(action) && /^到\S/u.test(title) && !/^到(?:当前)?(?:画布|全画布)$/u.test(title)) {
+    return { names: [title], destinationAlias: title.slice(1) };
+  }
+  if (location || target !== operand || action !== '写入' || /(?:卡片?|节点|文本框)$/u.test(title) || /^(?:角色|人物)$/u.test(title)) return namedContentTarget(title);
+  return undefined;
+}
+
 /** A named write destination is an action even when its body needs a model. */
-export function canvasContentTarget(prompt: string): { names: string[]; replaceBody?: true } | undefined {
+export function canvasContentTarget(prompt: string): CanvasContentTarget | undefined {
   if (/^\s*@画布操作\s+(?:(?:请|帮我)\s*)?(?:设计|创作|写|撰写|续写|改写)\s*\S/u.test(prompt) &&
     !/[？?]\s*$/u.test(prompt) && !/然后|再把|并且|分组|连线|删除|改色/u.test(canvasCommandText(prompt))) return { names: ['选中的节点'] };
   const text = canvasIntentText(prompt).trim().replace(/[。！!]$/u, '');
-  if (/^(?:不要|先别|先不要|别|如果|如何|怎么)/u.test(text) || /[？?]$/u.test(text)) return undefined;
-  let match = /^(?:在|往|向|给)\s*(.+?)(?:里|内|中|上)[，,\s]*(?:设计|创作|写|填|生成|补充|续写|完善)/u.exec(text);
-  if (match) return /^(?:当前)?(?:画布|全画布)$/u.test(name(match[1]!)) ? undefined : { names: [name(match[1]!)] };
-  match = /^(.+?(?:卡|卡片|节点|文本框))(?:里|内|中)[，,\s]*(?:设计|创作|写|填|生成|补充|续写|完善)/u.exec(text)
-    ?? /^(?:设计|创作|写|生成|补充).+?[，,；;]\s*(?:再|然后)?(?:填入|写入|写进|放进)\s*(.+?(?:卡|卡片|节点|文本框))(?:里|内|中)?$/u.exec(text);
+  if (/^(?:不要|先别|先不要|别|如果|假如|假设|要是|如何|怎么|怎样|能否)/u.test(text) || /[？?]$/u.test(text)) return undefined;
+  const prose = text.replace(/^(?:先|再|继续|接着)\s*(?=在|给|为|往|向)/u, '');
+  const located = locatedCanvasProse.exec(prose);
+  const operand = located?.[1] ?? located?.[2] ?? located?.[3] ?? addressedCanvasProse.exec(prose)?.[1] ?? '';
+  const target = name(operand);
+  if (target && !/^(?:当前)?(?:画布|全画布)$/u.test(target)) return target === operand.trim() ? namedContentTarget(target) : { names: [target] };
+  const generation = generateThenWrite.exec(text);
+  const destination = generation && canvasDraftDestination(generation[1]!, true);
+  if (destination) return { ...destination, writeGeneratedText: true };
+  const draftDestination = canvasDraftDestination(text);
+  if (draftDestination) return draftDestination;
+  let match = /^(?:补全|完善)\s*(.{1,120}?)(?:[，,].*)?$/u.exec(text);
   if (match) return { names: [name(match[1]!)] };
-  match = /^给\s*(.+?(?:卡片?|节点|文本框))\s*(?:设计|创作|续写|补充|写|生成)(?=\s*\S)/u.exec(text);
-  if (match) return { names: [name(match[1]!)] };
-  match = /^(?:填入|填充|补全|完善|填好)\s*(.{1,120}?)(?:[，,].*)?$/u.exec(text);
-  if (match) return { names: [name(match[1]!)] };
-  if (/^(?:填进去|写进去|填进刚才的卡|填入刚才的节点)$/u.test(text)) return { names: ['刚才创建的节点'] };
   match = /^(?:把|将)\s*(.+?)的(?:正文|全文|内容)\s*(?:写成|重写为|改写成|替换为|换成)\s*\S/u.exec(text);
   if (match) return { names: [name(match[1]!)], replaceBody: true };
   match = /^(?:把|将)\s*(.+?)(?:的正文|的内容)?\s*(?:填成|填上|补全为|写成)[，,\s]*.+$/u.exec(text);
@@ -260,6 +312,8 @@ export function naturalCanvasOperation(prompt: string): NaturalCanvasOperation |
   const masked = command.replace(literals, match => '□'.repeat(match.length));
   const separators = [...masked.matchAll(/[，,；;。]\s*(?:再把|再将|然后把|然后将|再从|然后从|然后|再)|\s*(?:然后|接着|并且|并)\s*(?=把|将|从|改成|改为|换成|切成|向|往|连到)/gu)];
   if (separators.length && separators.length < 8) {
+    const generatedContent = canvasContentTarget(command);
+    if (generatedContent?.writeGeneratedText) return { kind: 'content', ...generatedContent };
     const clauses: string[] = [];
     let start = 0;
     for (const separator of separators) {

@@ -8,7 +8,7 @@ import { createConnectionsPlugin } from '../src/plugins/connections/model.ts';
 import { createCanvasControlPlugin } from '../src/plugins/canvas-control/model.ts';
 import { inferAtOperation } from '../src/plugins/ai-assistant/command-parser.ts';
 import { naturalWritebackIntent, writebackTaskInstructions } from '../src/plugins/ai-assistant/natural-writeback.ts';
-import { naturalCanvasOperation } from '../src/services/ai-task-route.ts';
+import { naturalCanvasOperation, reusesCanvasDraft } from '../src/services/ai-task-route.ts';
 import { naturalNames, naturalTargetFilter } from '../src/services/natural-canvas-rules.ts';
 import type { CanvasControlState } from '../src/protocols/canvas-control.ts';
 import type { ContentSummary } from '../src/protocols/content.ts';
@@ -71,6 +71,34 @@ test('natural operation catalog covers every content task without treating quote
   assert.equal(naturalCanvasOperation('把主角改名为旧版？'), undefined);
   assert.equal(naturalCanvasOperation('不要删除主角'), undefined);
   assert.deepEqual(naturalWritebackIntent('把主角里写旧伤的那段润色一下'), { kind: 'description', name: '主角', phrase: '旧伤' });
+});
+
+test('locative destinations preserve quoted names and distinguish generation from draft transfer', () => {
+  const create = '角色中，设计出人物小传';
+  assert.deepEqual(naturalCanvasOperation(create), { kind: 'content', names: ['角色'] });
+  assert.deepEqual(naturalCanvasOperation('在角色里面，撰写人物小传'), { kind: 'content', names: ['角色'] });
+  for (const prompt of ['给角色写一段人物小传', '角色里写一篇人物小传', '继续在角色里写']) {
+    assert.deepEqual(naturalCanvasOperation(prompt), { kind: 'content', names: ['角色'] }, prompt);
+    assert.equal(reusesCanvasDraft(prompt), false, prompt);
+  }
+  for (const prompt of ['写一段人物小传并写进角色', '设计一份人物小传，然后写入到角色中']) {
+    assert.deepEqual(naturalCanvasOperation(prompt), { kind: 'content', names: ['角色'], writeGeneratedText: true }, prompt);
+    assert.equal(reusesCanvasDraft(prompt), false, prompt);
+  }
+  assert.equal(reusesCanvasDraft(create), false);
+  for (const prompt of ['写入到角色中', '填入到角色中', '把刚才写的人物小传写入到角色里', '把上面那段写进角色', '把它写进角色']) {
+    assert.deepEqual(naturalCanvasOperation(prompt), { kind: 'content', names: ['角色'] }, prompt);
+    assert.equal(reusesCanvasDraft(prompt), true, prompt);
+  }
+  assert.deepEqual(naturalCanvasOperation('填入进展'), { kind: 'content', names: ['进展'] });
+  assert.deepEqual(naturalCanvasOperation('写入到角色'), { kind: 'content', names: ['到角色'], destinationAlias: '角色' });
+  assert.deepEqual(naturalCanvasOperation('填入期中'), { kind: 'content', names: ['期中'], destinationAlias: '期' });
+  assert.deepEqual(naturalCanvasOperation('写入到「角色中」'), { kind: 'content', names: ['角色中'] });
+  assert.equal(naturalCanvasOperation('角色中，怎么设计人物小传？'), undefined);
+  assert.equal(naturalCanvasOperation('假如在角色中，设计出人物小传'), undefined);
+  assert.equal(naturalCanvasOperation('给孩子写一封信'), undefined);
+  assert.equal(naturalCanvasOperation('人物连接到角色中')?.kind, 'connect');
+  assert.equal('destinationAlias' in naturalCanvasOperation('人物连接到「角色中」')!, false);
 });
 
 test('target filters combine group, conjunction, presentation and exclusions', () => {

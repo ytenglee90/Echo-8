@@ -68,8 +68,10 @@ export function resolveBoundCanvasWrite(
   }
 
   const command = canvasCommandText(prepared.prompt);
+  const writeGeneratedText = route.local?.kind === 'content' && route.local.writeGeneratedText;
   if (route.category !== 'operation' || route.history ||
-    /同时|顺便|并且|然后|之后|再把|再将|分组|连线|连接|重连|群组|改色|换色|主题|移动|移到|删掉|删除|新建|改名|插入|合并|重排|拆分/u.test(command) ||
+    !writeGeneratedText && /同时|顺便|并且|然后|之后|再把|再将/u.test(command) ||
+    /分组|连线|连接|重连|群组|改色|换色|主题|移动|移到|删掉|删除|新建|改名|插入|合并|重排|拆分/u.test(command) ||
     (route.draft && !assembly.canvasDraftBound)) return undefined;
   const range = prepared.writebackTarget;
   const id = range?.nodeId ?? contentTargetId;
