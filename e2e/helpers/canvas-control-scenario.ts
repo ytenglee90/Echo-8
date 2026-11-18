@@ -64,6 +64,26 @@ export function canvasControlScenarios(url: string): void {
     await expect(page.locator('.text-node-card')).toHaveCount(3);
     expect(calls).toBe(0);
   });
+  test('switching a named card to a text box and entering immersive writing use no model', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await seedCanvas(page, url, [{ title: '空白 24', body: '这是要保留的正文。' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('切换空白24为文本框');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await control.getByRole('button', { name: /^应用/u }).click();
+    await expect(page.locator('.text-node-card.text-box')).toContainText('空白 24');
+    await control.getByRole('button', { name: '关闭画布控制', exact: true }).click();
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    await ai.locator('.ai-composer textarea').fill('打开空白24，沉浸写作模式');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.getByRole('button', { name: '退出沉浸写作', exact: true })).toBeVisible();
+    await expect(page.locator('.editor-writing-area').filter({ visible: true }).first()).toContainText('这是要保留的正文');
+    await page.getByRole('button', { name: '退出沉浸写作', exact: true }).click();
+    expect(calls).toBe(0);
+  });
   test('rewrite into a named new node generates only prose and creates an undoable result', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => {
