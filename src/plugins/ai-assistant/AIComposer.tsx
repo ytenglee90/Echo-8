@@ -5,6 +5,7 @@ import type {
   PointerEvent,
   RefObject,
   SyntheticEvent,
+  ReactNode,
 } from 'react';
 import type { AIStatusSignal } from '../../protocols/ai.ts';
 import { Icon, IconButton } from '../../ui/Icon.tsx';
@@ -25,6 +26,7 @@ export interface AIComposerProps {
   mentionMenuOpen: boolean;
   mentionSuggestions: readonly AIMentionSuggestion[];
   activeMentionIndex: number;
+  controls?: ReactNode;
   onResizePointerDown: (event: PointerEvent<HTMLDivElement>) => void;
   onResizePointerMove: (event: PointerEvent<HTMLDivElement>) => void;
   onResizePointerUp: (event: PointerEvent<HTMLDivElement>) => void;
@@ -55,6 +57,7 @@ export function AIComposer({
   mentionMenuOpen,
   mentionSuggestions,
   activeMentionIndex,
+  controls,
   onResizePointerDown,
   onResizePointerMove,
   onResizePointerUp,
@@ -116,6 +119,8 @@ export function AIComposer({
           onKeyUp={onCaretChange}
           onKeyDown={onKeyDown}
         />
+        <div className="ai-composer-footer">
+        {controls}
         <IconButton
           icon={status === 'generating' ? 'stop' : 'send'}
           label={status === 'generating' ? '停止本次生成' : '发送给模型'}
@@ -123,6 +128,7 @@ export function AIComposer({
           disabled={status !== 'generating' && sendDisabled}
           onClick={status === 'generating' ? onStop : onSend}
         />
+        </div>
         {mentionMenuOpen && (
           <div id={mentionMenuId} className="ai-mention-menu" role="listbox" aria-label="@ 命令和文字节点">
             {mentionSuggestions.map((suggestion, index) => (

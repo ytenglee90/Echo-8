@@ -29,17 +29,25 @@
   text-align: center;
 }
 .ai-provider-settings-host:has(.ai-provider-panel) > .ai-provider-settings-unavailable { display: none; }
+.ai-provider-retrieval-link { padding: 8px 12px 12px; }
+.ai-retrieval-settings-button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--control-surface); color: var(--ink); text-align: left; cursor: pointer; }
+.ai-retrieval-settings-button > span { display: grid; gap: 2px; flex: 1; }
+.ai-retrieval-settings-button strong { font-size: 12px; font-weight: 600; }
+.ai-retrieval-settings-button small { color: var(--muted); font-size: 11px; }
+.ai-retrieval-settings-button:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--border-strong); }
+.ai-retrieval-settings-button:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+.ai-retrieval-settings-button:disabled { cursor: not-allowed; }
 
 .ai-chat-shell { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100%; min-height: 0; }
 .ai-chat-input-area { min-width: 0; border-top: 1px solid var(--border); background: var(--panel); }
 .ai-chat-input-area .ai-chat-topbar { border-bottom: 0; }
 .ai-chat-topbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 6px;
-  padding: 8px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
 }
 .text-assist-toggle { position: relative; }
 .text-assist-toggle::after {
@@ -407,9 +415,7 @@ button.ai-source-citation:focus-visible {
 .ai-composer-resize-handle:focus-visible::after { background: var(--ink); opacity: 1; }
 .ai-composer-input {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
-  align-items: end;
+  display: block;
   overflow: visible;
   border: 1px solid var(--border-strong);
   border-radius: 11px;
@@ -431,6 +437,7 @@ button.ai-source-citation:focus-visible {
   scrollbar-gutter: stable;
 }
 .ai-composer-input:focus-within { border-color: var(--ink); background: var(--panel); }
+.ai-composer-footer { display: flex; align-items: center; gap: 6px; padding: 3px 8px 7px; min-width: 0; }
 .ai-send-button {
   position: static;
   align-self: end;
@@ -438,7 +445,8 @@ button.ai-source-citation:focus-visible {
   place-items: center;
   width: 32px;
   height: 32px;
-  margin: 0 6px 6px 4px;
+  margin: 0 0 0 auto;
+  flex: 0 0 32px;
   padding: 0;
   border: 0;
   border-radius: 9px;

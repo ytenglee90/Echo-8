@@ -37,6 +37,7 @@ import { useConnectionGesture } from '../../ui/use-connection-gesture.ts';
 import { useConnectionTargets } from '../../ui/use-connection-targets.ts';
 import { selectedJunctionOrigins, includesJunctionMoves, moveCanvasEntities, snapCanvasPositions } from '../../ui/mixed-canvas-move.ts';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
+import { IconButton } from '../../ui/Icon.tsx';
 
 const CULL_MARGIN = 360;
 const SNAP_THRESHOLD_PX = 18;
@@ -80,6 +81,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
   useSyncExternalStore(client.subscribeKeyboard, client.getKeyboardVersion, () => 0);
   const duplicateModifierActive = client.isShortcutPressed('canvas.duplicate-modifier');
   const [groups, setGroups] = useState<GroupRecord[]>([]);
+  const groupNumbers = useMemo(() => new Map(groups.map((group, index) => [group.id, index + 1])), [groups]);
   const [appearancePreview, setAppearancePreview] = useState<AppearancePreview>();
   const [membershipPreview, setMembershipPreview] = useState<GroupMembershipPreview>();
   const drag = useRef<GroupDrag | undefined>(undefined);
@@ -486,7 +488,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
                 });
               }}
             >
-              <span className="group-name-badge" style={{ fontSize: 12 / camera.zoom }}>{group.title} · {members.length}</span>
+              <GroupLabel group={group} number={groupNumbers.get(group.id) ?? 1} zoom={camera.zoom} client={client} />
               {connectionAvailable && (['left', 'right'] as const).map(side => <button
                 key={side} type="button" className={`group-connection-port ${side}`} aria-label={`从群组${side === 'left' ? '左' : '右'}侧连接`}
                 data-group-id={group.id} title="拖动连接到节点、群组或中转点"
@@ -500,6 +502,41 @@ export function GroupLayer({ client }: { client: ViewClient }) {
       </div>
     </div>
   );
+}
+
+function GroupLabel({ group, number, zoom, client }: { group: GroupRecord; number: number; zoom: number; client: ViewClient }) {
+  const [edit, setEdit] = useState<{ title: string; revision: number }>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  const badge = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(false);
+  const editing = Boolean(edit);
+  useEffect(() => {
+    if (editing) { input.current?.focus(); input.current?.select(); }
+    else if (wasEditing.current) badge.current?.focus({ preventScroll: true });
+    wasEditing.current = editing;
+  }, [editing]);
+  const save = async () => {
+    if (!edit || busy || !edit.title.trim()) return;
+    setBusy(true); setError('');
+    try { await client.dispatch('group.rename@1', { id: group.id, title: edit.title, expectedRevision: edit.revision }); setEdit(undefined); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  };
+  return <div className={`group-label${edit ? ' editing' : ''}`} style={{ top: -2 / zoom, transform: `scale(${1 / zoom}) translateY(-100%)` }}
+    onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}
+    onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); setEdit(undefined); setError(''); } }}>
+    {edit ? <form aria-label={`修改群组 ${number} 名称`} onSubmit={event => { event.preventDefault(); void save(); }}>
+      <input ref={input} aria-label={`群组 ${number} 名称`} maxLength={300} value={edit.title} disabled={busy}
+        onChange={event => setEdit({ ...edit, title: event.target.value })} />
+      <IconButton icon="check" label="保存群组名称" disabled={busy || !edit.title.trim()} onClick={() => void save()} />
+      <IconButton icon="close" label="取消修改群组名称" disabled={busy} onClick={() => { setEdit(undefined); setError(''); }} />
+      {error && <span role="alert">{error}</span>}
+    </form> : <button ref={badge} type="button" className="group-name-badge" aria-label={`修改群组名称：${group.title}`}
+      title={`${group.title} · ${group.memberIds.length} 个节点。点击编号修改名称`}
+      onClick={() => { setError(''); setEdit({ title: group.title, revision: group.revision }); }}>{number}</button>}
+  </div>;
 }
 
 function modifierMode(event: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }): SelectionMode {

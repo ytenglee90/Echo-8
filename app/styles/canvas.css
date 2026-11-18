@@ -646,7 +646,14 @@
 }
 .group-frame.selected::after { border: 3px solid var(--canvas-selection, var(--selection)); }
 .group-frame:not(.selected):focus-visible { outline: 2px solid var(--canvas-selection, var(--selection)); outline-offset: 3px; }
-.group-name-badge { position: absolute; left: 10px; top: 3px; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; color: var(--ink); background: var(--panel); border-radius: 4px; padding: 1px 5px; pointer-events: none; }
+.group-label { position: absolute; left: 10px; transform-origin: left top; opacity: 0; pointer-events: none; font-size: 12px; color: var(--ink); }
+.group-label::after { content: ''; position: absolute; top: 100%; left: 0; width: 100%; height: 4px; }
+.group-frame:is(:hover, :focus-within) .group-label, .group-label.editing { opacity: 1; pointer-events: auto; }
+.group-name-badge { min-width: 22px; height: 20px; padding: 0 5px; border: 0; border-radius: 5px; color: var(--ink); background: var(--panel); font: inherit; cursor: text; }
+.group-label form { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; width: 230px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.group-label input { width: 160px; min-width: 0; padding: 4px; color: var(--ink); background: var(--control-surface); border: 1px solid var(--border); border-radius: 4px; font: inherit; }
+.group-label .icon-button { width: 24px; min-width: 24px; height: 24px; padding: 0; }
+.group-label [role="alert"] { color: var(--danger); width: 100%; overflow-wrap: anywhere; }
 .group-connection-port {
   position: absolute; top: 50%; transform: translate(-50%, -50%);
   width: 18px; height: 18px; padding: 0; border-radius: 4px;

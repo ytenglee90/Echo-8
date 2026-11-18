@@ -332,13 +332,13 @@ export function createWorkspaceActionsPlugin(panel?: unknown): PluginDefinition 
     queries: [query, 'workspace.plan.validate@1', 'workspace.plan.receipt@1', 'workspace.plan.latest@1', 'workspace.queryTask@1', 'workspace.actions.state@1', 'workspace.coverage@1'],
     namespaces: [WORKSPACE_ACTIONS_NAMESPACE], namespaceDomains: { [WORKSPACE_ACTIONS_NAMESPACE]: 'workspace' },
     sessionOnlyWorkspace: { [WORKSPACE_ACTIONS_NAMESPACE]: true },
-    ui: ['workspace-actions.panel'], actions: ['workspace-actions.open'], shortcuts: ['workspace-actions.open-shortcut'],
+    ui: ['workspace-actions.panel'],
     asks: [...new Set([query, 'workspace.coverage@1', 'system.actions', 'system.plugins', 'system.document.revision', 'system.action.validate@1', 'system.actionCatalog@1', 'canvasControl.reviewReceipt@1',
       ...localActions.flatMap(action => action.queries)])],
     dispatches: [...new Set(['system.action.invoke@1', 'file.cancelOperation@1', 'canvasControl.apply@1', 'canvasControl.dismiss@1', ...localActions.flatMap(action => action.commands)])],
     optionalCapabilities: [...new Set(['content.summaries@1', 'content.canvasSummariesById@1', 'file.state@1', 'file.operationResult@1',
       ...localActions.flatMap(action => action.capabilities)])],
-    permissions: ['history.manage', 'persistence.manage', 'ui.action.execute', 'store.own.read', 'store.own.write', 'ui.right.contribute', 'ui.action.register', 'ui.shortcut.register', 'tasks.schedule'],
+    permissions: ['history.manage', 'persistence.manage', 'ui.action.execute', 'store.own.read', 'store.own.write', 'ui.right.contribute', 'tasks.schedule'],
     events: ['document.replaced', UI_SURFACE_REVEALED_EVENT],
   }),
   start(context) {
@@ -354,10 +354,6 @@ export function createWorkspaceActionsPlugin(panel?: unknown): PluginDefinition 
     context.commands.register({ type: 'workspace.actions.close@1', handle: () => setOpen(false) });
     context.queries.register({ type: 'workspace.actions.state@1', handle: () => ({ open: context.store.readValue<boolean>(WORKSPACE_ACTIONS_NAMESPACE, 'open') ?? false }) });
     context.ui.contribute({ id: 'workspace-actions.panel', slot: 'right.primary', kind: 'view', label: '开发者工具：工作区动作', component: panel, priority: 82 });
-    context.ui.action({ id: 'workspace-actions.open', command: 'workspace.actions.open@1', label: '开发者工具：查看本地工作区动作与固定计划', category: '开发者工具',
-      localTool: { version: 1, effect: 'workspace', resultMode: 'returned', inputSchema: { type: 'null' } },
-    });
-    context.ui.shortcut({ id: 'workspace-actions.open-shortcut', command: 'workspace.actions.open@1', label: '开发者工具：查看本地工作区动作与固定计划', category: '开发者工具' });
     const receipts = new Map<string, { signature: string; plan: WorkspacePlan; receipt: WorkspacePlanReceipt;
       bindings: Record<string, Record<string, unknown>> }>();
     context.events.subscribe('document.replaced', () => {

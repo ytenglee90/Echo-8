@@ -7,7 +7,7 @@ import { isWorkspaceTarget } from './actions.ts';
 export const batchableActions = new Set([
   'node.create', 'node.rename', 'node.move', 'node.resize', 'node.presentation',
   'content.edit', 'content.draft.preview', 'connection.create', 'connection.label',
-  'group.createExplicit', 'node.color',
+  'group.createExplicit', 'node.color', 'group.rename', 'connection.appearance',
 ]);
 
 /** Compiles protocol operations; feature owners still prepare and validate all patches. */
@@ -68,6 +68,16 @@ export async function compileDocumentBatch(
       }
       case 'connection.label':
         actions.push({ type: 'update-connection', id: String(args.id), label: String(args.label) });
+        bindings[step.id] = String(args.id);
+        break;
+      case 'connection.appearance':
+        actions.push({ type: 'update-connection', id: String(args.id),
+          ...(args.color === undefined ? {} : { color: String(args.color) }),
+          ...(args.line === undefined ? {} : { line: args.line as 'solid' | 'dashed' }) });
+        bindings[step.id] = String(args.id);
+        break;
+      case 'group.rename':
+        actions.push({ type: 'update-group', id: String(args.id), title: String(args.title) });
         bindings[step.id] = String(args.id);
         break;
       case 'group.createExplicit': {

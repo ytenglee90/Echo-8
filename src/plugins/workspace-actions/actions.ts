@@ -124,7 +124,7 @@ const asTarget = (value: unknown): WorkspaceTarget => {
 
 function action(
   id: string, owner: string, label: string, category: string, effect: Effect, rules: Rules,
-  implementation: Pick<LocalAction, 'commands' | 'queries' | 'capabilities' | 'run'>,
+  implementation: Pick<LocalAction, 'commands' | 'queries' | 'capabilities' | 'run'> & Pick<Partial<LocalAction>, 'preflight'>,
 ): LocalAction {
   return {
     descriptor: { id, owner, label, category, effect, inputSchema: {
@@ -574,6 +574,62 @@ export async function documentPreview(context: PluginContext, plan: CanvasContro
 }
 
 localActions.push(
+  action('group.inspect', 'groups', '查看指定群组名称、成员与修订', '群组', 'query', { id: string(200) }, {
+    commands: [], queries: [], capabilities: ['groups.list@1'],
+    run: async (context, args) => {
+      const group = (await context.capabilities.request<GroupRecord[]>('groups.list@1')).find(group => group.id === args.id);
+      if (!group) throw new Error('指定群组不存在');
+      return { result: group };
+    },
+  }),
+  action('group.rename', 'groups', '修改指定群组名称', '群组', 'document', { id: string(200), title: string(300), expectedRevision: number(1, 1e9, true) }, {
+    commands: ['group.rename@1'], queries: [], capabilities: ['groups.list@1'],
+    preflight: async (context, args) => (await context.capabilities.request<GroupRecord[]>('groups.list@1')).some(group => group.id === args.id && group.revision === args.expectedRevision),
+    run: async (context, args) => {
+      await context.commands.invoke('group.rename@1', { id: String(args.id), title: String(args.title), expectedRevision: Number(args.expectedRevision) });
+      const group = (await context.capabilities.request<GroupRecord[]>('groups.list@1')).find(group => group.id === args.id);
+      if (group?.title !== String(args.title).trim()) throw new Error('群组名称回读不匹配');
+      return { result: { id: group.id, title: group.title, revision: group.revision } };
+    },
+  }),
+  command('group.management.open', 'groups', '打开群组管理', '群组', 'workspace', 'group.membership.open'),
+  command('group.management.close', 'groups', '关闭群组管理', '群组', 'workspace', 'group.membership.close'),
+  action('connection.inspect', 'connections', '查看指定连线端点、样式与修订', '连线', 'query', { id: string(200) }, {
+    commands: [], queries: [], capabilities: ['connections.graph@1'],
+    run: async (context, args) => {
+      const edge = (await context.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections.find(edge => edge.id === args.id);
+      if (!edge) throw new Error('指定连接线不存在');
+      return { result: edge };
+    },
+  }),
+  action('connection.appearance', 'canvas-control', '预览连线颜色或实虚线', '连线', 'document', {
+    id: string(200), color: optional(color), line: optional(oneOf('solid', 'dashed')),
+  }, {
+    commands: ['canvasControl.workspacePreview@1'], queries: ['system.document.revision'], capabilities: ['connections.graph@1'],
+    preflight: async (_context, args) => args.color !== undefined || args.line !== undefined,
+    run: async (context, args) => {
+      const edge = (await context.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections.find(edge => edge.id === args.id);
+      if (!edge) throw new Error('指定连接线不存在');
+      return documentPreview(context, { version: 1, actions: [{ type: 'update-connection', id: edge.id,
+        ...(args.color === undefined ? {} : { color: String(args.color) }),
+        ...(args.line === undefined ? {} : { line: args.line as 'solid' | 'dashed' }) }] }, [edge.id]);
+    },
+  }),
+  command('connection.labelSize', 'connections', '设置连线标签尺寸', '连线', 'document', 'connection.resizeLabel',
+    { id: string(200), width: number(40, 1000), height: number(20, 1000), expectedRevision: number(1, 1e9, true) }, undefined,
+    async (context, _result, args) => {
+      const edge = (await context.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections.find(edge => edge.id === args.id);
+      if (!edge) throw new Error('连线标签回读不可用');
+      return { result: edge };
+    }, ['connections.graph@1']),
+  query('editor.state', 'editor', '查看编辑器宽度、窗格比例与当前范围', '编辑器', 'editor.state'),
+  command('editor.layout', 'editor', '同时设置编辑区宽度与窗格比例', '编辑器', 'workspace', 'editor.setPaneLayout',
+    { width: number(100, 10000), ratios }, undefined, async (context) => ({ result: await context.queries.ask('editor.state') })),
+  command('editor.window', 'editor', '切换已打开长正文的显示起点', '编辑器', 'workspace', 'editor.setWindow',
+    { target, start: number(0, 32e6, true) }, async (args, resolve) => ({ ...await lookupNodeId(args, resolve), start: args.start }),
+    async (context) => ({ result: await context.queries.ask('editor.state') })),
+  capability('selection.resolve', 'selection', '查询指定选区及群组包含的对象', '选择', 'selection.resolve@1', { ids }),
+  capability('group.management.read', 'groups', '查看群组管理是否打开', '群组', 'group.membership.state@1'),
   query('document.revision', 'workspace-actions', '读取书籍修订', '查询', 'system.document.revision'),
   action('layout.plan', 'text-node', '准备精确分列与着色方案', '布局', 'query', {
     nodeIds: ids, columns: number(1, 20, true), gap: number(0, 1000),

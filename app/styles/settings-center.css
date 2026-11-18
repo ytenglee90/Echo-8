@@ -153,6 +153,9 @@
 .ai-personal-switch-row .switch { flex: 0 0 30px; }
 
 .ai-personal-list { margin-top: 20px; }
+.ai-personal-learning { display: grid; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.ai-personal-learning .ai-personal-heading { margin: 0; min-height: 0; }
+.ai-personal-learning .ai-personal-heading > span { color: var(--muted); font-size: 12px; }
 .ai-personal-heading {
   display: flex;
   align-items: center;
@@ -263,13 +266,7 @@
 .ai-personal-page .ai-instruction-preview { padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-control, 8px); overflow-wrap: anywhere; }
 .ai-canvas-assistants:not([hidden]) { display: contents; }
 .ai-personal-import-preview, .ai-personal-clear { display: grid; justify-items: start; gap: 8px; }
-.ai-layout-defaults { display: grid; gap: 12px; }
-.ai-layout-default-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
-.ai-layout-default-row > div { display: grid; gap: 5px; flex: 1 1 130px; }
-.ai-layout-default-row small, .ai-preference-purpose { color: var(--muted); font-size: 12px; line-height: 1.5; }
-.ai-layout-default-row label { display: grid; gap: 5px; font-size: 12px; }
-.ai-layout-default-row input { width: 100px; padding: 6px; color: var(--ink); background: var(--control-surface); border: 1px solid var(--border); border-radius: 6px; }
-.ai-layout-default-row button { padding: 7px; color: var(--ink); background: var(--control-surface); border: 1px solid var(--border); border-radius: 6px; }
+.ai-preference-purpose { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .ai-personal-import-preview ul { margin: 0; padding-inline-start: 17px; font-size: 12px; overflow-wrap: anywhere; }
 .ai-personal-clear { padding-top: 10px; border-top: 1px solid var(--border); }
 

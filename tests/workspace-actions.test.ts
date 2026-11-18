@@ -634,12 +634,75 @@ test('copy aliases bind a selection operand and the owner copies captured IDs af
   assert.deepEqual(await kernel.capabilities.request('clipboard.state@1'), clipboard);
 });
 
-test('a parameterless registered panel uses the owner command contract', async () => {
+test('the retired developer entry is absent while the group manager retains its validated owner command', async () => {
   const { kernel, run } = await harness();
-  const action = 'registered:workspace-actions:workspace-actions.open';
+  const index = await kernel.router.ask<WorkspaceActionIndex>('workspace.actions@1', undefined, source);
+  assert.equal(index.actions.some(action => action.id === 'registered:workspace-actions:workspace-actions.open'), false);
+  const action = 'group.management.open';
   await assert.rejects(run('panel-excess', [{ id: 'show', action, arguments: { extra: true } }]), /参数无效/u);
   assert.equal((await run('panel-open', [{ id: 'show', action }])).status, 'completed');
-  assert.deepEqual(await kernel.router.ask('workspace.actions.state@1', undefined, source), { open: true });
+  assert.deepEqual(await kernel.capabilities.request('group.membership.state@1'), { open: true });
+});
+
+test('expanded group and connection actions verify owners, reject stale revisions and preserve atomic undo', async () => {
+  const { kernel, run, nodes } = await harness();
+  const a = await kernel.router.dispatch<{ id: string }>('node.create', { title: '甲' }, source);
+  const b = await kernel.router.dispatch<{ id: string }>('node.create', { title: '乙' }, source);
+  await kernel.router.dispatch('selection.set', { ids: [a.id, b.id] }, source);
+  const group = await kernel.router.dispatch<{ id: string }>('group.create', { title: '旧名称' }, source);
+  await kernel.router.dispatch('connection.create', { from: { nodeId: a.id, side: 'right' }, to: { nodeId: b.id, side: 'left' } }, source);
+  const edge = (await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections[0]!;
+  const inspect = await run('inspect-new', [{ id: 'g', action: 'group.inspect', arguments: { id: group.id } },
+    { id: 'e', action: 'connection.inspect', arguments: { id: edge.id } }]);
+  assert.equal((inspect.steps[0]?.result as { title: string }).title, '旧名称');
+  await assert.rejects(run('stale-group', [{ id: 'g', action: 'group.rename', arguments: { id: group.id, title: '不应改名', expectedRevision: 99 } }]), /参数无效/u);
+  await assert.rejects(run('empty-edge-style', [{ id: 'e', action: 'connection.appearance', arguments: { id: edge.id } }]), /参数无效/u);
+  const result = await run('rename-and-recolor', [
+    { id: 'g', action: 'group.rename', arguments: { id: group.id, title: '新名称', expectedRevision: 1 } },
+    { id: 'e', action: 'connection.appearance', arguments: { id: edge.id, color: '#3568a8', line: 'dashed' } },
+  ]);
+  assert.equal(result.status, 'waiting');
+  await kernel.router.dispatch('workspace.plan.resume@1', { id: result.id, apply: ['g'] }, source);
+  const changed = await run('inspect-changed', [{ id: 'g', action: 'group.inspect', arguments: { id: group.id } },
+    { id: 'e', action: 'connection.inspect', arguments: { id: edge.id } }]);
+  assert.equal((changed.steps[0]?.result as { title: string }).title, '新名称');
+  assert.equal((changed.steps[1]?.result as { lineColor: string }).lineColor, '#3568a8');
+  assert.equal(isTitleConnection((changed.steps[1]?.result as ConnectionGraphSnapshot['connections'][number])), true);
+  await kernel.router.dispatch('history.undo', undefined, source);
+  const restored = await run('inspect-restored', [{ id: 'g', action: 'group.inspect', arguments: { id: group.id } },
+    { id: 'e', action: 'connection.inspect', arguments: { id: edge.id } }]);
+  assert.equal((restored.steps[0]?.result as { title: string }).title, '旧名称');
+  assert.equal((restored.steps[1]?.result as { lineColor: string }).lineColor, edge.lineColor);
+  assert.equal((await nodes()).length, 2);
+});
+
+test('expanded editor, selection and connection label controls return actual owner state', async () => {
+  const { kernel, run } = await harness();
+  const a = await kernel.router.dispatch<{ id: string }>('node.create', { title: '显示范围甲', body: '长正文'.repeat(200) }, source);
+  const b = await kernel.router.dispatch<{ id: string }>('node.create', { title: '显示范围乙' }, source);
+  await kernel.router.dispatch('editor.open', { id: a.id, mode: 'add' }, source);
+  await kernel.router.dispatch('editor.open', { id: b.id, mode: 'add' }, source);
+  const layout = await run('editor-actual-layout', [
+    { id: 'layout', action: 'editor.layout', arguments: { width: 800, ratios: { [a.id]: 2, [b.id]: 1 } } },
+    { id: 'window', action: 'editor.window', arguments: { target: { id: a.id }, start: 100 } },
+    { id: 'state', action: 'editor.state' },
+    { id: 'selection', action: 'selection.resolve', arguments: { ids: [a.id, b.id] } },
+  ]);
+  assert.equal(layout.status, 'completed', JSON.stringify(layout));
+  const state = layout.steps[2]?.result as { paneWindows: Record<string, number>; paneRatios: Record<string, number>; dockWidth: number };
+  assert.equal(state.paneWindows[a.id], 100);
+  assert.equal(state.dockWidth, 800);
+  assert.ok(Math.abs(state.paneRatios[a.id]! / state.paneRatios[b.id]! - 2) < 0.00001);
+  assert.deepEqual((layout.steps[3]?.result as { expandedIds: string[] }).expandedIds.sort(), [a.id, b.id].sort());
+  await kernel.router.dispatch('connection.create', { from: { nodeId: a.id, side: 'right' }, to: { nodeId: b.id, side: 'left' } }, source);
+  let edge = (await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections[0]!;
+  await kernel.router.dispatch('connection.setLabel', { id: edge.id, label: '尺寸测试', expectedRevision: edge.revision }, source);
+  edge = (await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections[0]!;
+  const resized = await run('label-size', [{ id: 'size', action: 'connection.labelSize', arguments: { id: edge.id, width: 180, height: 60, expectedRevision: edge.revision } }]);
+  assert.equal(resized.status, 'completed', JSON.stringify(resized));
+  assert.equal((resized.steps[0]?.result as { labelWidth: number }).labelWidth, 180);
+  await kernel.router.dispatch('history.undo', undefined, source);
+  assert.equal((await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1')).connections[0]?.labelWidth, edge.labelWidth);
 });
 
 test('captured cut deletes only its original object in one undo and captured paste rejects a replaced clipboard', async () => {

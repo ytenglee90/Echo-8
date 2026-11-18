@@ -12,7 +12,7 @@ import {
 } from 'react';
 import type { UISlot, ViewClient } from '../../core/contracts.ts';
 import { FloatingPanel } from '../../ui/FloatingPanel.tsx';
-import { IconButton } from '../../ui/Icon.tsx';
+import { Icon, IconButton } from '../../ui/Icon.tsx';
 import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import { AIMemoryCenter } from './AIMemoryViews.tsx';
@@ -420,7 +420,7 @@ function AIAssistantWindow({
             onDismiss={() => setDismissedMemorySuggestion(memorySuggestion.id)}
           />
         )}
-        <AIChatHeader
+        <AIComposer {...composerProps} controls={<AIChatHeader
           client={client}
           assistantId={assistantId}
           providerSelectionAvailable={providerSelectionAvailable}
@@ -437,8 +437,7 @@ function AIAssistantWindow({
             assistantId, enabled: !assistantInstance?.webSearchEnabled,
           }))}
           onOpenPromptTemplates={() => void client.dispatch('ai.setView', { assistantId, view: 'prompt' })}
-        />
-        <AIComposer {...composerProps} />
+          />} />
         </div>
       </section> : state.view === 'memory' ? (
         <AIMemoryCenter
@@ -472,8 +471,11 @@ function AIAssistantWindow({
         <section className="ai-provider-settings-host" aria-label="AI 模型与连接">
           {renderSlot?.('ai.settings')}
           <section className="ai-provider-retrieval-link" aria-label="检索方式">
-            <button type="button" disabled={!client.isCommandAvailable('retrieval.open@1')}
-              onClick={() => void client.dispatch('retrieval.open@1').catch(reason => setError(errorMessage(reason)))}>打开检索设置</button>
+            <button type="button" className="ai-retrieval-settings-button" aria-label="打开检索设置" title="打开检索设置，管理检索方式、语义模型和索引"
+              disabled={!client.isCommandAvailable('retrieval.open@1')}
+              onClick={() => void client.dispatch('retrieval.open@1').catch(reason => setError(errorMessage(reason)))}>
+              <Icon name="search" size={17} /><span><strong>打开检索设置</strong><small>检索方式、语义模型与索引</small></span><Icon name="chevron-right" size={16} />
+            </button>
           </section>
           <p className="ai-provider-settings-unavailable">模型连接插件当前不可用。</p>
         </section>

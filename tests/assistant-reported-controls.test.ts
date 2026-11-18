@@ -126,7 +126,8 @@ test('model fallback uses current provider metadata and registered actions, requ
   const { kernel, dispatch, context } = await harness();
   await dispatch('node.create', { title: '空白 31', body: '正文不应发送给解析器' });
   let request: AIGenerateRequest | undefined;
-  let output = { steps: [{ action: 'editor.immersive.enter', arguments: { target: { title: '空白31' } } }], clarification: '' };
+  let output: { steps: Array<{ action: string; arguments: Record<string, unknown> }>; clarification: string } =
+    { steps: [{ action: 'editor.immersive.enter', arguments: { target: { title: '空白31' } } }], clarification: '' };
   const planner = { ...context, capabilities: { ...context.capabilities, request: async (key: string, input: unknown, signal?: AbortSignal) => {
     if (key === 'ai.provider.catalog@1') return { activeId: 'chosen', options: [{ id: 'chosen', configured: true }] };
     if (key === 'ai.generate@1') { request = input as AIGenerateRequest; return { text: JSON.stringify(output), provider: 'fixture', model: 'chosen', usage: { inputTokens: 42, outputTokens: 12 } }; }
@@ -146,6 +147,8 @@ test('model fallback uses current provider metadata and registered actions, requ
   assert.ok(editor.immersivePane);
   output = { steps: [{ action: 'invented.deleteEverything', arguments: { target: { title: '空白31' } } }], clarification: '' };
   await assert.rejects(planWorkspaceWithModel(planner, { ...prepared, id: 'invalid' }, new AbortController().signal), /未开放动作/u);
+  output = { steps: [{ action: 'selection.resolve', arguments: { ids: ['not-in-directory'] } }], clarification: '' };
+  await assert.rejects(planWorkspaceWithModel(planner, { ...prepared, id: 'invalid-ids' }, new AbortController().signal), /未提供的对象/u);
   output = { steps: [{ action: 'editor.immersive.enter', arguments: { target: { title: '空白31' } } }], clarification: '' };
   await planWorkspaceWithModel(planner, { ...prepared, id: 'changed-after-review' }, new AbortController().signal);
   const pending = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;

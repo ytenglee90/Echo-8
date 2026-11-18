@@ -37,7 +37,7 @@ export function canvasControlScenarios(url: string): void {
     await expect(page.getByRole('region', { name: '沉浸式写作', exact: true })).toBeVisible();
     expect(calls).toBe(0);
   });
-  test('group management exposes actual names, renaming and member counts', async ({ page }) => {
+  test('group management exposes actual names, renaming and member counts', async ({ page }, info) => {
     await configure(page, url, 'openai', undefined, 'direct');
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     await ai.locator('.ai-composer textarea').fill('新建两张管理测试，两张管理测试打一个组');
@@ -50,7 +50,20 @@ export function canvasControlScenarios(url: string): void {
     await panel.getByRole('button', { name: '保存名称', exact: true }).click();
     await expect(panel.getByRole('form', { name: '管理群组 我的人物组', exact: true })).toContainText('2 个节点');
     await panel.getByRole('button', { name: '关闭群组成员管理', exact: true }).click();
-    await expect(page.locator('.group-name-badge')).toContainText('我的人物组');
+    const frame = page.locator('.group-frame');
+    await frame.hover({ position: { x: 40, y: 10 } });
+    const badge = page.getByRole('button', { name: '修改群组名称：我的人物组', exact: true });
+    await expect(badge).toHaveText('1');
+    await expect(badge).toHaveAttribute('title', /我的人物组 · 2 个节点/u);
+    await page.screenshot({ path: info.outputPath('group-hover-number.png') });
+    await badge.click();
+    const rename = page.getByRole('form', { name: '修改群组 1 名称' });
+    await rename.getByRole('textbox', { name: '群组 1 名称', exact: true }).fill('直接改名的人物组');
+    await page.screenshot({ path: info.outputPath('group-inline-rename.png') });
+    await rename.getByRole('button', { name: '保存群组名称', exact: true }).click();
+    await expect(frame).toHaveAttribute('aria-label', '群组：直接改名的人物组，包含 2 个节点');
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(frame).toHaveAttribute('aria-label', '群组：我的人物组，包含 2 个节点');
   });
   test('reported review supports select all, deselect all, editable titles and collision recovery without partial writes', async ({ page }, info) => {
     test.setTimeout(60_000);
@@ -120,7 +133,11 @@ export function canvasControlScenarios(url: string): void {
     await expect(ai.getByRole('combobox', { name: '当前模型平台' })).toBeVisible();
     const model = await ai.getByRole('combobox', { name: '当前模型平台' }).boundingBox();
     const input = await ai.locator('.ai-composer textarea').boundingBox();
-    expect(model!.y).toBeLessThan(input!.y); expect(input!.y - model!.y).toBeLessThan(120);
+    expect(model!.y).toBeGreaterThanOrEqual(input!.y + input!.height);
+    const footer = ai.locator('.ai-composer-footer');
+    await expect(footer.getByRole('button', { name: /^Prompt：/u })).toBeVisible();
+    expect((await footer.getByRole('button', { name: /^Prompt：/u }).textContent())?.trim()).toBe('');
+    expect(await footer.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
     await expect(page.locator('.canvas-surface')).toHaveCSS('background-color', 'rgb(228, 232, 218)');
     await control.getByRole('button', { name: '关闭画布控制', exact: true }).click();

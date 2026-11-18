@@ -540,7 +540,7 @@ test('the brand returns home while cloud sync stays in its governed panel', asyn
     '另存到云端',
   ]);
   expect(await commandPalette.getByRole('group').evaluateAll(groups => groups.map(group => group.getAttribute('aria-label')))).toEqual([
-    '快捷入口', '书籍与同步', '编辑', '画布与节点', '群组与排列', '连线与中转点', 'AI 助手', '设置', '开发者工具',
+    '快捷入口', '书籍与同步', '编辑', '画布与节点', '群组与排列', '连线与中转点', 'AI 助手', '设置',
   ]);
   for (const label of ['立即保存当前云端书籍', '切换为选择工具', '切换为手抓工具', '取消选择', '将选中节点建立群组', '取消选中的群组', '查看内核与诊断', '按选择顺序连接节点或中转点']) {
     await expect(commandPalette.getByRole('option', { name: label, exact: true })).toHaveCount(0);
@@ -3719,7 +3719,7 @@ test('independent AI assistants can be selected and deleted from the toolbar men
 test('AI transcript copy keeps the native clipboard and paste stays inside the composer', async ({ page }) => {
   await openApplication(page);
   await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
-  await expect(page.getByText('Prompt：默认通用', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Prompt：默认通用/u })).toBeVisible();
   const copyText = await page.locator('.ai-command-hints summary span').innerText();
   await page.evaluate(() => {
     const target = document.querySelector<HTMLElement>('.ai-command-hints summary span');
@@ -3807,6 +3807,8 @@ test('AI memory and Prompt management views remain mounted through their governe
   await page.getByRole('button', { name: 'AI 对话', exact: true }).click();
   const memoryShortcut = assistantPanel.getByRole('button', { name: '选择本轮记忆，前往记忆中心', exact: true });
   await expect(memoryShortcut).toHaveText('选择记忆 · 自动');
+  await expect(memoryShortcut).toHaveAttribute('title', /自动检索可用记忆/u);
+  await expect(memoryShortcut.locator('.sr-only')).toHaveText('选择记忆 · 自动');
   await expect(assistantPanel.locator('.ai-memory-picker-popover')).toHaveCount(0);
   await memoryShortcut.click();
   const memoryCenter = page.getByRole('region', { name: 'AI 记忆中心' });
@@ -3891,6 +3893,10 @@ test('AI connection form keeps the routine connection path clear', async ({ page
   await expect(memoryToolToggle).toBeDisabled();
 
   await expect(settings.getByRole('tab')).toHaveCount(0);
+  const retrievalButton = settings.getByRole('button', { name: /打开检索设置/u });
+  await expect(retrievalButton).toHaveAttribute('title', /语义模型和索引/u);
+  await expect(retrievalButton).toHaveCSS('cursor', 'pointer');
+  await expect(retrievalButton).toContainText('检索方式、语义模型与索引');
   await settings.getByRole('button', { name: '打开检索设置', exact: true }).click();
   const retrieval = page.getByRole('region', { name: '检索设置', exact: true });
   await expect(retrieval).toBeVisible();

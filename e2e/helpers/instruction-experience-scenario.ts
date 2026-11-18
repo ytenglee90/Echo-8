@@ -30,8 +30,10 @@ export function instructionExperienceScenario(url: string) {
     await panel.screenshot({ path: info.outputPath('instructions-directory.png') });
     await panel.getByRole('tab', { name: '我的用语', exact: true }).click();
     await expect(panel.getByText('连接账户后可以保存个人设置，全部指令可直接浏览。')).toBeVisible();
+    await expect(panel.getByRole('region', { name: '学习记录' })).toBeVisible();
+    await expect(panel.getByRole('tab')).toHaveCount(2);
     await panel.getByRole('tab', { name: '我的用语', exact: true }).press('ArrowRight');
-    await expect(panel.getByRole('tab', { name: '默认偏好', exact: true })).toBeFocused();
+    await expect(panel.getByRole('tab', { name: '全部指令', exact: true })).toBeFocused();
     await panel.getByRole('tab', { name: '全部指令', exact: true }).click();
     await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '插件', exact: true }).click();
     const plugins = page.getByRole('region', { name: '插件中心', exact: true });

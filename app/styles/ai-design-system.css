@@ -98,10 +98,11 @@
 .ai-floating-panel .local-semantic-hero h2 { font-size: 14px; line-height: 1.5; }
 .ai-floating-panel :is(.ai-provider-advanced, .ai-provider-manual-details, .ai-provider-remote-semantic-details, .local-semantic-maintenance) { padding: 10px 12px; border-color: var(--border); border-radius: var(--ai-card-radius); background: var(--control-surface); }
 .ai-floating-panel :is(.ai-provider-advanced, .local-semantic-maintenance) > summary { font-weight: 550; }
-.ai-floating-panel .ai-chat-topbar { display: flex; align-items: center; flex-wrap: wrap; padding: 12px; gap: 8px; }
-.ai-floating-panel .ai-model-controls { flex: 1 1 180px; }
-.ai-floating-panel :is(.ai-prompt-active-summary, .ai-memory-picker) { max-width: 156px; min-height: var(--ai-control-height); padding: 0 10px; }
-.ai-floating-panel .ai-chat-topbar .ai-web-search-toggle { width: 34px; min-width: 34px; height: 34px; min-height: 34px; }
+.ai-floating-panel .ai-chat-topbar { flex: 0 1 324px; flex-wrap: nowrap; padding: 0; gap: 4px; }
+.ai-floating-panel .ai-model-controls { flex: 1 1 220px; min-width: 0; grid-template-columns: minmax(0, 1fr) 28px; gap: 4px; }
+.ai-floating-panel .ai-model-selector select { height: 28px; min-height: 28px; padding-left: 5px; border-color: transparent; background-color: transparent; text-overflow: ellipsis; }
+.ai-floating-panel .ai-chat-topbar :is(.ai-prompt-active-summary, .ai-memory-picker, .ai-web-search-toggle) { flex: 0 0 28px; width: 28px; min-width: 28px; height: 28px; min-height: 28px; max-width: 28px; padding: 0; justify-content: center; border: 0; background: transparent; }
+.ai-floating-panel .ai-chat-topbar .is-active { background: var(--accent-soft); color: var(--ink); }
 .ai-floating-panel .ai-chat-feed { padding: var(--ai-page-padding); }
 .ai-floating-panel .ai-command-hints { padding: 12px; border-color: var(--border); border-radius: var(--ai-card-radius); background: var(--control-surface); }
 .ai-floating-panel .ai-command-hints > summary strong { font-weight: 600; }

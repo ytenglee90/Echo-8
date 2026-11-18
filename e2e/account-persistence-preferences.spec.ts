@@ -12,7 +12,7 @@ async function command(page: Page, label: string) {
 
 async function account(browser: Browser, workerVersion = 6) {
   const db = new SQLiteD1();
-  const env = { DB: db, DATA_WORKER_VERSION: String(workerVersion), STORAGE_MODE: 'd1', INSTALLATION_ID: 'preferences-browser-installation', DATA_SIGNING_SECRET: 'browser-preferences-test-secret', ALLOWED_ORIGIN: 'http://localhost:3000' };
+  const env = { DB: db, DATA_WORKER_VERSION: String(workerVersion), STORAGE_MODE: 'd1', INSTALLATION_ID: 'preferences-browser-installation', DATA_SIGNING_SECRET: 'browser-preferences-test-secret', ALLOWED_ORIGIN: new URL(test.info().project.use.baseURL ?? 'http://localhost:3000').origin };
   const contexts: Awaited<ReturnType<Browser['newContext']>>[] = [];
   const device = async (user = 'alice') => {
     const context = await browser.newContext(); contexts.push(context);
@@ -44,7 +44,7 @@ async function account(browser: Browser, workerVersion = 6) {
 const interval = (page: Page) => page.getByRole('combobox', { name: '自动保存当前目标的间隔' });
 const retention = (page: Page) => page.getByRole('combobox', { name: '恢复副本自动保留数量' });
 
-test('extended instruction aliases and per-layout defaults persist, preview and execute through the normal owner', async ({ browser }, info) => {
+test('multiple phrases and legacy layout entries remain manageable without a defaults tab', async ({ browser }, info) => {
   const a = await account(browser, 9);
   try {
     const page = await a.device();
@@ -63,9 +63,17 @@ test('extended instruction aliases and per-layout defaults persist, preview and 
     await form.getByRole('button', { name: '添加', exact: true }).click();
     const read = () => JSON.parse(String(a.assistant()?.body_json));
     await expect.poll(() => read()).toMatchObject({ schemaVersion: 2, entries: [{ kind: 'phrase', action: 'vertical', gap: 120 }, { kind: 'phrase', action: 'vertical', gap: 120 }] });
-    await panel.getByRole('tab', { name: '默认偏好', exact: true }).click();
-    await panel.getByRole('spinbutton', { name: '网格默认间距' }).fill('90');
-    await panel.getByRole('button', { name: '保存网格默认值', exact: true }).click();
+    await expect(panel.getByRole('tab', { name: '默认偏好', exact: true })).toHaveCount(0);
+    await panel.getByText('导入与导出', { exact: true }).click();
+    await panel.getByLabel('选择导入文件').setInputFiles({ name: '旧版排列设置.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
+      schemaVersion: 2, enabled: true, learning: false, entries: [{ id: 'legacy-grid', kind: 'gap', layout: 'grid', gap: 80, enabled: true, origin: 'manual' }],
+    })) });
+    await panel.getByRole('button', { name: '保留已有冲突项', exact: true }).click();
+    const learning = panel.getByRole('region', { name: '学习记录', exact: true });
+    await learning.getByRole('button', { name: '编辑', exact: true }).click();
+    const legacyEdit = panel.getByRole('form', { name: '编辑条目', exact: true });
+    await legacyEdit.getByRole('spinbutton', { name: '默认间距', exact: true }).fill('90');
+    await legacyEdit.getByRole('button', { name: '保存修改', exact: true }).click();
     await expect.poll(() => read().entries).toHaveLength(3);
     await panel.getByRole('button', { name: '关闭指令与偏好' }).click();
     await command(page, '全选画布节点');
@@ -80,8 +88,7 @@ test('extended instruction aliases and per-layout defaults persist, preview and 
     await restored.getByRole('tab', { name: '我的用语', exact: true }).click();
     await expect(restored).toContainText('往下摆松些');
     await expect(restored).toContainText('向下排松点');
-    await restored.getByRole('tab', { name: '默认偏好', exact: true }).click();
-    await expect(restored).toContainText('网格默认间距 90');
+    await expect(restored.getByRole('region', { name: '学习记录', exact: true })).toContainText('网格默认间距 90');
   } finally { await a.close(); }
 });
 
@@ -135,7 +142,7 @@ test('assistant preferences keep switches compact and open a responsive form on 
   } finally { await a.close(); }
 });
 
-test('assistant phrases are learned from a correction, confirmed in settings, and loaded on another device', async ({ browser }) => {
+test('assistant phrases are learned from a correction, confirmed in settings, and loaded on another device', async ({ browser }, info) => {
   const a = await account(browser, 8);
   try {
     const openPreferences = async (page: Page) => {
@@ -147,6 +154,7 @@ test('assistant phrases are learned from a correction, confirmed in settings, an
     };
     const first = await a.device();
     let panel = await openPreferences(first);
+    await expect(panel.getByRole('region', { name: '学习记录', exact: true })).toContainText('还没有学习记录');
     await panel.getByRole('switch', { name: '从反馈学习' }).click();
     await expect(panel.getByRole('switch', { name: '从反馈学习' })).toHaveAttribute('aria-checked', 'true');
     await expect.poll(() => JSON.parse(String(a.assistant()?.body_json)).learning).toBe(true);
@@ -161,11 +169,25 @@ test('assistant phrases are learned from a correction, confirmed in settings, an
     await expect.poll(() => JSON.parse(String(a.assistant()?.body_json)).entries).toMatchObject([{ phrase: '收一下', status: 'candidate', evidence: 1 }]);
     await command(first, '书籍与恢复设置');
     panel = await openPreferences(first);
-    await panel.getByRole('button', { name: '确认生效', exact: true }).click();
+    let learning = panel.getByRole('region', { name: '学习记录', exact: true });
+    await expect(learning).toContainText('待确认 1');
+    await expect(learning).toContainText('来源：反馈学习：明确纠正 1 次');
+    await learning.screenshot({ path: info.outputPath('learning-record-pending.png') });
+    await learning.getByRole('button', { name: '确认生效', exact: true }).click();
     await expect.poll(() => JSON.parse(String(a.assistant()?.body_json)).entries).toMatchObject([{ phrase: '收一下', status: 'active' }]);
+    await expect(learning).toContainText('已生效');
+    await learning.getByRole('combobox', { name: '查看学习记录' }).selectOption('pending');
+    await expect(learning).toContainText('没有匹配的学习记录');
+    await learning.getByRole('combobox', { name: '查看学习记录' }).selectOption('confirmed');
+    await learning.screenshot({ path: info.outputPath('learning-record-confirmed.png') });
     const second = await a.device();
     let restored = await openPreferences(second);
-    await expect(restored.getByText('「收一下」→ 给选中节点编组', { exact: true })).toBeVisible();
+    learning = restored.getByRole('region', { name: '学习记录', exact: true });
+    await expect(learning.getByText('「收一下」→ 给选中节点编组', { exact: true })).toBeVisible();
+    await expect(learning).toContainText('已生效');
+    await learning.getByRole('button', { name: '停用', exact: true }).click();
+    await expect(learning).toContainText('已停用');
+    await learning.getByRole('button', { name: '启用', exact: true }).click();
     await restored.getByText('导入与导出', { exact: true }).click();
     const download = second.waitForEvent('download');
     await restored.getByRole('button', { name: '导出全部', exact: true }).click();
@@ -197,7 +219,7 @@ test('three verified horizontal arrangements suggest an account preference witho
     const panel = page.getByRole('region', { name: 'AI 指令与偏好', exact: true });
     const open = async () => {
       await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '指令与偏好', exact: true }).click();
-      await panel.getByRole('tab', { name: '默认偏好', exact: true }).click();
+      await panel.getByRole('tab', { name: '我的用语', exact: true }).click();
     };
     await open();
     await panel.getByRole('tab', { name: '我的用语', exact: true }).click();
@@ -226,10 +248,16 @@ test('three verified horizontal arrangements suggest an account preference witho
     await expect.poll(() => read().entries).toMatchObject([{ kind: 'gap', gap: 80, enabled: false, origin: 'feedback' }]);
     await command(page, '书籍与恢复设置');
     await open();
-    const candidate = panel.getByRole('listitem').filter({ hasText: '横排默认间距 80' });
+    const learning = panel.getByRole('region', { name: '学习记录', exact: true });
+    const candidate = learning.getByRole('listitem').filter({ hasText: '横排默认间距 80' });
     await expect(candidate).toContainText('待确认');
+    await expect(candidate).toContainText('重复应用 3 次');
     await candidate.getByRole('button', { name: '确认生效' }).click();
     await expect.poll(() => read().entries).toMatchObject([{ kind: 'gap', gap: 80, enabled: true }]);
+    await expect(candidate).toContainText('已生效');
+    await candidate.getByRole('button', { name: '停用' }).click();
+    await expect(candidate).toContainText('已停用');
+    await expect(learning.getByRole('button', { name: '确认生效' })).toHaveCount(0);
   } finally { await a.close(); }
 });
 

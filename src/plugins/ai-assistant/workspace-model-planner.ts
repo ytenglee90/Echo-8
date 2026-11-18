@@ -55,7 +55,7 @@ export async function planWorkspaceWithModel(context: PluginContext, prepared: A
       .map(([key, field]) => [key, compactSchema(field)])) : value;
   const directory = {
     nodes: visibleNodes.map(({ id, title, revision, nodeRevision, presentation, x, y, width, height }) => ({ id, title, revision, nodeRevision, presentation, x, y, width, height })),
-    groups: visibleGroups.map(({ id, title, memberIds, revision }) => ({ id, title, memberIds, revision })),
+    groups: visibleGroups.map(({ id, title, memberIds, revision }) => ({ id, number: groups.findIndex(group => group.id === id) + 1, title, memberIds, revision })),
     connections: visibleEdges.map(({ id, from, to, revision }) => ({ id, from: from.nodeId, to: to.nodeId, revision })),
     truncated: nodes.length !== visibleNodes.length,
   };
@@ -134,7 +134,7 @@ export async function planWorkspaceWithModel(context: PluginContext, prepared: A
     const checkReferences = (value: unknown, key = '', literalIds: readonly unknown[] = []): void => {
       if (Array.isArray(value)) { value.forEach(item => checkReferences(item, key, literalIds)); return; }
       if (isRecord(value)) { for (const [child, field] of Object.entries(value)) checkReferences(field, child, literalIds); return; }
-      if (typeof value === 'string' && /^(?:id|nodeId|nodeIds|sourceId|sourceIds|entityId|entityIds|groupId|anchorId)$/u.test(key) &&
+      if (typeof value === 'string' && /^(?:id|ids|nodeId|nodeIds|sourceId|sourceIds|entityId|entityIds|groupId|anchorId)$/u.test(key) &&
         !(key === 'id' && literalIds.includes(value)) && !objectIds.has(value)) throw new Error('模型引用了未提供的对象，请明确目标后重试。');
     };
     const steps: WorkspacePlanStep[] = raw.steps.map((step, i) => {

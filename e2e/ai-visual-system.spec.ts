@@ -17,8 +17,13 @@ test('assistant views share control typography, spacing and section headings', a
   await panel.screenshot({ path: info.outputPath('ai-chat.png') });
   await panel.getByRole('button', { name: 'Prompt 模板', exact: true }).click();
   const prompt = page.getByRole('region', { name: 'AI Prompt 模板', exact: true });
-  expect(await controlStyle(prompt.getByRole('combobox'))).toEqual(chatSelect);
-  expect(await controlStyle(prompt.getByPlaceholder('例如：代码审查、新闻稿、产品分析'))).toEqual(chatSelect);
+  const formSelect = await controlStyle(prompt.getByRole('combobox'));
+  const { height: compactHeight, ...compactTypography } = chatSelect;
+  const { height: formHeight, ...formTypography } = formSelect;
+  expect(compactTypography).toEqual(formTypography);
+  expect(compactHeight).toBeGreaterThanOrEqual(28);
+  expect(compactHeight).toBeLessThanOrEqual(formHeight);
+  expect(await controlStyle(prompt.getByPlaceholder('例如：代码审查、新闻稿、产品分析'))).toEqual(formSelect);
   const promptHeading = await prompt.getByRole('heading', { name: 'Prompt 模板', exact: true }).evaluate(element => {
     const style = getComputedStyle(element); return [style.fontSize, style.fontWeight, style.lineHeight];
   });
@@ -31,13 +36,13 @@ test('assistant views share control typography, spacing and section headings', a
     const style = getComputedStyle(element); return [style.fontSize, style.fontWeight, style.lineHeight];
   })).toEqual(promptHeading);
   const memoryButton = await controlStyle(memory.getByRole('button', { name: '选择保存路径', exact: true }));
-  expect(memoryButton.height).toBe(chatSelect.height);
+  expect(memoryButton.height).toBe(formSelect.height);
   expect(memoryButton.fontFamily).toBe(chatSelect.fontFamily);
   expect(memoryButton.radius).toBe(chatSelect.radius);
   await memory.screenshot({ path: info.outputPath('ai-memory.png') });
   await panel.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
   const provider = page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
-  expect(await controlStyle(provider.locator('.ai-provider-profile-toolbar select'))).toEqual(chatSelect);
+  expect(await controlStyle(provider.locator('.ai-provider-profile-toolbar select'))).toEqual(formSelect);
   expect(await provider.getByRole('heading', { name: '连接模型', exact: true }).evaluate(element => {
     const style = getComputedStyle(element); return [style.fontSize, style.fontWeight, style.lineHeight];
   })).toEqual(promptHeading);

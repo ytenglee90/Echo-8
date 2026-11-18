@@ -174,93 +174,14 @@ export function workspaceActionsScenario(url: string): void {
     expect(errors).toEqual([]);
   });
 
-  test('fixed plans focus a real group, distinguish relative scale, pan in screen pixels and restore the saved view', async ({ page }) => {
+  test('developer plan tooling is absent from the command palette', async ({ page }) => {
     await page.goto(url);
     await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
     await page.getByRole('button', { name: '命令面板', exact: true }).click();
-    const command = page.getByRole('dialog', { name: '命令面板' });
-    await command.getByRole('textbox', { name: '搜索命令' }).fill('查看本地工作区动作');
-    await command.getByRole('option', { name: /查看本地工作区动作/u }).click();
-    const panel = page.getByRole('region', { name: '工作区动作', exact: true });
-    await page.context().setOffline(true);
-    await panel.getByRole('textbox', { name: '固定计划', exact: true }).fill(JSON.stringify({ version: 1, id: 'group-view', steps: [
-      { id: 'a', action: 'node.create', arguments: { title: '视口验收甲', x: 200, y: 600 } },
-      { id: 'b', action: 'node.create', arguments: { title: '视口验收乙', x: 650, y: 600 } },
-      { id: 'group', action: 'group.createExplicit', arguments: { title: '视口验收组', members: [{ from: 'a' }, { from: 'b' }] } },
-      { id: 'focus', action: 'viewport.focusEntity', arguments: { entityId: { $step: 'group', path: ['id'] }, zoom: 1 } },
-      { id: 'bookmark', action: 'viewport.read', dependsOn: ['focus'] },
-      { id: 'pan', action: 'viewport.set', arguments: { pan: { x: 100, y: 0 } }, dependsOn: ['bookmark'] },
-      { id: 'panned', action: 'viewport.read', dependsOn: ['pan'] },
-      { id: 'relative', action: 'viewport.scale', arguments: { factor: 0.4 }, dependsOn: ['panned'] },
-      { id: 'restore', action: 'viewport.restore', arguments: { camera: { $step: 'bookmark' } }, dependsOn: ['relative'] },
-    ], verify: [{ action: 'viewport.read', field: ['zoom'], equals: { $step: 'bookmark', path: ['zoom'] } }] }));
-    await panel.getByRole('button', { name: '运行固定计划', exact: true }).click();
-    await expect(panel.getByText('group-view：等待处理', { exact: true })).toBeVisible();
-    await panel.getByRole('button', { name: '应用此文档预览并继续' }).first().click();
-    await expect(panel.getByText('group-view：已完成', { exact: true })).toBeVisible();
-    const readResult = async (step: string) => {
-      const item = panel.locator('.workspace-action-receipt').filter({ has: page.getByText(step + ' · 已完成', { exact: true }) });
-      await item.getByText('实际结果', { exact: true }).click();
-      return JSON.parse((await item.locator('pre').textContent())!) as { x: number; y: number; zoom: number };
-    };
-    const before = await readResult('bookmark'); const moved = await readResult('panned');
-    const scaled = await readResult('relative'); const restored = await readResult('restore');
-    expect(moved.x - before.x).toBeCloseTo(100, 6); expect(moved.y).toBeCloseTo(before.y, 6);
-    expect(scaled.zoom).toBe(0.4); expect(restored.x).toBeCloseTo(before.x, 6); expect(restored.y).toBeCloseTo(before.y, 6);
-    await expect(page.getByRole('textbox', { name: /画布缩放/u })).toHaveValue('100');
-    await page.getByRole('button', { name: '撤销', exact: true }).click();
-    await expect(page.locator('.text-node-card').filter({ hasText: '视口验收甲' })).toHaveCount(0);
-    await expect(page.locator('.text-node-card').filter({ hasText: '视口验收乙' })).toHaveCount(0);
-    await expect(page.getByRole('textbox', { name: /画布缩放/u })).toHaveValue('100');
-  });
-
-  test('fixed plans run through the catalog panel and keep one atomic document preview across panel changes', async ({ page }) => {
-    const external: string[] = [];
-    const errors: string[] = [];
-    page.on('pageerror', error => errors.push(error.message));
-    const allowed = new URL(url);
-    await page.route('**/*', route => {
-      const request = new URL(route.request().url());
-      if (['http:', 'https:'].includes(request.protocol) && request.origin !== allowed.origin) {
-        external.push(request.origin); return route.abort();
-      }
-      return route.continue();
-    });
-    await page.goto(url);
-    await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
-    const showPanel = async () => {
-      await page.getByRole('button', { name: '命令面板', exact: true }).click();
-      const command = page.getByRole('dialog', { name: '命令面板' });
-      await command.getByRole('textbox', { name: '搜索命令' }).fill('查看本地工作区动作');
-      await command.getByRole('option', { name: /查看本地工作区动作/u }).click();
-      await expect(page.getByRole('region', { name: '工作区动作', exact: true })).toBeVisible();
-    };
-    await showPanel();
-    const panel = page.getByRole('region', { name: '工作区动作', exact: true });
-    await expect(panel).toContainText(/66 类 \/ 27 项跨类别能力/u);
-    await page.context().setOffline(true);
-    await panel.getByRole('textbox', { name: '固定计划', exact: true }).fill(JSON.stringify({ version: 1, id: 'ui-atomic-1', steps: [
-      { id: 'hero', action: 'node.create', arguments: { title: '固定计划主角', text: '本地固定稿件', x: 200, y: 100 } },
-      { id: 'case', action: 'node.create', arguments: { title: '固定计划旧案', x: 650, y: 100 } },
-      { id: 'edge', action: 'connection.create', arguments: { from: { from: 'hero' }, to: { from: 'case' }, line: 'dashed' } },
-      { id: 'open', action: 'editor.open', arguments: { target: { from: 'hero' }, mode: 'add' } },
-    ] }));
-    await panel.getByRole('button', { name: '运行固定计划', exact: true }).click();
-    const apply = page.getByRole('button', { name: '应用整份计划', exact: true });
-    await expect(apply).toBeVisible();
-    await expect(page.locator('.text-node-card').filter({ hasText: '固定计划主角' })).toHaveCount(0);
-    await apply.click();
-    await expect(page.locator('.text-node-card').filter({ hasText: '固定计划主角' })).toHaveCount(1);
-    await expect(page.locator('.text-node-card').filter({ hasText: '固定计划旧案' })).toHaveCount(1);
-    await showPanel();
-    await expect(panel.getByRole('textbox', { name: '固定计划', exact: true })).toHaveValue(/ui-atomic-1/u);
-    await panel.getByRole('button', { name: '回读并继续', exact: true }).click();
-    await expect(page.getByRole('textbox', { name: '固定计划主角 正文', exact: true })).toBeVisible();
-    await showPanel();
-    await expect(panel.getByLabel('计划回执')).toContainText('ui-atomic-1：已完成');
-    await panel.getByRole('button', { name: '运行固定计划', exact: true }).click();
-    await expect(page.locator('.text-node-card').filter({ hasText: '固定计划主角' })).toHaveCount(1);
-    expect(external).toEqual([]); expect(errors).toEqual([]);
+    const commands = page.getByRole('dialog', { name: '命令面板' });
+    await expect(commands.getByRole('group', { name: '开发者工具', exact: true })).toHaveCount(0);
+    await commands.getByRole('textbox', { name: '搜索命令' }).fill('固定计划');
+    await expect(commands.getByRole('option')).toHaveCount(0);
   });
 
   test('offline assistant focuses the actual card at exactly 60 percent and opens the minimap', async ({ page }) => {
@@ -319,14 +240,9 @@ export function workspaceActionsScenario(url: string): void {
     // Independently inspect the saved document instead of treating zoom-adjusted DOM geometry as document coordinates.
     await page.getByRole('button', { name: '命令面板', exact: true }).click();
     const command = page.getByRole('dialog', { name: '命令面板' });
-    await command.getByRole('textbox', { name: '搜索命令' }).fill('查看本地工作区动作');
-    await command.getByRole('option', { name: /查看本地工作区动作/u }).click();
-    const actions = page.getByRole('region', { name: '工作区动作', exact: true });
-    await actions.getByRole('textbox', { name: '固定计划', exact: true }).fill(JSON.stringify({ version: 1, id: 'geometry-export', steps: [
-      { id: 'copy', action: 'file.copy' },
-    ] }));
+    await command.getByRole('textbox', { name: '搜索命令' }).fill('另存本地副本');
     const downloaded = page.waitForEvent('download');
-    await actions.getByRole('button', { name: '运行固定计划', exact: true }).click();
+    await command.getByRole('option', { name: /^另存本地副本/u }).click();
     const artifact = await downloaded;
     const saved = await parseProject(new Blob([await readFile((await artifact.path())!)]));
     for (const [id, node] of Object.entries(project.document.namespaces.textNode!)) {

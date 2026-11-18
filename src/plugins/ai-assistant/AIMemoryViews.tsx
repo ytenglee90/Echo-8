@@ -41,7 +41,7 @@ export function AIMemoryShortcut({
   return (
     <button
       type="button"
-      className={`ai-memory-picker${selectedTitles.length > 0 || explicitOnly ? ' is-active' : ''}`}
+      className={`icon-button ai-memory-picker${selectedTitles.length > 0 || explicitOnly ? ' is-active' : ''}`}
       aria-label="选择本轮记忆，前往记忆中心"
       title={selectedTitles.length > 0
         ? `已选择：${selectedTitles.join('、')}。点击前往记忆中心调整。`
@@ -51,7 +51,7 @@ export function AIMemoryShortcut({
       onClick={() => void client.dispatch('ai.setView', { assistantId, view: 'memory' })}
     >
       <Icon name="at" size={14} />
-      <span>选择记忆 · {selectedTitles.length > 0 ? `${selectedTitles.length} 份` : explicitOnly ? '仅明确' : '自动'}</span>
+      <span className="sr-only">选择记忆 · {selectedTitles.length > 0 ? `${selectedTitles.length} 份` : explicitOnly ? '仅明确' : '自动'}</span>
     </button>
   );
 }

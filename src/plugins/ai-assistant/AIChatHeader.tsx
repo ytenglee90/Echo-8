@@ -49,6 +49,7 @@ export function AIChatHeader({
           <select
             value={selectedProviderId}
             aria-label="当前模型平台"
+            title={selectedProvider?.model || '模型未配置'}
             disabled={!providerSelectionAvailable || providerCatalog.options.length === 0}
             onChange={(event) => onSelectProvider(event.target.value)}
           >
@@ -73,12 +74,12 @@ export function AIChatHeader({
           onClick={onToggleWebSearch}
         />
       </div>
-      <button
-        type="button"
-        className={`ai-prompt-active-summary${selectedPromptTemplate ? ' is-active' : ''}`}
-        title={`当前使用：${selectedPromptTemplate?.name ?? '默认通用协议'}。点击查看或切换 Prompt 模板`}
+      <IconButton
+        icon="template"
+        className={`icon-button ai-prompt-active-summary${selectedPromptTemplate ? ' is-active' : ''}`}
+        label={`Prompt：${selectedPromptTemplate?.name ?? '默认通用'}。查看或切换 Prompt 模板`}
         onClick={onOpenPromptTemplates}
-      >Prompt：{selectedPromptTemplate?.name ?? '默认通用'}</button>
+      />
       <AIMemoryShortcut
         client={client}
         assistantId={assistantId}
