@@ -29,7 +29,7 @@ export default {
       let response;
       if (url.pathname === '/v2/maintenance' && request.method === 'POST') {
         response = json(await runMaintenance(env, maintenanceHelpers, true));
-      } else if (url.pathname.startsWith('/v2/')) {
+      } else if (url.pathname.startsWith('/v2/') || url.pathname === '/v3/assistant-preferences') {
         response = await routeBookRequest(request, env, url, identity, { readJson, requireProject, projectSummary, storageUsage });
       } else if (url.pathname === '/v1/storage' && request.method === 'GET') {
         response = await readStorageUsage(env);

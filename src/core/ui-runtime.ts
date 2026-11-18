@@ -1,11 +1,12 @@
-import type {
-  ActionContribution,
-  RegisteredAction,
-  RegisteredShortcut,
-  ShortcutContribution,
-  ShortcutOverride,
-  UIContribution,
-  UISlot,
+import {
+  isRecord,
+  type ActionContribution,
+  type RegisteredAction,
+  type RegisteredShortcut,
+  type ShortcutContribution,
+  type ShortcutOverride,
+  type UIContribution,
+  type UISlot,
 } from './contracts.ts';
 import type { ActiveTheme, ThemeDefinition, ThemeTokenOverrides } from '../protocols/theme.ts';
 
@@ -531,6 +532,11 @@ function validateAction(action: ActionContribution): void {
   if (!action.label.trim()) throw new Error(`Action ${action.id} has no label`);
   if (!action.command.trim()) throw new Error(`Action ${action.id} has no command`);
   if (!action.category.trim()) throw new Error(`Action ${action.id} has no category`);
+  if (action.localTool && (![1, 2].includes(action.localTool.version) ||
+    action.localTool.version === 2 && (typeof action.localTool.command !== 'string' || !action.localTool.command.trim()) ||
+    !['query', 'workspace', 'document', 'file'].includes(action.localTool.effect) ||
+    !['returned', 'waiting'].includes(action.localTool.resultMode) ||
+    !isRecord(action.localTool.inputSchema))) throw new Error(`Invalid local tool metadata: ${action.id}`);
 }
 
 function normalizeOverrides(

@@ -15,6 +15,7 @@ declare module './commands.ts' {
     'ai.assistant.delete': ValidatedCommand;
     'ai.assistant.focus': ValidatedCommand;
     'ai.assistant.openNew': ValidatedCommand;
+    'ai.assistant.openSession': ValidatedCommand;
     'ai.assistant.removeDeletedWindow': ValidatedCommand;
     'ai.assistant.setMemories': ValidatedCommand;
     'ai.assistant.setContextMode': ValidatedCommand;
@@ -71,6 +72,7 @@ declare module './commands.ts' {
     'selection.all': ValidatedCommand;
     'canvas.tool.hand': ValidatedCommand;
     'canvas.tool.select': ValidatedCommand;
+    'canvas.tool.set': ValidatedCommand;
     'clipboard.copy': ValidatedCommand;
     'clipboard.cut': ValidatedCommand;
     'clipboard.duplicateSelectionAt': ValidatedCommand;
@@ -80,6 +82,10 @@ declare module './commands.ts' {
     'content.migrateStorage': ValidatedCommand;
     'diagnostics.close': ValidatedCommand;
     'editor.activate': ValidatedCommand;
+    'editor.activateNext': ValidatedCommand;
+    'editor.activatePrevious': ValidatedCommand;
+    'editor.revealRange': ValidatedCommand;
+    'editor.setPaneRatios': ValidatedCommand;
     'editor.cancelReplace': ValidatedCommand;
     'editor.close': ValidatedCommand;
     'editor.enterImmersive': ValidatedCommand;
@@ -94,6 +100,7 @@ declare module './commands.ts' {
     'editor.toggleFormatBrush': ValidatedCommand;
     'file.cancelPendingOpen': ValidatedCommand;
     'file.closePanel': ValidatedCommand;
+    'file.openPanel': ValidatedCommand;
     'file.commitImportedDocuments': ValidatedCommand;
     'file.createRecoveryPoint': ValidatedCommand;
     'file.exportText': ValidatedCommand;
@@ -109,6 +116,8 @@ declare module './commands.ts' {
     'group.membership.open': ValidatedCommand;
     'group.membership.remove': ValidatedCommand;
     'group.toggleSelection': ValidatedCommand;
+    'group.create': ValidatedCommand;
+    'group.ungroup': ValidatedCommand;
     'history.redo': ValidatedCommand;
     'history.undo': ValidatedCommand;
     'localSemanticProvider.index.rebuild': ValidatedCommand;
@@ -120,6 +129,7 @@ declare module './commands.ts' {
     'node.resize': ValidatedCommand;
     'node.seed': ValidatedCommand;
     'palette.applyAppearance': ValidatedCommand;
+    'palette.open': ValidatedCommand;
     'palette.close': ValidatedCommand;
     'palette.colorPicker.close': ValidatedCommand;
     'palette.colorPicker.commit': ValidatedCommand;
@@ -128,6 +138,7 @@ declare module './commands.ts' {
     'plugin.stop': ValidatedCommand;
     'pluginCenter.close': ValidatedCommand;
     'search.close': ValidatedCommand;
+    'search.open': ValidatedCommand;
     'search.focus': ValidatedCommand;
     'search.next': ValidatedCommand;
     'search.previous': ValidatedCommand;
@@ -146,6 +157,7 @@ declare module './commands.ts' {
     'semanticProvider.setSessionKey': ValidatedCommand;
     'shortcuts.clearOverride': ValidatedCommand;
     'shortcuts.close': ValidatedCommand;
+    'shortcuts.open': ValidatedCommand;
     'shortcuts.resetAll': ValidatedCommand;
     'shortcuts.resetOverride': ValidatedCommand;
     'shortcuts.restorePreferences': ValidatedCommand;
@@ -156,6 +168,7 @@ declare module './commands.ts' {
     'system.preferences.set': ValidatedCommand;
     'system.recovery.restore': ValidatedCommand;
     'textAssist.mergeDefaultRules': ValidatedCommand;
+    'textAssist.openRules': ValidatedCommand;
     'textAssist.restoreSettings': ValidatedCommand;
     'textAssist.toggleCompletion': ValidatedCommand;
     'textAssist.toggleCorrection': ValidatedCommand;

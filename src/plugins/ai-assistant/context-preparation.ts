@@ -13,6 +13,9 @@ import type {
 import { explicitAtOperation, stripOperationCommands } from './command-parser.ts';
 import { classifyAIContextIntent, isAssistantIdentityQuestion, isNearConversationFollowup, isSocialGreeting, isStandaloneConversation } from './context-intent.ts';
 import type { PreparePayload } from './command-payloads.ts';
+import type { ContentSummary } from '../../protocols/content.ts';
+import { compileWorkspaceLanguage, workspaceNameKey } from '../../services/workspace-language.ts';
+import { prepareCatalogIntent, workspaceDocumentInstruction } from './workspace-language-runtime.ts';
 import {
   readContextCatalog,
   readContextSource,
@@ -41,18 +44,24 @@ import { operationCreatesWriteback } from './operations.ts';
 import { bindNaturalWriteback, naturalWritebackIntent, readBoundWriteback, writebackTaskInstructions } from './natural-writeback.ts';
 import { naturalMemoryDirective } from './memory-suggestion.ts';
 import type { CanvasCompoundPreparation } from '../../protocols/canvas-control.ts';
-import { turnAssembly } from './turn-route.ts';
+import {
+  turnAssembly,
+  classifyAITurn,
+  mixedCanvasWrite,
+  rememberTurnAssembly,
+  type AITurnRoute,
+  type TurnAssembly,
+} from './turn-route.ts';
 import type { PersonalTurn } from './personal-preferences.ts';
 import { bindNaturalSourceScope, naturalResultDestination } from './natural-source-scope.ts';
 import { planFullSourceSummary } from './full-source-summary.ts';
-import { classifyAITurn, mixedCanvasWrite, rememberTurnAssembly, type AITurnRoute, type TurnAssembly } from './turn-route.ts';
 import { canvasTitleAliases, normalizeCanvasTitle } from '../../services/canvas-titles.ts';
 import { conversationDraftRequest, exactHistoryRequest, readConversationDraft, recallConversation } from './conversation-recall.ts';
 import { nativeCanvasUsesSelection } from '../../services/native-canvas-intent.ts';
 import { OPERATION_LOG_STAGE_V2, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
 import { prepareStructuredFields } from './structured-fields.ts';
 import { prepareCardRestructure } from './card-restructure.ts';
-import { canvasReceiptReply, checkCanvasRecovery, readCanvasReceipt, recoverCanvasRequest } from './canvas-recovery.ts';
+import { canvasReceiptReply, checkCanvasRecovery, readCanvasReceipt, recoverCanvasRequest, recoverFieldDelegation } from './canvas-recovery.ts';
 import { interpretLocalTurn } from './local-turn-routing.ts';
 import { requestsCanvasTextGeneration } from './canvas-execution-policy.ts';
 
@@ -63,7 +72,7 @@ export interface AIContextBudget {
   minimumMemoryWindow: number;
 }
 
-export const DEFAULT_AI_CONTEXT_BUDGET: Readonly<AIContextBudget> = Object.freeze({
+const DEFAULT_AI_CONTEXT_BUDGET: Readonly<AIContextBudget> = Object.freeze({
   characterLimit: 12_000,
   tokenLimit: 6_000,
   transcriptWindow: 4_000,
@@ -87,14 +96,63 @@ export async function prepareAIContext(
   let route = turnRoute ?? classifyAITurn(payload.prompt, explicitAtOperation(payload.prompt) ?? payload.operation);
   if (personalTurn) {
     const instruction = personalTurn.instruction;
+    if (instruction) {
+      const resolved = await prepareAIContext(context, session, memoryIndexes, { ...payload, prompt: instruction, operation: 'canvas-control' },
+        signal, report, budgetOverride, previousProposal, preparationId, undefined, undefined, selectionAtSend);
+      const assembly = turnAssembly(resolved);
+      return rememberTurnAssembly({ ...resolved, prompt: payload.prompt }, { ...assembly, personalTurn,
+        ...(!assembly.route.native && !assembly.route.workspaceSteps && !assembly.route.catalogIntent ?
+          { localInstructions: [instruction], expectedSelectionCount: personalTurn.expectedSelectionCount } : {}) });
+    }
     const createdAt = Date.now();
     report(1);
     return rememberTurnAssembly({
       id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
       operation: instruction ? 'canvas-control' : 'general', contextMode: 'explicit-only', contextIntent: 'conversation', sources: [],
       totalCharacters: payload.prompt.length, estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000,
-    }, { route: instruction ? classifyAITurn(instruction, 'canvas-control') : route, personalTurn,
+    }, { route: instruction ? { ...classifyAITurn(instruction, 'canvas-control'), workspaceSteps: undefined } : route, personalTurn,
       ...(instruction ? { localInstructions: [instruction], expectedSelectionCount: personalTurn.expectedSelectionCount } : { localReply: personalTurn.reply }) });
+  }
+  if (route.archiveSession) {
+    const createdAt = Date.now();
+    return rememberTurnAssembly({
+      id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+      operation: 'canvas-control', contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
+      estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000,
+    }, { route });
+  }
+  if (route.catalogIntent) {
+    const { steps, clarify } = await prepareCatalogIntent(
+      context, route.catalogIntent, session.id, payload.assistantId, selectionAtSend, signal,
+    );
+    const createdAt = Date.now();
+    signal.throwIfAborted();
+    report(1);
+    return rememberTurnAssembly({
+      id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+      operation: 'canvas-control', contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
+      estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000,
+    }, { route: { ...route, category: 'operation', workspaceSteps: steps }, clarify });
+  }
+  if (route.workspaceSteps) {
+    const requiresNames = route.workspaceSteps.some(step =>
+      step.arguments?.target || step.arguments?.targets || step.arguments?.from || step.arguments?.to || step.action === 'content.find');
+    if (requiresNames) {
+      const nodes = await context.capabilities.request<ContentSummary[]>('content.summaries@1', undefined, signal)
+        .catch(error => { if (isCapabilityUnavailable(error, 'content.summaries@1')) return []; throw error; });
+      const workspaceSteps = compileWorkspaceLanguage(payload.prompt, new Set(nodes.map(node => workspaceNameKey(node.title))));
+      if (workspaceSteps) route = { ...route, workspaceSteps };
+    }
+    const workspaceLocalPrompt = workspaceDocumentInstruction(route.workspaceSteps);
+    if (workspaceLocalPrompt) route = { ...route, workspaceSteps: undefined };
+    signal.throwIfAborted();
+    const createdAt = Date.now();
+    report(1);
+    return rememberTurnAssembly({
+      id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+      operation: 'canvas-control', contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
+      estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000,
+    }, { route, workspaceLocalPrompt });
   }
   if (route.excludesHistory) {
     payload = { ...payload, contextMode: 'explicit-only', memorySourceIds: undefined };
@@ -191,6 +249,20 @@ export async function prepareAIContext(
       : { localReply: repeatCreation ? '请说出要再创建哪张卡片，或提供新卡片的标题。' : canvasReceiptReply(receipt) }) });
   }
   if (route.disposition !== 'normal') payload = { ...payload, operation: route.operation };
+  const fieldDelegation = route.category === 'chat' && !explicitAtOperation(payload.prompt) && !payload.references?.length
+    ? await recoverFieldDelegation(context, session, payload.prompt, signal) : undefined;
+  if (fieldDelegation) {
+    const receipt = await readCanvasReceipt(context, session.id, signal, { goal: fieldDelegation });
+    if (receipt) {
+      const createdAt = Date.now();
+      report(1);
+      return rememberTurnAssembly({ id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
+        operation: 'general', contextIntent: 'conversation', contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
+        estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000 }, { route, localReply: canvasReceiptReply(receipt) });
+    }
+    route = classifyAITurn(fieldDelegation, 'canvas-control');
+    payload = { ...payload, operation: 'canvas-control' };
+  }
   const recoveryPrompt = route.category === 'chat' && !explicitAtOperation(payload.prompt)
     ? await recoverCanvasRequest(context, session, payload.prompt, signal) : undefined;
   if (recoveryPrompt) {
@@ -204,7 +276,7 @@ export async function prepareAIContext(
     : (!explicitAtOperation(payload.prompt) || explicitAtOperation(payload.prompt) === 'canvas-control') && !naturalMemoryDirective(payload.prompt)
       ? await interpretLocalTurn(context, payload.prompt, route, signal) : {};
   if (local.instructions) {
-    route = { ...classifyAITurn(local.instructions[0]!, 'canvas-control'), purpose: 'general', geometryOnly: false };
+    route = { ...classifyAITurn(local.instructions[0]!, 'canvas-control'), workspaceSteps: undefined, purpose: 'general', geometryOnly: false };
     payload = { ...payload, operation: 'canvas-control' };
     context.signals.emit(OPERATION_LOG_STAGE_V2, { id: preparationId, relatedId: preparationId,
       phase: 'ai-routing', state: 'completed', detail: { step: 'route', route: 'local', reason: 'local-rule' } } satisfies OperationStageUpdateV2);

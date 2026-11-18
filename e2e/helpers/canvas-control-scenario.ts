@@ -19,6 +19,48 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 
 export function canvasControlScenarios(url: string): void {
   test.beforeEach(async ({page})=>installLocalLanguageAssets(page));
+  test('conversational theme names apply all three complete presets locally and the chooser matches the interface', async ({ page }, info) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() !== 'OPTIONS') calls++;
+      return route.fulfill({ status: 500, headers: { 'access-control-allow-origin': '*' }, body: 'Unexpected model request' });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const input = ai.locator('.ai-composer textarea');
+    const colors = page.getByRole('region', { name: '全局颜色设置', exact: true });
+    const openColors = async () => {
+      await page.getByRole('button', { name: '命令面板', exact: true }).click();
+      const commands = page.getByRole('dialog', { name: '命令面板' });
+      await commands.getByRole('textbox', { name: '搜索命令' }).fill('打开全局颜色设置');
+      await commands.getByRole('option', { name: /^打开全局颜色设置/u }).click();
+    };
+    for (const [prompt, label, background, toolbar] of [
+      ['帮我换成暗调', 'B 暗调', 'rgb(24, 25, 27)', '#1c1e23'],
+      ['能不能帮我把主题换成护眼？', 'C 护眼', 'rgb(228, 232, 218)', '#eaf0e2'],
+      ['恢复明调', 'A 明调', 'rgb(239, 239, 236)', '#fafaf9'],
+      ['切换主题到深色', 'B 暗调', 'rgb(24, 25, 27)', '#1c1e23'],
+    ]) {
+      await input.fill(prompt!); await input.press('Enter');
+      await expect(ai.getByRole('status')).toContainText('完整配色已应用');
+      await expect(page.locator('.canvas-surface')).toHaveCSS('background-color', background!);
+      await expect.poll(() => page.locator('.top-bar').evaluate(element => getComputedStyle(element).getPropertyValue('--toolbar').trim())).toBe(toolbar!);
+      await openColors();
+      await expect(colors.getByRole('button', { name: new RegExp(`^${label}`, 'u') })).toHaveAttribute('aria-pressed', 'true');
+      await colors.getByRole('button', { name: '关闭全局颜色设置', exact: true }).click();
+      await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
+      expect(calls).toBe(0);
+    }
+    await input.fill('切换主题'); await input.press('Enter');
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    for (const name of ['明调', '暗调', '护眼']) await expect(control.getByRole('button', { name, exact: true })).toBeVisible();
+    await control.getByRole('button', { name: '护眼', exact: true }).click();
+    await expect(page.locator('.canvas-surface')).toHaveCSS('background-color', 'rgb(228, 232, 218)');
+    await openColors();
+    await expect(colors.getByRole('button', { name: /^C 护眼/u })).toHaveAttribute('aria-pressed', 'true');
+    await page.screenshot({ path: info.outputPath('assistant-eye-care-theme.png') });
+    expect(calls).toBe(0);
+  });
   test('all canvas controls keep themes backgrounds annotations and unknown operations local with a configured model', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => {
@@ -35,7 +77,7 @@ export function canvasControlScenarios(url: string): void {
       await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
       expect(calls).toBe(0);
     };
-    await send('切换主题到深色', '已切换为深色主题');
+    await send('切换主题到深色', '已切换为暗调主题');
     await send('把背景颜色改成浅蓝', '已准备画布背景颜色');
     await expect(control.getByLabel('画布背景预览')).toContainText('#add8e6');
     await control.getByRole('button', { name: '应用背景', exact: true }).click();
@@ -161,6 +203,79 @@ export function canvasControlScenarios(url: string): void {
     await expect(page.getByRole('article', { name: /文本节点：人物卡$/u })).toHaveCount(0);
     await page.getByRole('button', { name: '重做', exact: true }).click();
     await expect(page.getByRole('article', { name: /文本节点：人物卡$/u })).toContainText('她总替别人修伞');
+  });
+  test('reported counted grouping keeps outside cards separate and unpunctuated targets receive generated prose', async ({ page }) => {
+    const calls: string[] = [];
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      const body = route.request().postDataJSON() as { messages: Array<{ content: string }>; tools?: unknown };
+      expect(body.tools).toBeUndefined();
+      expect(JSON.stringify(body.messages)).toContain('应用已核对本轮写入目标和范围');
+      const prompt = body.messages.at(-1)!.content;
+      calls.push(prompt);
+      const content = JSON.stringify({ text: prompt.includes('武器') ? '武器卡的示例正文。' : '架空势力的示例正文。' });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
+        body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const send = async (prompt: string) => {
+      await ai.locator('.ai-composer textarea').fill(prompt);
+      await ai.locator('.ai-composer textarea').press('Enter');
+    };
+    await send('生成一张角色，一张人物，3张空白，1张武器，3张空白群组，武器连接到人物。');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 8 项');
+    const frame = page.locator('.group-frame');
+    await expect(frame).toHaveCount(1);
+    const frameBox = (await frame.boundingBox())!;
+    const card = (title: string) => page.getByRole('article', { name: new RegExp(`文本节点：${title}$`, 'u') });
+    for (const title of ['人物', '角色', '武器']) {
+      const box = (await card(title).boundingBox())!;
+      expect(box.y + box.height).toBeLessThan(frameBox.y);
+    }
+    expect(calls).toEqual([]);
+    await send('武器 里生成一把武器设计');
+    await expect(card('武器')).toContainText('武器卡的示例正文。');
+    await send('空白 1里生成势力设计');
+    await expect(card('空白 1')).toContainText('架空势力的示例正文。');
+    await expect(card('空白 2')).not.toContainText('示例正文');
+    expect(calls).toHaveLength(2);
+  });
+
+  test('a delegated biography name is generated once and updates only the bound field on approval', async ({ page }) => {
+    await seedCanvas(page, url, [{ title: '角色', body: '人物小传\n姓名：沈昭秋\n年龄：34岁' }, { title: '人物' }]);
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      const body = route.request().postDataJSON() as { messages: Array<{ content: string }>; tools?: unknown };
+      expect(body.tools).toBeUndefined();
+      expect(JSON.stringify(body.messages)).toContain('要求修改时给出与原值不同的新值');
+      expect(JSON.stringify(body.messages)).toContain('沈昭秋');
+      const content = JSON.stringify({ texts: ['沈砚舟'] });
+      return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
+        body: `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` });
+    });
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const input = ai.locator('.ai-composer textarea');
+    await input.fill('修改人物小传内容，改个姓名');
+    await input.press('Enter');
+    const role = page.getByRole('article', { name: /文本节点：角色$/u });
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await expect(control.getByRole('button', { name: '应用整份计划' })).toBeVisible();
+    await expect(role).toContainText('姓名：沈昭秋');
+    await input.fill('你决定');
+    await input.press('Enter');
+    await expect(ai.getByRole('log')).toContainText('仍待确认');
+    expect(calls).toBe(1);
+    await control.getByRole('button', { name: '应用整份计划' }).click();
+    await expect(role).toContainText('姓名：沈砚舟');
+    await expect(role).toContainText('年龄：34岁');
+    await expect(page.getByRole('article', { name: /文本节点：人物$/u })).not.toContainText('沈砚舟');
+    await control.getByRole('button', { name: '关闭画布控制' }).click();
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(role).toContainText('姓名：沈昭秋');
   });
   for (const verb of ['造', '建', '新建', '创建']) test(`reported card batch with ${verb} groups blanks and connects roles offline`, async ({ page }) => {
     await page.goto(url);

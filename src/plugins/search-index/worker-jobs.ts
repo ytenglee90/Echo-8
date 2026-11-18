@@ -5,7 +5,7 @@ export const SEARCH_INDEX_ANALYZE_JOB = 'search-index.analyze@1';
 export const SEARCH_INDEX_RANK_JOB = 'search-index.rank@1';
 
 export const SEARCH_INDEX_BLOOM_WORDS = 128;
-export const SEARCH_INDEX_MAX_POSTING_TERMS_PER_CHUNK = 4_096;
+const SEARCH_INDEX_MAX_POSTING_TERMS_PER_CHUNK = 4_096;
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 

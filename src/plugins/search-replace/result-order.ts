@@ -1,6 +1,15 @@
 import type { EditorContextSnapshot } from '../../protocols/editor.ts';
 import type { SearchHit } from '../../protocols/search.ts';
 
+export function sameSearchHit(left: SearchHit, right: SearchHit): boolean {
+  return left.nodeId === right.nodeId &&
+    (left.field ?? 'body') === (right.field ?? 'body') &&
+    left.start === right.start &&
+    left.length === right.length &&
+    left.revision === right.revision &&
+    left.matchedText === right.matchedText;
+}
+
 export interface SearchNodeResult {
   nodeId: string;
   title: string;

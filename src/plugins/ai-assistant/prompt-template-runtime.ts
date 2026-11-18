@@ -28,7 +28,7 @@ declare module '../../protocols/commands.ts' {
   }
 }
 
-export const PERSONAL_PROMPT_TEMPLATES_KEY = 'prompt-templates@1';
+const PERSONAL_PROMPT_TEMPLATES_KEY = 'prompt-templates@1';
 const PROMPT_TEMPLATE_LIMIT = 24;
 const PROMPT_TEMPLATE_FILE_SIZE_LIMIT = 256 * 1024;
 

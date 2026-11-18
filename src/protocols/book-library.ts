@@ -7,4 +7,10 @@ declare module './commands.ts' {
   }
 }
 
+declare module './messages.ts' {
+  interface ApplicationQueryMap {
+    'bookLibrary.state@1': MessageContract<undefined, { open: boolean }>;
+  }
+}
+
 export {};

@@ -1,4 +1,5 @@
 import type { PalettePreferences, PalettePresetId } from '../../protocols/appearance.ts';
+import { PALETTE_PRESET_LABELS } from '../../protocols/appearance.ts';
 
 export type { PalettePresetId } from '../../protocols/appearance.ts';
 
@@ -17,7 +18,7 @@ export const PALETTE_PRESETS: readonly PalettePreset[] = [
   {
     id: 'bright',
     key: 'A',
-    label: '明调',
+    label: PALETTE_PRESET_LABELS.bright,
     description: '清爽白灰，适合明亮环境',
     canvasBackground: '#efefec',
     connectionColor: '#80858c', junctionColor: '#616b78',
@@ -33,7 +34,7 @@ export const PALETTE_PRESETS: readonly PalettePreset[] = [
   {
     id: 'dark',
     key: 'B',
-    label: '暗调',
+    label: PALETTE_PRESET_LABELS.dark,
     description: '低亮深灰，适合夜间使用',
     canvasBackground: '#18191b',
     connectionColor: '#8d98a7', junctionColor: '#bec9d6',
@@ -49,7 +50,7 @@ export const PALETTE_PRESETS: readonly PalettePreset[] = [
   {
     id: 'eye-care',
     key: 'C',
-    label: '护眼',
+    label: PALETTE_PRESET_LABELS['eye-care'],
     description: '柔和草木色，降低长时阅读刺激',
     canvasBackground: '#e4e8da',
     connectionColor: '#7b8672', junctionColor: '#5c6d51',

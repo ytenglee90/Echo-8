@@ -195,4 +195,10 @@
 
 | [0158](ADR-0158-ASSISTANT-COMPOUND-TURNS-AND-ACCOUNT-PREFERENCES.md) | 助手组合任务、账户用语与偏好 | 有效，补充 0127、0133、0155、0157 |
 
+| [0159](ADR-0159-LOCAL-WORKSPACE-ACTION-PLANS.md) | 本地工作区动作目录与固定计划 | 有效，补充 0157、0158 |
+
+| [0160](ADR-0160-ASSISTANT-INSTRUCTIONS-AND-PREFERENCES.md) | 指令与偏好、账户配置 v2 与独立新建分批 | 有效，补充 0157、0158、0159 |
+
+| [0161](ADR-0161-ASSISTANT-COMPLETE-THEME-PRESETS.md) | 自然语言切换明调、暗调、护眼完整主题 | 有效，补充 0079、0157、0160 |
+
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

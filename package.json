@@ -21,6 +21,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:e2e": "node scripts/prepare-local-language-test-assets.mjs && playwright test",
+    "test:workspace-language": "node scripts/run-workspace-language.mjs",
     "test:performance-browser": "playwright test --config=playwright.performance.config.ts",
     "test:portable": "node scripts/prepare-local-language-test-assets.mjs && playwright test --config=playwright.portable.config.ts",
     "test:cross-browser": "node scripts/prepare-local-language-test-assets.mjs && playwright test --config=playwright.cross-browser.config.ts && playwright test --config=playwright.portable.cross-browser.config.ts",

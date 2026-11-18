@@ -9,12 +9,12 @@ import type { PersonalTextAssetRecord } from '../../protocols/personal-assets.ts
 import { isAbortError } from '../../services/abort.ts';
 import type { LocalLanguageRequest, LocalLanguageResult } from '../../protocols/local-language.ts';
 import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
-import type {
-  AIContextSearchContribution,
-  AIContextSearchRequest,
-  AIContextSource,
+import {
+  type AIContextSearchContribution,
+  type AIContextSearchRequest,
+  type AIContextSource,
+  validateAIContextSearchRequest,
 } from '../../protocols/ai.ts';
-import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import {
   LOCAL_SEMANTIC_PROVIDER_CHANGED_SIGNAL,
   LOCAL_SEMANTIC_PROVIDER_COMMANDS,

@@ -43,14 +43,37 @@ export async function planControlApplication(context: PluginContext, snapshot: C
   const allNodes = await context.capabilities.request<ContentSummary[]>('content.summaries@1', undefined, signal);
   const parts: CanvasControlPatchPlan[] = [];
   const aliases = new Map<string, string>();
-  let nextCreation = 0;
   const creates = plan.actions.filter(action => action.type === 'create-node');
   const columnWidth = Math.max(340, ...creates.map(action => action.width ?? 340)) + 60;
   const rowHeight = Math.max(220, ...creates.map(action => action.height ?? 220)) + 80;
+  const groupByMember = new Map<string, string>();
+  if (creates.every(action => action.x === undefined && action.y === undefined)) {
+    const newRefs = new Set(creates.map(action => action.ref));
+    for (const action of plan.actions) if (action.type === 'create-group' && action.members.every(id => newRefs.has(id))) {
+      for (const id of action.members) groupByMember.set(id, action.ref);
+    }
+  }
+  const blocks = new Map<string | undefined, string[]>();
+  for (const action of creates) {
+    const group = groupByMember.get(action.ref);
+    const block = blocks.get(group) ?? [];
+    block.push(action.ref);
+    blocks.set(group, block);
+  }
+  const positions = new Map<string, { x: number; y: number }>();
+  const columns = 3;
+  let firstRow = 0;
+  for (const block of blocks.values()) {
+    block.forEach((id, index) => positions.set(id, {
+      x: snapshot.origin.x + (index % columns) * columnWidth,
+      y: snapshot.origin.y + (firstRow + Math.floor(index / columns)) * rowHeight,
+    }));
+    firstRow += Math.ceil(block.length / columns);
+  }
   const nodeActions: ControlNodeAction[] = plan.actions.filter((action): action is ControlNodeAction => action.type === 'create-node' || action.type === 'update-node').map(action => {
     if (action.type !== 'create-node') return action;
-    const index = nextCreation++;
-    return { ...action, x: action.x ?? snapshot.origin.x + (index % 3) * columnWidth, y: action.y ?? snapshot.origin.y + Math.floor(index / 3) * rowHeight };
+    const position = positions.get(action.ref)!;
+    return { ...action, x: action.x ?? position.x, y: action.y ?? position.y };
   });
   let plannedNodes: ContentSummary[] = [];
   if (nodeActions.length) {

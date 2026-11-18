@@ -22,7 +22,7 @@ export interface CloudflareIdentity {
   name?: string;
 }
 
-export function oauthRedirectUri(env: Required<CloudControlEnv>): string {
+function oauthRedirectUri(env: Required<CloudControlEnv>): string {
   return new URL('/api/cloud/oauth/callback', normalizedOrigin(env.PUBLIC_APP_ORIGIN)).toString();
 }
 

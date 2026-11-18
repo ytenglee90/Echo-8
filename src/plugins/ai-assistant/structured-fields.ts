@@ -15,11 +15,14 @@ const COMPLETE = new RegExp(String.raw`^(?:给|为)\s*(.+?组)(?:里|内|中的?
 const RESTORE = new RegExp(String.raw`^恢复第\s*(\d+)\s*轮(?:的)?(.{1,80}?)(?:的)?(${FIELDS})(?:[，,]\s*保留[^。！？]+)?[。！!]?$`, 'u');
 const CHECK = new RegExp(String.raw`^(?:检查|查找|找出)\s*(.+?组)(?:里|内|中的?)?\s*缺(?:少)?\s*(${FIELDS})\s*的(卡片?|节点|文本框)[。！!]?$`, 'u');
 const SCAN_OLD = new RegExp(String.raw`^(.{1,60}?)(?:的)?(${FIELDS})(?:改了|已经更改|已更新)[，,]\s*(?:找出|查找|查一下)(?:还)?(?:写着|提到|包含)旧\2的(?:卡片?|节点|文本框)[。！!]?$`, 'u');
+const CHANGE_DESCRIPTION = new RegExp(String.raw`^(?:修改|编辑|调整)\s*(.{1,120}?)(?:的?(?:正文|内容))?[，,]\s*(?:换|改)(?:一个|个|一下)?\s*(${FIELDS})(?:\s*(?:改成|改为|换成|换为|为|叫)\s*([^，,。！？；;\r\n]{1,120}))?$`, 'u');
+const CHANGE_NAMED = new RegExp(String.raw`^(?:把|将)\s*(.{1,120}?)(?:里面|里|内|中)?的\s*(${FIELDS})\s*(?:改成|改为|换成|换为|改一下|换一个)(?:\s*([^，,。！？；;\r\n]{1,120}))?$`, 'u');
 const MAX_BODY = 8_192;
 
 export type FieldTask = { kind: 'complete' | 'check'; group: string; field: string; presentation?: ContentSummary['presentation'] } |
   { kind: 'restore'; target: string; field: string; turn: number } | { kind: 'age-conflicts'; group?: string } |
-  { kind: 'scan-old'; target: string; field: string };
+  { kind: 'scan-old'; target: string; field: string } |
+  { kind: 'change'; target: string; field: string; description: boolean; value?: string };
 export interface FieldTarget { id: string; start: number; deleteCount: number; expectedRevision: number; prefix: string }
 interface FieldPreparation {
   sources?: AIPreparedSource[];
@@ -31,6 +34,11 @@ interface FieldPreparation {
 
 export function structuredFieldTask(prompt: string): FieldTask | undefined {
   const text = prompt.trim().replace(/^@画布操作\s+/u, '').replace(/^(?:请|帮我)\s*/u, '');
+  const command = text.replace(/[。！!]$/u, '');
+  const description = CHANGE_DESCRIPTION.exec(command);
+  const change = description ?? CHANGE_NAMED.exec(command);
+  if (change && !/[？?]$/u.test(command)) return { kind: 'change', target: change[1]!.trim(), field: change[2]!,
+    description: Boolean(description), value: change[3]?.trim().replace(/^[「『“"]|[」』”"]$/gu, '') };
   const age = /^(?:查|检查|核对)(?:\s*(.+?组)(?:里|内|中的?)?)?\s*年龄(?:矛盾|冲突|不一致)(?:[，,]?(?:并)?定位原句)?[。！!]?$/u.exec(text);
   if (age) return { kind: 'age-conflicts', group: age[1] };
   const scanOld = SCAN_OLD.exec(text);
@@ -45,7 +53,7 @@ export function structuredFieldTask(prompt: string): FieldTask | undefined {
 }
 
 function fieldRanges(body: string, field: string) {
-  const pattern = new RegExp(String.raw`^[ \t]*(?:[-*][ \t]+)?${field}[ \t]*[：:][ \t]*([^\r\n]*)`, 'gmu');
+  const pattern = new RegExp(String.raw`^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?${field}(?:\*\*)?[ \t]*[：:][ \t]*([^\r\n]*)`, 'gmu');
   return [...body.matchAll(pattern)].map(match => ({ start: match.index! + match[0].length - match[1]!.length, value: match[1]!.trimEnd(),
     lineStart: match.index!, line: match[0].trimEnd() }));
 }
@@ -68,12 +76,46 @@ function historicalFieldValues(text: string, field: string): string[] {
   return inline ? [inline[1]!.trim().replace(/^[「『“"]|[」』”"]$/gu, '')] : [];
 }
 
+async function prepareFieldChange(
+  context: PluginContext, task: Extract<FieldTask, { kind: 'change' }>, scope: AIContextSource[],
+  budget: { characters: number; tokens: number }, signal: AbortSignal, refs: AIInlineReference[],
+): Promise<FieldPreparation> {
+  const explicit = refs.find(ref => ref.token === task.target);
+  const name = normalizeCanvasTitle(task.target.replace(/^[「『“"]|[」』”"]$/gu, ''));
+  let candidates = scope.filter(source => explicit ? source.sourceId === explicit.sourceId : canvasTitleAliases(source.title).includes(name));
+  const clarify = { clarify: '请用 @ 指定含有该字段的唯一卡片，画布尚未修改。' };
+  if (!candidates.length && !explicit && task.description && scope.length) {
+    const result = await context.capabilities.request<ContentSearchResultV2>('content.search@2', {
+      query: task.target, nodeIds: scope.map(source => source.sourceId), matchCase: false, wholeWord: false, maxResults: 24,
+    }, signal);
+    if (result.truncated) return clarify;
+    const ids = new Set(result.hits.filter(hit => hit.field === 'body').map(hit => hit.nodeId));
+    candidates = scope.filter(source => ids.has(source.sourceId));
+  }
+  if (candidates.length !== 1) return clarify;
+  const source = candidates[0]!;
+  const body = await currentBody(context, source, signal);
+  const ranges = fieldRanges(body, task.field);
+  if (ranges.length !== 1) return { clarify: `请明确「${source.title}」中要修改的「${task.field}」字段所在行。` };
+  const range = ranges[0]!;
+  const target = { id: source.sourceId, start: range.start, deleteCount: range.value.length, expectedRevision: source.revision };
+  if (task.value) {
+    if (task.value === range.value) return { clarify: `「${source.title}」的${task.field}已经是这个值。` };
+    return { sources: [evidence(source, '')], fixedPlan: { version: 2, actions: [{
+      type: 'update-node', id: target.id, edit: { start: target.start, deleteCount: target.deleteCount, expectedRevision: target.expectedRevision, insert: task.value },
+    }] } };
+  }
+  if (body.length > budget.characters || estimateAITokens(body) > budget.tokens) return { clarify: '目标正文超过本轮预算，请指定字段所在段落。' };
+  return { field: task.field, fields: [{ ...target, prefix: '' }], sources: [evidence(source, body)] };
+}
+
 export async function prepareStructuredFields(
   context: PluginContext, task: FieldTask, catalog: AIContextSource[], budget: { characters: number; tokens: number },
   signal: AbortSignal, refs: AIInlineReference[] = [], transcript?: AIContextSource,
 ): Promise<FieldPreparation> {
   const scope = catalog.filter(source => source.kind === 'text' && source.provider !== 'ai-assistant' &&
     (source.automaticRetrieval !== false || refs.some(ref => ref.sourceId === source.sourceId)));
+  if (task.kind === 'change') return prepareFieldChange(context, task, scope, budget, signal, refs);
   if (task.kind === 'scan-old') {
     const ask = { clarify: `没有找到可核对的「${task.target}」旧${task.field}。请提供旧值或旧原句。` };
     if (!transcript) return ask;

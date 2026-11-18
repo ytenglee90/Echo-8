@@ -1,5 +1,6 @@
 import { canvasIntentText } from './ai-task-route.ts';
 import { naturalColor, naturalName, NATURAL_QUOTED_NAME } from './natural-canvas-rules.ts';
+import { palettePresetIntent } from './palette-preset-intent.ts';
 
 export type NativeCanvasIntent =
   | { kind: 'action'; label: string }
@@ -27,8 +28,8 @@ export function nativeCanvasIntent(prompt: string): NativeCanvasIntent | undefin
     return { kind: 'action', label: '打开全局颜色设置' };
   }
   if (/^切换小地图$/u.test(text)) return { kind: 'action', label: '打开或关闭小地图' };
-  const preset = /^(?:应用|切换到|切换为|换成|主题改成|主题改为)(护眼|明亮|深色)(?:配色|颜色方案)$/u.exec(text);
-  if (preset) return { kind: 'preset', id: preset[1] === '护眼' ? 'eye-care' : preset[1] === '深色' ? 'dark' : 'bright' };
+  const preset = palettePresetIntent(text);
+  if (preset) return { kind: 'preset', id: preset };
   const views: Array<[RegExp, Extract<NativeCanvasIntent, { kind: 'view' }>['action']]> = [
     [/^(?:放大|放大画布|画布放大)(?:一点|一级)?$/u, 'zoom-in'],
     [/^(?:缩小|缩小画布|画布缩小)(?:一点|一级)?$/u, 'zoom-out'],

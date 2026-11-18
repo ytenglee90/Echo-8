@@ -585,6 +585,9 @@ export class PluginManager {
         action: (contribution: ActionContribution) => {
           assertDeclared(manifest.actions, contribution.id, 'action contribution');
           assertPermission(manifest, 'ui.action.register', `register action ${contribution.id}`);
+          if (contribution.localTool?.version === 2) {
+            assertDeclared(manifest.commands, contribution.localTool.command, 'local action command');
+          }
           track('action', this.ui.registerAction(owner, contribution));
         },
         shortcut: (shortcut: ShortcutContribution) => {

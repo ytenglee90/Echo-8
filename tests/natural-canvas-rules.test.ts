@@ -50,10 +50,10 @@ test('natural operation catalog covers every content task without treating quote
   for (const [prompt, kind] of [
     ['帮我找到主角', 'find'], ['帮我给主角和武器连线', 'connect'], ['请用虚线把主角和武器连接起来', 'connect'],
     ['把这两个连接起来', 'connect'], ['帮我把主角标题栏改红色', 'color'], ['把背景色改成暖灰', 'background'],
-    ['主题改成深色', 'theme'], ['麻烦把主角和武器组成一个群组，名为角色组', 'group'],
+    ['主题改成深色', 'preset'], ['麻烦把主角和武器组成一个群组，名为角色组', 'group'],
     ['把主角正文的「旧枪」替换为「新枪」，全部', 'replace'],
     ['建个文本框，就叫线索', 'create'], ['把主角跟武器排成一行', 'arrange'], ['往右挪一点', 'move'],
-    ['能不能帮我把主角刷成墨绿？', 'color'], ['再换成文字框', 'presentation'], ['打开夜间模式', 'theme'],
+    ['能不能帮我把主角刷成墨绿？', 'color'], ['再换成文字框', 'presentation'], ['打开夜间模式', 'preset'],
     ['给主角用虚线连线', 'connect'], ['再连到地图', 'connect'], ['把武器归到人物组里', 'group-add'],
     ['把画布背景刷成浅灰', 'background'],
     ['我想把主角和武器横着排', 'arrange'], ['建个文本框叫出口然后连到地图', 'batch'],

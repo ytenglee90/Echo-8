@@ -809,6 +809,7 @@ export function createTextAssistPlugin(associationNotice?: unknown): PluginDefin
     });
     context.ui.action({
       id: 'text-assist.load-rules-file-action',
+      localTool: { version: 1, effect: 'workspace', resultMode: 'returned', inputSchema: { type: 'null' } },
       label: '从 TXT 更新纠错规则',
       command: 'textAssist.loadRulesFile',
       category: '设置',

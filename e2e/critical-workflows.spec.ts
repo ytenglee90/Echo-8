@@ -540,7 +540,7 @@ test('the brand returns home while cloud sync stays in its governed panel', asyn
     '另存到云端',
   ]);
   expect(await commandPalette.getByRole('group').evaluateAll(groups => groups.map(group => group.getAttribute('aria-label')))).toEqual([
-    '快捷入口', '书籍与同步', '编辑', '画布与节点', '群组与排列', '连线与中转点', 'AI 助手', '设置',
+    '快捷入口', '书籍与同步', '编辑', '画布与节点', '群组与排列', '连线与中转点', 'AI 助手', '设置', '开发者工具',
   ]);
   for (const label of ['立即保存当前云端书籍', '切换为选择工具', '切换为手抓工具', '取消选择', '将选中节点建立群组', '取消选中的群组', '查看内核与诊断', '按选择顺序连接节点或中转点']) {
     await expect(commandPalette.getByRole('option', { name: label, exact: true })).toHaveCount(0);
@@ -565,6 +565,10 @@ test('the brand returns home while cloud sync stays in its governed panel', asyn
   await expect(page.getByRole('region', { name: 'AI 助手' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: '查找与替换' })).toHaveCount(0);
   await library.press('Escape');
+  await expect(page.getByRole('region', { name: 'AI 助手' })).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
+    await page.getByRole('region', { name: 'AI 助手' }).last().getByRole('button', { name: '关闭AI 助手', exact: true }).click();
+  }
   await executeCommand(page, '云同步设置');
   const panel = page.getByRole('region', { name: 'Cloudflare 云同步' });
   await expect(panel).toBeVisible();

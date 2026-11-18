@@ -1,4 +1,4 @@
-import { isRecord, type MessageEnvelope, type PluginDefinition } from '../../core/contracts.ts';
+import { isRecord, type MessageEnvelope, type PluginDefinition, type ShortcutOverride } from '../../core/contracts.ts';
 import type { TransactionCommitRecord } from '../../protocols/state.ts';
 import type { PersonalTextAssetRecord } from '../../protocols/personal-assets.ts';
 import type {} from '../../protocols/cloud-sync.ts';
@@ -25,7 +25,6 @@ import {
 import { defineManifest } from '../manifest.ts';
 import { BookTransport } from './book-transport.ts';
 import { saveLegacyBook, hydrateRemoteDocument } from './legacy-transport.ts';
-import type { ShortcutOverride } from '../../core/contracts.ts';
 import type {} from '../../protocols/shortcut-sync.ts';
 import { planShortcutSync, shortcutFingerprint, type ShortcutAccountState, type RemoteShortcuts } from './shortcut-sync.ts';
 import { addPendingBookChange, type PendingBookChange } from './pending-book.ts';
@@ -99,7 +98,7 @@ export function createCloudSyncPlugin(
       ],
       events: ['transaction.committed', 'document.replaced', 'shortcuts.changed'],
       queries: ['cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation', 'account.assistantPreferenceScope@1'],
-      providesCapabilities: ['account.assistantPreferences@1'],
+      providesCapabilities: ['account.assistantPreferences@1', 'account.assistantPreferences@2'],
       asks: [
         'system.preferences.get', 'system.personalAssets.get', 'system.project.source', 'system.project.catalog', 'system.document.revision',
         'system.persistence', 'cloudSync.state', 'cloudSync.projects', 'cloudSync.deleteConfirmation', 'shortcuts.state',
@@ -201,21 +200,22 @@ export function createCloudSyncPlugin(
       const preferenceScope = (): AssistantPreferenceAccount | undefined => state.user ? {
         userId: state.user.id, installationId: local.installationId, bookId: local.projectId,
         available: state.installations.some(item => item.id === local.installationId && item.status === 'ready' && item.workerVersion >= 8),
+        extended: state.installations.some(item => item.id === local.installationId && item.status === 'ready' && item.workerVersion >= 9),
       } : undefined;
       context.queries.register({ type: 'account.assistantPreferenceScope@1', handle: preferenceScope });
-      context.capabilities.provide({ key: 'account.assistantPreferences@1', invoke: async (input: {
+      const preferenceTransport = (extended: boolean) => async (input: {
         account: AssistantPreferenceAccount;
         write?: { expectedRevision: number; preferences: import('../../protocols/assistant-preferences.ts').AssistantPreferences };
-      }, signal) => {
+      }, signal?: AbortSignal) => {
         const checkScope = () => {
           const current = preferenceScope();
-          if (!current?.available || current.userId !== input.account.userId || current.installationId !== input.account.installationId) {
+          if (!current?.available || extended && !current.extended || current.userId !== input.account.userId || current.installationId !== input.account.installationId) {
             throw new Error('账号或个人数据服务已经变化，请重新载入');
           }
           signal?.throwIfAborted();
         };
         checkScope();
-        const response = await dataRequest<AssistantPreferenceSnapshot>('/v2/assistant-preferences?account=' + encodeURIComponent(input.account.userId), {
+        const response = await dataRequest<AssistantPreferenceSnapshot>((extended ? '/v3' : '/v2') + '/assistant-preferences?account=' + encodeURIComponent(input.account.userId), {
           ...(input.write ? jsonInit(input.write, 'PUT') : { method: 'GET' }), signal,
         });
         checkScope();
@@ -223,7 +223,9 @@ export function createCloudSyncPlugin(
           throw new Error('账户返回的 AI 偏好格式无效');
         }
         return response;
-      } });
+      };
+      context.capabilities.provide({ key: 'account.assistantPreferences@1', invoke: preferenceTransport(false) });
+      context.capabilities.provide({ key: 'account.assistantPreferences@2', invoke: preferenceTransport(true) });
       const refreshStorageUsage = async () => {
         const installation = state.installations.find(
           (item) => item.id === local.installationId && item.status === 'ready',
@@ -954,10 +956,12 @@ export function createCloudSyncPlugin(
       });
       context.ui.action({
         id: 'cloud-sync.open-action', label: '云同步设置', command: 'cloudSync.open',
+        localTool: { version: 1, effect: 'workspace', resultMode: 'returned', inputSchema: { type: 'null' } },
         category: '设置', keywords: ['打开 Cloudflare 云同步', 'cloudflare', '跨设备', '账户'], priority: 20,
       });
       context.ui.action({
         id: 'cloud-sync.save-as-action', label: '另存到云端', command: 'cloudSync.requestSaveAs@1',
+        localTool: { version: 1, effect: 'workspace', resultMode: 'returned', inputSchema: { type: 'null' } },
         category: '云同步', keywords: ['保存', '本地', '上传', '同步', 'cloud', 'save as'], priority: -200,
       });
       context.ui.shortcut({

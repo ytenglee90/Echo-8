@@ -1,7 +1,4 @@
-import type {
-  CSSProperties,
-} from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { SearchMatchPreview } from '../../protocols/search.ts';

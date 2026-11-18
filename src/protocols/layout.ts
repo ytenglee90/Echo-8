@@ -56,6 +56,7 @@ declare module './commands.ts' {
   interface ApplicationCommandMap {
     'layout.toggleGuides@1': CommandContract<undefined, SmartLayoutSettings>;
     'layout.toggleSnap@1': CommandContract<undefined, SmartLayoutSettings>;
+    'layout.arrangeNodes@1': CommandContract<{ nodeIds: string[]; mode: ArrangeMode }, { selected: number; changed: number; columns: number }>;
     'node.arrangeSelectedCycle': CommandContract<undefined, ArrangeCycleResult>;
     'node.arrangeSelectedGrid': CommandContract<undefined, { selected: number; changed: number; columns: number }>;
     'node.arrangeSelectedGrid.horizontal': CommandContract<undefined, { selected: number; changed: number; columns: number }>;

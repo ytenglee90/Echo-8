@@ -5,7 +5,7 @@ import { CHUNK_SIZE, readContentRange, type TextContentRecord } from './content-
 const PARAGRAPH_FIELDS = new Set<string>(PARAGRAPH_FORMAT_FIELDS);
 
 /** Reads at most one chunk at a time, including paragraphs crossing editor windows. */
-export function enclosingParagraphRange(
+function enclosingParagraphRange(
   context: PluginContext,
   content: TextContentRecord,
   start: number,

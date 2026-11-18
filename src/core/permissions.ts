@@ -1,6 +1,6 @@
 import type { PluginManifest, UISlot } from './contracts.ts';
 
-export const KNOWN_PERMISSIONS = new Set([
+const KNOWN_PERMISSIONS = new Set([
   'store.own.read',
   'store.own.write',
   'ui.welcome.contribute',
@@ -79,6 +79,7 @@ const COMMAND_PERMISSIONS: Record<string, string> = {
   'system.personalAssets.set': 'personal.assets.manage',
   'system.recovery.restore': 'persistence.manage',
   'system.action.execute': 'ui.action.execute',
+  'system.action.invoke@1': 'ui.action.execute',
 };
 
 export function assertKnownPermissions(manifest: PluginManifest): void {

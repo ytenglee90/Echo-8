@@ -2,16 +2,15 @@ import type { PluginContext } from '../../core/contracts.ts';
 import type { AIContextCatalogContribution, AIContextReadContribution, AIContextSearchContribution } from '../../protocols/ai.ts';
 import type { CanvasControlAction, CanvasControlAdmission, CanvasControlPlan, CanvasControlState } from '../../protocols/canvas-control.ts';
 import { isTitleConnection } from '../../protocols/connections.ts';
-import type { CanvasRelativePlacement } from '../../protocols/canvas-agent.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
+import { PALETTE_PRESET_LABELS, type PalettePresetId } from '../../protocols/appearance.ts';
 import type { ContentReplaceRequest, SearchHit } from '../../protocols/search.ts';
 import type { NaturalCanvasOperation } from '../../services/ai-task-route.ts';
-import { naturalTargetFilter } from '../../services/natural-canvas-rules.ts';
+import { naturalTargetFilter, naturalColor, NATURAL_COLORS } from '../../services/natural-canvas-rules.ts';
 import { readControlOwners } from './context.ts';
-import { naturalColor, NATURAL_COLORS } from '../../services/natural-canvas-rules.ts';
 import { resolveNaturalBatch } from './natural-batch.ts';
 import { canvasTitleAliases, normalizeCanvasTitle as normalize } from '../../services/canvas-titles.ts';
-import { planRelativePlacement } from './relative-placement.ts';
+import { planRelativeTranslation, type ControlRelativePlacement } from './relative-placement.ts';
 import { auditCanvasNames, findCanvasText, planGroupColumns, shortestCanvasPath } from './structured-operations.ts';
 
 export interface NaturalControlState {
@@ -19,7 +18,7 @@ export interface NaturalControlState {
   frozenSelection?: string[];
   createdIds?: string[];
   pendingTask?: { goal: string; question: string };
-  lastPlacement?: CanvasRelativePlacement;
+  lastPlacement?: ControlRelativePlacement;
   lastArrangement?: ControlArrangement;
   unfinishedConnection?: { from: string; line?: 'solid' | 'dashed'; expiresAt: number };
 }
@@ -31,13 +30,13 @@ export interface NaturalControlResult {
   next?: Partial<NaturalControlState>;
   choice?: { name: string; ids: string[] };
   chosen?: ReadonlyMap<string, string>;
-  setting?: Extract<NaturalCanvasOperation, { kind: 'theme' }> | { kind: 'background'; color: string };
+  setting?: Extract<NaturalCanvasOperation, { kind: 'theme' | 'preset' }> | { kind: 'background'; color: string };
   pendingLine?: { id: string; line: 'solid' | 'dashed' };
   pendingColor?: { id: string; direction: 'lighter' | 'darker' };
   selectionMode?: 'replace' | 'add';
   replacement?: ContentReplaceRequest;
   unresolvedTarget?: boolean;
-  placement?: CanvasRelativePlacement;
+  placement?: ControlRelativePlacement;
   arrangement?: ControlArrangement;
   pendingArrangement?: { id: string; arrangement: ControlArrangement };
   replacesArrangement?: string;
@@ -259,15 +258,15 @@ export async function resolveNaturalOperation(
   };
   if (operation.kind === 'batch') return resolveNaturalBatch(operation.steps, previous, (step, state) =>
     resolveNaturalOperation(context, request, step, state, chosen, signal));
-  const relativePlan = async (placement: CanvasRelativePlacement): Promise<NaturalControlResult> => {
-    const targets = [placement.nodeId, placement.anchorId];
+  const relativePlan = async (placement: ControlRelativePlacement): Promise<NaturalControlResult> => {
+    const targets = [...placement.movingIds, placement.anchorId];
     const nodes = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: targets }, signal);
-    if (nodes.length !== 2) return answer('上次涉及的卡片已无法定位，请指出这次的两张卡。');
-    return { ...makePlan([planRelativePlacement(nodes, placement)], targets, { ids: [placement.nodeId] }), placement };
+    if (nodes.length !== targets.length) return answer('涉及的卡片已无法定位，请重新指定移动对象和参照卡。');
+    return { ...makePlan(planRelativeTranslation(nodes, placement), targets, { ids: placement.movingIds }), placement };
   };
   if (operation.kind === 'placement-gap') {
     const previousPlacement = previous.lastPlacement;
-    if (!previousPlacement) return answer('哪两张卡之间要留这个间距？');
+    if (!previousPlacement) return answer('请指出要移动的卡片和参照卡。');
     return relativePlan({ ...previousPlacement, gap: operation.gap });
   }
   if (operation.kind === 'narrow') {
@@ -294,8 +293,8 @@ export async function resolveNaturalOperation(
   if (operation.kind === 'choose-theme') {
     const choiceName = '\u0000theme';
     const theme = chosen.get(choiceName);
-    if (theme === 'light' || theme === 'dark') return { ...answer('正在切换主题。'), setting: { kind: 'theme', names: [], theme } };
-    const items = [{ id: 'light', label: '浅色' }, { id: 'dark', label: '深色' }];
+    if (theme && Object.hasOwn(PALETTE_PRESET_LABELS, theme)) return { ...answer('正在切换主题。'), setting: { kind: 'preset', names: [], id: theme as PalettePresetId } };
+    const items = Object.entries(PALETTE_PRESET_LABELS).map(([id, label]) => ({ id, label }));
     return { ...answer('请选择一个主题。'), choice: { name: choiceName, ids: items.map(item => item.id) },
       navigation: { heading: '选择主题', choice: true, items } };
   }
@@ -599,8 +598,9 @@ export async function resolveNaturalOperation(
     return makePlan([{ type: 'update-node', id: source.sourceId, edit: { start: matches[0]!, deleteCount: operation.old.length, insert: operation.text, expectedRevision: source.revision } }], unique, { ids: unique });
   }
   if (operation.kind === 'place-relative') {
-    if (unique.length !== 2) return answer('请指定两个不同的节点。');
-    return relativePlan({ nodeId: unique[0]!, anchorId: unique[1]!, side: operation.side, gap: operation.gap });
+    if (unique.length < 2 || unique.length !== ids.length) return answer('请指定不同的移动对象和一张参照卡。');
+    if (unique.length > 80) return answer('目标超过 80 项，请分批移动。');
+    return relativePlan({ movingIds: unique.slice(0, -1), anchorId: unique.at(-1)!, side: operation.side, gap: operation.gap });
   }
   if (operation.kind === 'move' || operation.kind === 'arrange') {
     if (unique.length > 80) return answer('目标超过 80 项，请分批移动或排列。');

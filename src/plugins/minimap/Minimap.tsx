@@ -3,9 +3,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent } from 'react';
 import { createId, type ViewClient } from '../../core/contracts.ts';
 import type { AppearancePreview } from '../../protocols/appearance.ts';
-import type { CameraState, CanvasAppearanceSnapshot, CanvasPanRequest, CanvasViewportSize } from '../../protocols/canvas.ts';
+import type {
+  CameraState,
+  CanvasAppearanceSnapshot,
+  CanvasPanRequest,
+  CanvasViewportSize,
+  CanvasOverviewEntity,
+} from '../../protocols/canvas.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
-import type { CanvasOverviewEntity } from '../../protocols/canvas.ts';
 import type { MinimapState } from '../../protocols/minimap.ts';
 import { viewportCenterInWorld, worldViewport } from '../../protocols/viewport.ts';
 import { IconButton } from '../../ui/Icon.tsx';

@@ -1,7 +1,7 @@
 export const GRID_NODE_WIDTH = 280;
 export const GRID_NODE_HEIGHT = 158;
-export const GRID_NODE_GAP_X = 40;
-export const GRID_NODE_GAP_Y = 40;
+const GRID_NODE_GAP_X = 40;
+const GRID_NODE_GAP_Y = 40;
 
 export interface GridLayoutNode {
   id: string;

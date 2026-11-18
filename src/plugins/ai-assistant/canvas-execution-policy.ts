@@ -5,6 +5,6 @@ export const LOCAL_CANVAS_CONTENT_TARGET = '请明确要创作的正文和写入
 
 /** A model may supply requested prose, never resolve objects or decide canvas actions. */
 export function requestsCanvasTextGeneration(route: AITurnRoute): boolean {
-  return route.local?.kind === 'content' || route.fieldTask?.kind === 'complete' ||
+  return route.local?.kind === 'content' || route.fieldTask?.kind === 'complete' || route.fieldTask?.kind === 'change' && !route.fieldTask.value ||
     Boolean(route.restructureTask || route.creationText) || route.category === 'mixed';
 }

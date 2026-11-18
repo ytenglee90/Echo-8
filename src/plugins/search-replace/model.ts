@@ -20,6 +20,7 @@ import { abortableDelay as waitForDelay } from '../../services/async-control.ts'
 import { isAbortError } from '../../services/abort.ts';
 import { defineManifest } from '../manifest.ts';
 import { resolveSearchNavigation } from './navigation.ts';
+import { sameSearchHit } from './result-order.ts';
 
 const SEARCH_NAMESPACE = 'searchUI';
 const DEFAULT_SEARCH_RECT: FloatingPanelRect = { x: 160, y: 88, width: 500, height: 620 };
@@ -722,7 +723,9 @@ export function createSearchReplacePlugin(panel?: unknown): PluginDefinition {
 
       context.capabilities.provide({
         key: 'search.state@1',
-        invoke: () => ({ open: isOpen(), rect: readRect() }),
+        invoke: () => ({ open: isOpen(), rect: readRect(), ...(latestResult && !activeTask ? {
+          query: latestResult.query, matchCount: latestResult.hits.length, truncated: latestResult.truncated,
+        } : {}) }),
       });
 
       context.ui.contribute({
@@ -914,18 +917,6 @@ function resolveReplacementContinuation(
   return anchor.direction > 0
     ? after[0] ?? laterNodes[0] ?? earlierNodes[0] ?? before[0]
     : before.at(-1) ?? earlierNodes.at(-1) ?? laterNodes.at(-1) ?? after.at(-1);
-}
-
-function sameSearchHit(
-  left: SearchHit,
-  right: NonNullable<SearchReplaceTargetsRequest['currentHit']>,
-): boolean {
-  return left.nodeId === right.nodeId &&
-    (left.field ?? 'body') === (right.field ?? 'body') &&
-    left.start === right.start &&
-    left.length === right.length &&
-    left.revision === right.revision &&
-    left.matchedText === right.matchedText;
 }
 
 function selectionSnapshotFromPayload(payload: unknown): SelectionSnapshot | undefined {

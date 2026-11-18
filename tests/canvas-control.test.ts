@@ -168,6 +168,41 @@ test('numbered incoming dashed links and a shared junction are local and reject 
   await kernel.plugins.stop('canvas-control');
 });
 
+test('counted grouping in a generated batch binds only its new blank cards and preserves a directed link', async () => {
+  const kernel = await harness('direct');
+  const existing = await kernel.router.dispatch<{ id: string }>('node.create', { title: '旧空白', x: 4_000, y: 4_000 }, 'core.test');
+  const before = (await nodes(kernel)).map(card => card.id).sort();
+  await kernel.router.dispatch('selection.set', { ids: [existing.id], mode: 'replace' }, 'core.test');
+  const language = { capabilities: { request() { throw new Error('the classifier must stay unused'); } },
+    diagnostics: { warn() { throw new Error('the classifier must stay unused'); } } } as unknown as PluginContext;
+  const signal = new AbortController().signal;
+  const prompt = '生成一张角色，一张人物，3张空白，1张武器，3张空白群组，武器连接到人物。';
+  const incorrect = prompt.replace('3张空白群组', '4张空白群组');
+  const rejected = await interpretLocalTurn(language, incorrect, classifyAITurn(incorrect), signal);
+  assert.equal(rejected.instructions, undefined);
+  assert.match(rejected.clarification ?? '', /画布尚未修改/u);
+  const { instructions } = await interpretLocalTurn(language, prompt, classifyAITurn(prompt), signal);
+  assert.equal(instructions?.length, 8);
+  const admission = { preparationId: 'generated-counted-group', sessionId: 'generated-counted-group', prompt };
+  const local = await kernel.capabilities.request<{ text: string }>('canvasControl.localPlan@2', { ...admission, instructions });
+  const offer = await kernel.router.dispatch<{ directPlanId: string }>('canvasControl.offer@1', { ...admission, text: local.text, complete: true }, 'core.test');
+  const applied = await kernel.router.dispatch<{ message: string }>('canvasControl.generate@1', { id: offer.directPlanId }, 'core.test');
+  assert.match(applied.message, /已直接完成 8 项/u);
+  const cards = (await nodes(kernel)).filter(card => !before.includes(card.id));
+  assert.deepEqual(cards.map(card => card.title).sort(), ['人物', '武器', '空白 1', '空白 2', '空白 3', '角色'].sort());
+  const blanks = cards.filter(card => card.title.startsWith('空白'));
+  const [group] = await kernel.capabilities.request<GroupRecord[]>('groups.list@1');
+  assert.deepEqual(group?.memberIds.slice().sort(), blanks.map(card => card.id).sort());
+  const nonmembers = cards.filter(card => !blanks.includes(card));
+  assert.ok(Math.max(...nonmembers.map(card => card.y + card.height)) < Math.min(...blanks.map(card => card.y)) - 25);
+  const { connections } = await kernel.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1');
+  assert.equal(connections[0]?.from.nodeId, cards.find(card => card.title === '武器')!.id);
+  assert.equal(connections[0]?.to.nodeId, cards.find(card => card.title === '人物')!.id);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.deepEqual((await nodes(kernel)).map(card => card.id).sort(), before);
+  await kernel.plugins.stop('canvas-control');
+});
+
 test('preview, group retargeting and repeated offers use the same checked canvas task', async () => {
   const kernel = await harness('direct');
   const sessionId = 'retarget-layout';
@@ -294,7 +329,38 @@ test('relative placement uses named nodes and exact geometry despite a different
   const continued = await kernel.capabilities.request<{ text: string }>('canvasControl.localPlan@1', { ...input, preparationId: 'relative:after-undo', prompt: '间距改成35' });
   const continuation = parseCanvasControlPlan(continued.text);
   assert.deepEqual(continuation.actions, []);
-  assert.match(continuation.answer ?? '', /哪两张卡/u);
+  assert.match(continuation.answer ?? '', /移动的卡片和参照卡/u);
+  await kernel.plugins.stop('canvas-control');
+});
+
+test('a plural relative move keeps the two cards together, leaves the anchor still and can adjust the gap', async () => {
+  const kernel = await harness();
+  const create = (title: string, x: number, y: number) => kernel.router.dispatch<{ id: string }>('node.create',
+    { title, x, y, width: 300, height: 200 }, 'core.test');
+  const person = await create('人物', 420, 400);
+  const weapon = await create('武器', 820, 450);
+  const role = await create('角色', 80, 500);
+  const send = async (prompt: string) => {
+    const input = { preparationId: 'plural-move:' + ++sequence, sessionId: 'plural-move', prompt };
+    const plan = await kernel.capabilities.request<{ text: string }>('canvasControl.localPlan@1', input);
+    await kernel.router.dispatch('canvasControl.offer@1', { ...input, complete: true, text: plan.text }, 'core.test');
+    const review = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;
+    await kernel.router.dispatch('canvasControl.apply@1', { id: review.id }, 'core.test');
+  };
+  const check = async (gap: number) => {
+    const summaries = await nodes(kernel);
+    const [a, b, anchor] = [person, weapon, role].map(card => summaries.find(node => node.id === card.id)!);
+    assert.deepEqual([anchor!.x, anchor!.y], [80, 500]);
+    assert.equal(b!.x - a!.x, 400);
+    assert.equal(b!.y - a!.y, 50);
+    assert.equal(anchor!.y - Math.max(a!.y + a!.height, b!.y + b!.height), gap);
+  };
+  await send('人物和武器移动到角色上方间隔20');
+  await check(20);
+  await send('间距改成35');
+  await check(35);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  await check(20);
   await kernel.plugins.stop('canvas-control');
 });
 

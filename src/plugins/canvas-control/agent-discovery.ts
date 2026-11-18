@@ -25,7 +25,7 @@ export function newAgentDiscovery(input: CanvasControlAdmission): AgentDiscovery
     nodes: new Map(), groupRevisions: new Map(), connectionRevisions: new Map(), bodyCharacters: 0 };
 }
 
-export function validateAgentQuery(query: unknown): asserts query is CanvasAgentQuery {
+function validateAgentQuery(query: unknown): asserts query is CanvasAgentQuery {
   if (!isRecord(query) || !['state', 'selection', 'recent', 'search', 'all', 'relations'].includes(String(query.mode)) ||
     Object.keys(query).some(key => !['mode', 'query', 'ids', 'cursor'].includes(key)) ||
     (query.query !== undefined && (typeof query.query !== 'string' || !query.query.trim() || query.query.length > 300)) ||

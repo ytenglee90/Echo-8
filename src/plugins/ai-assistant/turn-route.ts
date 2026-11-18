@@ -1,5 +1,5 @@
 import type { AIOperation, AIPreparedContext } from '../../protocols/ai.ts';
-import type { CanvasControlPlan } from '../../protocols/canvas-control.ts';
+import type { CanvasControlPlan, CanvasCompoundTarget } from '../../protocols/canvas-control.ts';
 import type { CanvasAgentQueryResult } from '../../protocols/canvas-agent.ts';
 import {
   asksForCanvasContinuation, canvasCommandText, canvasControlPurpose, canvasIntentText, canvasRequestDisposition,
@@ -15,9 +15,13 @@ import type { BoundCanvasWrite } from './bound-canvas-write.ts';
 import { nativeCanvasIntent } from '../../services/native-canvas-intent.ts';
 import { canvasCreationWithText } from './local-instruction-parser.ts';
 import { readCompoundTurn, readDeferredCanvasTurn } from './compound-turn.ts';
-import type { CanvasCompoundTarget } from '../../protocols/canvas-control.ts';
 import type { PersonalTurn } from './personal-preferences.ts';
 import { isStandaloneConversation } from './context-intent.ts';
+import { compileWorkspaceLanguage } from '../../services/workspace-language.ts';
+import { workspaceCatalogIntent } from '../../services/workspace-catalog-intent.ts';
+import { readWorkspaceSequence } from '../../services/workspace-sequence-intent.ts';
+import { isCurrentConversationArchiveRequest } from '../../services/conversation-archive-intent.ts';
+import { isWorkspacePreviewRequest } from '../../services/workspace-structural-intent.ts';
 
 const OBJECT = /画布|卡(?:片)?|节点|文本框|群组|选区|连线|这条线|主题|背景|注释|批注|标注|导航栏|工具栏|编辑器|小地图|视图|缩放/u;
 const ANALYSIS = /总结|概括|归纳|对比|比较|分析|检查|核对|找出|根据|结合|参考/u;
@@ -36,9 +40,23 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const text = canvasCommandText(prompt).replace(/「[^」\r\n]+」|『[^』\r\n]+』|“[^”\r\n]+”|"[^"\r\n]+"/gu, ' □ ').trim();
   const local = naturalCanvasOperation(prompt);
   const disposition = canvasRequestDisposition(prompt);
-  const compound = disposition !== 'read-only' && (!explicit || explicit === 'general' || explicit === 'canvas-control')
+  const allowsWorkspace = !explicit || explicit === 'general' || explicit === 'canvas-control';
+  const archiveSession = allowsWorkspace &&
+    isCurrentConversationArchiveRequest(prompt);
+  const compound = disposition !== 'read-only' && allowsWorkspace
     ? readDeferredCanvasTurn(prompt) ?? readCompoundTurn(prompt) : undefined;
-  const native = disposition === 'normal' ? nativeCanvasIntent(prompt) : undefined;
+  const nativeCandidate = disposition === 'normal' ? nativeCanvasIntent(prompt) : undefined;
+  const copyIntent = nativeCandidate?.kind === 'copy' ? workspaceCatalogIntent(prompt) : undefined;
+  const native = copyIntent?.steps[0]?.selection && copyIntent.steps[0].action === 'clipboard.copy' ? undefined : nativeCandidate;
+  const workspaceSteps = !native && !compound && disposition === 'normal' && allowsWorkspace
+    ? compileWorkspaceLanguage(prompt) : undefined;
+  const canUseCatalog = !native && !compound && !workspaceSteps && allowsWorkspace;
+  const sequence = canUseCatalog && !copyIntent ? readWorkspaceSequence(prompt) : undefined;
+  const catalogCandidate = canUseCatalog
+    ? copyIntent ?? (sequence?.matched ? sequence.intent : workspaceCatalogIntent(prompt)) : undefined;
+  // A direct named group plan already supplies the group reference for later turns.
+  const catalogIntent = local?.kind === 'group' && disposition === 'normal' && catalogCandidate?.binding === 'members' &&
+    !isWorkspacePreviewRequest(text) ? undefined : catalogCandidate;
   const repeatCreation = isCanvasRepeatCreation(prompt);
   const revisePending = /^(?:取消(?:这次|刚才的|待应用的)?(?:画布)?(?:计划|操作|修改)|放弃(?:这份|刚才的)(?:计划|预览))[。！!]?$/u.test(text)
     ? 'cancel' as const : /^(?:先别删|先不要删|取消删除|保留(?:要删的)?节点)[。！!]?$/u.test(text) ? 'keep-nodes' as const : undefined;
@@ -69,8 +87,9 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const indirectTask = !prospective && !DISCUSSION.test(text) &&
     (/^(?:请\s*|帮我\s*)?让.{1,90}(?:资料|正文|设定).{0,50}(?:更完整|补充|建立联系)/u.test(text) ||
       /落实到画布|^让(?:当前)?画布.{0,12}出现|换成.{0,60}关系改成/u.test(text));
-  const operation = revisePending || isCanvasStatusFollowup(prompt) || disposition === 'read-only' ? 'general'
-    : compound ? 'canvas-control' : disposition === 'preview' && !local ? 'general'
+  const operation = revisePending || isCanvasStatusFollowup(prompt) ? 'general'
+    : catalogIntent || archiveSession ? 'canvas-control' : disposition === 'read-only' ? 'general'
+    : workspaceSteps || compound ? 'canvas-control' : disposition === 'preview' && !local ? 'general'
     : prospective && (!explicit || explicit === 'canvas-control') ? contentOperation ?? 'general' : explicit ?? (writeCommand || mixed || (!contentOperation && openCanvasTask) || indirectTask ? 'canvas-control'
     : requested !== 'general' ? requested : contentOperation ?? 'general');
   const category = operation === 'canvas-control' ? (compound && !compound.deferred || mixed && !interpretedSearch) ? 'mixed' : 'operation' : 'chat';
@@ -88,7 +107,8 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
     ? '你希望我在画布上修改什么，还是先讨论怎么改？' : undefined;
   return {
     category, operation, local, disposition, repeatCreation, native: category === 'operation' ? native : undefined, history, draft, continuation, mechanical, geometryOnly, interpretedSearch, lookupOnly,
-    excludesHistory, revisePending, compound: operation === 'canvas-control' ? compound : undefined,
+    excludesHistory, revisePending, workspaceSteps, archiveSession, catalogIntent: operation === 'canvas-control' ? catalogIntent : undefined,
+    compound: operation === 'canvas-control' ? compound : undefined,
     readCanvas: category !== 'chat' || !standalone && (canvas || IMPLICIT_CANVAS_QUESTION.test(text) || /(?:这两张|这三张|它们).{0,10}(?:怎么连|如何连接)/u.test(text)),
     purpose: category === 'mixed' ? 'general' as const : canvasControlPurpose(prompt),
     clarification, applyItems, fieldTask, restructureTask, creationText,
@@ -122,6 +142,7 @@ export interface TurnAssembly {
   relations?: CanvasAgentQueryResult['connections'];
   ownerId?: string;
   refreshed?: boolean;
+  workspaceLocalPrompt?: string;
 }
 
 // Preparation objects are short-lived and never serialize the routing state into a book.
@@ -147,5 +168,6 @@ export function canvasTurnId(prepared: AIPreparedContext): string {
 
 export function isCanvasReceiptTurn(prepared: AIPreparedContext): boolean {
   const assembly = turnAssembly(prepared);
-  return Boolean(assembly.localReply || assembly.route.native);
+  return Boolean(assembly.localReply || assembly.route.archiveSession || assembly.route.native || assembly.route.workspaceSteps ||
+    assembly.route.catalogIntent || assembly.workspaceLocalPrompt);
 }

@@ -100,7 +100,7 @@ test('themes, backgrounds, annotations and view controls have local grammars wit
   for (const prompt of ['改主题', '改背景颜色', '改注释颜色', '添加注释：请检查这里',
     '默认注释颜色改成红色', '全局注释颜色设置为蓝色', '放大画布', '缩小画布', '重置缩放', '全选画布', '取消选择',
     '执行本地命令：打开查找替换']) assert.ok(nativeCanvasIntent(prompt), prompt);
-  assert.equal(naturalCanvasOperation('切换主题到深色')?.kind, 'theme');
+  assert.deepEqual(naturalCanvasOperation('切换主题到深色'), { kind: 'preset', names: [], id: 'dark' });
   assert.equal(naturalCanvasOperation('把背景颜色改成浅蓝')?.kind, 'background');
   assert.equal(classifyAITurn('调整注释颜色的透明度').category, 'operation');
   assert.equal(nativeCanvasIntent('不要添加注释'), undefined);

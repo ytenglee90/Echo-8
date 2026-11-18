@@ -1,15 +1,15 @@
 import type { ContentSummary } from '../../protocols/content.ts';
-import type {
-  TextAssistAnalysis,
-  TextAssistAnalyzeRequest,
-  TextAssistCorrectionRule,
-  TextAssistLanguageModel,
-  TextAssistSettings,
-  TextCompletionCandidate,
-  TextCorrectionDecoration,
-  TextNodeReferenceDecoration,
+import {
+  type TextAssistAnalysis,
+  type TextAssistAnalyzeRequest,
+  type TextAssistCorrectionRule,
+  type TextAssistLanguageModel,
+  type TextAssistSettings,
+  type TextCompletionCandidate,
+  type TextCorrectionDecoration,
+  type TextNodeReferenceDecoration,
+  DEFAULT_TEXT_ASSIST_SETTINGS,
 } from '../../protocols/text-assist.ts';
-import { DEFAULT_TEXT_ASSIST_SETTINGS } from '../../protocols/text-assist.ts';
 import { assertNotAborted as throwIfAborted } from '../../services/async-control.ts';
 import { compileTextAssistResources } from './resource-format.ts';
 

@@ -1,13 +1,13 @@
 import type { PluginContext, PluginDefinition, TaskHandle } from '../../core/contracts.ts';
 import { assertNotAborted, waitForPromise, yieldToMainThread } from '../../services/async-control.ts';
-import type {
-  AIContextCatalogContribution,
-  AIContextReadContribution,
-  AIContextSearchContribution,
-  AIContextSearchRequest,
-  AIContextSource,
+import {
+  type AIContextCatalogContribution,
+  type AIContextReadContribution,
+  type AIContextSearchContribution,
+  type AIContextSearchRequest,
+  type AIContextSource,
+  validateAIContextSearchRequest,
 } from '../../protocols/ai.ts';
-import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { isAbortError } from '../../services/abort.ts';
 import { defineManifest } from '../manifest.ts';
 import {

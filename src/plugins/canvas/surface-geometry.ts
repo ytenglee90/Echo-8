@@ -27,11 +27,6 @@ export interface SurfaceSize {
   height: number;
 }
 
-export interface NodeCharacterCount {
-  revision: number;
-  characters: number;
-}
-
 export interface LassoSession {
   startX: number;
   startY: number;
@@ -182,7 +177,7 @@ function findConnectionTarget(
   return best?.node;
 }
 
-export function nodeGeometry(
+function nodeGeometry(
   node: ContentSummary,
   previews: Record<string, NodePosition>,
   resizePreviews: Record<string, ResizePreview>,
@@ -225,14 +220,6 @@ export function normalizeLasso(session: LassoSession): LassoPreview {
     height: Math.abs(session.latestY - session.startY),
     mode: session.mode,
   };
-}
-
-export function formatNodeCharacterCount(
-  node: ContentSummary,
-  counts: ReadonlyMap<string, NodeCharacterCount>,
-): string {
-  const count = counts.get(node.id);
-  return count?.revision === node.revision ? count.characters.toLocaleString() : '…';
 }
 
 export function dragOriginFor(id: string, nodes: ContentSummary[]): NodePosition | undefined {

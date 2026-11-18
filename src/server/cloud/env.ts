@@ -10,7 +10,7 @@ export interface CloudControlEnv {
   PUBLIC_APP_ORIGIN?: string;
 }
 
-export function cloudEnv(): CloudControlEnv {
+function cloudEnv(): CloudControlEnv {
   const bound = workerEnv as unknown as CloudControlEnv;
   return {
     ...bound,
@@ -23,7 +23,7 @@ export function cloudEnv(): CloudControlEnv {
   };
 }
 
-export function isCloudControlConfigured(env: CloudControlEnv): boolean {
+function isCloudControlConfigured(env: CloudControlEnv): boolean {
   return Boolean(
     env.CONTROL_DB && env.CLOUDFLARE_OAUTH_CLIENT_ID && env.CLOUDFLARE_OAUTH_CLIENT_SECRET &&
     env.SESSION_SECRET && env.TOKEN_ENCRYPTION_KEY && env.PUBLIC_APP_ORIGIN,

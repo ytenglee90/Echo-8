@@ -228,6 +228,9 @@ export function createAIAssistantPlugin(
         'content.placementPlan@1',
         'content.renamePlan@1',
         'content.summaries@1',
+        'content.canvasSummariesById@1',
+        'content.read@1',
+        'content.formatting@2',
         'content.summariesById@1',
         'context.catalog@1',
         'context.read@1',
@@ -235,8 +238,11 @@ export function createAIAssistantPlugin(
       ],
       optionalCapabilities: [
         'language.embed@1', 'canvasControl.localPlan@2', 'canvasControl.prepareCompound@1', 'canvasControl.completeCompound@1',
-        'account.assistantPreferences@1',
+        'account.assistantPreferences@1', 'account.assistantPreferences@2',
         'groups.list@1',
+        'annotations.list@1',
+        'clipboard.sources@1',
+        'canvas.camera@1', 'canvas.viewport@1',
         'content.search@2',
         'ai.provider.taskUsage@1',
         'ai.provider.requestTrace@1',
@@ -317,7 +323,8 @@ export function createAIAssistantPlugin(
         'ai.memory.candidate.dismiss',
       ],
       dispatches: [
-        'canvasControl.offer@1', 'canvasControl.native@1', 'canvasControl.generate@1', 'canvasControl.applyItems@1', 'diagnostics.operationLog.open@1',
+        'workspace.plan.run@1',
+        'canvasControl.offer@1', 'canvasControl.native@1', 'canvasControl.generate@1', 'canvasControl.applyItems@1', 'canvasControl.scope@1', 'diagnostics.operationLog.open@1',
         'ai.personal.update@1',
         'canvasControl.revisePending@1',
         'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings', 'retrieval.open@1',
@@ -348,14 +355,14 @@ export function createAIAssistantPlugin(
         'ai.prompt.configuration.changed',
       ],
       queries: [
-        'ai.personal.state@1',
+        'ai.personal.state@1', 'ai.instructions@1',
         'ai.task.usage@1',
         'ai.request.inspection@1',
         'ai.state', 'ai.catalog', 'ai.transcript', 'ai.pendingPreparation',
         'ai.memoryIndexes', 'ai.memoryCatalog', 'ai.memory.deleteConfirmation', 'ai.promptTemplates',
       ],
       asks: [
-        'account.assistantPreferenceScope@1', 'ai.personal.state@1',
+        'account.assistantPreferenceScope@1', 'ai.personal.state@1', 'ai.instructions@1', 'bookLibrary.state@1', 'cloudSync.state', 'canvasControl.state@1',
         'ai.task.usage@1',
         'ai.request.inspection@1',
         'ai.state',
@@ -367,10 +374,13 @@ export function createAIAssistantPlugin(
         'ai.memory.deleteConfirmation',
         'ai.promptTemplates',
         'system.persistence',
+        'system.document.revision',
+        'workspace.plan.receipt@1',
+        'workspace.actions@1', 'system.recovery.list', 'system.shortcuts', 'editor.openPanes',
         'system.preferences.get',
       ],
       signals: [
-        PERSONAL_PREFERENCES_CHANGED, 'cloudSync.updated',
+        PERSONAL_PREFERENCES_CHANGED, 'cloudSync.updated', 'bookLibrary.updated', 'canvasControl.updated@1',
         'canvasControl.resume@1',
         'canvasControl.result@1',
         'system.operationLog.stage@1',
@@ -394,7 +404,6 @@ export function createAIAssistantPlugin(
         'content.reference.drop-zone',
         'content.reference.drag.preview',
         'content.reference.drop',
-        'bookLibrary.updated',
       ],
       ui: ['ai.open-button', 'ai.panel', 'ai.memory.deleteConfirm', 'ai.request-inspection', 'ai.personal.settings'],
       actions: ['ai.open-action', 'ai.open-new-assistant-action', 'ai.open-provider-settings-action', 'ai.save-session-action'],
@@ -1126,11 +1135,6 @@ export function createAIAssistantPlugin(
           };
         },
       });
-      context.signals.subscribe('bookLibrary.updated', (message) => {
-        if (!isRecord(message.payload) || message.payload.open !== true) return;
-        if (!readAssistantInstances().some((assistant) => assistant.minimized !== true)) return;
-        void context.commands.dispatch('ai.closeAll');
-      });
       context.commands.register<SessionIdPayload>({
         type: 'ai.assistant.removeDeletedWindow',
         validate: isSessionIdPayload,
@@ -1398,6 +1402,7 @@ export function createAIAssistantPlugin(
       const personalPreferences = registerPersonalPreferences(context, personalPreferencesPanel);
       registerAIRequestRuntime(context, {
         planPersonalTurn: personalPreferences.plan,
+        observeAppliedPreference: personalPreferences.observeApplied,
         preparations,
         preparationTasks,
         generationTasks,
@@ -1453,7 +1458,30 @@ export function createAIAssistantPlugin(
       });
 
       registerAIGenerationRuntime(context, {
+        archiveSession: async (sessionId, signal, report, waitIfPaused) => {
+          const session = readSessions()[sessionId];
+          if (!session) throw new Error('当前对话已经不存在。');
+          autoSaveDelayTasks.get(sessionId)?.cancel();
+          autoSaveDelayTasks.delete(sessionId);
+          memoryTasks.get(sessionId)?.cancel();
+          const prepared = await prepareMemoryCommit(context, session, signal, report, waitIfPaused, false);
+          signal.throwIfAborted();
+          memoryCommitPreparations.set(prepared.id, prepared);
+          const cancelPreparation = () => { memoryCommitPreparations.delete(prepared.id); };
+          signal.addEventListener('abort', cancelPreparation, { once: true });
+          try {
+            const result = await context.commands.dispatch('ai.session.memory.commit', { preparationId: prepared.id });
+            signal.throwIfAborted();
+            if (!isRecord(result) || typeof result.archiveNodeId !== 'string' || readMemoryIndexes()[result.archiveNodeId]?.sessionId !== sessionId) {
+              throw new Error('未读回当前对话的存档记录。');
+            }
+          } finally {
+            signal.removeEventListener('abort', cancelPreparation);
+            memoryCommitPreparations.delete(prepared.id);
+          }
+        },
         planPersonalTurn: personalPreferences.plan,
+        observeAppliedPreference: personalPreferences.observeApplied,
         taskForSession: taskUsage.taskFor,
         preparations,
         tasks: generationTasks,

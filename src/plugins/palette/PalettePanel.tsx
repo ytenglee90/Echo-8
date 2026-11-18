@@ -203,8 +203,7 @@ export function PalettePanel({ client }: { client: ViewClient }) {
     clearPreviews(client);
     setApplyingPreset(preset.id);
     try {
-      const preferences = await client.dispatch('palette.applyPresetColors@1', { id: preset.id });
-      await client.dispatch('palette.setPreferences', preferences);
+      const preferences = await client.dispatch('palette.applyPreset@1', { id: preset.id });
       setState((current) => ({ ...current, preferences }));
       setCanvasDraft(preset.canvasBackground);
       setEditorDraft(preferences.editorBackground);

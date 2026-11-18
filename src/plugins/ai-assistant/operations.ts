@@ -152,7 +152,7 @@ export function isAIOperation(value: unknown): value is AIOperation {
   return typeof value === 'string' && BY_OPERATION.has(value as AIOperation);
 }
 
-export function operationDefinition(operation: AIOperation): AIOperationDefinition {
+function operationDefinition(operation: AIOperation): AIOperationDefinition {
   return BY_OPERATION.get(operation) ?? BY_OPERATION.get('general')!;
 }
 

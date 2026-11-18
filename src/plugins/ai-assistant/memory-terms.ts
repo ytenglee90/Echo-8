@@ -1,6 +1,6 @@
 import { stripOperationCommands } from './command-parser.ts';
 
-export const STOP_TERMS = new Set([
+const STOP_TERMS = new Set([
   '请你', '帮我', '这个', '这些', '那个', '一个', '进行', '内容', '根据', '需要', '然后', '以及',
   'the', 'and', 'for', 'with',
 ]);

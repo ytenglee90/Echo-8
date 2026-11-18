@@ -1,13 +1,14 @@
 import { isRecord, type PluginContext, type TaskHandle } from '../../core/contracts.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
-import type {
-  FileArtifact,
-  FileDirectoryTarget,
-  FileOperationStatus,
-  FileSaveTarget,
-  ProjectSource,
+import {
+  type FileArtifact,
+  type FileDirectoryTarget,
+  type FileOperationStatus,
+  type FileSaveTarget,
+  type ProjectSource,
+  type LocalFileTaskResult,
+  safeLocalFilename,
 } from '../../protocols/files.ts';
-import { safeLocalFilename } from '../../protocols/files.ts';
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import { DEFAULT_TEXT_DOCUMENT_FORMAT, type TextFormattingSnapshot } from '../../protocols/formatting.ts';
 import { isAbortError } from '../../services/abort.ts';
@@ -22,6 +23,35 @@ import { readDocxPlainText } from './docx-import.ts';
 import { FileWriteCoordinator } from './file-write-coordinator.ts';
 
 const READ_WINDOW = 256 * 1024;
+const localTaskResults = new WeakMap<PluginContext, Map<string, LocalFileTaskResult>>();
+const localTaskHandles = new WeakMap<PluginContext, Map<string, TaskHandle<unknown>>>();
+
+function taskResults(context: PluginContext): Map<string, LocalFileTaskResult> {
+  let results = localTaskResults.get(context);
+  if (!results) {
+    results = new Map();
+    localTaskResults.set(context, results);
+    localTaskHandles.set(context, new Map());
+    context.resources.track('other', () => {
+      results!.clear();
+      localTaskResults.delete(context);
+      localTaskHandles.delete(context);
+    });
+  }
+  return results;
+}
+
+export function readFileTaskResult(context: PluginContext, taskId: string): LocalFileTaskResult | undefined {
+  const result = localTaskResults.get(context)?.get(taskId);
+  return result && { ...result };
+}
+
+export function cancelFileTask(context: PluginContext, taskId: string): boolean {
+  const task = localTaskHandles.get(context)?.get(taskId);
+  if (!task || readFileTaskResult(context, taskId)?.state !== 'running') return false;
+  task.cancel();
+  return true;
+}
 
 export interface TextReadResult {
   text: string;
@@ -119,6 +149,21 @@ export function scheduleOperation(
     run: async (signal) => run(signal),
   });
   capture(task);
+  const results = taskResults(context);
+  const handles = localTaskHandles.get(context)!;
+  handles.set(task.id, task);
+  const result: LocalFileTaskResult = { taskId: task.id, state: 'running' };
+  results.set(task.id, result);
+  while (results.size > 32) results.delete(results.keys().next().value!);
+  void task.result.then(message => {
+    handles.delete(task.id);
+    result.state = 'ready';
+    result.message = message;
+  }, error => {
+    handles.delete(task.id);
+    result.state = isAbortError(error) ? 'cancelled' : 'error';
+    result.message = error instanceof Error ? error.message : '文件操作失败';
+  });
   void task.result.then(
     (readyMessage) => context.signals.emit('file.status', {
       operation,
@@ -229,7 +274,7 @@ export async function exportCanvasTextFiles(
   return { count: nodes.length, totalBytes, bindings };
 }
 
-export async function sameDirectory(left: FileDirectoryTarget, right: FileDirectoryTarget): Promise<boolean> {
+async function sameDirectory(left: FileDirectoryTarget, right: FileDirectoryTarget): Promise<boolean> {
   if (left === right) return true;
   try {
     if (left.isSameEntry) return await left.isSameEntry(right);
@@ -251,7 +296,7 @@ export async function removeDirectoryEntry(directory: FileDirectoryTarget, filen
   }
 }
 
-export async function buildTextArtifact(
+async function buildTextArtifact(
   context: PluginContext,
   node: ContentSummary,
   filename: string,
@@ -275,7 +320,7 @@ export async function buildTextArtifact(
   return { filename, mimeType: 'text/plain;charset=utf-8', blob: new Blob(parts, { type: 'text/plain;charset=utf-8' }) };
 }
 
-export async function resolveCurrentNode(
+async function resolveCurrentNode(
   context: PluginContext,
   summaries: ContentSummary[],
   requestedNodeId?: string,
@@ -408,7 +453,7 @@ export async function renameDestination(
   return fileWrites.run(destination, signal, () => renameDestinationDirect(destination, filename, signal));
 }
 
-export async function renameDestinationDirect(
+async function renameDestinationDirect(
   destination: FileSaveTarget,
   filename: string,
   signal: AbortSignal,
@@ -451,7 +496,7 @@ export async function reserveTextFile(
   throw new Error(`无法为“${title || '未命名节点'}”生成不重复的 TXT 文件名`);
 }
 
-export function uniqueTextFilename(title: string, reservedNames: Set<string>): string {
+function uniqueTextFilename(title: string, reservedNames: Set<string>): string {
   for (let index = 1; index <= 10_000; index += 1) {
     const filename = textFilenameCandidate(title, index);
     const key = filename.toLocaleLowerCase('zh-CN');
@@ -489,7 +534,7 @@ export async function parseImportedDocument(
   return splitImportedDocument(text, name);
 }
 
-export async function readTextFile(file: Blob, signal: AbortSignal): Promise<string> {
+async function readTextFile(file: Blob, signal: AbortSignal): Promise<string> {
   const reader = file.stream().getReader();
   const decoder = new TextDecoder('utf-8');
   const parts: string[] = [];
@@ -511,7 +556,7 @@ export async function readTextFile(file: Blob, signal: AbortSignal): Promise<str
   }
 }
 
-export function splitImportedDocument(text: string, filename: string): { title: string; body: string } {
+function splitImportedDocument(text: string, filename: string): { title: string; body: string } {
   const normalized = text.replace(/^\uFEFF/u, '').replace(/\r\n?/gu, '\n');
   const paragraphBreak = /\n[\t ]*\n/u.exec(normalized);
   let titlePart: string;
@@ -579,7 +624,7 @@ export function isFileSaveTarget(value: unknown): value is FileSaveTarget {
     typeof (value as FileSaveTarget).createWritable === 'function';
 }
 
-export function isFileDirectoryTarget(value: unknown): value is FileDirectoryTarget {
+function isFileDirectoryTarget(value: unknown): value is FileDirectoryTarget {
   return typeof value === 'object' && value !== null &&
     typeof (value as FileDirectoryTarget).name === 'string' &&
     typeof (value as FileDirectoryTarget).getFileHandle === 'function';
@@ -603,6 +648,6 @@ export function formatBytes(bytes: number): string {
 
 export { isAbortError } from '../../services/abort.ts';
 
-export function isNotFoundError(error: unknown): boolean {
+function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
 }

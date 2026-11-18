@@ -59,7 +59,7 @@ export function selectionScreenAnchor(root: HTMLDivElement | null): { x: number;
   return { x: fallback.left + 16, y: fallback.top + 24 };
 }
 
-export function domPointToTextOffset(root: HTMLDivElement, target: Node, targetOffset: number): number {
+function domPointToTextOffset(root: HTMLDivElement, target: Node, targetOffset: number): number {
   if (target === root) {
     return [...root.childNodes].slice(0, targetOffset)
       .reduce((total, child, index) => total + (child.textContent?.length ?? 0) + (index > 0 ? 1 : 0), 0);

@@ -2,12 +2,10 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
-import type {
-  FileArtifact,
-  FileOperationStatus,
-  FileRuntimeState,
-} from '../../protocols/files.ts';
 import {
+  type FileArtifact,
+  type FileOperationStatus,
+  type FileRuntimeState,
   AUTOSAVE_DISABLED_INTERVAL_MS,
   AUTOSAVE_INTERVAL_OPTIONS,
   AUTOSAVE_REALTIME_INTERVAL_MS,
@@ -22,7 +20,6 @@ import { Icon, IconButton } from '../../ui/Icon.tsx';
 import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import type { LocalStorageUsage } from '../../protocols/local-storage.ts';
-import type {} from '../../protocols/local-storage.ts';
 import { RecoveryManager } from './RecoveryManager.tsx';
 import {
   chooseNativeTextExport,
@@ -129,26 +126,16 @@ export function FilePanel({ client }: { client: ViewClient }) {
       }
     })();
   };
-  const saveProject = () => {
-    void client.dispatch('file.saveProject').catch((reason) => {
-        if (reason instanceof DOMException && reason.name === 'AbortError') return;
-        setStatus({
-          operation: 'project-save',
-          state: 'error',
-          message: reason instanceof Error ? reason.message : String(reason),
-        });
+  const reportProjectSaveError = (reason: unknown) => {
+    if (reason instanceof DOMException && reason.name === 'AbortError') return;
+    setStatus({
+      operation: 'project-save',
+      state: 'error',
+      message: reason instanceof Error ? reason.message : String(reason),
     });
   };
-  const saveProjectAs = () => {
-    void client.dispatch('file.saveProjectAs').catch((reason) => {
-      if (reason instanceof DOMException && reason.name === 'AbortError') return;
-      setStatus({
-        operation: 'project-save',
-        state: 'error',
-        message: reason instanceof Error ? reason.message : String(reason),
-      });
-    });
-  };
+  const saveProject = () => { void client.dispatch('file.saveProject').catch(reportProjectSaveError); };
+  const saveProjectAs = () => { void client.dispatch('file.saveProjectAs').catch(reportProjectSaveError); };
   const exportCanvas = () => {
     void (async () => {
       try {

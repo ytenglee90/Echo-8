@@ -18,6 +18,7 @@ import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import { AIMemoryCenter } from './AIMemoryViews.tsx';
 import { AIAssistantWindowActions } from './AIAssistantWindowActions.tsx';
 import { AIChatHeader } from './AIChatHeader.tsx';
+import { AIWorkspaceContext } from './AIWorkspaceContext.tsx';
 import {
   AIChatEmptyState,
   AICommandHints,
@@ -60,6 +61,14 @@ export function AIAssistantPanel({
 }) {
   const stateVersion = useSyncExternalStore(client.subscribeState, client.getStateVersion, () => 0);
   const [assistants, setAssistants] = useState<AIAssistantInstanceState[]>([]);
+  const [libraryOpen, setLibraryOpen] = useState(true);
+  useEffect(() => {
+    let current = true;
+    const unsubscribe = client.subscribeSignal<{ open: boolean }>('bookLibrary.updated', ({ payload }) => setLibraryOpen(payload.open));
+    void client.ask<{ open: boolean }>('bookLibrary.state@1').then(state => { if (current) setLibraryOpen(state.open); })
+      .catch(() => { if (current) setLibraryOpen(false); });
+    return () => { current = false; unsubscribe(); };
+  }, [client]);
   useEffect(() => {
     let current = true;
     void client.ask<AIAssistantState>('ai.state').then((state) => {
@@ -67,14 +76,14 @@ export function AIAssistantPanel({
     });
     return () => { current = false; };
   }, [client, stateVersion]);
-  return <>{assistants.filter((assistant) => assistant.minimized !== true).map((assistant) => (
+  return <div className="ai-canvas-assistants" hidden={libraryOpen}>{assistants.filter((assistant) => assistant.minimized !== true).map((assistant) => (
     <AIAssistantWindow
       key={assistant.id}
       assistantId={assistant.id}
       client={client}
       renderSlot={renderSlot}
     />
-  ))}</>;
+  ))}</div>;
 }
 
 function AIAssistantWindow({
@@ -280,6 +289,7 @@ function AIAssistantWindow({
         aria-label="AI 对话"
         style={{ '--ai-composer-height': `${composerHeight}px` } as CSSProperties}
       >
+        <AIWorkspaceContext client={client} />
         <AIChatHeader
           client={client}
           assistantId={assistantId}

@@ -36,6 +36,20 @@ export interface CanvasControlAdmission {
   sourceIds?: string[];
 }
 export interface CanvasControlOffer extends CanvasControlAdmission { text: string; complete: boolean }
+export interface WorkspaceCanvasPreview {
+  plan: CanvasControlPlan;
+  expectedRevision: number;
+  /** Read dependencies, including text copied into a newly created node. */
+  sourceIds?: string[];
+}
+
+export interface CanvasReviewReceipt {
+  status: CanvasControlTaskState['plans'][number]['status'];
+  createdIds: string[];
+  created: Record<string, string>;
+  verification?: import('./canvas-agent.ts').CanvasControlVerification;
+  error?: string;
+}
 export interface CanvasControlNativeRequest extends CanvasControlAdmission { selectedIds?: string[] }
 export type CanvasCompoundStep = { instruction: string } | { target: string; replace: boolean };
 export interface CanvasCompoundRequest extends CanvasControlAdmission { steps: CanvasCompoundStep[]; selectedIds?: string[] }
@@ -113,6 +127,7 @@ declare module './commands.ts' {
     'canvasControl.scope@1': CommandContract<{ scope: 'selection' | 'canvas' }>;
     'canvasControl.execution@1': CommandContract<{ execution: 'direct' | 'review' }>;
     'canvasControl.offer@1': CommandContract<CanvasControlOffer, { message: string; directPlanId?: string }>;
+    'canvasControl.workspacePreview@1': CommandContract<WorkspaceCanvasPreview, { reviewId: string; message: string }>;
     'canvasControl.native@1': CommandContract<CanvasControlNativeRequest, { message: string }>;
     'canvasControl.generate@1': CommandContract<{ id: string }, { message: string }>;
     'canvasControl.apply@1': CommandContract<{ id: string }, { createdIds: string[] }>;
@@ -140,5 +155,8 @@ declare module './messages.ts' {
     'canvasControl.groupsPlan@1': MessageContract<CanvasControlGroupRequest, CanvasControlGroupPlan>;
     'canvasControl.connectionsPlan@1': MessageContract<CanvasControlConnectionRequest, CanvasControlPatchPlan>;
   }
-  interface ApplicationQueryMap { 'canvasControl.state@1': MessageContract<undefined, CanvasControlState> }
+  interface ApplicationQueryMap {
+    'canvasControl.state@1': MessageContract<undefined, CanvasControlState>;
+    'canvasControl.reviewReceipt@1': MessageContract<{ id: string }, CanvasReviewReceipt | undefined>;
+  }
 }

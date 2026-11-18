@@ -33,7 +33,7 @@ export function formatShortcutChord(chord: string): string {
     .join(' + ');
 }
 
-export function stripShortcutSuffix(value: string): string {
+function stripShortcutSuffix(value: string): string {
   const match = value.match(/\s*[（(]([^（）()]*)[）)]\s*$/u);
   if (!match || !looksLikeShortcut(match[1])) return value;
   return value.slice(0, match.index).trimEnd();

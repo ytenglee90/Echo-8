@@ -30,6 +30,7 @@ export interface ApplicationQueryMap {
   'semanticProvider.personalConnections': ValidatedMessage;
   'semanticProvider.state': ValidatedMessage;
   'system.actions': ValidatedMessage;
+  'system.diagnostics': ValidatedMessage;
   'system.document.revision': ValidatedMessage;
   'system.persistence': ValidatedMessage;
   'system.storage.usage': ValidatedMessage;
@@ -46,6 +47,7 @@ export interface ApplicationQueryMap {
 
 /** Closed built-in capability-name registry. Runtime providers remain the schema authority. */
 export interface ApplicationCapabilityMap {
+  'layout.settings@1': MessageContract<undefined, import('./layout.ts').SmartLayoutSettings>;
   'ai.generate.stream@1': ValidatedMessage;
   'ai.generate@1': ValidatedMessage;
   'ai.promptPolicy@1': ValidatedMessage;
@@ -89,6 +91,7 @@ export interface ApplicationCapabilityMap {
   'content.statistics@1': ValidatedMessage;
   'content.summaries@1': ValidatedMessage;
   'content.summariesById@1': ValidatedMessage;
+  'content.canvasSummariesById@1': ValidatedMessage;
   'context.catalog@1': ValidatedMessage;
   'context.read@1': ValidatedMessage;
   'context.search@1': ValidatedMessage;

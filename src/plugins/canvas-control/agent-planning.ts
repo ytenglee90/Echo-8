@@ -94,7 +94,8 @@ export async function prepareAgentPlan(
   validateControlScope(plan, snapshot);
   assertNotAborted(signal);
   const local: NaturalControlResult = { plan, targets: [...ids],
-    ...(placements.length === 1 ? { placement: placements[0] } : {}),
+    ...(placements.length === 1 ? { placement: { movingIds: [placements[0]!.nodeId], anchorId: placements[0]!.anchorId,
+      side: placements[0]!.side, gap: placements[0]!.gap } } : {}),
     ...(input.setting ? { setting: input.setting.kind === 'theme' ? { ...input.setting, names: [] } : input.setting } : {}),
     ...(input.focusIds?.length ? { focus: input.focusIds } : {}),
     next: { ids: placements.length ? placements.map(item => item.nodeId) : nodes.length ? nodes.map(node => node.id) : [...session.nodes.keys()].slice(-12),

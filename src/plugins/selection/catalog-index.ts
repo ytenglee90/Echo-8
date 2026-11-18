@@ -68,7 +68,7 @@ export class SelectionCatalogIndex {
   }
 }
 
-export function selectionIndexBounds(entity: SelectableEntity): SpatialBounds | undefined {
+function selectionIndexBounds(entity: SelectableEntity): SpatialBounds | undefined {
   if (entity.bounds) return entity.bounds;
   const regions = entity.boxRegions;
   if (!regions?.length) return undefined;

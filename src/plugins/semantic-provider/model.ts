@@ -6,12 +6,12 @@ import {
   type TaskHandle,
 } from '../../core/contracts.ts';
 import { assertNotAborted, yieldToMainThread } from '../../services/async-control.ts';
-import type {
-  AIContextSearchContribution,
-  AIContextSearchRequest,
-  AIContextSource,
+import {
+  type AIContextSearchContribution,
+  type AIContextSearchRequest,
+  type AIContextSource,
+  validateAIContextSearchRequest,
 } from '../../protocols/ai.ts';
-import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { isAbortError } from '../../services/abort.ts';
 import {
   isOptionalProfileIdPayload,

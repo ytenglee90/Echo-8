@@ -1,7 +1,19 @@
 import { createId, isRecord, type PluginDefinition } from '../../core/contracts.ts';
-import { CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, type CanvasControlAdmission, type CanvasControlNativeRequest, type CanvasControlOffer, type CanvasControlReceipt, type CanvasControlReview, type CanvasControlState } from '../../protocols/canvas-control.ts';
-import type { AppearanceEntityRef, AppearanceReadContribution, AppearanceUpdatePlan } from '../../protocols/appearance.ts';
-import type { CanvasCompoundRequest, CanvasCompoundTarget, CanvasControlPlan } from '../../protocols/canvas-control.ts';
+import {
+  CANVAS_CONTROL_RESUME,
+  CANVAS_CONTROL_RESULT,
+  type CanvasControlAdmission,
+  type CanvasControlNativeRequest,
+  type CanvasControlOffer,
+  type CanvasControlReceipt,
+  type CanvasControlReview,
+  type CanvasControlState,
+  type CanvasCompoundRequest,
+  type CanvasCompoundTarget,
+  type CanvasControlPlan,
+  type WorkspaceCanvasPreview,
+} from '../../protocols/canvas-control.ts';
+import { PALETTE_PRESET_LABELS, type AppearanceEntityRef, type AppearanceReadContribution, type AppearanceUpdatePlan } from '../../protocols/appearance.ts';
 import { resolveNaturalBatch } from './natural-batch.ts';
 import type { ContentReplacePlan } from '../../protocols/search.ts';
 import { OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2, type OperationStatus, type OperationStageUpdate, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
@@ -23,7 +35,7 @@ import { verifyControlApplication } from './verification.ts';
 import { nativeCanvasIntent } from '../../services/native-canvas-intent.ts';
 import { prepareNativeCanvasAction } from './native-actions.ts';
 
-export const CONTROL_UI_NAMESPACE = 'canvasControlUI';
+const CONTROL_UI_NAMESPACE = 'canvasControlUI';
 export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('canvas-control', 'AI 画布控制', {
@@ -32,12 +44,12 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       requiresCapabilities: ['content.summaries@1', 'content.summariesById@1', 'selection.read@1', 'selection.resolve@1', 'selection.entities@1', 'canvasControl.nodesPlan@1'],
       optionalCapabilities: ['content.createPlan@1', 'content.search@2', 'context.catalog@1', 'context.read@1', 'context.search@1', 'context.search@3', 'context.semanticSearch@3', 'appearance.read@1', 'appearance.updatePlan@1', 'canvasControl.nodesPlan@2', 'groups.list@1', 'connections.graph@1', 'connections.targets@1', 'annotations.list@1', 'clipboard.state@1', 'entity.deletePlan@1', 'canvasControl.groupsPlan@1', 'canvasControl.connectionsPlan@1', 'content.replacePlan@2'],
       providesCapabilities: ['canvasControl.agentQuery@1', 'canvasControl.agentRead@1', 'canvasControl.agentPlan@1', 'canvasControl.agentPlan@2', 'canvasControl.bindContent@1', 'canvasControl.context@1', 'canvasControl.context@2', 'canvasControl.context@3', 'canvasControl.localPlan@1', 'canvasControl.localPlan@2', 'canvasControl.taskState@1', 'canvasControl.receipt@1', 'canvasControl.searchPlan@1', 'canvasControl.prepareCompound@1', 'canvasControl.completeCompound@1'],
-      commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.native@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.applyItems@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.revisePending@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
+      commands: ['canvasControl.open@1', 'canvasControl.close@1', 'canvasControl.scope@1', 'canvasControl.execution@1', 'canvasControl.offer@1', 'canvasControl.workspacePreview@1', 'canvasControl.native@1', 'canvasControl.generate@1', 'canvasControl.apply@1', 'canvasControl.applyItems@1', 'canvasControl.commit@1', 'canvasControl.dismiss@1', 'canvasControl.revisePending@1', 'canvasControl.navigate@1', 'canvasControl.background.apply@1', 'canvasControl.background.dismiss@1'],
       dispatches: ['canvasControl.apply@1', 'canvasControl.commit@1', 'canvasControl.offer@1', 'canvasControl.generate@1', 'selection.set', 'selection.delete', 'canvas.focusSelection', 'palette.setPreferences', 'palette.applyAppearance',
         'clipboard.copy', 'clipboard.paste', 'annotation.create', 'annotation.update', 'annotation.delete', 'connection.toolbarToggle@1', 'connection.addJunctionForEdges@1', 'history.undo', 'history.redo',
-        'system.action.execute', 'canvas.zoomIn', 'canvas.zoomOut', 'canvas.resetZoom', 'selection.all', 'selection.clear', 'minimap.open', 'minimap.close', 'palette.applyPresetColors@1'],
-      queries: ['canvasControl.state@1'],
-      asks: ['history.state', 'system.actions'],
+        'system.action.execute', 'canvas.zoomIn', 'canvas.zoomOut', 'canvas.resetZoom', 'selection.all', 'selection.clear', 'minimap.open', 'minimap.close', 'palette.applyPresetColors@1', 'palette.applyPreset@1'],
+      queries: ['canvasControl.state@1', 'canvasControl.reviewReceipt@1'],
+      asks: ['history.state', 'system.actions', 'system.document.revision'],
       events: ['document.replaced', 'history.changed', 'canvas.appearance.changed', 'canvasControl.background.applied@1'], signals: [CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, 'canvasControl.updated@1', 'appearance.color.preview', OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2],
       ui: ['canvas-control.panel', 'canvas-control.toolbar'], actions: ['canvas-control.open-action'],
       shortcuts: ['canvas-control.open-shortcut'],
@@ -219,7 +231,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           const last = lastPlacementBySession.get(input.sessionId);
           const placement = last?.placement;
           if (last?.review.status === 'applied' && last.after && placement) {
-            const ids = [placement.nodeId, placement.anchorId];
+            const ids = [...placement.movingIds, placement.anchorId];
             const live = await readTaskMarkers(context, ids, signal);
             if (ids.every(id => live.markers[id] === last.after?.[id])) previous = { ...previous, lastPlacement: placement };
           }
@@ -231,7 +243,7 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
             trace('completed', { step: 'targets', matched: result.focus.length, reason: 'model-plan' });
             return { handled: false as const, sourceIds: result.focus };
           }
-        } else if (operation.kind === 'theme' || operation.kind === 'background') {
+        } else if (operation.kind === 'theme' || operation.kind === 'preset' || operation.kind === 'background') {
           result = { plan: { version: 1, actions: [] }, setting: operation };
         } else if (operation.kind === 'arrange-followup' && pendingArrangement?.arrangement) {
           const last = pendingArrangement.arrangement;
@@ -547,6 +559,57 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
         } else rememberReceipt(input, message, 'applied');
         return { result: { message }, ...(needsReview ? { transaction: showControl() } : {}) };
       } });
+      context.queries.register({
+        type: 'canvasControl.reviewReceipt@1', validate: isPlanId,
+        handle: async ({ id }: { id: string }) => {
+          const draft = reviews.get(id);
+          if (!draft) return undefined;
+          return { status: await readControlReviewStatus(context, draft), createdIds: draft.createdIds ?? [],
+            created: draft.created ?? {}, verification: draft.review.verification, error: draft.review.error };
+        },
+      });
+      context.commands.register<WorkspaceCanvasPreview, { reviewId: string; message: string }>({
+        type: 'canvasControl.workspacePreview@1',
+        validate: (input): input is WorkspaceCanvasPreview => isRecord(input) && isRecord(input.plan) &&
+          Object.keys(input).every(key => ['plan', 'expectedRevision', 'sourceIds'].includes(key)) &&
+          typeof input.expectedRevision === 'number' && Number.isSafeInteger(input.expectedRevision) &&
+          (input.sourceIds === undefined || Array.isArray(input.sourceIds) && input.sourceIds.length <= 80 &&
+            input.sourceIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 200)),
+        handle: async ({ plan: rawPlan, expectedRevision, sourceIds = [] }) => {
+          const revision = await context.queries.ask<{ revision: number }>('system.document.revision');
+          if (revision.revision !== expectedRevision) throw new Error('工作区操作计划引用的书籍修订已过期');
+          const plan = parseCanvasControlPlan(JSON.stringify(rawPlan));
+          if (!plan.actions.length) throw new Error('工作区操作计划没有文档修改');
+          const refs = new Set(plan.actions.flatMap(action => 'ref' in action ? [action.ref] : []));
+          const targetIds = new Set<string>(sourceIds);
+          for (const action of plan.actions) {
+            if ('id' in action) targetIds.add(action.id);
+            if ('ids' in action) action.ids.forEach(id => targetIds.add(id));
+            if ('members' in action) action.members?.forEach(id => { if (!refs.has(id)) targetIds.add(id); });
+            if ('from' in action && action.from && !refs.has(action.from)) targetIds.add(action.from);
+            if ('to' in action && action.to && !refs.has(action.to)) targetIds.add(action.to);
+          }
+          const catalogs = await context.capabilities.requestAll<{ entities: Array<{ id: string }> }>('selection.entities@1');
+          const visibleIds = new Set(catalogs.flatMap(catalog => catalog.entities.map(entity => entity.id)));
+          if ([...targetIds].some(id => !visibleIds.has(id))) throw new Error('工作区计划只能引用公开画布对象');
+          const input = {
+            preparationId: createId('workspace-document'), sessionId: 'local-workspace',
+            prompt: '先预览本地工作区操作', sourceIds: [...targetIds],
+          };
+          const snapshot = await captureControlSnapshot(context, input, 'selection', undefined, undefined, true);
+          snapshot.execution = 'review';
+          validateControlScope(plan, snapshot);
+          snapshots.set(input.preparationId, snapshot);
+          try {
+            const result = await context.commands.invoke('canvasControl.offer@1', { ...input, text: JSON.stringify(plan), complete: true });
+            const id = existingReceipt(input)?.reviewId;
+            if (!id) throw new Error('工作区文档操作没有可用的预览');
+            return { result: { reviewId: id, message: result.message } };
+          } finally {
+            snapshots.delete(input.preparationId);
+          }
+        },
+      });
       context.commands.register({ type: 'canvasControl.offer@1', validate: (input): input is CanvasControlOffer => isAdmission(input) && typeof (input as CanvasControlOffer).text === 'string' && typeof (input as CanvasControlOffer).complete === 'boolean', handle: async input => {
         const disposition = canvasRequestDisposition(input.prompt);
         if (disposition === 'read-only') throw new Error('本轮只查看画布，不能提交修改计划。');
@@ -570,6 +633,11 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           if (local.focus && local.selectionMode) await context.commands.invoke('selection.set', { ids: local.focus, mode: local.selectionMode });
           else if (local.focus) focus(local.focus);
           if (local.navigation) { openSurface(); publish(); }
+          if (local.setting?.kind === 'preset') {
+            const id = local.setting.id;
+            await context.commands.invoke('palette.applyPreset@1', { id });
+            return { result: rememberReceipt(input, `已切换为${PALETTE_PRESET_LABELS[id]}主题，完整配色已应用。`, 'applied') };
+          }
           if (local.setting?.kind === 'theme') {
             await context.commands.invoke('palette.setPreferences', { themeId: local.setting.theme });
             return { result: rememberReceipt(input, `已切换为${local.setting.theme === 'dark' ? '深色' : '浅色'}主题。`, 'applied') };
@@ -836,7 +904,9 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       context.events.subscribe('canvas.appearance.changed', () => { if (background) clearBackground(); });
       context.ui.contribute({ id: 'canvas-control.panel', slot: 'overlay.floating', kind: 'view', label: '画布控制', component: panel });
       context.ui.contribute({ id: 'canvas-control.toolbar', slot: 'top.primary', kind: 'view', label: '画布控制', group: 'assist', priority: 80, component: toolbar });
-      context.ui.action({ id: 'canvas-control.open-action', label: '画布控制', command: 'canvasControl.open@1', category: 'AI', keywords: ['操作', '节点', '群组', '连线', '控制'], priority: 40 });
+      context.ui.action({ id: 'canvas-control.open-action', label: '画布控制', command: 'canvasControl.open@1', category: 'AI', keywords: ['操作', '节点', '群组', '连线', '控制'], priority: 40,
+        localTool: { version: 1, effect: 'workspace', resultMode: 'returned', inputSchema: { type: 'null' } },
+      });
       context.ui.shortcut({ id: 'canvas-control.open-shortcut', label: '画布控制', command: 'canvasControl.open@1', category: 'AI' });
     },
   };
@@ -892,8 +962,8 @@ function selectReviewItems(original: StoredControlReview, items: number[]): Stor
   if (actions.some(action => ('members' in action && action.members?.some(id => removedRefs.has(id))) ||
     ('from' in action && action.from && removedRefs.has(action.from)) ||
     ('to' in action && action.to && removedRefs.has(action.to)))) throw new Error('选中项依赖未选中的新对象，请一并勾选。');
-  const placement = original.placement && actions.some(action => action.type === 'update-node' && action.id === original.placement?.nodeId &&
-    (action.x !== undefined || action.y !== undefined)) ? original.placement : undefined;
+  const placement = original.placement?.movingIds.every(id => actions.some(action => action.type === 'update-node' && action.id === id &&
+    (action.x !== undefined || action.y !== undefined))) ? original.placement : undefined;
   if (placement || actions.some(action => action.type !== 'update-node' && action.type !== 'create-node')) {
     return { ...original, placement, review: { ...review, actions } };
   }

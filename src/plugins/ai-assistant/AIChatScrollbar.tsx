@@ -32,7 +32,7 @@ function sameMetrics(left: AIChatScrollMetrics, right: AIChatScrollMetrics): boo
     && Math.abs(left.thumbTop - right.thumbTop) < 0.5;
 }
 
-export function scrollAIChatToLatest(feed: HTMLDivElement): void {
+function scrollAIChatToLatest(feed: HTMLDivElement): void {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   feed.scrollTo({
     top: Math.max(0, feed.scrollHeight - feed.clientHeight),

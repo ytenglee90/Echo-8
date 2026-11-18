@@ -15,6 +15,7 @@ import type {
   CanvasViewportSize,
   CanvasZoomRequest,
   FocusRequest,
+  SetCanvasViewport,
 } from '../../protocols/canvas.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { SelectionCatalogContribution, SelectionSnapshot } from '../../protocols/selection.ts';
@@ -42,6 +43,8 @@ export const canvasPlugin: PluginDefinition = {
     sessionOnlyWorkspace: { [VIEW_NAMESPACE]: true },
     requiresCapabilities: ['content.summaries@1', 'content.catalog@2', 'content.metrics@2'],
     optionalCapabilities: [
+      'content.summariesById@1',
+      'content.canvasSummariesById@1',
       'canvas.overview@1',
       'selection.read@1',
       'selection.resolve@1',
@@ -73,6 +76,7 @@ export const canvasPlugin: PluginDefinition = {
       'canvas.tool.hand',
       'canvas.focusSelection',
       'canvas.focusEntity',
+      'canvas.viewport.set@1',
       'canvas.zoomIn',
       'canvas.zoomOut',
       'canvas.resetZoom',
@@ -95,7 +99,7 @@ export const canvasPlugin: PluginDefinition = {
       'clipboard.duplicateSelectionAt',
       'content.materializeCopy',
     ],
-    events: ['canvas.appearance.changed', 'history.changed', 'document.replaced'],
+    events: ['canvas.appearance.changed', 'canvas.viewport.settled', 'history.changed', 'document.replaced'],
     signals: [
       'canvas.drag.preview',
       'canvas.snap.preview',
@@ -158,6 +162,10 @@ export const canvasPlugin: PluginDefinition = {
     context.events.subscribe('canvas.appearance.changed', invalidateAppearance);
     context.events.subscribe('history.changed', invalidateAppearance);
     context.events.subscribe('document.replaced', invalidateAppearance);
+    context.events.subscribe<CameraState>('canvas.viewport.settled', ({ payload }) => {
+      liveCamera = payload;
+      context.signals.emit('canvas.camera.preview', payload);
+    });
 
     context.signals.subscribe<CameraState>('canvas.camera.preview', (message) => {
       if (isCameraState(message.payload)) liveCamera = message.payload;
@@ -296,6 +304,41 @@ export const canvasPlugin: PluginDefinition = {
           bounds: { x: entity.x, y: entity.y, width: entity.width, height: entity.height },
         } satisfies FocusRequest);
         return { result: true };
+      },
+    });
+
+    context.commands.register<SetCanvasViewport, CameraState>({
+      type: 'canvas.viewport.set@1',
+      validate: (input): input is SetCanvasViewport => isRecord(input) && Object.keys(input).length > 0 &&
+        Object.keys(input).every(key => ['zoom', 'entityId', 'center', 'pan'].includes(key)) &&
+        (input.zoom === undefined || typeof input.zoom === 'number' && input.zoom >= MIN_ZOOM && input.zoom <= MAX_ZOOM) &&
+        (input.entityId === undefined || typeof input.entityId === 'string' && input.entityId.length > 0 && input.center === undefined) &&
+        (input.center === undefined || isFinitePoint(input.center)) && (input.pan === undefined || isFinitePoint(input.pan)),
+      handle: async (input) => {
+        if (!viewportSize) throw new Error('画布视图尚未完成布局');
+        const viewport = viewportSize;
+        const current = liveCamera ?? readCamera();
+        let center = input.center ?? viewportCenterInWorld(current, viewport);
+        if (input.entityId) {
+          const id = input.entityId;
+          const [node] = await context.capabilities.request<ContentSummary[]>('content.canvasSummariesById@1', { nodeIds: [id] });
+          const bounds = node ?? (await context.capabilities.requestAll<SelectionCatalogContribution>('selection.entities@1'))
+            .flatMap(item => item.entities).find(entity => entity.id === id)?.bounds;
+          if (!bounds) throw new Error('未找到可聚焦的画布对象');
+          center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+        }
+        const zoom = input.zoom ?? current.zoom;
+        const next = {
+          x: viewport.width / 2 - center.x * zoom + (input.pan?.x ?? 0),
+          y: viewport.height / 2 - center.y * zoom + (input.pan?.y ?? 0),
+          zoom,
+        };
+        if (!isCameraState(next)) throw new Error('视口坐标超出可用范围');
+        return { result: next, transaction: {
+          label: '调整画布视口', history: false,
+          patches: [{ op: 'set', domain: 'workspace', namespace: VIEW_NAMESPACE, key: 'camera', value: next }],
+          events: [{ type: 'canvas.viewport.settled', payload: next }],
+        } };
       },
     });
 
@@ -523,6 +566,10 @@ function isAppearanceUpdate(value: unknown): value is AppearanceUpdateRequest {
       typeof entity.id === 'string' &&
       Number.isInteger(entity.revision) &&
       typeof entity.expectedColor === 'string');
+}
+
+function isFinitePoint(value: unknown): value is { x: number; y: number } {
+  return isRecord(value) && Number.isFinite(value.x) && Number.isFinite(value.y);
 }
 
 function isCameraState(value: unknown): value is CameraState {

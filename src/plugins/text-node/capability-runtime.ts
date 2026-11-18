@@ -324,6 +324,16 @@ export function registerTextNodeCapabilities(runtime: TextNodeCapabilityRuntime)
       },
     });
 
+    context.capabilities.provide<ContentSummariesRequest, ContentSummary[]>({
+      key: 'content.canvasSummariesById@1',
+      invoke: input => {
+        if (!input || !Array.isArray(input.nodeIds) || input.nodeIds.length > 100 ||
+            input.nodeIds.some(id => typeof id !== 'string' || id.length > 200)) {
+          throw new Error('画布正文字段的查询范围无效');
+        }
+        return readSummaries(input.nodeIds);
+      },
+    });
     context.capabilities.provide<undefined, SelectionCatalogContribution>({
       key: 'selection.entities@1',
       invoke: () => ({
@@ -1488,10 +1498,11 @@ export function registerTextNodeCapabilities(runtime: TextNodeCapabilityRuntime)
       invoke: (input) => createReplacePlan(input, true),
     });
 
-    context.capabilities.provide<undefined, ContentStatistics>({
-      key: 'content.statistics@1',
-      invoke: async (_input, signal) => {
-        const nodes = Object.values(readNodes()).filter(isCanvasTextNode);
+    const readStatistics = async (nodeIds?: string[], signal?: AbortSignal): Promise<ContentStatistics> => {
+        const allNodes = Object.values(readNodes()).filter(isCanvasTextNode);
+        const selected = nodeIds && new Set(nodeIds);
+        const nodes = selected ? allNodes.filter(node => selected.has(node.id)) : allNodes;
+        if (selected && nodes.length !== selected.size) throw new Error('统计范围包含已失效的画布节点');
         const result: ContentStatistics = {
           nodeCount: nodes.length,
           utf16Units: 0,
@@ -1518,9 +1529,21 @@ export function registerTextNodeCapabilities(runtime: TextNodeCapabilityRuntime)
           result.lines += counts.lines;
           result.revisions[node.id] = content.revision;
         }
-        const liveContentIds = new Set(nodes.map((node) => node.contentId));
+        const liveContentIds = new Set(allNodes.map((node) => node.contentId));
         for (const id of statisticsCache.keys()) if (!liveContentIds.has(id)) statisticsCache.delete(id);
         return result;
+    };
+    context.capabilities.provide<undefined, ContentStatistics>({
+      key: 'content.statistics@1',
+      invoke: (_input, signal) => readStatistics(undefined, signal),
+    });
+    context.capabilities.provide<{ nodeIds: string[] }, ContentStatistics>({
+      key: 'content.statistics@2',
+      invoke: (input, signal) => {
+        if (!input || !Array.isArray(input.nodeIds) || input.nodeIds.length > 100 || input.nodeIds.some(id => typeof id !== 'string')) {
+          throw new Error('统计范围无效');
+        }
+        return readStatistics(input.nodeIds, signal);
       },
     });
 

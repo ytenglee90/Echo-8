@@ -1,7 +1,7 @@
 import type { CanvasControlAction, CanvasControlPlan } from '../protocols/canvas-control.ts';
 
-export const CANVAS_CONTROL_MAX_ACTIONS = 100;
-export const CANVAS_CONTROL_MAX_TEXT = 100_000;
+const CANVAS_CONTROL_MAX_ACTIONS = 100;
+const CANVAS_CONTROL_MAX_TEXT = 100_000;
 export const CANVAS_CONTROL_MAX_OBJECTS = 80;
 const FIELDS: Record<CanvasControlAction['type'], readonly string[]> = {
   'create-node': ['type', 'ref', 'title', 'text', 'x', 'y', 'width', 'height', 'color', 'presentation'],

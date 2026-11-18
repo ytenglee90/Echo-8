@@ -2,8 +2,11 @@ import { createId, isRecord, type PluginContext, type TaskHandle } from '../../c
 import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import {
   isAssistantPreferences, preferencePhrase, type AssistantPreferenceAccount, type AssistantPreferenceAction,
-  type AssistantPreferenceEntry, type AssistantPreferenceSnapshot, type AssistantPreferenceState, type AssistantPreferences,
+  type AssistantPreferenceEntry, type AssistantPreferenceSnapshot, type AssistantPreferenceState, type AssistantPreferences, type AssistantInstruction,
 } from '../../protocols/assistant-preferences.ts';
+import type { WorkspaceActionIndex } from '../../protocols/workspace-actions.ts';
+import { assistantInstructionCatalog, preferenceActionLabel, preferenceInstruction } from '../../services/assistant-instructions.ts';
+import type { CanvasControlTaskState } from '../../protocols/canvas-control.ts';
 import { canvasRequestDisposition, naturalCanvasOperation } from '../../services/ai-task-route.ts';
 import { isLocalDiscussion } from './local-instruction-parser.ts';
 import { isAbortError } from './runtime-errors.ts';
@@ -12,7 +15,9 @@ import { AI_UI_NAMESPACE } from './assistant-workspace.ts';
 export const PERSONAL_PREFERENCES_CHANGED = 'ai.personal.changed@1';
 const PANEL = 'ai.personal.settings';
 
-export const PREFERENCE_ACTION_LABELS: Record<AssistantPreferenceAction, string> = { group: '给选中节点编组', horizontal: '横排选中节点', vertical: '竖排选中节点' };
+export const PREFERENCE_ACTION_LABELS: Record<string, string> = { group: '给选中节点编组', horizontal: '横排选中节点', vertical: '竖排选中节点' };
+export const isPreferenceCandidate = (entry: AssistantPreferenceEntry) => entry.kind === 'phrase' ? entry.status === 'candidate' :
+  entry.origin === 'feedback' && !entry.enabled;
 const instructions: Record<AssistantPreferenceAction, string> = {
   group: '把选中的节点分组', horizontal: '把选中节点横排', vertical: '把选中节点垂直排列',
 };
@@ -29,9 +34,18 @@ export function registerPersonalPreferences(context: PluginContext, panel?: unkn
   let task: TaskHandle<AssistantPreferenceSnapshot> | undefined;
   let scopeRequest = 0;
   let stopped = false;
+  let instructionCatalog: AssistantInstruction[] | undefined;
+  const readInstructions = async () => {
+    const index = await context.queries.ask<WorkspaceActionIndex>('workspace.actions@1');
+    const instructions = assistantInstructionCatalog(index);
+    if (!stopped) instructionCatalog = instructions;
+    return { version: 1 as const, instructions };
+  };
+  let lastGap: { gap: number; count: number } | undefined;
+  const observed = new Set<string>();
   const show = () => context.signals.emit(PERSONAL_PREFERENCES_CHANGED, state);
   const sameAccount = (a?: AssistantPreferenceAccount, b?: AssistantPreferenceAccount) =>
-    a?.userId === b?.userId && a?.installationId === b?.installationId && a?.available === b?.available;
+    a?.userId === b?.userId && a?.installationId === b?.installationId && a?.available === b?.available && a?.extended === b?.extended;
 
   function schedule(account: AssistantPreferenceAccount, write?: { expectedRevision: number; preferences: AssistantPreferences }) {
     task?.cancel();
@@ -39,7 +53,7 @@ export function registerPersonalPreferences(context: PluginContext, panel?: unkn
     const current = context.tasks.schedule<AssistantPreferenceSnapshot>({
       category: 'ai-account-preferences', label: write ? '保存 AI 个人偏好' : '读取 AI 个人偏好',
       priority: 12, timeoutMs: 20_000, estimatedCost: 1,
-      run: signal => context.capabilities.request<AssistantPreferenceSnapshot>('account.assistantPreferences@1', { account, write }, signal),
+      run: signal => context.capabilities.request<AssistantPreferenceSnapshot>(account.extended ? 'account.assistantPreferences@2' : 'account.assistantPreferences@1', { account, write }, signal),
     });
     task = current;
     show();
@@ -65,18 +79,24 @@ export function registerPersonalPreferences(context: PluginContext, panel?: unkn
       task?.cancel();
       task = undefined;
       state = { account, busy: false };
+      lastGap = undefined;
+      observed.clear();
       show();
     } else if (account?.bookId !== state.account?.bookId) {
       state = { ...state, account };
+      lastGap = undefined;
+      observed.clear();
       show();
     }
     if (account?.available && !state.busy && (force || !state.snapshot && !state.error)) schedule(account);
   }
 
   context.queries.register({ type: 'ai.personal.state@1', handle: () => state });
+  context.queries.register({ type: 'ai.instructions@1', handle: readInstructions });
   context.commands.register({ type: 'ai.personal.open@1', handle: () => {
     context.ui.activateSurface('right.primary', PANEL, 'ai.personal.close@1');
     void refresh(true);
+    void readInstructions().catch(error => context.diagnostics.warn('指令目录暂不可用', error));
     return { transaction: { label: '打开个人用语与偏好', history: false,
       patches: [{ op: 'set', domain: 'workspace', namespace: AI_UI_NAMESPACE, key: 'personalPreferencesOpen', value: true }],
       events: [{ type: UI_SURFACE_REVEALED_EVENT, payload: uiSurfaceRevealed('right.primary', 'ai-assistant', PANEL) }] } };
@@ -96,6 +116,7 @@ export function registerPersonalPreferences(context: PluginContext, panel?: unkn
       if (!state.account?.available || !sameAccount(value.account, state.account) || state.snapshot?.revision !== value.expectedRevision || state.busy) {
         throw new Error('账户设置正在更新或已有变化，请重新载入后再试');
       }
+      if (!value.preferences.learning) lastGap = undefined;
       schedule(state.account, { expectedRevision: value.expectedRevision, preferences: value.preferences });
       return { result: undefined };
     },
@@ -106,18 +127,42 @@ export function registerPersonalPreferences(context: PluginContext, panel?: unkn
       const current = state.snapshot?.preferences;
       if (!current) throw new Error('请先载入账户偏好');
       const selected = ids && new Set(ids);
-      const entries = current.entries.filter(entry => (!selected || selected.has(entry.id)) && (entry.kind === 'gap' || entry.status === 'active'));
+      const entries = current.entries.filter(entry => (!selected || selected.has(entry.id)) && !isPreferenceCandidate(entry));
       return { result: { text: JSON.stringify({ ...current, entries }, null, 2) } };
     },
   });
-  if (panel) context.ui.contribute({ id: PANEL, slot: 'right.primary', kind: 'view', label: '个人用语与偏好', component: panel,
-    settings: { version: 1, label: 'AI 偏好', icon: 'sparkles', order: 46, openCommand: 'ai.personal.open@1' }, priority: 80 });
+  if (panel) context.ui.contribute({ id: PANEL, slot: 'right.primary', kind: 'view', label: '指令与偏好', component: panel,
+    settings: { version: 1, label: '指令与偏好', icon: 'sparkles', order: 46, openCommand: 'ai.personal.open@1' }, priority: 80 });
   context.signals.subscribe('cloudSync.updated', () => { void refresh(); });
   context.resources.track('other', () => { stopped = true; scopeRequest++; task?.cancel(); task = undefined; });
   void refresh();
 
   return {
-    plan(prompt: string, _sessionId: string, previousPrompt?: string): PersonalTurn | undefined {
+    async observeApplied(prompt: string, sessionId: string, preparationId: string, reviewId?: string): Promise<void> {
+      const { account, snapshot } = state;
+      const prefs = snapshot?.preferences;
+      if (!account?.available || !snapshot || !prefs?.learning || state.busy || observed.has(preparationId) ||
+        prefs.entries.length >= 300 || prefs.entries.some(entry => entry.kind === 'gap' && (entry.layout ?? 'horizontal') === 'horizontal' && entry.bookId === account.bookId)) return;
+      const operation = naturalCanvasOperation(prompt);
+      if (operation?.kind !== 'arrange' || operation.layout !== 'horizontal' || operation.gap === undefined ||
+        !Number.isInteger(operation.gap) || operation.gap < 0 || operation.gap > 2_000) return;
+      if (reviewId) {
+        const taskState = await context.capabilities.request<CanvasControlTaskState>('canvasControl.taskState@1', { sessionId });
+        if (!taskState.plans.some(plan => plan.id === reviewId && plan.status === 'applied' &&
+          plan.verification?.status === 'verified' && plan.actionCount >= 2)) return;
+      }
+      if (stopped || state.account !== account || state.snapshot !== snapshot || state.busy || observed.has(preparationId)) return;
+      observed.add(preparationId);
+      if (observed.size > 40) observed.delete(observed.values().next().value!);
+      const gap = operation.gap;
+      lastGap = { gap, count: lastGap?.gap === gap ? lastGap.count + 1 : 1 };
+      if (lastGap.count < 3) return;
+      lastGap = undefined;
+      const entry: AssistantPreferenceEntry = { id: createId('ai-gap'), kind: 'gap', gap, enabled: false, origin: 'feedback', bookId: account.bookId };
+      await context.commands.dispatch('ai.personal.update@1', { account, expectedRevision: snapshot.revision,
+        preferences: { ...prefs, entries: putPreferenceEntry(prefs.entries, entry) } });
+    },
+    async plan(prompt: string, _sessionId: string, previousPrompt?: string): Promise<PersonalTurn | undefined> {
       const { account, snapshot } = state;
       const prefs = snapshot?.preferences;
       const gap = /^(?:以后|今后)\s*(?:(本书|这本书)\s*)?横排(?:时)?(?:的)?默认间距(?:设为|用|为|是)?\s*(\d{1,4})(?:\s*(?:px|像素))?[。！!]?$/u.exec(prompt.trim());
@@ -160,7 +205,11 @@ export function registerPersonalPreferences(context: PluginContext, panel?: unkn
           ...(entries ? { update: { account, expectedRevision: snapshot.revision, preferences: { ...prefs, entries } } } : {}),
         };
       }
-      return prefs?.enabled ? resolvePreference(prompt, prefs, account?.bookId) : undefined;
+      if (prefs?.enabled && prefs.entries.some(entry => entry.kind === 'phrase' && preferencePhrase(entry.phrase) === preferencePhrase(prompt))) {
+        await readInstructions().catch(() => { instructionCatalog = []; });
+        if (stopped || state.account !== account || state.snapshot !== snapshot) return undefined;
+      }
+      return prefs?.enabled ? resolvePreference(prompt, prefs, account?.bookId, instructionCatalog) : undefined;
     },
   };
 }
@@ -171,12 +220,12 @@ function readPreferenceFeedback(prompt: string): { phrase: string; action: Assis
   const action: AssistantPreferenceAction | undefined = /^(?:把|将|给)?(?:当前)?(?:选中(?:的)?节点)?(?:编组|分组|编成一组|归成一组)$/u.test(match[2]!)
     ? 'group' : /^(?:把|将)?(?:选中(?:的)?节点)?(?:横排|横向排列)$/u.test(match[2]!) ? 'horizontal'
     : /^(?:把|将)?(?:选中(?:的)?节点)?(?:竖排|垂直排列)$/u.test(match[2]!) ? 'vertical' : undefined;
-  return action && { phrase: match[1]!, action, longTerm: /^(?:以后|今后)/u.test(prompt.trim()) };
+  return action ? { phrase: match[1]!, action, longTerm: /^(?:以后|今后)/u.test(prompt.trim()) } : undefined;
 }
 
 export function putPreferenceEntry(entries: AssistantPreferenceEntry[], entry: AssistantPreferenceEntry): AssistantPreferenceEntry[] {
   const index = entries.findIndex(existing => existing.id === entry.id || existing.bookId === entry.bookId &&
-    (existing.kind === 'gap' && entry.kind === 'gap' || existing.kind === 'phrase' && entry.kind === 'phrase' &&
+    (existing.kind === 'gap' && entry.kind === 'gap' && (existing.layout ?? 'horizontal') === (entry.layout ?? 'horizontal') || existing.kind === 'phrase' && entry.kind === 'phrase' &&
       existing.status === entry.status && preferencePhrase(existing.phrase) === preferencePhrase(entry.phrase)));
   if (index === -1) return [...entries, entry];
   return entries.map((existing, position) => position === index ? { ...entry, id: existing.id,
@@ -184,7 +233,7 @@ export function putPreferenceEntry(entries: AssistantPreferenceEntry[], entry: A
       ? { evidence: Math.min(100, existing.evidence + 1) } : {}) } : existing);
 }
 
-export function resolvePreference(prompt: string, prefs: AssistantPreferences, bookId?: string): PersonalTurn | undefined {
+export function resolvePreference(prompt: string, prefs: AssistantPreferences, bookId?: string, catalog?: readonly AssistantInstruction[]): PersonalTurn | undefined {
   if (!prefs.enabled || canvasRequestDisposition(prompt) === 'read-only' || isLocalDiscussion(prompt)) return undefined;
   const parsed = naturalCanvasOperation(prompt);
   const available = prefs.entries.filter(entry => entry.enabled && (!entry.bookId || entry.bookId === bookId));
@@ -192,11 +241,15 @@ export function resolvePreference(prompt: string, prefs: AssistantPreferences, b
   if (!parsed) {
     const phrase = scopedFirst(available.filter(entry => entry.kind === 'phrase' && entry.status === 'active' &&
       preferencePhrase(entry.phrase) === preferencePhrase(prompt)));
-    if (phrase?.kind === 'phrase') return { instruction: instructions[phrase.action] };
+    if (phrase?.kind === 'phrase') {
+      const defaultGap = scopedFirst(available.filter(entry => entry.kind === 'gap' && (entry.layout ?? 'horizontal') === phrase.action));
+      const instruction = preferenceInstruction(phrase.action, phrase.gap ?? (defaultGap?.kind === 'gap' ? defaultGap.gap : undefined), catalog);
+      return instruction ? { instruction } : { reply: `个人用语对应的「${preferenceActionLabel(phrase.action)}」当前不可用，请在指令与偏好中检查。` };
+    }
   }
-  if (parsed?.kind === 'arrange' && parsed.gap === undefined && parsed.layout === 'horizontal' &&
+  if (parsed?.kind === 'arrange' && parsed.gap === undefined &&
       !parsed.exclude?.length && !/间距|间隔/u.test(prompt)) {
-    const gap = scopedFirst(available.filter(entry => entry.kind === 'gap'));
+    const gap = scopedFirst(available.filter(entry => entry.kind === 'gap' && (entry.layout ?? 'horizontal') === parsed.layout));
     const instruction = prompt.trim().replace(/[。！!]+$/gu, '') + `，间距 ${gap?.gap}`;
     if (gap?.kind === 'gap' && naturalCanvasOperation(instruction)?.kind === 'arrange') {
       return { instruction, expectedSelectionCount: parsed.expectedCount };

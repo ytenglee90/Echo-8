@@ -5,6 +5,7 @@ import { readControlOwners, type ControlSnapshot } from './context.ts';
 import type { NativeCanvasAction } from './native-actions.ts';
 import type { AnnotationRecord } from '../../protocols/annotations.ts';
 import type { ControlArrangement } from './natural-operations.ts';
+import type { ControlRelativePlacement } from './relative-placement.ts';
 
 export interface StoredControlReview {
   review: CanvasControlReview;
@@ -16,7 +17,7 @@ export interface StoredControlReview {
   created?: Record<string, string>;
   before?: Record<string, string>;
   after?: Record<string, string>;
-  placement?: import('../../protocols/canvas-agent.ts').CanvasRelativePlacement;
+  placement?: ControlRelativePlacement;
 }
 function nodeMarker(node: ContentSummary): string {
   return JSON.stringify([node.revision, node.nodeRevision, node.title, node.x, node.y, node.width, node.height, node.titleColor, node.presentation, node.length]);

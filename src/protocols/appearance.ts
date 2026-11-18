@@ -129,10 +129,13 @@ export interface PalettePreferencesPatch {
 }
 
 export type PalettePresetId = 'bright' | 'dark' | 'eye-care';
+export const PALETTE_PRESET_LABELS: Readonly<Record<PalettePresetId, string>> = { bright: '明调', dark: '暗调', 'eye-care': '护眼' };
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'palette.selectionColor.openFor@1': CommandContract<{ ids: string[] }, { opened: true }>;
     'palette.applyPresetColors@1': CommandContract<{ id: PalettePresetId }, PalettePreferences>;
+    'palette.applyPreset@1': CommandContract<{ id: PalettePresetId }, PalettePreferences>;
     'palette.setPreferences': CommandContract<PalettePreferencesPatch, PalettePreferences>;
     'palette.resetAppearance': CommandContract<undefined, { changed: number }>;
   }

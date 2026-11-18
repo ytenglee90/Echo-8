@@ -22,7 +22,7 @@ export interface TextContentChunkRecord {
   text: string;
 }
 
-export function chunkText(text: string): string[] {
+function chunkText(text: string): string[] {
   if (!text) return [''];
   const chunks: string[] = [];
   for (let offset = 0; offset < text.length; offset += CHUNK_SIZE) {
@@ -328,7 +328,7 @@ export function readRangeWithReader(
   return result;
 }
 
-export function locateOffsetByLengths(lengths: number[], offset: number): { index: number; offset: number } {
+function locateOffsetByLengths(lengths: number[], offset: number): { index: number; offset: number } {
   let cursor = 0;
   for (let index = 0; index < lengths.length; index += 1) {
     const end = cursor + lengths[index];

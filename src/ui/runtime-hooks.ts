@@ -101,18 +101,6 @@ export function useContentCatalog(client: ViewClient, options?: { geometryOnly?:
   return { summaries, byId, geometryById, unavailable };
 }
 
-export function applyCatalogDelta(
-  current: readonly ContentSummary[],
-  delta: ContentCatalogDelta,
-): ContentSummary[] {
-  if (delta.reset) return delta.summaries;
-  if (delta.summaries.length === 0 && delta.removedIds.length === 0) return current as ContentSummary[];
-  const byId = new Map(current.map((summary) => [summary.id, summary]));
-  for (const id of delta.removedIds) byId.delete(id);
-  for (const summary of delta.summaries) byId.set(summary.id, summary);
-  return [...byId.values()];
-}
-
 export function mergeContentCatalogDeltas(
   current: ReadonlyMap<string, ContentSummary>,
   deltas: readonly ContentCatalogDelta[],

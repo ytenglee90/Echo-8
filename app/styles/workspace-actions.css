@@ -1,0 +1,8 @@
+.workspace-actions-body { padding: 16px; display: grid; gap: 12px; }
+.workspace-actions-body label { display: grid; gap: 6px; font-size: 13px; }
+.workspace-actions-body input, .workspace-actions-body textarea { width: 100%; border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); padding: 8px; color: var(--text); background: var(--panel); }
+.workspace-actions-body textarea, .workspace-actions-body code, .workspace-actions-body pre { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.workspace-actions-body pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
+.workspace-actions-catalog { max-height: 360px; overflow: auto; display: grid; gap: 8px; margin-top: 8px; }
+.workspace-actions-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.workspace-action-receipt { border-top: 1px solid var(--border); padding: 10px 0; }

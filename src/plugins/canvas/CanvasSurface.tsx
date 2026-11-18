@@ -68,7 +68,7 @@ import { canvasContrastVariables } from '../../ui/canvas-contrast.ts';
 import { SpatialHashIndex } from '../../services/spatial-index.ts';
 import { useCommandAvailability, useContentCatalog } from '../../ui/runtime-hooks.ts';
 import { useConnectionTargets } from '../../ui/use-connection-targets.ts';
-import { CanvasEntityLayerProvider } from '../../ui/canvas-entity-layer-runtime.tsx';
+import { CanvasEntityLayerProvider, type CanvasEntityCharacterCount } from '../../ui/canvas-entity-layer-runtime.tsx';
 import { canvasNodeDetail } from '../../services/canvas-lod.ts';
 import { isSupportedDocumentFile } from '../../services/document-files.ts';
 import {
@@ -88,7 +88,6 @@ import {
   updateConnectionSession,
   type ConnectionSession,
   type LassoSession,
-  type NodeCharacterCount,
   type ResizePreview,
   type SurfaceSize,
 } from './surface-geometry.ts';
@@ -210,7 +209,7 @@ export function CanvasSurface({
   const [connectionTargetId, setConnectionTargetId] = useState<string>();
   const [nodeDragActive, setNodeDragActive] = useState(false);
   const [dragOriginPreview, setDragOriginPreview] = useState<NodePosition[]>([]);
-  const [nodeCharacterCounts, setNodeCharacterCounts] = useState<ReadonlyMap<string, NodeCharacterCount>>(
+  const [nodeCharacterCounts, setNodeCharacterCounts] = useState<ReadonlyMap<string, CanvasEntityCharacterCount>>(
     () => new Map(),
   );
   const drag = useRef<DragSession | undefined>(undefined);

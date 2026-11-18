@@ -1,19 +1,23 @@
 import { isRecord } from '../core/contracts.ts';
 
 export const ASSISTANT_PREFERENCE_ACTIONS = ['group', 'horizontal', 'vertical'] as const;
-export type AssistantPreferenceAction = typeof ASSISTANT_PREFERENCE_ACTIONS[number];
+export type AssistantPreferenceAction = string;
+export interface AssistantInstruction {
+  id: string; action: string; label: string; category: string; example?: string; requirement: string;
+  available: boolean; customizable: boolean; gap?: boolean;
+}
 interface PreferenceBase { id: string; enabled: boolean; bookId?: string; origin?: 'manual' | 'explicit' | 'feedback' }
 export type AssistantPreferenceEntry = PreferenceBase & (
-  | { kind: 'phrase'; phrase: string; action: AssistantPreferenceAction; status: 'active' | 'candidate'; evidence: number }
-  | { kind: 'gap'; gap: number }
+  | { kind: 'phrase'; phrase: string; action: AssistantPreferenceAction; gap?: number; status: 'active' | 'candidate'; evidence: number }
+  | { kind: 'gap'; gap: number; layout?: 'horizontal' | 'vertical' | 'grid' }
 );
 export interface AssistantPreferences {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   enabled: boolean;
   learning: boolean;
   entries: AssistantPreferenceEntry[];
 }
-export interface AssistantPreferenceAccount { userId: string; installationId?: string; bookId?: string; available: boolean }
+export interface AssistantPreferenceAccount { userId: string; installationId?: string; bookId?: string; available: boolean; extended?: boolean }
 export interface AssistantPreferenceSnapshot { revision: number; preferences: AssistantPreferences }
 export interface AssistantPreferenceState {
   account?: AssistantPreferenceAccount;
@@ -24,9 +28,11 @@ export interface AssistantPreferenceState {
 
 export const emptyAssistantPreferences = (): AssistantPreferences => ({ schemaVersion: 1, enabled: true, learning: false, entries: [] });
 export const preferencePhrase = (phrase: string) => phrase.normalize('NFKC').trim().replace(/[。！!]+$/gu, '').toLocaleLowerCase('zh-CN');
+export const upgradeAssistantPreferences = (value: AssistantPreferences): AssistantPreferences => ({ ...value, schemaVersion: 2,
+  entries: value.entries.map(entry => ({ ...entry })) });
 
 export function isAssistantPreferences(value: unknown): value is AssistantPreferences {
-  if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.enabled !== 'boolean' || typeof value.learning !== 'boolean' ||
+  if (!isRecord(value) || ![1, 2].includes(Number(value.schemaVersion)) || typeof value.schemaVersion !== 'number' || typeof value.enabled !== 'boolean' || typeof value.learning !== 'boolean' ||
     !Array.isArray(value.entries) || value.entries.length > 300) return false;
   const ids = new Set<string>();
   const keys = new Set<string>();
@@ -38,14 +44,17 @@ export function isAssistantPreferences(value: unknown): value is AssistantPrefer
     const scope = entry.bookId ?? '';
     let key: string;
     if (entry.kind === 'phrase' && typeof entry.phrase === 'string' && preferencePhrase(entry.phrase) && entry.phrase.length <= 80 &&
-      !/[\r\n]/u.test(entry.phrase) && ASSISTANT_PREFERENCE_ACTIONS.includes(entry.action as AssistantPreferenceAction) &&
+      !/[\r\n]/u.test(entry.phrase) && typeof entry.action === 'string' &&
+      (value.schemaVersion === 1 ? (ASSISTANT_PREFERENCE_ACTIONS as readonly string[]).includes(entry.action) : /^[a-z][a-z0-9.:-]{0,199}$/u.test(entry.action)) &&
+      (entry.gap === undefined || value.schemaVersion === 2 && Number.isInteger(entry.gap) && Number(entry.gap) >= 0 && Number(entry.gap) <= 2000) &&
       (entry.status === 'active' || entry.status === 'candidate') && typeof entry.evidence === 'number' &&
       Number.isInteger(entry.evidence) && entry.evidence >= 1 && entry.evidence <= 100) {
-      if (Object.keys(entry).some(field => !['id', 'enabled', 'bookId', 'origin', 'kind', 'phrase', 'action', 'status', 'evidence'].includes(field))) return false;
+      if (Object.keys(entry).some(field => !['id', 'enabled', 'bookId', 'origin', 'kind', 'phrase', 'action', 'status', 'evidence', ...(value.schemaVersion === 2 ? ['gap'] : [])].includes(field))) return false;
       key = JSON.stringify([scope, entry.kind, preferencePhrase(entry.phrase), entry.status]);
     } else if (entry.kind === 'gap' && typeof entry.gap === 'number' && Number.isInteger(entry.gap) && entry.gap >= 0 && entry.gap <= 2_000) {
-      if (Object.keys(entry).some(field => !['id', 'enabled', 'bookId', 'origin', 'kind', 'gap'].includes(field))) return false;
-      key = JSON.stringify([scope, entry.kind]);
+      if (entry.layout !== undefined && (value.schemaVersion !== 2 || !['horizontal', 'vertical', 'grid'].includes(String(entry.layout)))) return false;
+      if (Object.keys(entry).some(field => !['id', 'enabled', 'bookId', 'origin', 'kind', 'gap', ...(value.schemaVersion === 2 ? ['layout'] : [])].includes(field))) return false;
+      key = JSON.stringify([scope, entry.kind, entry.layout ?? 'horizontal']);
     } else return false;
     if (keys.has(key)) return false;
     keys.add(key);
@@ -59,10 +68,15 @@ declare module './messages.ts' {
       account: AssistantPreferenceAccount;
       write?: { expectedRevision: number; preferences: AssistantPreferences };
     }, AssistantPreferenceSnapshot>;
+    'account.assistantPreferences@2': MessageContract<{
+      account: AssistantPreferenceAccount;
+      write?: { expectedRevision: number; preferences: AssistantPreferences };
+    }, AssistantPreferenceSnapshot>;
   }
   interface ApplicationQueryMap {
     'account.assistantPreferenceScope@1': MessageContract<undefined, AssistantPreferenceAccount | undefined>;
     'ai.personal.state@1': MessageContract<undefined, AssistantPreferenceState>;
+    'ai.instructions@1': MessageContract<undefined, { version: 1; instructions: AssistantInstruction[] }>;
   }
 }
 declare module './commands.ts' {

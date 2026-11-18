@@ -15,6 +15,7 @@ for (const [asset, file] of Object.entries(assets)) {
   const path = `${directory}/${file}`;
   const minimum = file.endsWith('.wasm') ? 5000000 : file.endsWith('.onnx') ? 10000000 : 100;
   if ((await stat(path).catch(() => ({ size: 0 }))).size > minimum) continue;
+  if (process.env.ECHO8_OFFLINE_TESTS === '1') throw Error(`Offline test asset missing: ${path}`);
   const section = policy.indexOf(`'${asset}': {`);
   const url = /url: '([^']+)'/u.exec(policy.slice(section))?.[1];
   if (section < 0 || !url) throw Error(`Pinned asset missing: ${asset}`);

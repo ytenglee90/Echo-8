@@ -1,5 +1,7 @@
 import type { CanvasControlPurpose } from '../protocols/canvas-control.ts';
 import { extendedCanvasOperation, naturalColor, naturalTargetFilter, NATURAL_QUOTED_NAME, type ExtendedCanvasOperation } from './natural-canvas-rules.ts';
+import { palettePresetIntent } from './palette-preset-intent.ts';
+import type { PalettePresetId } from '../protocols/appearance.ts';
 
 /** Deterministic, conservative hints. Ambiguous requests retain the full path. */
 export function canvasControlPurpose(prompt: string): CanvasControlPurpose {
@@ -67,6 +69,7 @@ export type NaturalCanvasOperation =
   | { kind: 'color'; names: string[]; color: string; members?: boolean }
   | { kind: 'background'; names: string[]; color: string }
   | { kind: 'theme'; names: string[]; theme: 'light' | 'dark' }
+  | { kind: 'preset'; names: string[]; id: PalettePresetId }
   | { kind: 'group' | 'group-add' | 'group-remove' | 'group-rename'; names: string[]; title?: string }
   | { kind: 'replace' | 'append'; names: string[]; text: string; old?: string; occurrence?: number | 'all' }
   | { kind: 'set-body'; names: string[]; text: string }
@@ -75,7 +78,7 @@ export type NaturalCanvasOperation =
   | { kind: 'move'; names: string[]; x?: number; y?: number }
   | { kind: 'arrange'; names: string[]; layout: 'horizontal' | 'vertical' | 'grid'; columns?: number; gap?: number; exclude?: string[]; expectedCount?: number }
   | { kind: 'arrange-followup'; names: []; columns?: number; gap?: number; group?: string }
-  | { kind: 'place-relative'; names: [string, string]; side: 'above' | 'below' | 'left' | 'right'; gap: number }
+  | { kind: 'place-relative'; names: string[]; side: 'above' | 'below' | 'left' | 'right'; gap: number }
   | { kind: 'placement-gap'; names: []; gap: number };
 
 const name = (value: string) => value.trim().replace(/^@\[([^\]]+)\](?:\([^)]+\))?$/u, '$1').replace(/^[「“"『]|[」”"』]$/gu, '').trim();
@@ -102,6 +105,7 @@ function ungroupTarget(value: string): NaturalCanvasOperation {
   return { kind: 'ungroup', names: targets, ...(targets.length > 1 ? { byMembers: true } : {}) };
 }
 const connectionOperand = `(${quotedName}|[^「」『』“”"，,？?\r\n]+?)`;
+const placementSubjects = String.raw`((?:(?:${quotedName})|[^「」『』“”"，,？?\r\n])+?)`;
 const connectionStyle = String.raw`(?:(?:[，,\s]*(?:使用|用)\s*|[，,\s]+)(实线|虚线))?`;
 const directedConnection = new RegExp(`^(?:把|将)?\\s*${connectionOperand}\\s*(?:连接到|连到|连向|连接至|接到)\\s*${connectionOperand}${connectionStyle}$`, 'u');
 const styledDirectedConnection = new RegExp(`^(?:把|将)?\\s*${connectionOperand}\\s*(实线|虚线)\\s*(?:连接到|连到|连向|连接至|接到)\\s*${connectionOperand}${connectionStyle}$`, 'u');
@@ -192,11 +196,12 @@ export function isCanvasRepeatCreation(prompt: string): boolean {
 
 function relativePlacement(command: string): Extract<NaturalCanvasOperation, { kind: 'place-relative' }> | undefined {
   const text = command.trim().replace(/[。！!]$/u, '');
-  const position = new RegExp(String.raw`^(?:把|将)?\s*${connectionOperand}\s*(?:(?:摆放|放置|排列|移动|挪动|摆|放|排|移|挪)(?:到|在)|排列杂)\s*${connectionOperand}\s*(上方|上面|下方|下面|左侧|左边|右侧|右边)(?:[，,、；;\s]*(?:中间\s*)?(?:间隔|间距(?:为)?|相隔|隔|留(?:出)?|空)\s*(\d+(?:\.\d+)?)[ \t]*(?:px|像素)?)?$`, 'iu');
+  const position = new RegExp(String.raw`^(?:把|将)?\s*${placementSubjects}\s*(?:(?:摆放|放置|排列|移动|挪动|摆|放|排|移|挪)(?:到|在)|排列杂)\s*${connectionOperand}\s*(上方|上面|下方|下面|左侧|左边|右侧|右边)(?:[，,、；;\s]*(?:中间\s*)?(?:间隔|间距(?:为)?|相隔|隔|留(?:出)?|空)\s*(\d+(?:\.\d+)?)[ \t]*(?:px|像素)?)?$`, 'iu');
   const match = position.exec(text);
   if (!match) return undefined;
   const anchor = match[2]!.trim();
-  const targets: [string, string] = [name(match[1]!), name(anchor === name(anchor) ? anchor.replace(/的$/u, '') : anchor)];
+  const subjects = names(match[1]!);
+  const targets = [...(subjects.length > 1 ? subjects : [name(match[1]!)]), name(anchor === name(anchor) ? anchor.replace(/的$/u, '') : anchor)];
   if (targets.some(target => !target || target.length > 120) || /^(?:如果|假如|假设|要是|不要|先别|别|如何|怎么|怎样|解释|分析)/u.test(targets[0])) return undefined;
   const gap = Number(match[4] ?? 60);
   if (!Number.isFinite(gap) || gap > 10_000) return undefined;
@@ -220,7 +225,7 @@ const draftTransfer = /^(?:(?:把|将)?\s*((?:上一(?:版|段|份|条(?:回答|
 const contentVerb = '(?:设计|创作|撰写|续写|写|填|生成|补充|完善)';
 const locationWord = '(?:里面|里边|里|内|中|上)';
 const namedCard = `(${quotedName}|角色|人物|[^，,。！？；;\r\n]{1,110}?(?:卡片?|节点|文本框))`;
-const locatedCanvasProse = new RegExp(String.raw`^(?:(?:在|往|向|给)\s*${connectionOperand}${locationWord}[，,\s]*|${connectionOperand}${locationWord}\s*[，,]\s*|${namedCard}${locationWord}\s*)${contentVerb}`, 'u');
+const locatedCanvasProse = new RegExp(String.raw`^(?:(?:在|往|向|给)\s*)?${connectionOperand}\s*${locationWord}[，,\s]*${contentVerb}`, 'u');
 const addressedCanvasProse = new RegExp(String.raw`^(?:给|为)\s*${namedCard}\s*${contentVerb}(?=\s*\S)`, 'u');
 const generateThenWrite = /^(?:设计|创作|撰写|写|生成|补充)[^。！？\r\n]+?(?:[，,；;]\s*(?:再|然后)?|然后|并且?)\s*((?:填入|填进|填到|写入|写进|写到|放进|放到).+)$/u;
 const quotedDestination = new RegExp(String.raw`^(${quotedName})(?:\s*(?:里面|里边|里|内|中|上))?$`, 'u');
@@ -270,10 +275,10 @@ export function canvasContentTarget(prompt: string): CanvasContentTarget | undef
   const text = canvasIntentText(prompt).trim().replace(/[。！!]$/u, '');
   if (/^(?:不要|先别|先不要|别|如果|假如|假设|要是|如何|怎么|怎样|能否)/u.test(text) || /[？?]$/u.test(text)) return undefined;
   const prose = text.replace(/^(?:先|再|继续|接着)\s*(?=在|给|为|往|向)/u, '');
-  const located = locatedCanvasProse.exec(prose);
-  const operand = located?.[1] ?? located?.[2] ?? located?.[3] ?? addressedCanvasProse.exec(prose)?.[1] ?? '';
+  const located = /^(?:把|将|让|总结|分析|检查|查看|查询|对比|比较|解释|查找|搜索)/u.test(prose) ? null : locatedCanvasProse.exec(prose);
+  const operand = located?.[1] ?? addressedCanvasProse.exec(prose)?.[1] ?? '';
   const target = name(operand);
-  if (target && !/^(?:当前)?(?:画布|全画布)$/u.test(target)) return target === operand.trim() ? namedContentTarget(target) : { names: [target] };
+  if (target && target.length <= 120 && !/^(?:(?:当前)?(?:画布|全画布)|这|那)$/u.test(target)) return target === operand.trim() ? namedContentTarget(target) : { names: [target] };
   const generation = generateThenWrite.exec(text);
   const destination = generation && canvasDraftDestination(generation[1]!, true);
   if (destination) return { ...destination, writeGeneratedText: true };
@@ -294,6 +299,8 @@ export function naturalCanvasOperation(prompt: string): NaturalCanvasOperation |
   let command = canvasIntentText(prompt);
   const disposition = canvasRequestDisposition(prompt);
   if (disposition === 'read-only') return undefined;
+  const preset = disposition === 'normal' && palettePresetIntent(command);
+  if (preset) return { kind: 'preset', names: [], id: preset };
   const protectedMove = preserveColor.exec(command);
   if (protectedMove) {
     const action = parseCanvasOperation(protectedMove[1]!);
@@ -336,6 +343,11 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
   const text = command.replace(/[。！？!?]$/u, '').trim();
   let match: RegExpExecArray | null;
   if (/^(?:如果|假如|假设|要是|先别|先不要|不要|别|不用|暂不|如何|怎么|怎样|解释|分析|总结|对比|比较)/u.test(text)) return undefined;
+  const spacing = /^(.*?)[，,\s]+(?:间距|间隔)\s*(?:为|设为)?\s*(\d{1,4})(?:\s*(?:px|像素))?$/iu.exec(text);
+  if (spacing && Number(spacing[2]) <= 2000) {
+    const base = parseCanvasOperation(spacing[1]!);
+    if (base?.kind === 'arrange') return { ...base, gap: Number(spacing[2]) };
+  }
   if ((match = /^(?:(?:不|说错了)[，,。\s]+)?(?:我说的是|我指的是|对象(?:改成|换成|是)|(?:改|换)成)\s*(.{1,120}?(?:群组|组))[，,；;\s]+(?:其他|其它|其余|排列方式和间距)(?:都)?(?:照旧|不变|保持不变)$/u.exec(text))) {
     const group = match[1]!.trim().replace(/([」』”"])\s*(?:群组|组)$/u, '$1');
     return { kind: 'arrange-followup', names: [], group: name(group) };

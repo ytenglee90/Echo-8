@@ -2,6 +2,7 @@ import type { PluginContext, RegisteredAction } from '../../core/contracts.ts';
 import { MAX_ANNOTATION_BODY_LENGTH, type AnnotationRecord, type AnnotationTarget } from '../../protocols/annotations.ts';
 import type { AIContextCatalogContribution } from '../../protocols/ai.ts';
 import type { AppearanceReadContribution } from '../../protocols/appearance.ts';
+import { PALETTE_PRESET_LABELS } from '../../protocols/appearance.ts';
 import type { CanvasControlNativeRequest } from '../../protocols/canvas-control.ts';
 import { isTitleConnection, type ConnectionGraphSnapshot } from '../../protocols/connections.ts';
 import type { GroupRecord } from '../../protocols/groups.ts';
@@ -52,8 +53,8 @@ export async function prepareNativeCanvasAction(context: PluginContext, input: C
     });
   }
   if (intent.kind === 'preset') return action('应用配色方案', async () => {
-    await context.commands.invoke('palette.applyPresetColors@1', { id: intent.id });
-    return '已应用配色方案。';
+    await context.commands.invoke('palette.applyPreset@1', { id: intent.id });
+    return `已切换为${PALETTE_PRESET_LABELS[intent.id]}主题，完整配色已应用。`;
   });
   if (intent.kind === 'undo' || intent.kind === 'redo') {
     const undo = intent.kind === 'undo';

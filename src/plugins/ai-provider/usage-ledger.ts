@@ -3,7 +3,7 @@ import type { AITaskUsageSnapshot, AIUsageAttempt, AIUsageTotals } from '../../p
 import { estimateAITokens } from '../../services/ai-token-estimate.ts';
 import { normalizeTokenUsage } from '../../services/ai-token-usage.ts';
 
-export const emptyUsageTotals = (): AIUsageTotals => ({ calls: 0, retries: 0, actualInput: 0, actualOutput: 0,
+const emptyUsageTotals = (): AIUsageTotals => ({ calls: 0, retries: 0, actualInput: 0, actualOutput: 0,
   estimatedInput: 0, estimatedOutput: 0, unknownInput: 0, unknownOutput: 0, pending: 0, reasoning: 0,
   cachedInput: 0, cacheMissInput: 0, inputBreakdown: {}, outputBreakdown: {} });
 

@@ -2,8 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
-import { IconButton } from '../../ui/Icon.tsx';
-import { Icon } from '../../ui/Icon.tsx';
+import { IconButton, Icon } from '../../ui/Icon.tsx';
 import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
 import {
   chooseNativePersonalAIBackup,

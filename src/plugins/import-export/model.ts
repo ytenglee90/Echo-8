@@ -4,18 +4,20 @@ import type {
   ContentMutationPlan,
   ContentSummary,
 } from '../../protocols/content.ts';
-import type {
-  DocumentRevisionSnapshot,
-  FileDirectoryTarget,
-  FileOperationStatus,
-  FileRuntimeState,
-  FileSaveTarget,
-  LibraryProjectOpenPayload,
-  ProjectOpenPayload,
-  ProjectSource,
-} from '../../protocols/files.ts';
 import type { CloudSyncState } from '../../cloud/contracts.ts';
-import { isEcho8ProjectFile, PROJECT_FILE_EXTENSION, PROJECT_RELATED_DIRECTORY_CAPABILITY } from '../../protocols/files.ts';
+import {
+  type DocumentRevisionSnapshot,
+  type FileDirectoryTarget,
+  type FileOperationStatus,
+  type FileRuntimeState,
+  type FileSaveTarget,
+  type LibraryProjectOpenPayload,
+  type ProjectOpenPayload,
+  type ProjectSource,
+  isEcho8ProjectFile,
+  PROJECT_FILE_EXTENSION,
+  PROJECT_RELATED_DIRECTORY_CAPABILITY,
+} from '../../protocols/files.ts';
 import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { PRODUCT_NAME } from '../../product.ts';
 import {
@@ -51,6 +53,8 @@ import {
   renameDestination,
   reserveTextFile,
   scheduleOperation,
+  cancelFileTask,
+  readFileTaskResult,
   textFilenameCandidate,
   writeProjectDestination,
   type CommitImportedDocumentsPayload,
@@ -102,11 +106,15 @@ export function createImportExportPlugin(
         'editor.activeNode@1',
       ],
       providesCapabilities: [
+        'file.operationResult@1',
         'file.state@1',
         'file.textExportState@1',
         PROJECT_RELATED_DIRECTORY_CAPABILITY,
       ],
       commands: [
+        'file.saveLocal@1',
+        'file.saveLocalCopy@1',
+        'file.cancelOperation@1',
         'file.openPanel',
         'file.closePanel',
         'file.saveProject',
@@ -415,26 +423,11 @@ export function createImportExportPlugin(
           return setOpen(false);
         },
       });
-      context.commands.register<SaveProjectPayload>({
-        type: 'file.saveProject',
-        validate: (payload): payload is SaveProjectPayload =>
-          payload === undefined ||
-          (isRecord(payload) &&
-            (payload.destination === undefined || isFileSaveTarget(payload.destination)) &&
-            (payload.mode === undefined || payload.mode === 'current' || payload.mode === 'copy')),
-        handle: async (payload = {}, envelope) => {
-          if (payload.mode !== 'copy' && payload.destination === undefined) {
-            const cloud = await saveActiveCloudProject(envelope);
-            if (cloud) return { result: cloud };
-            if (!projectDestination) {
-              const created = await saveNewCloudProject(envelope);
-              if (created) return { result: created };
-            }
-          }
-          // "保存" means update the opened book when a native handle exists;
-          // only an unbound/downloaded book needs a first save-location choice.
-          const destination = payload.destination ?? projectDestination ?? await chooseNativeProjectSave();
-          return {
+      const saveLocalProject = async (payload: SaveProjectPayload = {}) => {
+        // "保存" means update the opened book when a native handle exists;
+        // only an unbound/downloaded book needs a first save-location choice.
+        const destination = payload.destination ?? (payload.mode === 'copy' ? undefined : projectDestination) ?? await chooseNativeProjectSave();
+        return {
           result: scheduleOperation(context, 'project-save', '正在整理书籍文件', async (signal) => {
             await nextTaskTurn();
             // Project export already reads one immutable source snapshot. Do not
@@ -460,7 +453,7 @@ export function createImportExportPlugin(
               lastProjectSavedRevision = source.document.revision;
               saveLocationRequired = false;
             }
-            if(destination)void context.commands.dispatch('system.persistence.confirmBackup',{documentRevision:source.document.revision}).catch(()=>undefined);
+            if (destination) void context.commands.dispatch('system.persistence.confirmBackup', { documentRevision: source.document.revision }).catch(() => undefined);
             context.signals.emit('file.save-state.changed', fileState());
             return `${payload.mode === 'copy' ? '本地副本已另存' : '书籍已保存'}（${formatBytes(bytes)}）`;
           }, (task) => {
@@ -468,7 +461,41 @@ export function createImportExportPlugin(
             activeTask = task;
           }),
         };
+      };
+      context.commands.register<SaveProjectPayload>({
+        type: 'file.saveProject',
+        validate: (payload): payload is SaveProjectPayload =>
+          payload === undefined ||
+          (isRecord(payload) &&
+            (payload.destination === undefined || isFileSaveTarget(payload.destination)) &&
+            (payload.mode === undefined || payload.mode === 'current' || payload.mode === 'copy')),
+        handle: async (payload = {}, envelope) => {
+          if (payload.mode !== 'copy' && payload.destination === undefined) {
+            const cloud = await saveActiveCloudProject(envelope);
+            if (cloud) return { result: cloud };
+            if (!projectDestination) {
+              const created = await saveNewCloudProject(envelope);
+              if (created) return { result: created };
+            }
+          }
+          return saveLocalProject(payload);
         },
+      });
+      context.commands.register({
+        type: 'file.saveLocal@1',
+        validate: (payload): payload is undefined => payload === undefined,
+        handle: () => saveLocalProject(),
+      });
+      context.commands.register({
+        type: 'file.saveLocalCopy@1',
+        handle: async () => ({
+          result: await context.commands.invoke('file.saveProject', { mode: 'copy' }) as { taskId: string },
+        }),
+      });
+      context.commands.register({ type: 'file.cancelOperation@1',
+        validate: (input): input is { taskId: string } => isRecord(input) && Object.keys(input).length === 1 &&
+          typeof input.taskId === 'string' && input.taskId.length > 0 && input.taskId.length <= 200,
+        handle: ({ taskId }) => ({ result: { requested: cancelFileTask(context, taskId) } }),
       });
 
       context.commands.register({
@@ -1140,6 +1167,10 @@ export function createImportExportPlugin(
         scheduleAutomaticOutputs,
       );
       context.capabilities.provide({ key: 'file.state@1', invoke: fileState });
+      context.capabilities.provide({ key: 'file.operationResult@1', invoke: input => {
+        if (!isRecord(input) || typeof input.taskId !== 'string') throw new Error('文件任务编号无效');
+        return readFileTaskResult(context, input.taskId);
+      } });
       context.capabilities.provide<undefined, FileDirectoryTarget | undefined>({
         key: PROJECT_RELATED_DIRECTORY_CAPABILITY,
         invoke: () => chooseNativeDirectoryNearProject(projectDestination),
@@ -1234,6 +1265,7 @@ export function createImportExportPlugin(
       });
       context.ui.action({
         id: 'file.save-action',
+        localTool: { version: 2, command: 'file.saveLocal@1', effect: 'file', resultMode: 'waiting', inputSchema: { type: 'null' } },
         label: '保存书籍',
         command: 'file.saveProject',
         category: '文件',

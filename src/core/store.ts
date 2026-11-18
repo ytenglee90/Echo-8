@@ -7,14 +7,6 @@ import {
 
 const emptyDomain = (): DomainSnapshot => ({ revision: 0, namespaces: {} });
 
-export function createEmptySnapshot(): StoreSnapshot {
-  return {
-    formatVersion: 1,
-    document: emptyDomain(),
-    workspace: emptyDomain(),
-  };
-}
-
 export interface SnapshotAsyncOptions {
   /**
    * Store records are immutable after admission. A mandatory persistence
@@ -367,7 +359,7 @@ function now(): number {
   return globalThis.performance?.now?.() ?? Date.now();
 }
 
-export function validateDomainSnapshot(snapshot: DomainSnapshot): void {
+function validateDomainSnapshot(snapshot: DomainSnapshot): void {
   if (!snapshot || !Number.isInteger(snapshot.revision) || snapshot.revision < 0 ||
     typeof snapshot.namespaces !== 'object' || snapshot.namespaces === null || Array.isArray(snapshot.namespaces)) {
     throw new Error('Invalid document snapshot');

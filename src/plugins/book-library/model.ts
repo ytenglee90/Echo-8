@@ -26,6 +26,7 @@ export function createBookLibraryPlugin(homeView?: unknown): PluginDefinition {
         'system.document.new',
       ],
       events: ['document.replaced'],
+      queries: ['bookLibrary.state@1'],
       signals: ['bookLibrary.updated', 'cloudSync.updated', 'file.status'],
       asks: ['cloudSync.state', 'cloudSync.projects'],
       ui: ['book-library.home'],
@@ -41,6 +42,7 @@ export function createBookLibraryPlugin(homeView?: unknown): PluginDefinition {
 
     start(context) {
       open = true;
+      context.queries.register({ type: 'bookLibrary.state@1', handle: () => ({ open }) });
       const setOpen = (next: boolean) => {
         open = next;
         context.signals.emit('bookLibrary.updated', { open });

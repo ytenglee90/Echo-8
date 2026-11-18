@@ -172,6 +172,12 @@ export interface ActionContribution {
   category: string;
   keywords?: string[];
   priority?: number;
+  /** Versioned, owner-opted local automation. The owning command validates its payload. */
+  localTool?: {
+    effect: 'query' | 'workspace' | 'document' | 'file';
+    inputSchema: Record<string, unknown>;
+    resultMode: 'returned' | 'waiting';
+  } & ({ version: 1 } | { version: 2; command: string });
 }
 
 export interface ShortcutOverride {

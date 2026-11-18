@@ -84,7 +84,7 @@ export function normalizePromptTemplateCatalog(
   return { activeTemplateId, templates };
 }
 
-export function isPromptTemplateRecord(value: unknown): value is AIPromptTemplateRecord {
+function isPromptTemplateRecord(value: unknown): value is AIPromptTemplateRecord {
   return isRecord(value) &&
     typeof value.id === 'string' && value.id.length > 0 && value.id.length <= MAX_TEMPLATE_ID_LENGTH &&
     typeof value.name === 'string' && value.name.length > 0 && value.name.length <= MAX_TEMPLATE_NAME_LENGTH &&

@@ -44,14 +44,57 @@ async function account(browser: Browser, workerVersion = 6) {
 const interval = (page: Page) => page.getByRole('combobox', { name: '自动保存当前目标的间隔' });
 const retention = (page: Page) => page.getByRole('combobox', { name: '恢复副本自动保留数量' });
 
+test('extended instruction aliases and per-layout defaults persist, preview and execute through the normal owner', async ({ browser }, info) => {
+  const a = await account(browser, 9);
+  try {
+    const page = await a.device();
+    await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '指令与偏好', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'AI 指令与偏好', exact: true });
+    await panel.getByRole('tab', { name: '我的用语', exact: true }).click();
+    await panel.getByRole('button', { name: '添加条目', exact: true }).click();
+    const form = panel.getByRole('form', { name: '添加条目' });
+    await expect.poll(() => form.getByRole('combobox', { name: '对应动作' }).locator('option').count()).toBeGreaterThan(20);
+    await form.getByRole('combobox', { name: '动作类别' }).selectOption('排版');
+    await form.getByRole('combobox', { name: '对应动作' }).selectOption('vertical');
+    await form.getByRole('spinbutton', { name: '本用语的间距（可选）' }).fill('120');
+    await form.getByRole('textbox', { name: '个人用语' }).fill('往下摆松些');
+    await expect(form.getByRole('status')).toContainText('把选中节点垂直排列，间距 120');
+    await panel.screenshot({ path: info.outputPath('personal-alias-preview.png') });
+    await form.getByRole('button', { name: '添加', exact: true }).click();
+    const read = () => JSON.parse(String(a.assistant()?.body_json));
+    await expect.poll(() => read()).toMatchObject({ schemaVersion: 2, entries: [{ kind: 'phrase', action: 'vertical', gap: 120 }] });
+    await panel.getByRole('tab', { name: '默认偏好', exact: true }).click();
+    await panel.getByRole('button', { name: '添加条目', exact: true }).click();
+    await form.getByRole('combobox', { name: '排列方式' }).selectOption('grid');
+    await form.getByRole('spinbutton', { name: '默认间距' }).fill('90');
+    await form.getByRole('button', { name: '添加', exact: true }).click();
+    await expect.poll(() => read().entries).toHaveLength(2);
+    await panel.getByRole('button', { name: '关闭指令与偏好' }).click();
+    await command(page, '全选画布节点');
+    await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('往下摆松些');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 2 项操作');
+    const second = await a.device();
+    await second.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '指令与偏好', exact: true }).click();
+    const restored = second.getByRole('region', { name: 'AI 指令与偏好', exact: true });
+    await restored.getByRole('tab', { name: '我的用语', exact: true }).click();
+    await expect(restored).toContainText('往下摆松些');
+    await restored.getByRole('tab', { name: '默认偏好', exact: true }).click();
+    await expect(restored).toContainText('网格默认间距 90');
+  } finally { await a.close(); }
+});
+
 test('assistant preferences keep switches compact and open a responsive form on demand', async ({ browser }, info) => {
   const a = await account(browser, 8);
   try {
     const page = await a.device();
     const center = page.getByRole('region', { name: '设置中心', exact: true });
     const nav = center.getByRole('navigation', { name: '设置分类' });
-    const panel = center.getByRole('region', { name: 'AI 个人用语与偏好', exact: true });
-    await nav.getByRole('button', { name: 'AI 偏好', exact: true }).click();
+    const panel = center.getByRole('region', { name: 'AI 指令与偏好', exact: true });
+    await nav.getByRole('button', { name: '指令与偏好', exact: true }).click();
+    await panel.getByRole('tab', { name: '我的用语', exact: true }).click();
     const learning = panel.getByRole('switch', { name: '从反馈学习' });
     await expect(learning).toBeEnabled();
     const label = await panel.getByText('从反馈学习', { exact: true }).boundingBox();
@@ -60,7 +103,7 @@ test('assistant preferences keep switches compact and open a responsive form on 
     expect(toggle!.height).toBeLessThanOrEqual(22);
     expect(toggle!.x).toBeGreaterThan(label!.x + label!.width);
     await expect(panel.getByRole('form')).toHaveCount(0);
-    await expect(panel.getByText('还没有条目', { exact: true })).toBeVisible();
+    await expect(panel.getByText('尚未添加个人用语', { exact: true })).toBeVisible();
     await center.screenshot({ path: info.outputPath('ai-preferences-empty.png') });
 
     await panel.getByRole('button', { name: '添加条目', exact: true }).click();
@@ -77,14 +120,15 @@ test('assistant preferences keep switches compact and open a responsive form on 
     await nav.getByRole('button', { name: '外观', exact: true }).click();
     await center.getByRole('button', { name: /^B 暗调/u }).click();
     await page.setViewportSize({ width: 390, height: 844 });
-    await nav.getByRole('button', { name: 'AI 偏好', exact: true }).click();
+    await nav.getByRole('button', { name: '指令与偏好', exact: true }).click();
+    await panel.getByRole('tab', { name: '我的用语', exact: true }).click();
     await expect(entry).toBeVisible();
     await panel.getByRole('button', { name: '编辑', exact: true }).click();
     const edit = panel.getByRole('form', { name: '编辑条目' });
     await expect(edit.getByRole('textbox', { name: '个人用语' })).toBeFocused();
-    const kind = await edit.getByRole('combobox', { name: '条目类型' }).boundingBox();
+    const kind = await edit.getByRole('combobox', { name: '动作类别' }).boundingBox();
     const scope = await edit.getByRole('combobox', { name: '适用范围' }).boundingBox();
-    expect(scope!.y).toBeGreaterThan(kind!.y + kind!.height);
+    expect(kind!.y).toBeGreaterThan(scope!.y + scope!.height);
     expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     await center.screenshot({ path: info.outputPath('ai-preferences-narrow-dark.png') });
     await edit.getByRole('button', { name: '取消', exact: true }).click();
@@ -96,8 +140,9 @@ test('assistant phrases are learned from a correction, confirmed in settings, an
   const a = await account(browser, 8);
   try {
     const openPreferences = async (page: Page) => {
-      await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: 'AI 偏好', exact: true }).click();
-      const panel = page.getByRole('region', { name: 'AI 个人用语与偏好', exact: true });
+      await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '指令与偏好', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'AI 指令与偏好', exact: true });
+      await panel.getByRole('tab', { name: '我的用语', exact: true }).click();
       await expect(panel.getByRole('switch', { name: '从反馈学习' })).toBeEnabled();
       return panel;
     };
@@ -106,7 +151,7 @@ test('assistant phrases are learned from a correction, confirmed in settings, an
     await panel.getByRole('switch', { name: '从反馈学习' }).click();
     await expect(panel.getByRole('switch', { name: '从反馈学习' })).toHaveAttribute('aria-checked', 'true');
     await expect.poll(() => JSON.parse(String(a.assistant()?.body_json)).learning).toBe(true);
-    await panel.getByRole('button', { name: '关闭个人用语与偏好' }).click();
+    await panel.getByRole('button', { name: '关闭指令与偏好' }).click();
     await first.getByRole('button', { name: /^打开 AI 助手/u }).click();
     const assistant = first.getByRole('region', { name: 'AI 助手', exact: true });
     await assistant.locator('.ai-composer textarea').fill('收一下');
@@ -126,7 +171,7 @@ test('assistant phrases are learned from a correction, confirmed in settings, an
     const download = second.waitForEvent('download');
     await restored.getByRole('button', { name: '导出全部', exact: true }).click();
     expect((await download).suggestedFilename()).toMatch(/\.json$/u);
-    await restored.getByRole('button', { name: '关闭个人用语与偏好' }).click();
+    await restored.getByRole('button', { name: '关闭指令与偏好' }).click();
     await command(second, '全选画布节点');
     await second.getByRole('button', { name: /^打开 AI 助手/u }).click();
     const restoredAssistant = second.getByRole('region', { name: 'AI 助手', exact: true });
@@ -145,6 +190,48 @@ async function keep(page: Page, value: string) {
   await page.getByRole('group', { name: '确认清理恢复副本' }).getByRole('button', { name: '确认更改', exact: true }).click();
   await expect(retention(page)).toHaveValue(value);
 }
+
+test('three verified horizontal arrangements suggest an account preference without enabling it', async ({ browser }) => {
+  const a = await account(browser, 8);
+  try {
+    const page = await a.device();
+    const panel = page.getByRole('region', { name: 'AI 指令与偏好', exact: true });
+    const open = async () => {
+      await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '指令与偏好', exact: true }).click();
+      await panel.getByRole('tab', { name: '默认偏好', exact: true }).click();
+    };
+    await open();
+    await panel.getByRole('switch', { name: '从反馈学习' }).click();
+    const read = () => JSON.parse(String(a.assistant()?.body_json));
+    await expect.poll(() => read().learning).toBe(true);
+    await panel.getByRole('button', { name: '关闭指令与偏好' }).click();
+    await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const input = ai.locator('.ai-composer textarea');
+    const send = async (prompt: string, responseCount: number) => {
+      await input.fill(prompt);
+      await input.press('Enter');
+      await expect(ai.getByLabel('本轮 Token 用量')).toHaveCount(responseCount);
+    };
+    await send('新建一张偏好甲，一张偏好乙', 1);
+    await expect(ai.getByRole('status')).toContainText('已直接完成 2 项操作');
+    for (let index = 1; index <= 3; index++) {
+      await send('把偏好甲和偏好乙横排，间距 80', index + 1);
+      const control = page.getByRole('region', { name: '画布控制', exact: true });
+      await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
+      await expect(ai.getByRole('status')).toContainText('已完成回读核对');
+      await control.getByRole('button', { name: '关闭画布控制' }).click();
+      if (index < 3) expect(read().entries).toEqual([]);
+    }
+    await expect.poll(() => read().entries).toMatchObject([{ kind: 'gap', gap: 80, enabled: false, origin: 'feedback' }]);
+    await command(page, '书籍与恢复设置');
+    await open();
+    const candidate = panel.getByRole('listitem').filter({ hasText: '横排默认间距 80' });
+    await expect(candidate).toContainText('待确认');
+    await candidate.getByRole('button', { name: '确认生效' }).click();
+    await expect.poll(() => read().entries).toMatchObject([{ kind: 'gap', gap: 80, enabled: true }]);
+  } finally { await a.close(); }
+});
 
 test('personal cadence and retention restore on fresh devices, including disabled and unlimited, without transferring recovery copies', async ({ browser }) => {
   test.setTimeout(90_000);

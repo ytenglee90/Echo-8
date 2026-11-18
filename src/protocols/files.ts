@@ -169,7 +169,10 @@ export interface PersistenceSnapshot {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'file.saveLocalCopy@1': CommandContract<undefined, { taskId: string }>;
+    'file.cancelOperation@1': CommandContract<{ taskId: string }, { requested: boolean }>;
     'system.document.new': CommandContract<undefined, { id: string }>;
+    'file.saveLocal@1': CommandContract<undefined, { taskId: string }>;
     'file.saveProjectAs': CommandContract<undefined, unknown>;
     'file.chooseOpenProject': CommandContract<undefined, ProjectOpenRequestResult>;
     'file.openProjectFromLibrary': CommandContract<LibraryProjectOpenPayload, { taskId: string }>;
@@ -180,6 +183,18 @@ declare module './commands.ts' {
     >;
     'system.persistence.checkpoint': CommandContract<{ label?: string } | undefined, RecoveryPointSummary>;
     'system.persistence.setAutosaveInterval': CommandContract<{ intervalMs: number }, PersistenceSnapshot>;
+  }
+}
+
+export interface LocalFileTaskResult {
+  taskId: string;
+  state: 'running' | 'ready' | 'error' | 'cancelled';
+  message?: string;
+}
+
+declare module './messages.ts' {
+  interface ApplicationCapabilityMap {
+    'file.operationResult@1': MessageContract<{ taskId: string }, LocalFileTaskResult | undefined>;
   }
 }
 

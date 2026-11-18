@@ -119,7 +119,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         'appearance.updatePlan@1',
         'appearance.colors@1',
         'appearance.resetPlan@1',
-        'selection.read@1',
+        'selection.read@1', 'selection.resolve@1',
         'editor.activeNode@1',
         'content.summaries@1',
         'selection.entities@1',
@@ -132,6 +132,7 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         'palette.close',
         'palette.setPreferences',
         'palette.applyPresetColors@1',
+        'palette.applyPreset@1',
         'palette.resetAppearance',
         'palette.applyAppearance',
         'palette.colorPicker.open',
@@ -140,7 +141,9 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         'palette.nodeTitlePicker.open',
         'palette.nodeTitlePicker.close',
         'palette.selectionColor.open',
+        'palette.selectionColor.openFor@1',
       ],
+      dispatches: ['palette.applyPresetColors@1', 'palette.setPreferences'],
       events: [
         'palette.preferences.changed',
         'selection.changed',
@@ -321,9 +324,9 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
         context.signals.emit('palette.nodeTitlePicker.changed', { open: true });
         return { result: { opened: true as const } };
       };
-      const openSelectionPicker = async () => {
+      const openSelectionPicker = async (entityIds?: string[]) => {
         const preferences = readPreferences();
-        const request = await resolveAppearanceScope(context, 'selection', preferences);
+        const request = await resolveAppearanceScope(context, 'selection', preferences, entityIds);
         if (request.selectedIds.length === 0) throw new Error('请先选择要修改颜色的对象');
         const contributions = await context.capabilities.requestAll<AppearanceReadContribution>(
           'appearance.read@1',
@@ -440,6 +443,15 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
           return { ...outcome, result: preset.preferences };
         },
       });
+      context.commands.register({ type: 'palette.applyPreset@1',
+        validate: (value): value is { id: import('../../protocols/appearance.ts').PalettePresetId } =>
+          isRecord(value) && PALETTE_PRESETS.some(preset => preset.id === value.id) && Object.keys(value).length === 1,
+        handle: async input => {
+          const preferences = await context.commands.invoke('palette.applyPresetColors@1', input);
+          await context.commands.invoke('palette.setPreferences', preferences);
+          return { result: preferences };
+        },
+      });
       context.commands.register<undefined, { changed: number }>({
         type: 'palette.resetAppearance',
         handle: async () => {
@@ -506,7 +518,16 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
       });
       context.commands.register({
         type: 'palette.selectionColor.open',
-        handle: openSelectionPicker,
+        handle: () => openSelectionPicker(),
+      });
+      context.commands.register({
+        type: 'palette.selectionColor.openFor@1',
+        validate: (input): input is { ids: string[] } =>
+          isRecord(input) && Object.keys(input).length === 1 && Array.isArray(input.ids) &&
+          input.ids.length > 0 && input.ids.length <= 5000 &&
+          input.ids.every(id => typeof id === 'string' && id.length > 0 && id.length <= 200) &&
+          new Set(input.ids).size === input.ids.length,
+        handle: input => openSelectionPicker(input.ids),
       });
       context.queries.register<undefined, ColorPickerState | undefined>({
         type: 'palette.colorPicker.state',
@@ -623,6 +644,10 @@ export function createPalettePlugin(panel?: unknown, colorPicker?: unknown): Plu
       });
       context.ui.action({
         id: 'palette.selection-color-action',
+        localTool: { version: 2, command: 'palette.selectionColor.openFor@1', effect: 'workspace', resultMode: 'returned',
+          inputSchema: { type: 'object', required: ['ids'], additionalProperties: false, properties: {
+            ids: { type: 'array', minItems: 1, maxItems: 5000, uniqueItems: true, items: { type: 'string' } },
+          } } },
         label: '修改选中项颜色',
         command: 'palette.selectionColor.open',
         category: '编辑',
@@ -657,22 +682,33 @@ async function resolveAppearanceScope(
   context: PluginContext,
   mode: AppearanceReadRequest['mode'],
   preferences: PalettePreferences,
+  entityIds?: string[],
 ): Promise<AppearanceReadRequest> {
   let selectedIds: string[] = [];
   let selectedItems: SelectionItem[] = [];
   let activeNodeId: string | undefined;
-  try {
-    const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+  if (entityIds) {
+    const selection = await context.capabilities.request<SelectionSnapshot>('selection.resolve@1', { ids: entityIds, mode: 'replace' });
+    if (selection.ids.length !== entityIds.length) {
+      throw new Error('指定调色的对象已经失效。');
+    }
     selectedIds = selection.ids;
     selectedItems = selection.items;
-  } catch {
-    // Selection is optional; canvas appearance remains available without it.
+  } else {
+    try {
+      const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+      selectedIds = selection.ids;
+      selectedItems = selection.items;
+    } catch {
+      // Selection is optional; canvas appearance remains available without it.
+    }
   }
   try {
     activeNodeId = await context.capabilities.request<string | undefined>('editor.activeNode@1');
   } catch {
     // Editor is optional; selected text nodes become the body-color scope.
   }
+  if (entityIds && activeNodeId && !selectedIds.includes(activeNodeId)) activeNodeId = undefined;
   return {
     mode,
     selectedIds,

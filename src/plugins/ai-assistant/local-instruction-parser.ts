@@ -4,11 +4,12 @@ import type { LocalIntentKind } from '../../services/local-intent-semantics.ts';
 
 const NUMBER = '[零一二两三四五六七八九十百\\d]+';
 const QUANTITY = new RegExp(`(${NUMBER})\\s*(张|个|份|块)\\s*(.+)`, 'u');
+const COUNT_DEMONSTRATIVE = new RegExp(`^(?:这|那)(?=${NUMBER}\\s*[张个份块])`, 'u');
 const QUOTED = new RegExp(NATURAL_QUOTED_NAME, 'gu');
 const strip = (text: string) => text.trim().replace(/^(?:(?:请你?|帮我|给我|麻烦你?|再|然后|接着)\s*)+/u, '').replace(/[。！!]+$/u, '').trim();
 const quote = (text: string) => `「${text}」`;
 const literal = (text: string) => text.trim().replace(/^[「『“"]|[」』”"]$/gu, '').trim();
-export const LOCAL_GROUP_CLAUSE = /^(.+?)(?:一起)?(?:分组|打组|打个组|成组|建组|(?:组成(?:一个)?|合成(?:一个)?)?群组|归到一块儿?|归到一起|归成一组|放到一组|放在同一组|合在一组|合成一组|编成一组|归在一组|分在一堆|收进一组)$/u;
+export const LOCAL_GROUP_CLAUSE = /^(.+?)(?:一起)?(?:分组|打(?:一|1)?个?组|成组|建组|(?:组成(?:一个)?|合成(?:一个)?)?群组|归到一块儿?|归到一起|归成一组|放到一组|放在同一组|合在一组|合成一组|编成一组|归在一组|分在一堆|收进一组)$/u;
 
 function localNumber(text: string): number | undefined {
   if (/^\d+$/u.test(text)) return Number(text);
@@ -90,7 +91,7 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
     const match = QUANTITY.exec(text);
     if (!match) return undefined;
     const count = localNumber(match[1]!);
-    if (!count || count > 80) return undefined;
+    if (!count || count > 400) return undefined;
     const named = /^(?:名为|叫做|叫)\s*|[「『“"]/u.test(match[3]!);
     let title = match[3]!.trim().replace(/^(?:(?:名为|叫做|叫)\s*)/u, '').replace(/(?:放)?(?:在这儿|在这里|放这里|就好|就行|吧)$/u, '').trim();
     const presentation = /文本框/u.test(title) ? '文本框' : '节点';
@@ -100,7 +101,7 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
       title = literal(quoted[1]!);
     } else title = title.replace(/的(?:卡片?|节点|文本框)$/u, '');
     if (!title || title.length > 100 || /[\r\n]/u.test(title) || !named && /(?:并|再)(?:写|填|设计|补)|正文|内容|写上|填上|带上/u.test(title) ||
-      !/[「『“"]/u.test(match[3]!) && /连接|连到|指向|打组|分组|改成|改为|用虚线/u.test(title)) return undefined;
+      !/[「『“"]/u.test(match[3]!) && /连接|连到|指向|打(?:一|1)?个?组|分组|改成|改为|用虚线/u.test(title)) return undefined;
     const requestedTitle = title;
     if (!named && /^(?:空白(?:的)?|空白(?:的)?(?:卡片?|节点)|卡片?|节点)$/u.test(title)) title = /空白/u.test(title) ? '空白' : '新节点';
     const titles: string[] = [];
@@ -119,7 +120,10 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
   // Existing exact grammars retain their own semantics and target boundaries.
   const exact = naturalCanvasOperation(text);
   const hasPluralAlias = [...context.aliases].some(([name, titles]) => titles.length > 1 && text.includes(name));
-  if (exact && exact.kind !== 'batch' && exact.kind !== 'content' && !hasPluralAlias) return [text];
+  const groupOperand = kind === 'group' ? LOCAL_GROUP_CLAUSE.exec(text)?.[1]?.trim().replace(/^(?:把|将|给|让)\s*/u, '').replace(COUNT_DEMONSTRATIVE, '') : undefined;
+  const refersToBatch = groupOperand && context.created.length &&
+    (QUANTITY.exec(groupOperand)?.index === 0 || context.aliases.has(groupOperand));
+  if (exact && exact.kind !== 'batch' && exact.kind !== 'content' && !hasPluralAlias && !refersToBatch) return [text];
   if (kind === 'color') {
     const match = /^(.*?)(#[a-f\d]{6}|墨绿|浅蓝|深蓝|暖灰|浅绿|深绿|浅灰|深灰|[黑白红蓝绿灰紫黄橙粉]色)(?:色)?(?:吧|一点)?$/iu.exec(text);
     const color = match && naturalColor(match[2]!);
@@ -150,9 +154,8 @@ export function compileLocalClause(raw: string, kind: LocalIntentKind, context: 
     const names = pair && operands(pair[1]!, context);
     if (names?.length === 2) return [`把${renderOperands(names)}连起来`];
   }
-  if (kind === 'group') {
-    const match = LOCAL_GROUP_CLAUSE.exec(text);
-    const names = match && operands(match[1]!, context);
+  if (groupOperand) {
+    const names = operands(groupOperand, context);
     if (names?.length) return [`${renderOperands(names)}分组`];
   }
   if (kind === 'ungroup') {

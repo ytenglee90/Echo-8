@@ -27,6 +27,7 @@ import { historyControlsPlugin } from './system/history-controls.ts';
 import { pluginCenterPlugin } from './system/plugin-center.ts';
 import { textNodePlugin } from './text-node/view-plugin.ts';
 import { textAssistPlugin } from './text-assist/view-plugin.ts';
+import { workspaceActionsPlugin } from './workspace-actions/plugin.ts';
 
 /** The only ordered list of built-in features. Deployments inject the semantic provider variant. */
 export function composeBuiltInPlugins(semanticProvider: PluginDefinition): PluginDefinition[] {
@@ -60,5 +61,6 @@ export function composeBuiltInPlugins(semanticProvider: PluginDefinition): Plugi
     retrievalSettingsPlugin,
     aiAssistantPlugin,
     canvasControlPlugin,
+    workspaceActionsPlugin,
   ];
 }

@@ -51,6 +51,7 @@ export function registerAIAssistantUI(
   });
   context.ui.action({
     id: 'ai.open-provider-settings-action',
+    localTool: { version: 1, effect: 'workspace', resultMode: 'returned', inputSchema: { type: 'null' } },
     label: '配置 AI 模型连接与密钥',
     command: 'ai.openProviderSettings',
     category: '设置',

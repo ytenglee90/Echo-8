@@ -1,4 +1,4 @@
-export const AI_MEMORY_PROTOCOL_VERSION = '1.3.0';
+const AI_MEMORY_PROTOCOL_VERSION = '1.3.0';
 export const PERSONAL_AI_MEMORY_DIRECTORY_KEY = 'ai-memory-directory@1';
 
 export const AI_MEMORY_DIRECTIVE_COMMANDS = [

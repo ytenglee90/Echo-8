@@ -297,9 +297,20 @@ function importSpecifiers(source: string): string[] {
 }
 
 function contributionCommands(source: string, kind: 'action' | 'shortcut'): string[] {
-  const pattern = new RegExp(
-    String.raw`context\.ui\.${kind}\(\{[\s\S]*?\bcommand:\s*'([^']+)'[\s\S]*?\}\);`,
-    'gu',
-  );
-  return [...source.matchAll(pattern)].map((match) => match[1]);
+  const file = ts.createSourceFile('contribution.ts', source, ts.ScriptTarget.Latest, true);
+  const commands: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && node.expression.getText(file) === `context.ui.${kind}`) {
+      const argument = node.arguments[0];
+      if (argument && ts.isObjectLiteralExpression(argument)) {
+        for (const property of argument.properties) {
+          if (ts.isPropertyAssignment(property) && property.name.getText(file) === 'command' &&
+            ts.isStringLiteralLike(property.initializer)) commands.push(property.initializer.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return commands;
 }

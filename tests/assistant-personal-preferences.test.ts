@@ -6,6 +6,30 @@ import { emptyAssistantPreferences, isAssistantPreferences, type AssistantPrefer
 import { resolvePreference } from '../src/plugins/ai-assistant/personal-preferences.ts';
 import { SQLiteD1 } from './helpers/d1.ts';
 
+test('v2 preferences migrate old settings and prevent legacy clients from deleting extended entries', async () => {
+  const db = new SQLiteD1();
+  const env = { DB: db, DATA_WORKER_VERSION: '9', STORAGE_MODE: 'd1', INSTALLATION_ID: 'prefs-v2', DATA_SIGNING_SECRET: 'preferences-v2-fixture', ALLOWED_ORIGIN: 'https://canvas.example' };
+  const token = await signDataToken({ sub: 'alice', aud: env.INSTALLATION_ID, installationId: env.INSTALLATION_ID, scope: ['projects:read', 'projects:write'] }, env.DATA_SIGNING_SECRET, 600);
+  const request = (version: 2 | 3, body?: unknown) => worker.fetch(new Request(`https://data.example/v${version}/assistant-preferences?account=alice`, {
+    method: body ? 'PUT' : 'GET', headers: { authorization: `Bearer ${token.token}`, 'content-type': 'application/json' },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  }), env);
+  const old = { ...emptyAssistantPreferences(), entries: [{ id: 'old', kind: 'gap', gap: 80, enabled: true }] };
+  assert.equal((await request(2, { expectedRevision: 0, preferences: old })).status, 200);
+  const migrated = await (await request(3)).json();
+  assert.deepEqual(migrated, { revision: 1, preferences: { ...old, schemaVersion: 2 } });
+  const preferences = { ...migrated.preferences, entries: [...old.entries,
+    { id: 'new', kind: 'phrase', phrase: '往下摆', action: 'vertical', gap: 120, enabled: true, status: 'active', evidence: 1 },
+    { id: 'vertical', kind: 'gap', layout: 'vertical', gap: 90, enabled: true }] };
+  assert.equal((await request(3, { expectedRevision: 1, preferences })).status, 200);
+  assert.deepEqual(await (await request(2)).json(), { revision: 2, preferences: old });
+  assert.equal((await request(2, { expectedRevision: 2, preferences: old })).status, 409);
+  assert.deepEqual(await (await request(3)).json(), { revision: 2, preferences });
+  assert.equal((await request(3, { expectedRevision: 2, preferences: { ...preferences, entries: [{ ...preferences.entries[1], gap: -1 }] } })).status, 400);
+  assert.deepEqual(await (await request(3)).json(), { revision: 2, preferences });
+  db.sqlite.close();
+});
+
 test('personal account settings survive reload, reject stale re-insertion, and stay under the signed identity', async () => {
   const db = new SQLiteD1();
   const env = { DB: db, DATA_WORKER_VERSION: '8', STORAGE_MODE: 'd1', INSTALLATION_ID: 'assistant-prefs-test',

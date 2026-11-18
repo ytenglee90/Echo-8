@@ -14,7 +14,7 @@ const operationFields: Partial<Record<NaturalCanvasOperation['kind'], readonly F
   color: ['color'], 'relative-color': ['color'], 'choose-color': ['color'],
   connect: ['links'], 'connect-many': ['links'], line: ['links'], relations: ['links'],
   group: ['groups'], 'group-add': ['groups'], 'group-remove': ['groups'], 'group-rename': ['groups'], ungroup: ['groups'],
-  presentation: ['presentation'], theme: ['settings'], background: ['settings'], 'choose-theme': ['settings'],
+  presentation: ['presentation'], theme: ['settings'], preset: ['settings'], background: ['settings'], 'choose-theme': ['settings'],
   rename: ['title'],
 };
 

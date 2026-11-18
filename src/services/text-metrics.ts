@@ -13,12 +13,12 @@ export interface GraphemeCounts {
 }
 
 /** The product-wide definition of a whitespace-only visible character. */
-export function isWhitespaceGrapheme(segment: string): boolean {
+function isWhitespaceGrapheme(segment: string): boolean {
   return segment.length > 0 && WHITESPACE_GRAPHEME.test(segment);
 }
 
 /** Visits user-visible Unicode characters using the same fallback everywhere. */
-export function forEachGrapheme(text: string, visit: (segment: string) => void): void {
+function forEachGrapheme(text: string, visit: (segment: string) => void): void {
   if (!text) return;
   if (GRAPHEME_SEGMENTER) {
     for (const segment of GRAPHEME_SEGMENTER.segment(text)) {

@@ -13,7 +13,6 @@ import {
 import type { ViewClient } from '../../core/contracts.ts';
 import type {
   SearchMatchPreview,
-  SearchHit,
   SearchNavigationSignal,
   SearchResult,
   SearchStatus,
@@ -24,7 +23,7 @@ import type { FloatingPanelRect } from '../../protocols/floating.ts';
 import { FloatingPanel } from '../../ui/FloatingPanel.tsx';
 import { Icon } from '../../ui/Icon.tsx';
 import { useLocalTextHistory } from '../../ui/use-local-text-history.ts';
-import { groupHitsByNode } from './result-order.ts';
+import { groupHitsByNode, sameSearchHit } from './result-order.ts';
 
 const DEFAULT_RECT: FloatingPanelRect = { x: 160, y: 88, width: 500, height: 620 };
 const DEFAULT_TEXTAREA_HEIGHT = 72;
@@ -655,13 +654,4 @@ function rectanglesIntersect(
     left.top <= right.bottom &&
     left.bottom >= right.top
   );
-}
-
-function sameSearchHit(left: SearchHit, right: SearchHit): boolean {
-  return left.nodeId === right.nodeId &&
-    (left.field ?? 'body') === (right.field ?? 'body') &&
-    left.start === right.start &&
-    left.length === right.length &&
-    left.revision === right.revision &&
-    left.matchedText === right.matchedText;
 }

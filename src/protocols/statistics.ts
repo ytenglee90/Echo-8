@@ -27,3 +27,10 @@ export interface StatisticsSnapshot extends ContentStatistics {
   status: 'idle' | 'running' | 'ready' | 'error';
   error?: string;
 }
+
+declare module './messages.ts' {
+  interface ApplicationCapabilityMap {
+    'statistics.current@1': MessageContract<undefined, StatisticsSnapshot>;
+    'content.statistics@2': MessageContract<{ nodeIds: string[] }, ContentStatistics>;
+  }
+}

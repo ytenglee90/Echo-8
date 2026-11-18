@@ -69,6 +69,7 @@ export interface AIAssistantState {
     sequence: number;
     text: string;
     reasoning: string;
+    batchProgress?: { completed: number; total: number; batches: number };
   }>;
   /** Runtime-only action for the most recent send; it never enters document or workspace persistence. */
   generationActionBySession: Record<string, AIGenerationAction>;

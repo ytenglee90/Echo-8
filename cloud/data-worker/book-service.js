@@ -188,18 +188,26 @@ export async function commitUpload(env, project, body) {
 }
 
 export async function routeBookRequest(request, env, url, identity, helpers) {
-  if (url.pathname === '/v2/assistant-preferences') {
+  if (url.pathname === '/v2/assistant-preferences' || url.pathname === '/v3/assistant-preferences') {
+    const extended = url.pathname === '/v3/assistant-preferences';
     if (url.searchParams.get('account') !== identity.sub) throw fail(403, '账号已经切换，请重新载入个人偏好');
     if (request.method === 'GET') {
       const current = await env.DB.prepare('SELECT revision, body_json FROM account_assistant_preferences WHERE user_id=?').bind(identity.sub).first();
-      return json({ revision: Number(current?.revision ?? 0),
-        preferences: current ? JSON.parse(current.body_json) : { schemaVersion: 1, enabled: true, learning: false, entries: [] } });
+      const preferences = current ? JSON.parse(current.body_json) : { schemaVersion: 1, enabled: true, learning: false, entries: [] };
+      return json({ revision: Number(current?.revision ?? 0), preferences: extended ? { ...preferences, schemaVersion: 2 } :
+        { ...preferences, schemaVersion: 1, entries: preferences.entries.filter(entry => entry.kind === 'gap'
+          ? !entry.layout || entry.layout === 'horizontal' : ['group', 'horizontal', 'vertical'].includes(entry.action) && entry.gap === undefined)
+          .map(entry => { const legacy = { ...entry }; delete legacy.layout; return legacy; }) } });
     }
     if (request.method !== 'PUT') throw fail(405, '不支持的操作');
     const body = await helpers.readJson(request);
     if (!body || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0 ||
       Object.keys(body).some(key => !['expectedRevision', 'preferences'].includes(key)) ||
-      !validAssistantPreferences(body.preferences)) throw fail(400, 'AI 个人偏好格式无效');
+      body.preferences?.schemaVersion !== (extended ? 2 : 1) || !validAssistantPreferences(body.preferences)) throw fail(400, 'AI 个人偏好格式无效');
+    if (!extended) {
+      const current = await env.DB.prepare('SELECT body_json FROM account_assistant_preferences WHERE user_id=?').bind(identity.sub).first();
+      if (current && JSON.parse(current.body_json).schemaVersion === 2) throw fail(409, '个人偏好已升级，请更新客户端后编辑', 'assistant_preferences_upgrade_required');
+    }
     const data = JSON.stringify(body.preferences);
     if (encoder.encode(data).length > 128 * 1024) throw fail(400, 'AI 个人偏好超过容量上限');
     const now = Date.now(), revision = body.expectedRevision;
@@ -307,7 +315,7 @@ export async function routeBookRequest(request, env, url, identity, helpers) {
 }
 
 function validAssistantPreferences(value) {
-  if (!value || value.schemaVersion !== 1 || typeof value.enabled !== 'boolean' || typeof value.learning !== 'boolean' ||
+  if (!value || ![1, 2].includes(value.schemaVersion) || typeof value.enabled !== 'boolean' || typeof value.learning !== 'boolean' ||
     !Array.isArray(value.entries) || value.entries.length > 300 ||
     Object.keys(value).some(key => !['schemaVersion', 'enabled', 'learning', 'entries'].includes(key))) return false;
   const ids = new Set(), keys = new Set();
@@ -318,14 +326,16 @@ function validAssistantPreferences(value) {
     ids.add(entry.id);
     let key;
     if (entry.kind === 'phrase' && typeof entry.phrase === 'string' && entry.phrase.length <= 80 && !/[\r\n]/u.test(entry.phrase) &&
-      ['group', 'horizontal', 'vertical'].includes(entry.action) && ['active', 'candidate'].includes(entry.status) &&
+      (value.schemaVersion === 1 ? ['group', 'horizontal', 'vertical'].includes(entry.action) : typeof entry.action === 'string' && /^[a-z][a-z0-9.:-]{0,199}$/u.test(entry.action)) &&
+      (entry.gap === undefined || value.schemaVersion === 2 && Number.isInteger(entry.gap) && entry.gap >= 0 && entry.gap <= 2000) && ['active', 'candidate'].includes(entry.status) &&
       Number.isInteger(entry.evidence) && entry.evidence >= 1 && entry.evidence <= 100 &&
-      Object.keys(entry).every(field => ['id', 'enabled', 'bookId', 'origin', 'kind', 'phrase', 'action', 'status', 'evidence'].includes(field))) {
+      Object.keys(entry).every(field => ['id', 'enabled', 'bookId', 'origin', 'kind', 'phrase', 'action', 'status', 'evidence', ...(value.schemaVersion === 2 ? ['gap'] : [])].includes(field))) {
       const phrase = entry.phrase.normalize('NFKC').trim().replace(/[。！!]+$/gu, '').toLocaleLowerCase('zh-CN');
       if (!phrase) return false;
       key = JSON.stringify([entry.bookId ?? '', entry.kind, phrase, entry.status]);
     } else if (entry.kind === 'gap' && Number.isInteger(entry.gap) && entry.gap >= 0 && entry.gap <= 2_000 &&
-      Object.keys(entry).every(field => ['id', 'enabled', 'bookId', 'origin', 'kind', 'gap'].includes(field))) key = JSON.stringify([entry.bookId ?? '', entry.kind]);
+      (entry.layout === undefined || value.schemaVersion === 2 && ['horizontal', 'vertical', 'grid'].includes(entry.layout)) &&
+      Object.keys(entry).every(field => ['id', 'enabled', 'bookId', 'origin', 'kind', 'gap', ...(value.schemaVersion === 2 ? ['layout'] : [])].includes(field))) key = JSON.stringify([entry.bookId ?? '', entry.kind, entry.layout ?? 'horizontal']);
     else return false;
     if (keys.has(key)) return false;
     keys.add(key);

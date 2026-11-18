@@ -159,7 +159,7 @@ const PLUGIN_SECTIONS: readonly PluginSection[] = [
   },
 ] as const;
 
-export function groupPlugins(plugins: PluginSnapshot[]): Array<Omit<PluginSection, 'pluginIds'> & {
+function groupPlugins(plugins: PluginSnapshot[]): Array<Omit<PluginSection, 'pluginIds'> & {
   plugins: PluginSnapshot[];
 }> {
   const byId = new Map(plugins.map((plugin) => [plugin.id, plugin]));

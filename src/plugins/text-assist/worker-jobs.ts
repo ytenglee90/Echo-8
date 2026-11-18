@@ -1,5 +1,8 @@
-import type { TextAssistCompileResult, TextAssistResourceTexts } from './resource-format.ts';
-import { compileTextAssistResources } from './resource-format.ts';
+import {
+  type TextAssistCompileResult,
+  type TextAssistResourceTexts,
+  compileTextAssistResources,
+} from './resource-format.ts';
 
 export const TEXT_ASSIST_COMPILE_JOB = 'text-assist.compile-rules@2';
 

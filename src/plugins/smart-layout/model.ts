@@ -1,4 +1,4 @@
-import type { PluginDefinition } from '../../core/contracts.ts';
+import { isRecord, type PluginDefinition } from '../../core/contracts.ts';
 import { SpatialHashIndex } from '../../services/spatial-index.ts';
 import type {
   ArrangeMode,
@@ -34,9 +34,10 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
     manifest: defineManifest('smart-layout', '智能参考线与自动排列', {
       namespaces: ['smartLayout'], namespaceDomains: { smartLayout: 'workspace' },
       requiresCapabilities: ['selection.read@1', 'selection.entities@1', 'layout.gridPlan@1'],
-      providesCapabilities: ['layout.snap@1', 'layout.resizeSnap@1'],
+      providesCapabilities: ['layout.snap@1', 'layout.resizeSnap@1', 'layout.settings@1'],
       commands: [
         'layout.toggleGuides@1', 'layout.toggleSnap@1',
+        'layout.arrangeNodes@1',
         'node.arrangeSelectedCycle',
         'node.arrangeSelectedGrid',
         'node.arrangeSelectedGrid.horizontal',
@@ -61,6 +62,7 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
         guides: context.store.readValue<boolean>('smartLayout', 'guides') !== false,
         snap: context.store.readValue<boolean>('smartLayout', 'snap') !== false,
       });
+      context.capabilities.provide({ key: 'layout.settings@1', invoke: settings });
       for (const [key, command, label] of [
         ['guides', 'layout.toggleGuides@1', '智能参考线'],
         ['snap', 'layout.toggleSnap@1', '自动吸附'],
@@ -164,12 +166,13 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
         },
       });
 
-      const buildArrangement = async (mode: ArrangeMode) => {
-        const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+      const buildArrangement = async (mode: ArrangeMode, explicitIds?: string[]) => {
+        const nodeIds = explicitIds ?? (await context.capabilities.request<SelectionSnapshot>('selection.read@1')).ids;
         const plan = await context.capabilities.request<GridArrangePlan>(
           'layout.gridPlan@1',
-          { nodeIds: selection.ids, mode } satisfies GridArrangePlanRequest,
+          { nodeIds, mode } satisfies GridArrangePlanRequest,
         );
+        if (explicitIds && plan.selected !== explicitIds.length) throw new Error('需要排列的部分卡片已失效，请重新选中。');
         const modeLabel = mode === 'grid' ? '宫格' : mode === 'horizontal' ? '横排' : '竖排';
         return {
           plan,
@@ -188,6 +191,16 @@ export function createSmartLayoutPlugin(arrangeGridActions?: unknown): PluginDef
           },
         };
       };
+      context.commands.register<{ nodeIds: string[]; mode: ArrangeMode }>({
+        type: 'layout.arrangeNodes@1',
+        validate: (input): input is { nodeIds: string[]; mode: ArrangeMode } =>
+          isRecord(input) && Object.keys(input).length === 2 && typeof input.mode === 'string' &&
+          ['grid', 'horizontal', 'vertical'].includes(input.mode) &&
+          Array.isArray(input.nodeIds) && input.nodeIds.length > 0 && input.nodeIds.length <= 100 &&
+          input.nodeIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 200) &&
+          new Set(input.nodeIds).size === input.nodeIds.length,
+        handle: async ({ mode, nodeIds }) => (await buildArrangement(mode, nodeIds)).outcome,
+      });
       const arrange = (type: string, mode: ArrangeMode) => context.commands.register({
         type,
         handle: async () => {

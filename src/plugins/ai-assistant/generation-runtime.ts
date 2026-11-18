@@ -1,4 +1,5 @@
 import { createId, isRecord, type PluginContext, type TaskHandle } from '../../core/contracts.ts';
+import { runCreationBatches } from './creation-batches.ts';
 import { OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2, type OperationStageUpdate, type OperationStageUpdateV2, type OperationStatus } from '../../protocols/operation-log.ts';
 import type {
   AIGenerateResult,
@@ -31,7 +32,10 @@ import { revalidatePreparedSources } from './context-source-reader.ts';
 import { operationCreatesWriteback } from './operations.ts';
 import { nativeConversation } from './request-evidence.ts';
 import { isAbortError, isCanvasRevisionConflict, isCapabilityUnavailable } from './runtime-errors.ts';
+import { workspaceReply } from './workspace-reply.ts';
+import { bindWorkspaceLanguage } from './workspace-language-runtime.ts';
 import type { PreparedGeneration } from './request-runtime.ts';
+import type { WorkspacePlanReceipt } from '../../protocols/workspace-actions.ts';
 import {
   AI_GENERATION_ACTION_TTL_MS,
   type AIGenerationAction,
@@ -40,7 +44,9 @@ import {
 type GenerationState = AIAssistantState['generationRuntimeBySession'][string];
 
 export interface AIGenerationRuntimeOptions {
-  planPersonalTurn?(prompt: string, sessionId: string): import('./personal-preferences.ts').PersonalTurn | undefined;
+  archiveSession?(sessionId: string, signal: AbortSignal, report: (progress: number) => void, waitIfPaused: () => Promise<void>): Promise<void>;
+  planPersonalTurn?(prompt: string, sessionId: string): import('./personal-preferences.ts').PersonalTurn | undefined | Promise<import('./personal-preferences.ts').PersonalTurn | undefined>;
+  observeAppliedPreference?(prompt: string, sessionId: string, preparationId: string, reviewId: string): Promise<void>;
   taskForSession?(sessionId: string): string;
   preparations: Map<string, PreparedGeneration>;
   tasks: Map<string, TaskHandle<AIGenerateResult>>;
@@ -125,7 +131,7 @@ export async function consumeAIGenerationStream(
   };
 }
 
-export function normalizeAIGenerateResult(result: AIGenerateResult): AIGenerateResult {
+function normalizeAIGenerateResult(result: AIGenerateResult): AIGenerateResult {
   const text = result.text.trim();
   if (!text && !result.toolCalls?.length) {
     if (result.reasoning?.trim()) {
@@ -183,7 +189,7 @@ export function registerAIGenerationRuntime(
       const session = options.readSessions()[prepared.sessionId];
       if (!session || !prepared.replayRequest) throw new Error('原请求已失效，请重新发送任务');
       const fresh = await prepareAIContext(context, session, options.readMemoryIndexes(), prepared.replayRequest, signal, () => undefined,
-        undefined, undefined, undefined, undefined, options.planPersonalTurn?.(prepared.prompt, session.id), prepared.selectionAtSend);
+        undefined, undefined, undefined, undefined, await options.planPersonalTurn?.(prepared.prompt, session.id), prepared.selectionAtSend);
       if (fresh.review) throw new Error(fresh.review.message);
       const refreshed: PreparedGeneration = {
         ...fresh,
@@ -204,6 +210,16 @@ export function registerAIGenerationRuntime(
     };
     const runWithRecovery = async (signal: AbortSignal, runTurn: () => Promise<AIGenerateResult>) => {
       if (prepared.followupAction === 'retry' && prepared.operation === 'canvas-control') {
+        const workspaceSteps = turnAssembly(prepared).route.workspaceSteps;
+        if (workspaceSteps) {
+          const receipt = await context.queries.ask<WorkspacePlanReceipt | undefined>('workspace.plan.receipt@1', { id: canvasTurnId(prepared) });
+          signal.throwIfAborted();
+          if (receipt) {
+            replayedCanvasReceipt = true;
+            const text = await workspaceReply(context, workspaceSteps, receipt, signal);
+            return { text, provider: 'local', model: '本地工作区动作', usage: { inputTokens: 0, outputTokens: 0 } };
+          }
+        }
         const receipt = await readCanvasReceipt(context, prepared.sessionId, signal, { preparationId: canvasTurnId(prepared) });
         if (receipt || prepared.appliedItemsMessage) {
           replayedCanvasReceipt = true;
@@ -212,12 +228,13 @@ export function registerAIGenerationRuntime(
             provider: 'local', model: '画布回执', usage: { inputTokens: 0, outputTokens: 0 } };
         }
       }
-      if (prepared.replayRequest && (prepared.followupAction === 'retry' && !turnAssembly(prepared).route.applyItems ||
+      const batchedCreation = (turnAssembly(prepared).localInstructions?.length ?? 0) > 80;
+      if (!batchedCreation && prepared.replayRequest && (prepared.followupAction === 'retry' && !turnAssembly(prepared).route.applyItems ||
         prepared.followupAction === 'repeat' && prepared.operation === 'canvas-control')) await rebuild(signal, false);
       try {
         return await runTurn();
       } catch (error) {
-        if (!prepared.replayRequest || signal.aborted || turnAssembly(prepared).compoundTargets || !isCanvasRevisionConflict(error)) throw error;
+        if (batchedCreation || !prepared.replayRequest || signal.aborted || turnAssembly(prepared).compoundTargets || !isCanvasRevisionConflict(error)) throw error;
         context.signals.emit('ai.status', { state: 'generating', message: '画布对象已变化，正在重新定位并核对正文',
           sessionId: prepared.sessionId, preparationId: prepared.id } satisfies AIStatusSignal);
         await rebuild(signal, true);
@@ -231,7 +248,7 @@ export function registerAIGenerationRuntime(
       priority: 16,
       timeoutMs: 5 * 60_000,
       estimatedCost: 4,
-      run: (signal, report) => runWithRecovery(signal, async () => {
+      run: (signal, report, control) => runWithRecovery(signal, async () => {
         report(0.1);
         if (prepared.localMemoryDirective) return { text: '已确认并记入当前对话。', provider: 'local', model: '正式记忆', usage: { inputTokens: 0, outputTokens: 0 } };
         const assembly = turnAssembly(prepared);
@@ -246,12 +263,31 @@ export function registerAIGenerationRuntime(
           return { text: result.message, provider: 'local', model: '画布预览', usage: { inputTokens: 0, outputTokens: 0 } };
         }
         if (assembly.localReply) return { text: assembly.localReply, provider: 'local', model: '画布回执', usage: { inputTokens: 0, outputTokens: 0 } };
+        if (route.archiveSession) {
+          if (!options.archiveSession) throw new Error('当前对话存档功能尚未启用。');
+          await options.archiveSession(prepared.sessionId, signal, report, control.waitIfPaused);
+          return { text: '当前对话原文与索引已保存到本地存档。', provider: 'local', model: '对话存档', usage: { inputTokens: 0, outputTokens: 0 } };
+        }
         const clarification = assembly.clarify ?? route.clarification;
         if (clarification) return { text: clarification, provider: 'local', model: '任务澄清', usage: { inputTokens: 0, outputTokens: 0 } };
+        if (route.workspaceSteps) {
+          signal.throwIfAborted();
+          const { revision } = await context.queries.ask<{ revision: number }>('system.document.revision');
+          const steps = await bindWorkspaceLanguage(context, route.workspaceSteps, prepared.selectionAtSend, signal);
+          signal.throwIfAborted();
+          const lastZoom = steps.findLast(step => ['viewport.set', 'viewport.focusEntity', 'viewport.scale'].includes(step.action) &&
+            (step.arguments?.zoom !== undefined || step.action === 'viewport.scale'))?.arguments?.zoom;
+          const receipt = await context.commands.dispatch('workspace.plan.run@1', {
+            version: 1, id: canvasTurnId(prepared), steps, constraints: { documentRevision: revision },
+            ...(typeof lastZoom === 'number' ? { verify: [{ action: 'viewport.read', field: ['zoom'], equals: lastZoom }] } : {}),
+          });
+          assembly.localReply = await workspaceReply(context, route.workspaceSteps, receipt, signal);
+          return { text: assembly.localReply, provider: 'local', model: '本地工作区动作', usage: { inputTokens: 0, outputTokens: 0 } };
+        }
         if (route.native) {
           signal.throwIfAborted();
           const result = await context.commands.dispatch('canvasControl.native@1', {
-            preparationId: canvasTurnId(prepared), sessionId: prepared.sessionId, prompt: prepared.prompt,
+            preparationId: canvasTurnId(prepared), sessionId: prepared.sessionId, prompt: assembly.personalTurn?.instruction ?? prepared.prompt,
             selectedIds: assembly.nativeSelection, sourceIds: assembly.localSourceIds,
           });
           return { text: result.message, provider: 'local', model: '确定性操作', usage: { inputTokens: 0, outputTokens: 0 } };
@@ -266,28 +302,42 @@ export function registerAIGenerationRuntime(
         if (assembly.fixedPlan) {
           const sources = prepared.sources.filter(source => source.reason === 'explicit-reference');
           await revalidatePreparedSources(context, sources, { signal });
-          if (!await initialCanvasAgentState(context, prepared, signal)) throw new Error('请启用画布控制以核对字段恢复目标');
+          if (!await initialCanvasAgentState(context, prepared, signal)) throw new Error('请启用画布控制以核对字段写入目标');
           const plan = await context.capabilities.request<{ text: string }>('canvasControl.agentPlan@1', {
             preparationId: canvasTurnId(prepared), sessionId: prepared.sessionId, prompt: prepared.prompt, plan: assembly.fixedPlan,
           }, signal);
-          return { text: plan.text, provider: 'local', model: '历史原文恢复', usage: { inputTokens: 0, outputTokens: 0 } };
+          return { text: plan.text, provider: 'local', model: route.fieldTask?.kind === 'change' ? '字段写入' : '历史原文恢复',
+            usage: { inputTokens: 0, outputTokens: 0 } };
         }
         if (route.category === 'operation' && !assembly.compoundTargets) {
-          if (prepared.selectionAtSend && /选中|选区/u.test(assembly.localInstructions?.join(' ') ?? prepared.prompt)) {
+          const instructions = assembly.localInstructions ?? (assembly.workspaceLocalPrompt ? [assembly.workspaceLocalPrompt] : undefined);
+          if (prepared.selectionAtSend && /选中|选区/u.test(instructions?.join(' ') ?? prepared.prompt)) {
             const current = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
             if (current.ids.length !== prepared.selectionAtSend.length || current.ids.some((id, index) => id !== prepared.selectionAtSend?.[index])) {
               throw new Error('发送后的选区已变化，请重新发送以确认目标。');
             }
           }
-          const local = await context.capabilities.request<{ handled: boolean; text?: string; unresolvedTarget?: boolean }>(assembly.localInstructions ? 'canvasControl.localPlan@2' : 'canvasControl.localPlan@1', {
+          if (instructions && instructions.length > 80) {
+            assembly.localReply = await runCreationBatches(context, { preparationId: canvasTurnId(prepared), sessionId: prepared.sessionId,
+              prompt: prepared.prompt }, instructions, signal, (completed, total, batches) => {
+              report(0.1 + 0.8 * completed / total);
+              const runtime = options.stateBySession.get(prepared.sessionId);
+              if (runtime) options.stateBySession.set(prepared.sessionId, { ...runtime, batchProgress: { completed, total, batches } });
+              context.signals.emit('ai.status', { state: 'generating', sessionId: prepared.sessionId, preparationId: prepared.id,
+                message: `分 ${batches} 批新建，已创建 ${completed}/${total} 个节点；可取消剩余批次，已提交批次可逐批撤销。` } satisfies AIStatusSignal);
+            });
+            return { text: assembly.localReply, provider: 'local', model: '分批新建', usage: { inputTokens: 0, outputTokens: 0 } };
+          }
+          const capability = instructions ? 'canvasControl.localPlan@2' : 'canvasControl.localPlan@1';
+          const local = await context.capabilities.request<{ handled: boolean; text?: string; unresolvedTarget?: boolean }>(capability, {
             preparationId: canvasTurnId(prepared), sessionId: prepared.sessionId, prompt: prepared.prompt,
             sourceIds: assembly.localSourceIds ?? prepared.sources.filter(source => source.reason === 'explicit-reference').map(source => source.sourceId),
-            ...(assembly.localInstructions ? { instructions: assembly.localInstructions, expectedSelectionCount: assembly.expectedSelectionCount } : {}),
-          }, signal).catch(error => { if (isCapabilityUnavailable(error, assembly.localInstructions ? 'canvasControl.localPlan@2' : 'canvasControl.localPlan@1')) return { handled: false }; throw error; });
+            ...(instructions ? { instructions, expectedSelectionCount: assembly.expectedSelectionCount } : {}),
+          }, signal).catch(error => { if (isCapabilityUnavailable(error, capability)) return { handled: false }; throw error; });
           if (local.handled && 'text' in local && local.text) {
             return { text: local.text, provider: 'local', model: '确定性操作', usage: { inputTokens: 0, outputTokens: 0 } };
           }
-          if(assembly.localInstructions) throw new Error('本地画布操作能力不可用，请启用 AI 画布控制插件；没有调用云端模型。');
+          if (instructions) throw new Error('本地画布操作能力不可用，请启用 AI 画布控制插件；没有调用云端模型。');
         }
         if (prepared.operation === 'canvas-control' && !requestsCanvasTextGeneration(route) && !prepared.writebackTarget) {
           assembly.localReply = LOCAL_CANVAS_CLARIFICATION;
@@ -605,7 +655,7 @@ export function registerAIGenerationRuntime(
         if (options.tasks.get(prepared.sessionId) !== task) return;
         let directPlanId = recoveredDirectPlanId;
         const assembly = turnAssembly(prepared);
-        if (prepared.operation === 'canvas-control' && !replayedCanvasReceipt && !assembly.localReply && !assembly.clarify && !assembly.route.clarification && !assembly.route.applyItems && !assembly.route.native) {
+        if (prepared.operation === 'canvas-control' && !replayedCanvasReceipt && !assembly.localReply && !assembly.clarify && !assembly.route.archiveSession && !assembly.route.clarification && !assembly.route.applyItems && !assembly.route.native) {
           if (options.tasks.get(prepared.sessionId) !== task) return;
           const offer = await context.commands.dispatch('canvasControl.offer@1', {
             preparationId: canvasTurnId(prepared), sessionId: prepared.sessionId, prompt: prepared.prompt,
@@ -622,6 +672,10 @@ export function registerAIGenerationRuntime(
         const completedSession = options.readSessions()[prepared.sessionId];
         prepared.transcriptRevisionAfterAssistant = completedSession?.transcriptRevision;
         const directResult = directPlanId ? await context.commands.dispatch('canvasControl.generate@1', { id: directPlanId }) : undefined;
+        if (directPlanId && !replayedCanvasReceipt) {
+          void options.observeAppliedPreference?.(prepared.prompt, prepared.sessionId, canvasTurnId(prepared), directPlanId)
+            .catch(error => context.diagnostics.warn('记录偏好候选失败', error));
+        }
         logAnswer('completed');
         prepared.expiresAt = Date.now() + AI_GENERATION_ACTION_TTL_MS;
         options.stateBySession.delete(prepared.sessionId);

@@ -2,17 +2,15 @@ import { isRecord } from '../../core/contracts.ts';
 import type { AIPreparedContext } from '../../protocols/ai.ts';
 import type { CanvasAgentQueryResult } from '../../protocols/canvas-agent.ts';
 import type { CanvasControlPlan } from '../../protocols/canvas-control.ts';
-import { canvasCommandText } from '../../services/ai-task-route.ts';
-import { naturalCanvasOperation } from '../../services/ai-task-route.ts';
+import { canvasCommandText, naturalCanvasOperation } from '../../services/ai-task-route.ts';
 import { compileLocalInstructions } from './local-turn-routing.ts';
-import { classifyAITurn } from './turn-route.ts';
+import { classifyAITurn, type TurnAssembly } from './turn-route.ts';
 import type { FieldTarget } from './structured-fields.ts';
-import type { TurnAssembly } from './turn-route.ts';
 
 export type BoundCanvasWrite =
   | { kind: 'create'; plan: CanvasControlPlan; titles: string[] }
   | { kind: 'write'; target: FieldTarget; instruction: string }
-  | { kind: 'fields'; targets: FieldTarget[]; field: string; sourceNumbers: number[] };
+  | { kind: 'fields'; targets: FieldTarget[]; field: string; sourceNumbers: number[]; replacedValues?: string[] };
 
 export function resolveBoundCanvasWrite(
   prepared: AIPreparedContext, assembly: TurnAssembly, state: CanvasAgentQueryResult | undefined,
@@ -59,8 +57,12 @@ export function resolveBoundCanvasWrite(
     return resolved?.whole && target.expectedRevision === resolved.node.revision &&
       target.start + target.deleteCount <= resolved.node.length;
   })) {
+    const evidence = fields.map(target => resolve(target.id)!.source);
     return { kind: 'fields', targets: fields, field,
-      sourceNumbers: fields.map(target => prepared.sources.indexOf(resolve(target.id)!.source) + 1) };
+      sourceNumbers: evidence.map(source => prepared.sources.indexOf(source) + 1),
+      ...(fields.some(target => target.deleteCount > 0) ? { replacedValues: fields.map((target, index) =>
+        evidence[index]!.text.slice(target.start, target.start + target.deleteCount)) } : {}),
+    };
   }
   if (destinationId && readIds?.length && readIds.every(id => resolve(id)?.whole)) {
     const target = resolve(destinationId);
@@ -106,7 +108,7 @@ export function boundCanvasWriteInstructions(write: BoundCanvasWrite): string {
   const rules = '应用已核对本轮写入目标和范围，并将本地提交。只输出 JSON，不要调用画布工具或输出操作计划。';
   if (write.kind === 'create') return `${rules} 按以下标题的顺序生成正文：${JSON.stringify(write.titles)}。只输出 {"texts":["正文", "..."]}，不要返回标题、对象 ID、坐标或其他操作字段。`;
   return write.kind === 'fields'
-    ? `${rules} 按来源编号 ${write.sourceNumbers.join('、')} 的顺序，为每张卡填写一行「${write.field}」的值。输出 {"texts":["字段值", "..."]}，每个元素只含值。`
+    ? `${rules} 按来源编号 ${write.sourceNumbers.join('、')} 的顺序，为每张卡提供一行「${write.field}」的值。要求修改时给出与原值不同的新值。输出 {"texts":["字段值", "..."]}，每个元素只含值。`
     : `${rules} ${write.instruction} 输出 {"text":"可直接写入的正文"}，正文从内容本身开始。`;
 }
 
@@ -128,7 +130,8 @@ export function buildBoundCanvasWritePlan(write: BoundCanvasWrite, output: strin
   if (!Array.isArray(texts) || texts.length !== targets.length) throw invalid();
   const actions = targets.map(({ id, start, deleteCount, expectedRevision, prefix }, index) => {
     const text: unknown = texts[index];
-    if (typeof text !== 'string' || !text.trim() || (write.kind === 'fields' && /[\r\n]/u.test(text.trim()))) throw invalid();
+    if (typeof text !== 'string' || !text.trim() || (write.kind === 'fields' &&
+      (/[\r\n]/u.test(text.trim()) || (deleteCount > 0 && text.trim() === write.replacedValues?.[index])))) throw invalid();
     return { type: 'update-node' as const, id, edit: { start, deleteCount, expectedRevision, insert: prefix + text.trim() } };
   });
   return { version: 2, actions };

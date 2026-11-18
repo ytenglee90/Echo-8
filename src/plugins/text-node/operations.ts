@@ -44,27 +44,27 @@ import {
 
 export const NODE_NAMESPACE = 'textNode';
 export const CONTENT_NAMESPACE = 'textContent';
-export const DEFAULT_NODE_TITLE_COLORS = ['#202124', '#374151'] as const;
+const DEFAULT_NODE_TITLE_COLORS = ['#202124', '#374151'] as const;
 
 export function defaultNodeTitleColor(index: number): string {
   return DEFAULT_NODE_TITLE_COLORS[Math.abs(Math.trunc(index)) % DEFAULT_NODE_TITLE_COLORS.length];
 }
 export const DEFAULT_NODE_WIDTH = GRID_NODE_WIDTH;
 export const DEFAULT_NODE_HEIGHT = GRID_NODE_HEIGHT;
-export const MIN_NODE_WIDTH = 220;
-export const MIN_NODE_HEIGHT = 120;
-export const MAX_NODE_HEIGHT = 1200;
-export const DEFAULT_TEXT_BOX_WIDTH = 240;
-export const DEFAULT_TEXT_BOX_HEIGHT = 64;
-export const MIN_TEXT_BOX_WIDTH = 120;
-export const MIN_TEXT_BOX_HEIGHT = 48;
-export const NODE_HEADER_HEIGHT = 42;
-export const NODE_PREVIEW_HORIZONTAL_PADDING = 32;
-export const NODE_PREVIEW_VERTICAL_PADDING = 34;
-export const NODE_PREVIEW_LINE_HEIGHT = 21;
-export const NODE_PREVIEW_MIN_GLYPH_WIDTH = 3;
-export const MIN_NODE_PREVIEW_LENGTH = 256;
-export const MAX_NODE_PREVIEW_LENGTH = 32 * 1024;
+const MIN_NODE_WIDTH = 220;
+const MIN_NODE_HEIGHT = 120;
+const MAX_NODE_HEIGHT = 1200;
+const DEFAULT_TEXT_BOX_WIDTH = 240;
+const DEFAULT_TEXT_BOX_HEIGHT = 64;
+const MIN_TEXT_BOX_WIDTH = 120;
+const MIN_TEXT_BOX_HEIGHT = 48;
+const NODE_HEADER_HEIGHT = 42;
+const NODE_PREVIEW_HORIZONTAL_PADDING = 32;
+const NODE_PREVIEW_VERTICAL_PADDING = 34;
+const NODE_PREVIEW_LINE_HEIGHT = 21;
+const NODE_PREVIEW_MIN_GLYPH_WIDTH = 3;
+const MIN_NODE_PREVIEW_LENGTH = 256;
+const MAX_NODE_PREVIEW_LENGTH = 32 * 1024;
 
 export interface TextNodeRecord {
   id: string;
@@ -472,7 +472,7 @@ export function isDeltaPayload(payload: unknown): payload is ApplyContentDeltaRe
   );
 }
 
-export function isAnnotationClipboardItems(value: unknown, insertionLength: number): value is AnnotationClipboardItem[] {
+function isAnnotationClipboardItems(value: unknown, insertionLength: number): value is AnnotationClipboardItem[] {
   if (!Array.isArray(value) || value.length > MAX_ANNOTATION_CLIPBOARD_ITEMS) return false;
   let bodyLength = 0;
   for (const item of value) {
@@ -664,7 +664,7 @@ export async function countContentChunks(
   };
 }
 
-export function hasWordBoundaries(window: string, start: number, end: number, query: string): boolean {
+function hasWordBoundaries(window: string, start: number, end: number, query: string): boolean {
   const first = query[0];
   const last = query.at(-1) ?? '';
   const before = start > 0 ? [...window.slice(0, start)].at(-1) ?? '' : '';
@@ -673,15 +673,15 @@ export function hasWordBoundaries(window: string, start: number, end: number, qu
     (!isWordCharacter(last) || !isWordCharacter(after));
 }
 
-export function isWordCharacter(value: string): boolean {
+function isWordCharacter(value: string): boolean {
   return value.length > 0 && /[\p{L}\p{N}_]/u.test(value);
 }
 
-export function escapeRegExp(value: string): string {
+function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export function countNewlines(value: string): number {
+function countNewlines(value: string): number {
   let count = 0;
   for (let index = value.indexOf('\n'); index >= 0; index = value.indexOf('\n', index + 1)) count += 1;
   return count;

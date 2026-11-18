@@ -5,12 +5,16 @@ import {
   type RetiredDataScrubRule,
 } from '../../core/contracts.ts';
 import { isRecord as isPlainRecord, removeOwnKeysInPlace } from '../../services/retired-data.ts';
-import type {
-  ClipboardBundle,
-  ClipboardFragment,
-  ClipboardInstantiatePlan,
+import {
+  isClipboardCopySelectionRequest,
+  isClipboardCapturedPasteRequest,
+  isClipboardDuplicateRequest,
+  type ClipboardBundle,
+  type ClipboardCopySelectionRequest,
+  type ClipboardFragment,
+  type ClipboardInstantiatePlan,
 } from '../../protocols/clipboard.ts';
-import type { SelectionResolution, SelectionSnapshot } from '../../protocols/selection.ts';
+import type { EntityDeletePlan, SelectionCatalogContribution, SelectionResolution, SelectionSnapshot } from '../../protocols/selection.ts';
 import { defineManifest } from '../manifest.ts';
 
 const CLIPBOARD_NAMESPACE = 'clipboard';
@@ -36,6 +40,7 @@ export const CLIPBOARD_RETIRED_DATA: RetiredDataScrubRule = {
 
 interface ClipboardCopiedEvent {
   cut: boolean;
+  deleted?: true;
 }
 
 interface ClipboardPastedEvent {
@@ -51,11 +56,11 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
       namespaceDomains: { [CLIPBOARD_NAMESPACE]: 'workspace' },
       sessionOnlyWorkspace: { [CLIPBOARD_NAMESPACE]: true },
       requiresCapabilities: ['selection.read@1', 'selection.resolve@1'],
-      optionalCapabilities: ['clipboard.serialize@1', 'clipboard.instantiate@1'],
-      providesCapabilities: ['clipboard.state@1'],
-      commands: ['clipboard.copy', 'clipboard.cut', 'clipboard.paste', 'clipboard.duplicateSelectionAt'],
+      optionalCapabilities: ['clipboard.serialize@1', 'clipboard.instantiate@1', 'entity.deletePlan@1', 'selection.entities@1', 'connections.graph@1'],
+      providesCapabilities: ['clipboard.state@1', 'clipboard.sources@1'],
+      commands: ['clipboard.copy', 'clipboard.copySelection@1', 'clipboard.cutSelection@1', 'clipboard.pasteCaptured@1', 'clipboard.duplicateCaptured@1', 'clipboard.cut', 'clipboard.paste', 'clipboard.duplicateSelectionAt'],
       dispatches: ['selection.delete', 'selection.set'],
-      events: ['clipboard.copied', 'clipboard.pasted'],
+      events: ['clipboard.copied', 'clipboard.pasted', 'entity.deleted'],
       ui: ['clipboard.actions'],
       actions: ['clipboard.copy-action', 'clipboard.cut-action', 'clipboard.paste-action'],
       shortcuts: ['clipboard.copy-shortcut', 'clipboard.cut-shortcut', 'clipboard.paste-shortcut'],
@@ -73,18 +78,27 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
       const readBundle = () =>
         context.store.readValue<ClipboardBundle>(CLIPBOARD_NAMESPACE, BUNDLE_KEY);
 
-      const readSelectionBundle = async (): Promise<ClipboardBundle> => {
-        const selection = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
-        if (selection.ids.length === 0) throw new Error('没有可复制的选中项');
+      const readSelectionBundle = async (captured?: ClipboardCopySelectionRequest): Promise<ClipboardBundle> => {
+        const selection = captured ? undefined : await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+        const sourceIds = captured?.sourceIds ?? selection!.ids;
+        if (sourceIds.length === 0) throw new Error('没有可复制的选中项');
         const resolution = await context.capabilities.request<SelectionResolution>(
           'selection.resolve@1',
-          { items: selection.items, mode: 'replace' },
+          captured ? { ids: sourceIds, mode: 'replace' } : { items: selection!.items, mode: 'replace' },
         );
+        if (captured && resolution.ids.length !== sourceIds.length) throw new Error('发送时的选区包含已失效的对象，请重新选中。');
+        if (captured?.expectedKind && resolution.items.some(item => item.kind !== captured.expectedKind)) {
+          throw new Error('发送时的选区包含其他类型，请选中指令指定的对象类型。');
+        }
         const fragments = (await context.capabilities.requestAll<ClipboardFragment>(
           'clipboard.serialize@1',
           { ids: resolution.expandedIds },
         )).filter((fragment) => fragment.entityIds.length > 0);
         if (fragments.length === 0) throw new Error('选中项没有可复制的数据提供者');
+        if (captured) {
+          const copied = new Set(fragments.flatMap(fragment => fragment.entityIds));
+          if (sourceIds.some(id => !copied.has(id))) throw new Error('部分发送时选中的对象不能单独复制。');
+        }
         const textFragment = fragments.find((fragment) => fragment.owner === 'text-node');
         const plainTextPreview =
           textFragment && isRecord(textFragment.payload) && typeof textFragment.payload.plainTextPreview === 'string'
@@ -93,8 +107,8 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
         return {
           format: 'application/x-echo-8-canvas+json',
           version: 1,
-          copiedAt: Date.now(),
-          sourceIds: selection.ids,
+          copiedAt: Math.max(Date.now(), (readBundle()?.copiedAt ?? 0) + 1),
+          sourceIds,
           fragments,
           plainTextPreview,
         };
@@ -104,6 +118,7 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
         bundle: ClipboardBundle,
         offset: { x: number; y: number },
         label: string,
+        detailed = false,
       ) => {
         const sourceEntityIds = [...new Set(bundle.fragments.flatMap((fragment) => fragment.entityIds))];
         const idMap = Object.fromEntries(
@@ -116,8 +131,12 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
         const patches = plans.flatMap((plan) => plan.patches);
         const selectIds = [...new Set(plans.flatMap((plan) => plan.selectIds ?? []))];
         if (patches.length === 0) throw new Error('当前插件组合无法复制这份内容');
+        if (detailed) {
+          const written = new Set(patches.filter(patch => patch.domain === 'document' && patch.op === 'set').map(patch => patch.key));
+          if (Object.values(idMap).some(id => !written.has(id))) throw new Error('部分对象无法实例化，本次复制未提交。');
+        }
         return {
-          result: { created: selectIds.length },
+          result: { created: selectIds.length, ...(detailed ? { createdIds: selectIds, entityIds: Object.values(idMap), sourceIds: [...bundle.sourceIds] } : {}) },
           transaction: {
             label,
             patches,
@@ -129,8 +148,8 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
         };
       };
 
-      const copy = async (cut: boolean) => {
-        const bundle = await readSelectionBundle();
+      const copy = async (cut: boolean, captured?: ClipboardCopySelectionRequest) => {
+        const bundle = await readSelectionBundle(captured);
         pasteSerial = 0;
         return {
           result: { count: bundle.sourceIds.length },
@@ -154,6 +173,78 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
       context.commands.register({
         type: 'clipboard.copy',
         handle: () => copy(false),
+      });
+      context.commands.register({
+        type: 'clipboard.copySelection@1',
+        validate: isClipboardCopySelectionRequest,
+        handle: input => copy(false, input),
+      });
+      context.commands.register({
+        type: 'clipboard.duplicateCaptured@1',
+        validate: isClipboardDuplicateRequest,
+        handle: async input => {
+          if (input.includeInternalRelations) await context.capabilities.request('connections.graph@1');
+          const bundle = await readSelectionBundle(input);
+          let offset: { x: number; y: number };
+          if ('offset' in input) offset = input.offset;
+          else {
+            const contributions = await context.capabilities.requestAll<SelectionCatalogContribution>('selection.entities@1');
+            const entities = new Map<string, SelectionCatalogContribution['entities']>();
+            const requested = new Set(input.sourceIds);
+            for (const entity of contributions.flatMap(contribution => contribution.entities)) {
+              if (requested.has(entity.id)) entities.set(entity.id, [...(entities.get(entity.id) ?? []), entity]);
+            }
+            const bounds = input.sourceIds.map(id => {
+              const matches = entities.get(id) ?? [];
+              const box = matches.length === 1 ? matches[0]!.bounds : undefined;
+              if (!box || ![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width < 0 || box.height < 0) {
+                throw new Error('复制对象缺少唯一的公开几何范围。');
+              }
+              return box;
+            });
+            const width = Math.max(...bounds.map(box => box.x + box.width)) - Math.min(...bounds.map(box => box.x));
+            const height = Math.max(...bounds.map(box => box.y + box.height)) - Math.min(...bounds.map(box => box.y));
+            const gap = input.gap ?? 80;
+            offset = { x: input.direction === 'right' ? width + gap : input.direction === 'left' ? -width - gap : 0,
+              y: input.direction === 'down' ? height + gap : input.direction === 'up' ? -height - gap : 0 };
+          }
+          return instantiate(bundle, offset, '复制明确对象及内部关系', true);
+        },
+      });
+      context.commands.register({
+        type: 'clipboard.cutSelection@1',
+        validate: isClipboardCopySelectionRequest,
+        handle: async input => {
+          const resolution = await context.capabilities.request<SelectionResolution>('selection.resolve@1', { ids: input.sourceIds, mode: 'replace' });
+          if (resolution.ids.length !== input.sourceIds.length) throw new Error('发送时的剪切对象已失效。');
+          const plans = await context.capabilities.requestAll<EntityDeletePlan>('entity.deletePlan@1', {
+            ids: resolution.expandedIds, items: resolution.items,
+          });
+          const patches = plans.flatMap(plan => plan.patches);
+          if (patches.length === 0) throw new Error('发送时的对象当前无法剪切。');
+          // The clipboard belongs to the workspace. Document deletion has its own undoable transaction.
+          const copied = await context.commands.invoke('clipboard.copySelection@1', input);
+          return { result: copied, transaction: {
+            label: '剪切发送时选中的对象',
+            patches,
+            events: [...plans.flatMap(plan => plan.events ?? []),
+              { type: 'entity.deleted', payload: { ids: resolution.expandedIds } },
+              { type: 'clipboard.copied', payload: { cut: true, deleted: true } satisfies ClipboardCopiedEvent }],
+          } };
+        },
+      });
+      context.commands.register({
+        type: 'clipboard.pasteCaptured@1',
+        validate: isClipboardCapturedPasteRequest,
+        handle: async input => {
+          const bundle = readBundle();
+          if (!bundle || bundle.version !== 1 || bundle.copiedAt !== input.copiedAt || bundle.sourceIds.length !== input.sourceIds.length ||
+            bundle.sourceIds.some((id, index) => id !== input.sourceIds[index])) {
+            throw new Error('发送后内部剪贴板已变化，请重新发送粘贴指令。');
+          }
+          pasteSerial += 1;
+          return instantiate(bundle, { x: pasteSerial * 36, y: pasteSerial * 36 }, '粘贴已核对的剪贴板对象');
+        },
       });
       context.commands.register({
         type: 'clipboard.cut',
@@ -182,7 +273,7 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
       });
 
       context.events.subscribe<ClipboardCopiedEvent>('clipboard.copied', (message) => {
-        if (message.payload.cut) void context.commands.dispatch('selection.delete');
+        if (message.payload.cut && !message.payload.deleted) void context.commands.dispatch('selection.delete');
       });
       context.events.subscribe<ClipboardPastedEvent>('clipboard.pasted', (message) => {
         if (message.payload.selectIds.length > 0) {
@@ -193,6 +284,13 @@ export function createClipboardPlugin(actionsView?: unknown): PluginDefinition {
         }
       });
 
+      context.capabilities.provide({
+        key: 'clipboard.sources@1',
+        invoke: () => {
+          const bundle = readBundle();
+          return { copiedAt: bundle?.copiedAt, sourceIds: [...(bundle?.sourceIds ?? [])] };
+        },
+      });
       context.capabilities.provide({
         key: 'clipboard.state@1',
         invoke: () => {

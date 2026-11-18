@@ -1,22 +1,23 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { ViewClient } from '../../core/contracts.ts';
-import { createId } from '../../core/contracts.ts';
+import { type ViewClient, createId } from '../../core/contracts.ts';
 import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import { Icon, IconButton } from '../../ui/Icon.tsx';
 import {
-  ASSISTANT_PREFERENCE_ACTIONS, isAssistantPreferences, preferencePhrase, type AssistantPreferenceAction,
+  ASSISTANT_PREFERENCE_ACTIONS, isAssistantPreferences, preferencePhrase, upgradeAssistantPreferences, type AssistantInstruction, type AssistantPreferenceAction,
   type AssistantPreferenceEntry, type AssistantPreferenceState, type AssistantPreferences,
 } from '../../protocols/assistant-preferences.ts';
-import { PERSONAL_PREFERENCES_CHANGED, PREFERENCE_ACTION_LABELS, putPreferenceEntry } from './personal-preferences.ts';
+import { isPreferenceCandidate, PERSONAL_PREFERENCES_CHANGED, PREFERENCE_ACTION_LABELS, putPreferenceEntry } from './personal-preferences.ts';
+import { preferenceActionLabel, preferenceInstruction } from '../../services/assistant-instructions.ts';
+import { classifyAITurn } from './turn-route.ts';
 
-type Edit = { id?: string; kind: 'phrase' | 'gap'; phrase: string; action: AssistantPreferenceAction; gap: string; bookId?: string };
+type Edit = { id?: string; kind: 'phrase' | 'gap'; phrase: string; action: AssistantPreferenceAction; gap: string; bookId?: string; layout?: 'horizontal' | 'vertical' | 'grid' };
 const emptyEdit: Edit = { kind: 'phrase', phrase: '', action: 'group', gap: '80' };
 const entryLabel = (entry: AssistantPreferenceEntry) => entry.kind === 'phrase'
-  ? `「${entry.phrase}」→ ${PREFERENCE_ACTION_LABELS[entry.action]}` : `横排默认间距 ${entry.gap}`;
+  ? `「${entry.phrase}」→ ${preferenceActionLabel(entry.action)}${entry.gap === undefined ? '' : `，间距 ${entry.gap}`}` : `${entry.layout === 'vertical' ? '竖排' : entry.layout === 'grid' ? '网格' : '横排'}默认间距 ${entry.gap}`;
 const sameEntry = (a: AssistantPreferenceEntry, b: AssistantPreferenceEntry) => a.bookId === b.bookId &&
-  (a.kind === 'gap' && b.kind === 'gap' || a.kind === 'phrase' && b.kind === 'phrase' &&
+  (a.kind === 'gap' && b.kind === 'gap' && (a.layout ?? 'horizontal') === (b.layout ?? 'horizontal') || a.kind === 'phrase' && b.kind === 'phrase' &&
     a.status === b.status && preferencePhrase(a.phrase) === preferencePhrase(b.phrase));
 
 export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
@@ -28,16 +29,33 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [imported, setImported] = useState<AssistantPreferences>();
   const [removeAll, setRemoveAll] = useState(false);
+  const [tab, setTab] = useState<'all' | 'phrases' | 'defaults'>('all');
+  const [instructions, setInstructions] = useState<AssistantInstruction[]>([]);
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [category, setCategory] = useState('');
+  const [actionCategory, setActionCategory] = useState('');
+  const refreshCatalog = () => client.ask<{ instructions: AssistantInstruction[] }>('ai.instructions@1')
+    .then(result => { setInstructions(result.instructions); setCatalogError(''); }).catch(reason => setCatalogError(String(reason)));
   const importInput = useRef<HTMLInputElement>(null);
   const editorInput = useRef<HTMLInputElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
   const returnToAdd = useRef(false);
   useEffect(() => {
     let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const refreshInstructions = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { void client.ask<{ instructions: AssistantInstruction[] }>('ai.instructions@1').then(result => {
+        if (active) { setInstructions(result.instructions); setCatalogError(''); }
+      }).catch(reason => { if (active) setCatalogError(String(reason)); }); }, 120);
+    };
+    refreshInstructions();
+    const unsubscribeCatalog = client.subscribeState(refreshInstructions);
     const unsubscribe = client.subscribeSignal<AssistantPreferenceState>(PERSONAL_PREFERENCES_CHANGED, event => setState(event.payload));
     void client.ask<AssistantPreferenceState>('ai.personal.state@1').then(result => { if (active) setState(result); })
       .catch(reason => { if (active) setError(String(reason)); });
-    return () => { active = false; unsubscribe(); };
+    return () => { active = false; clearTimeout(timer); unsubscribe(); unsubscribeCatalog(); };
   }, [client]);
   const editing = Boolean(edit);
   const editId = edit?.id;
@@ -52,17 +70,27 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
   const preferences = state.snapshot?.preferences;
   const disabled = state.busy || !account?.available;
   const entries = preferences?.entries ?? [];
-  const matchingEntries = entries.filter(entry => entryLabel(entry).includes(search.trim()));
-  const exportableEntries = entries.filter(entry => entry.kind === 'gap' || entry.status === 'active');
+  const visibleEntries = entries.filter(entry => tab === 'defaults' ? entry.kind === 'gap' : entry.kind === 'phrase');
+  const matchingEntries = visibleEntries.filter(entry => entryLabel(entry).includes(search.trim()))
+    .sort((left, right) => Number(isPreferenceCandidate(right)) - Number(isPreferenceCandidate(left)));
+  const exportableEntries = entries.filter(entry => !isPreferenceCandidate(entry));
   const selectedIds = exportableEntries.filter(entry => selected.includes(entry.id)).map(entry => entry.id);
+  const actionOptions = instructions.filter(item => item.customizable && (account?.extended || (ASSISTANT_PREFERENCE_ACTIONS as readonly string[]).includes(item.id)));
+  const chosenAction = actionOptions.find(item => item.id === edit?.action);
+  const preview = edit?.kind === 'phrase' ? preferenceInstruction(edit.action, chosenAction?.gap && edit.gap.trim() ? Number(edit.gap) : undefined, instructions) :
+    `${edit?.layout === 'vertical' ? '竖排' : edit?.layout === 'grid' ? '网格排列' : '横排'}未指定间距时使用 ${edit?.gap ?? 80}。`;
+  const categories = [...new Set(instructions.map(item => item.category))];
+  const filteredInstructions = instructions.filter(item => (!category || item.category === category) &&
+    `${item.label} ${item.example ?? ''} ${item.category}`.toLocaleLowerCase().includes(catalogSearch.trim().toLocaleLowerCase()));
   const change = async (next: AssistantPreferences) => {
     if (!account || !state.snapshot || disabled) return;
     setError('');
-    try { await client.dispatch('ai.personal.update@1', { account, expectedRevision: state.snapshot.revision, preferences: next }); }
+    try { await client.dispatch('ai.personal.update@1', { account, expectedRevision: state.snapshot.revision,
+      preferences: account.extended ? upgradeAssistantPreferences(next) : next }); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
   const run = (operation: Promise<unknown>) => { void operation.catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); };
-  const openEditor = (next: Edit) => { setFormError(''); setEdit(next); };
+  const openEditor = (next: Edit) => { setFormError(''); setEdit(next); setTab(next.kind === 'gap' ? 'defaults' : 'phrases'); };
   const closeEditor = () => { returnToAdd.current = true; setEdit(undefined); setFormError(''); };
   const saveEdit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -70,13 +98,21 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
     const base = { id: edit.id ?? createId('ai-personal'), enabled: preferences.entries.find(item => item.id === edit.id)?.enabled ?? true,
       bookId: edit.bookId, origin: 'manual' as const };
     const entry: AssistantPreferenceEntry = edit.kind === 'phrase'
-      ? { ...base, kind: 'phrase', phrase: edit.phrase.trim(), action: edit.action, status: 'active', evidence: 1 }
-      : { ...base, kind: 'gap', gap: Number(edit.gap) };
+      ? { ...base, kind: 'phrase', phrase: edit.phrase.trim(), action: edit.action, status: 'active', evidence: 1,
+        ...(account?.extended && chosenAction?.gap && edit.gap.trim() ? { gap: Number(edit.gap) } : {}) }
+      : { ...base, kind: 'gap', gap: Number(edit.gap), ...(account?.extended ? { layout: edit.layout ?? 'horizontal' } : {}) };
+    if (entry.kind === 'phrase') {
+      const standard = classifyAITurn(entry.phrase);
+      if (standard.local || standard.native || standard.workspaceSteps || standard.catalogIntent || standard.compound || standard.operation !== 'general') {
+        setFormError('这句话已有内置含义，请换一种个人说法，避免覆盖标准指令。'); return;
+      }
+      if (!chosenAction || !preview) { setFormError('对应动作当前不可用，请重新选择。'); return; }
+    }
     if (entries.some(item => item.id !== entry.id && sameEntry(item, entry))) {
       setFormError('这个适用范围已有同名条目，请编辑原条目。');
       return;
     }
-    const next = { ...preferences, entries: putPreferenceEntry(entries, entry) };
+    const next = { ...(account?.extended ? upgradeAssistantPreferences(preferences) : preferences), entries: putPreferenceEntry(entries, entry) };
     if (!isAssistantPreferences(next)) {
       setFormError(edit.kind === 'gap' ? '请输入 0 到 2000 的整数。' : '请输入 1 到 80 个字符的用语。');
       return;
@@ -111,37 +147,63 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
     run(change({ ...preferences, entries }));
     setImported(undefined);
   };
-  return <section className="ai-personal-page" aria-label="AI 个人用语与偏好">
-    <SettingsPageHeader title="个人用语与偏好" description="随账户保存，可在其他设备使用。"
-      closeLabel="关闭个人用语与偏好" onClose={() => run(client.dispatch('ai.personal.close@1'))}
+  return <section className="ai-personal-page" aria-label="AI 指令与偏好">
+    <SettingsPageHeader title="指令与偏好" description="查看可用操作、设置个人说法与默认参数。"
+      closeLabel="关闭指令与偏好" onClose={() => run(client.dispatch('ai.personal.close@1'))}
       actions={account?.available && <IconButton icon="sync" label="重新载入账户设置" disabled={state.busy}
         onClick={() => { setError(''); run(client.dispatch('ai.personal.refresh@1')); }} />} />
-    {!account?.available && <p className="settings-empty">{account ? '请在云同步中升级个人数据服务后使用。' : '请先在云同步中连接账户。'}</p>}
+    <div className="ai-instruction-tabs" role="tablist" aria-label="指令与偏好分类" onKeyDown={event => {
+      const tabs = ['all', 'phrases', 'defaults'] as const;
+      const index = tabs.indexOf(tab);
+      const next = event.key === 'ArrowRight' ? (index + 1) % 3 : event.key === 'ArrowLeft' ? (index + 2) % 3 : event.key === 'Home' ? 0 : event.key === 'End' ? 2 : -1;
+      if (next < 0) return;
+      event.preventDefault(); setTab(tabs[next]); setEdit(undefined);
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+    }}>
+      {([['all', '全部指令'], ['phrases', '我的用语'], ['defaults', '默认偏好']] as const).map(([id, label]) =>
+        <button key={id} id={`ai-instructions-${id}-tab`} role="tab" type="button" aria-selected={tab === id} aria-controls="ai-instructions-content"
+          tabIndex={tab === id ? 0 : -1} onClick={() => { setTab(id); setEdit(undefined); }}>{label}</button>)}
+    </div>
+    <div id="ai-instructions-content" role="tabpanel" aria-labelledby={`ai-instructions-${tab}-tab`}>
+    {tab === 'all' && <div className="ai-instruction-directory">
+      <label className="ai-personal-field">搜索指令<input type="search" placeholder="搜索用途或示例说法" value={catalogSearch} onChange={event => setCatalogSearch(event.target.value)} /></label>
+      <label className="ai-personal-field">动作类别<select value={category} onChange={event => setCategory(event.target.value)}>
+        <option value="">全部类别</option>{categories.map(name => <option key={name}>{name}</option>)}
+      </select></label>
+      <div className="ai-personal-heading"><p>{instructions.length} 项动作 · {instructions.filter(item => item.customizable).length} 项支持个人用语</p>
+        <button type="button" className="toolbar-button" onClick={() => void refreshCatalog()}>刷新指令</button></div>
+      {catalogError && <p role="alert">暂时无法读取指令目录，请刷新重试。{catalogError}</p>}
+      <ul className="ai-instruction-cards">{filteredInstructions.map(item => <li key={item.id}>
+        <div className="ai-personal-heading"><strong>{item.label}</strong><small>{item.category} · {item.available ? item.example ? '支持指令' : '功能界面' : '当前不可用'}</small></div>
+        {item.example && <p className="ai-instruction-example">例如：{item.example}</p>}
+        {item.requirement && <p>{item.requirement}</p>}
+        {item.customizable && <button type="button" className="toolbar-button" disabled={disabled || !account?.extended && !(ASSISTANT_PREFERENCE_ACTIONS as readonly string[]).includes(item.id)}
+          onClick={() => { setActionCategory(item.category); openEditor({ ...emptyEdit, action: item.id, gap: '' }); }}>设置个人用语</button>}
+      </li>)}</ul>
+      {!filteredInstructions.length && !catalogError && <p className="settings-empty">{instructions.length ? '没有匹配的指令。' : '正在读取当前功能的指令目录…'}</p>}
+    </div>}
+    {tab !== 'all' && !account?.available && <p className="settings-empty">{account ? '请在云同步中升级个人数据服务后保存个人设置。' : '连接账户后可以保存个人设置，全部指令可直接浏览。'}</p>}
+    {tab !== 'all' && account?.available && !account.extended && <p className="settings-empty">升级云同步中的个人数据服务后，可为更多动作设置用语及竖排、网格间距。原有用语继续可用。</p>}
     {state.busy && <p role="status" className="settings-page-summary">正在同步账户设置…</p>}
     {(error || state.error) && <p role="alert" className="ai-personal-error">{error || state.error}</p>}
-    {preferences && <>
+    {preferences && tab !== 'all' && <>
       <div className="ai-personal-switches" role="group" aria-label="使用与学习">
         <PreferenceSwitch label="使用个人用语与偏好" description="在识别画布指令时应用已启用的条目。"
           checked={preferences.enabled} disabled={disabled} toggle={() => run(change({ ...preferences, enabled: !preferences.enabled }))} />
-        <PreferenceSwitch label="从反馈学习" description="根据你的纠正生成候选，确认后生效。"
+        <PreferenceSwitch label="从反馈学习" description="从你的纠正和重复使用的横排间距生成候选，确认后生效。"
           checked={preferences.learning} disabled={disabled} toggle={() => run(change({ ...preferences, learning: !preferences.learning }))} />
       </div>
 
       <div className="ai-personal-list">
         <div className="ai-personal-heading">
-          <h3>全部条目</h3>
+          <h3>{tab === 'defaults' ? '默认参数' : '个人用语'}</h3>
           <button ref={addButton} type="button" className="toolbar-button" hidden={editing} disabled={disabled}
-            onClick={() => openEditor(emptyEdit)}><Icon name="add" size={14} />添加条目</button>
+            onClick={() => { setActionCategory(''); openEditor({ ...emptyEdit, kind: tab === 'defaults' ? 'gap' : 'phrase' }); }}><Icon name="add" size={14} />添加条目</button>
         </div>
 
         {edit && <form className="ai-personal-editor" aria-label={edit.id ? '编辑条目' : '添加条目'} onSubmit={saveEdit}>
           <h4>{edit.id ? '编辑条目' : '添加条目'}</h4>
           <fieldset disabled={disabled}>
-            <label className="ai-personal-field">条目类型
-              <select value={edit.kind} onChange={event => openEditor({ ...edit, kind: event.target.value as Edit['kind'] })}>
-                <option value="phrase">个人用语</option><option value="gap">横排默认间距</option>
-              </select>
-            </label>
             <label className="ai-personal-field">适用范围
               <select value={edit.bookId ?? ''} onChange={event => openEditor({ ...edit, bookId: event.target.value || undefined })}>
                 <option value="">全部书籍</option>
@@ -150,20 +212,30 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
               </select>
             </label>
             {edit.kind === 'phrase' ? <>
+              <label className="ai-personal-field">动作类别<select value={actionCategory} onChange={event => {
+                const category = event.target.value; setActionCategory(category);
+                openEditor({ ...edit, action: actionOptions.find(item => !category || item.category === category)?.id ?? '', gap: '' });
+              }}><option value="">全部类别</option>{[...new Set(actionOptions.map(item => item.category))].map(name => <option key={name}>{name}</option>)}</select></label>
+              <label className="ai-personal-field">对应动作
+                <select value={edit.action} onChange={event => openEditor({ ...edit, action: event.target.value, gap: '' })}>
+                  {!actionOptions.some(item => item.id === edit.action) && <option value={edit.action}>{PREFERENCE_ACTION_LABELS[edit.action] ?? preferenceActionLabel(edit.action)}（当前不可用）</option>}
+                  {actionOptions.filter(item => !actionCategory || item.category === actionCategory).map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+              </label>
+              {chosenAction?.gap && account?.extended && <label className="ai-personal-field">本用语的间距（可选）<input type="number" min={0} max={2000} placeholder="使用默认间距" value={edit.gap}
+                onChange={event => openEditor({ ...edit, gap: event.target.value })} /></label>}
               <label className="ai-personal-field">个人用语
                 <input ref={editorInput} placeholder="例如：收一下" maxLength={80} value={edit.phrase}
                   onChange={event => openEditor({ ...edit, phrase: event.target.value })} />
               </label>
-              <label className="ai-personal-field">对应动作
-                <select value={edit.action} onChange={event => openEditor({ ...edit, action: event.target.value as AssistantPreferenceAction })}>
-                  {ASSISTANT_PREFERENCE_ACTIONS.map(action => <option key={action} value={action}>{PREFERENCE_ACTION_LABELS[action]}</option>)}
-                </select>
-              </label>
-            </> : <label className="ai-personal-field">横排默认间距
+            </> : <><label className="ai-personal-field">排列方式<select value={edit.layout ?? 'horizontal'} onChange={event => openEditor({ ...edit, layout: event.target.value as Edit['layout'] })}>
+              <option value="horizontal">横排</option>{account?.extended && <><option value="vertical">竖排</option><option value="grid">网格</option></>}
+            </select></label><label className="ai-personal-field">默认间距
               <input ref={editorInput} type="number" min={0} max={2000} value={edit.gap}
                 onChange={event => openEditor({ ...edit, gap: event.target.value })} />
-            </label>}
+            </label></>}
           </fieldset>
+          <p className="ai-instruction-preview" role="status">解释预览：{preview ?? '对应动作当前不可用。'}{chosenAction?.requirement && `。${chosenAction.requirement}`}</p>
           {formError && <p className="ai-personal-error" role="alert">{formError}</p>}
           <div className="ai-personal-actions ai-personal-actions-end">
             <button type="button" className="toolbar-button" onClick={closeEditor}>取消</button>
@@ -173,14 +245,14 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
           </div>
         </form>}
 
-        {entries.length ? <>
+        {visibleEntries.length ? <>
           <label className="ai-personal-search">
             <Icon name="search" size={15} />
             <input type="search" aria-label="搜索个人偏好" placeholder="搜索条目" value={search} onChange={event => setSearch(event.target.value)} />
           </label>
           {matchingEntries.length ? <ul className="ai-personal-entries">
             {matchingEntries.map(entry => {
-              const candidate = entry.kind === 'phrase' && entry.status === 'candidate';
+              const candidate = isPreferenceCandidate(entry);
               const label = entryLabel(entry);
               return <li key={entry.id}>
                 <div className="ai-personal-entry-copy">
@@ -190,15 +262,17 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
                     <strong>{label}</strong>
                     <small>{[entry.bookId ? '指定书籍' : '全部书籍',
                       entry.origin === 'feedback' ? '反馈学习' : entry.origin === 'explicit' ? '对话中设置' : '手动配置',
-                      candidate ? `待确认，纠正 ${entry.evidence} 次` : entry.enabled ? '已启用' : '已停用'].join(' · ')}</small>
+                      candidate ? (entry.kind === 'phrase' ? `待确认，纠正 ${entry.evidence} 次` : '待确认，重复使用 3 次') :
+                        entry.enabled ? '已启用' : '已停用'].join(' · ')}</small>
                   </div>
                 </div>
                 <div className="ai-personal-actions">
                   {candidate ? <button type="button" className="toolbar-button" disabled={disabled} onClick={() => run(change({ ...preferences,
-                    entries: putPreferenceEntry(entries.filter(item => item.id !== entry.id), { ...entry, status: 'active' }) }))}>确认生效</button>
+                    entries: putPreferenceEntry(entries.filter(item => item.id !== entry.id), entry.kind === 'phrase'
+                      ? { ...entry, status: 'active' } : { ...entry, enabled: true, origin: 'explicit' }) }))}>确认生效</button>
                     : <>
                       <button type="button" className="toolbar-button" disabled={disabled}
-                        onClick={() => openEditor(entry.kind === 'phrase' ? { ...emptyEdit, ...entry } : { ...emptyEdit, ...entry, gap: String(entry.gap) })}>编辑</button>
+                        onClick={() => { setActionCategory(''); openEditor(entry.kind === 'phrase' ? { ...emptyEdit, ...entry, gap: entry.gap === undefined ? '' : String(entry.gap) } : { ...emptyEdit, ...entry, gap: String(entry.gap) }); }}>编辑</button>
                       <button type="button" className="toolbar-button" disabled={disabled}
                         onClick={() => run(change({ ...preferences, entries: entries.map(item => item.id === entry.id ? { ...item, enabled: !item.enabled } : item) }))}>
                         {entry.enabled ? '停用' : '启用'}
@@ -211,8 +285,8 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
             })}
           </ul> : <p className="settings-empty">没有匹配的条目。</p>}
         </> : !edit && <div className="ai-personal-empty">
-          <strong>还没有条目</strong>
-          <p>可以把「收一下」设为编组，或设置横排默认间距。</p>
+          <strong>{tab === 'defaults' ? '尚未设置默认参数' : '尚未添加个人用语'}</strong>
+          <p>{tab === 'defaults' ? '未设置时沿用应用默认值；本次指令指定的参数始终优先。' : '内置指令已经可用。可从全部指令选择动作，为它添加自己习惯的说法。'}</p>
         </div>}
       </div>
 
@@ -253,6 +327,7 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
         </div>}
       </details>
     </>}
+    </div>
   </section>;
 }
 

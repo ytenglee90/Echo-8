@@ -87,7 +87,7 @@ export function rebaseTextDelta(
 }
 
 /** Maps an offset through the one contiguous replacement produced by calculateTextDelta. */
-export function mapTextOffset(offset: number, change: TextDelta): number {
+function mapTextOffset(offset: number, change: TextDelta): number {
   const oldEnd = change.start + change.deleteCount;
   if (offset < change.start) return offset;
   if (offset > oldEnd || (offset === oldEnd && change.deleteCount > 0)) {

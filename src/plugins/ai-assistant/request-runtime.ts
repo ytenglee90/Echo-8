@@ -11,6 +11,7 @@ import type {
 import { explicitAtOperation } from './command-parser.ts';
 import { classifyAITurn, isCanvasReceiptTurn } from './turn-route.ts';
 import { canvasCommandText } from '../../services/ai-task-route.ts';
+import { catalogUsesSelection } from '../../services/workspace-catalog-intent.ts';
 import { naturalWritebackIntent } from './natural-writeback.ts';
 import { naturalMemoryDirective } from './memory-suggestion.ts';
 import { LOCAL_LANGUAGE_TIMEOUT_MS, mayUseLocalLanguage } from './local-turn-routing.ts';
@@ -59,7 +60,8 @@ export type PreparedGeneration = AIPreparedContext & {
 };
 
 export interface AIRequestRuntimeOptions {
-  planPersonalTurn?(prompt: string, sessionId: string, previousPrompt?: string): PersonalTurn | undefined;
+  planPersonalTurn?(prompt: string, sessionId: string, previousPrompt?: string): PersonalTurn | undefined | Promise<PersonalTurn | undefined>;
+  observeAppliedPreference?(prompt: string, sessionId: string, preparationId: string): Promise<void>;
   preparations: Map<string, PreparedGeneration>;
   preparationTasks: Map<string, TaskHandle<AIPreparedContext>>;
   generationTasks: Map<string, TaskHandle<AIGenerateResult>>;
@@ -88,6 +90,10 @@ export function registerAIRequestRuntime(
     const result = message.payload;
     const previous = options.lastPrepareRequestBySession.get(result.sessionId);
     if (!previous || previous.prompt !== result.prompt || options.generationTasks.has(result.sessionId)) return;
+    if (result.status === 'applied' && result.verification === 'verified' && result.count >= 2) {
+      void options.observeAppliedPreference?.(result.prompt, result.sessionId, result.preparationId)
+        .catch(error => context.diagnostics.warn('记录偏好候选失败', error));
+    }
     context.signals.emit('ai.status', { sessionId: result.sessionId, state: result.status === 'failed' ? 'error' : 'complete',
       message: result.status === 'applied' ? result.message ?? `已在画布应用 ${result.count} 项操作；${result.verification === 'verified' ? '已完成回读核对，可一次撤销。' : result.verification ? '回读核对尚未通过，请查看画布控制。' : '可一次撤销。'}` :
         result.status === 'dismissed' ? '已放弃这份画布计划。' : '画布提交失败，请查看实时操作日志。' } satisfies AIStatusSignal);
@@ -114,12 +120,14 @@ export function registerAIRequestRuntime(
       if (payload.assistantId && !boundAssistant) throw new Error('当前 AI 助手窗口已经不存在');
       const explicit = explicitAtOperation(payload.prompt);
       const route = classifyAITurn(payload.prompt, explicit, payload.operation);
-      const personalTurn = !explicit && !route.compound && !route.native && !route.applyItems ? options.planPersonalTurn?.(
+      const personalTurn = options.planPersonalTurn && !explicit && !route.archiveSession && !route.compound && !route.applyItems &&
+        (!route.workspaceSteps && !route.catalogIntent && !route.native || route.local?.kind === 'arrange') ? await options.planPersonalTurn?.(
         payload.prompt, session.id, options.lastPrepareRequestBySession.get(session.id)?.prompt,
       ) : undefined;
-      const selectionAtSend = route.compound || personalTurn?.instruction || route.operation === 'canvas-control' && /选中|选区/u.test(payload.prompt)
+      const selectionAtSend = route.compound || catalogUsesSelection(route.catalogIntent) || route.workspaceSteps?.some(step => step.selection) ||
+        personalTurn?.instruction || route.operation === 'canvas-control' && /选中|选区/u.test(payload.prompt)
         ? (await context.capabilities.request<{ ids: string[] }>('selection.read@1').catch(() => undefined))?.ids : undefined;
-      const mayLoadLocalLanguage = !personalTurn && (!explicit || explicit === 'canvas-control') && !naturalMemoryDirective(payload.prompt) && mayUseLocalLanguage(payload.prompt, route);
+      const mayLoadLocalLanguage = !personalTurn && !route.archiveSession && (!explicit || explicit === 'canvas-control') && !naturalMemoryDirective(payload.prompt) && mayUseLocalLanguage(payload.prompt, route);
       const normalizedPayload: PreparePayload = {
         ...payload,
         operation: personalTurn?.instruction ? 'canvas-control' : personalTurn?.reply ? 'general' :
@@ -411,6 +419,7 @@ export function registerAIRequestRuntime(
         ? [[payload.sessionId, options.generationTasks.get(payload.sessionId)] as const]
         : [...options.generationTasks.entries()];
       const cancelled = targets.some(([, task]) => Boolean(task));
+      const batch = targets.map(([sessionId]) => options.generationStateBySession.get(sessionId)?.batchProgress).find(Boolean);
       for (const [sessionId, task] of targets) {
         task?.cancel();
         if (options.generationTasks.get(sessionId) === task) options.generationTasks.delete(sessionId);
@@ -420,7 +429,8 @@ export function registerAIRequestRuntime(
       context.signals.emit('ai.state.invalidated');
       context.signals.emit('ai.status', {
         state: 'idle',
-        message: cancelled ? '已停止本次生成；未保存不完整内容' : '当前没有正在生成的内容',
+        message: cancelled ? batch ? `已停止剩余批次；已创建 ${batch.completed}/${batch.total} 个节点，已提交批次可逐批撤销。` :
+          '已停止本次生成；未保存不完整内容' : '当前没有正在生成的内容',
         sessionId: payload?.sessionId,
       } satisfies AIStatusSignal);
       return { result: { cancelled } };

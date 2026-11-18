@@ -91,6 +91,20 @@ export class MessageRouter {
     return Boolean(registration && this.admission(registration.owner));
   }
 
+  /** Read-only inventory: never exposes handlers or submitted payloads. */
+  messageCatalog() {
+    return {
+      commands: [...this.commands].map(([type, entry]) => ({ type, owner: entry.owner, available: this.admission(entry.owner) })),
+      queries: [...this.queries].map(([type, entry]) => ({ type, owner: entry.owner, available: this.admission(entry.owner) })),
+    };
+  }
+
+  validateCommandPayload(type: string, payload: unknown): boolean {
+    const entry = this.commands.get(type);
+    if (!entry || !this.admission(entry.owner)) return false;
+    try { return entry.validate ? entry.validate(payload) : true; } catch { return false; }
+  }
+
   subscribeCommands(listener: () => void): () => void {
     this.commandListeners.add(listener);
     return () => this.commandListeners.delete(listener);

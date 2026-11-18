@@ -3,6 +3,7 @@ import type { AISessionRecord } from '../../protocols/ai.ts';
 import { readContextSource } from './context-source-reader.ts';
 import { sessionTranscriptSourceId } from './transcript-storage.ts';
 import { classifyAITurn } from './turn-route.ts';
+import { structuredFieldTask } from './structured-fields.ts';
 import { isCapabilityUnavailable } from './runtime-errors.ts';
 import type { CanvasControlReceipt, CanvasControlTaskState } from '../../protocols/canvas-control.ts';
 
@@ -45,6 +46,23 @@ export async function checkCanvasRecovery(context: PluginContext, sessionId: str
 /** Only the nearest complete user request in this session can resume authority. */
 export async function recoverCanvasRequest(context: PluginContext, session: AISessionRecord, prompt: string, signal: AbortSignal): Promise<string | undefined> {
   if (!isCanvasFailureFollowup(prompt)) return undefined;
+  const previous = await readPreviousUserRequest(context, session, signal, isCanvasFailureFollowup);
+  if (!previous || previous.prompt.length > 2000) return undefined;
+  const route = classifyAITurn(previous.prompt);
+  return (previous.canvasOperation || route.category !== 'chat') && !route.lookupOnly && !route.applyItems ? previous.prompt : undefined;
+}
+
+export async function recoverFieldDelegation(context: PluginContext, session: AISessionRecord, prompt: string, signal: AbortSignal): Promise<string | undefined> {
+  const delegates = /^(?:你决定|你来定|你来决定|由你决定|你选一个)[。！？!?]*$/u;
+  if (!session.turns || !delegates.test(prompt.trim())) return undefined;
+  const previous = await readPreviousUserRequest(context, session, signal, text => delegates.test(text));
+  if (!previous || previous.prompt.length > 400) return undefined;
+  const task = structuredFieldTask(previous.prompt);
+  return task?.kind === 'change' && task.value === undefined ? previous.prompt : undefined;
+}
+
+async function readPreviousUserRequest(context: PluginContext, session: AISessionRecord, signal: AbortSignal,
+  skip: (prompt: string) => boolean): Promise<{ prompt: string; canvasOperation: boolean } | undefined> {
   const sourceId = sessionTranscriptSourceId(session);
   const metadata = await readContextSource(context, { sourceId, start: 0, length: 0 }, signal);
   const source = metadata.source;
@@ -58,12 +76,8 @@ export async function recoverCanvasRequest(context: PluginContext, session: AISe
     const header = headers[index]!;
     if (header[1] !== '用户') continue;
     const previous = text.slice(header.index! + header[0].length, headers[index + 1]?.index ?? text.length).trim();
-    if (isCanvasFailureFollowup(previous)) continue;
-    // Discussion, cancellation and unrelated turns are barriers; never search past them.
-    const route = classifyAITurn(previous);
-    const recordedCanvasOperation = /·\s*画布操作\]/u.test(header[0]);
-    return (recordedCanvasOperation || route.category !== 'chat') && !route.lookupOnly && !route.applyItems &&
-      previous.length <= 2000 ? previous : undefined;
+    if (skip(previous)) continue;
+    return { prompt: previous, canvasOperation: /·\s*画布操作\]/u.test(header[0]) };
   }
   return undefined;
 }

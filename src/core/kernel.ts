@@ -1,14 +1,14 @@
-import type {
-  DomainSnapshot,
-  PluginDefinition,
-  PluginSnapshot,
-  RegisteredAction,
-  RegisteredShortcut,
-  UIContribution,
-  UISlot,
-  ViewClient,
+import {
+  type DomainSnapshot,
+  type PluginDefinition,
+  type PluginSnapshot,
+  type RegisteredAction,
+  type RegisteredShortcut,
+  type UIContribution,
+  type UISlot,
+  type ViewClient,
+  isRecord,
 } from './contracts.ts';
-import { isRecord } from './contracts.ts';
 import {
   AUTOSAVE_INTERVAL_OPTIONS,
   PROJECT_KIND,
@@ -440,6 +440,40 @@ export class ApplicationKernel {
         this.router.defer(action.command, undefined, action.owner, envelope);
         return { result: { queued: true } };
       },
+    });
+    const localActionCommand = (owner: string, id: string): string | undefined => {
+      const action = this.ui.getAction(owner, id);
+      if (!action?.localTool) return undefined;
+      if (action.localTool.version === 1) return action.command;
+      const command = action.localTool.command;
+      return this.router.messageCatalog().commands.some(entry => entry.type === command && entry.owner === owner && entry.available)
+        ? command : undefined;
+    };
+    this.router.registerCommand<{ owner: string; id: string; arguments?: unknown }, unknown>('core.actions', {
+      type: 'system.action.invoke@1',
+      validate: (payload): payload is { owner: string; id: string; arguments?: unknown } =>
+        isRecord(payload) && Object.keys(payload).every(key => ['owner', 'id', 'arguments'].includes(key)) &&
+        typeof payload.owner === 'string' && typeof payload.id === 'string',
+      handle: async (payload, envelope) => {
+        const command = localActionCommand(payload.owner, payload.id);
+        if (!command) throw new Error('动作尚未授权本地带参数调用');
+        const result = await this.router.invoke(command, payload.arguments, payload.owner, envelope);
+        return { result };
+      },
+    });
+    this.router.registerQuery('core.actions', {
+      type: 'system.action.validate@1',
+      validate: (payload): payload is { owner: string; id: string; arguments?: unknown } =>
+        isRecord(payload) && Object.keys(payload).every(key => ['owner', 'id', 'arguments'].includes(key)) &&
+        typeof payload.owner === 'string' && typeof payload.id === 'string',
+      handle: payload => {
+        const command = localActionCommand(payload.owner, payload.id);
+        return { valid: Boolean(command && this.router.validateCommandPayload(command, payload.arguments)) };
+      },
+    });
+    this.router.registerQuery('core.actions', {
+      type: 'system.actionCatalog@1',
+      handle: () => ({ version: 1, ...this.router.messageCatalog(), capabilities: this.capabilities.list() }),
     });
     this.router.registerQuery('core.history', {
       type: 'history.state',

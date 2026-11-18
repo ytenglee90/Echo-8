@@ -1,13 +1,13 @@
 import { createId, isRecord, type PatchOperation } from '../../core/contracts.ts';
-import type {
-  ConnectionAddJunctionRequest,
-  ConnectionEndpoint,
-  ConnectionJunction,
-  ConnectionMoveJunctionRequest,
-  ConnectionNodeGeometry,
-  ConnectionRecord,
+import {
+  type ConnectionAddJunctionRequest,
+  type ConnectionEndpoint,
+  type ConnectionJunction,
+  type ConnectionMoveJunctionRequest,
+  type ConnectionNodeGeometry,
+  type ConnectionRecord,
+  isTitleConnection,
 } from '../../protocols/connections.ts';
-import { isTitleConnection } from '../../protocols/connections.ts';
 
 export const JUNCTION_NAMESPACE = 'connectionJunction';
 const CONNECTION_NAMESPACE = 'connections';

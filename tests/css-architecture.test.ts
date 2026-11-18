@@ -32,6 +32,7 @@ const expectedImports = [
   "@import './styles/ai-secondary.css';",
   "@import './styles/ai-design-system.css';",
   "@import './styles/settings-center.css';",
+  "@import './styles/workspace-actions.css';",
 ];
 
 test('global styles keep an explicit cascade order', async () => {

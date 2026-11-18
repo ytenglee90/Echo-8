@@ -17,6 +17,7 @@ type CanvasFocusCommand = CommandContract<{ id: string }, boolean>;
 declare module './commands.ts' {
   interface ApplicationCommandMap {
     'canvas.focusEntity': CanvasFocusCommand;
+    'canvas.viewport.set@1': CommandContract<SetCanvasViewport, CameraState>;
   }
 }
 
@@ -24,6 +25,16 @@ export interface CameraState {
   x: number;
   y: number;
   zoom: number;
+}
+
+export interface SetCanvasViewport {
+  /** Absolute scale, where 1 is 100%. */
+  zoom?: number;
+  /** Centre this existing entity without fitting to its dimensions. */
+  entityId?: string;
+  center?: { x: number; y: number };
+  /** Screen-space pan, independent of the document geometry. */
+  pan?: { x: number; y: number };
 }
 
 export interface CanvasViewportSize {

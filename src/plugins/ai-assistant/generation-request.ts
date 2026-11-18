@@ -14,7 +14,7 @@ import { SEARCH_MEMORY_TOOL } from './memory-search-tool.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
 import { evidenceBodies, focusedCanvasContentSource, nativeConversation } from './request-evidence.ts';
 import type { AIInputCategory } from '../../protocols/ai-usage.ts';
-import { operationCreatesWriteback } from './operations.ts';
+import { operationCreatesWriteback, operationInstruction, operationLabel, operationTemperature } from './operations.ts';
 import { canvasTurnId, turnAssembly } from './turn-route.ts';
 import { canvasCommandText, canvasControlPurpose } from '../../services/ai-task-route.ts';
 import { NATURAL_QUOTED_NAME } from '../../services/natural-canvas-rules.ts';
@@ -25,11 +25,6 @@ import { isAbortError, isCapabilityUnavailable } from './runtime-errors.ts';
 import { CANVAS_AGENT_TOOLS, CANVAS_AGENT_INSTRUCTIONS, CANVAS_GEOMETRY_INSTRUCTIONS, initialCanvasAgentState } from './canvas-agent-tools.ts';
 import { agentDirectory, canvasRequestScope, mergeCanvasDirectories, projectCanvasObjects, readCanvasDirectory,
   scopedCanvasInstructions, scopedCanvasTools } from './canvas-request-scope.ts';
-import {
-  operationInstruction,
-  operationLabel,
-  operationTemperature,
-} from './operations.ts';
 
 /** Builds the reviewed provider request without mutating plugin or document state. */
 export async function buildGenerateRequest(

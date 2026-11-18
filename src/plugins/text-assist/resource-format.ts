@@ -37,7 +37,7 @@ const MERGEABLE_SECTIONS = [
   '评分',
 ] as const;
 
-export const DEFAULT_TEXT_ASSIST_SCORING: TextAssistLanguageModel['scoring'] = {
+const DEFAULT_TEXT_ASSIST_SCORING: TextAssistLanguageModel['scoring'] = {
   nodeTitle: 35,
   prefix: 2,
   contains: -8,

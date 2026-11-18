@@ -8,20 +8,18 @@ import {
   type AppearanceUpdatePlan,
   type AppearanceUpdateRequest,
 } from '../../protocols/appearance.ts';
-import type {
-  AnnotationCreateRequest,
-  AnnotationMarkerAnchorsPreview,
-  AnnotationOpenRequest,
-  AnnotationOpenState,
-  AnnotationRecord,
-  AnnotationTarget,
-  AnnotationUpdateRequest,
-  ContentAnnotationCloneRequest,
-  ContentAnchorMoveRequest,
-  ContentAnchorTransformPlan,
-  ContentAnchorTransformRequest,
-} from '../../protocols/annotations.ts';
 import {
+  type AnnotationCreateRequest,
+  type AnnotationMarkerAnchorsPreview,
+  type AnnotationOpenRequest,
+  type AnnotationOpenState,
+  type AnnotationRecord,
+  type AnnotationTarget,
+  type AnnotationUpdateRequest,
+  type ContentAnnotationCloneRequest,
+  type ContentAnchorMoveRequest,
+  type ContentAnchorTransformPlan,
+  type ContentAnchorTransformRequest,
   MAX_ANNOTATION_BODY_LENGTH,
   MAX_ANNOTATION_CLIPBOARD_BODY,
   MAX_ANNOTATION_CLIPBOARD_ITEMS,
@@ -31,8 +29,7 @@ import type {
   SelectionCatalogContribution,
   SelectionSnapshot,
 } from '../../protocols/selection.ts';
-import type { EditorSelectionSnapshot } from '../../protocols/editor.ts';
-import type { EditorContextSnapshot } from '../../protocols/editor.ts';
+import type { EditorSelectionSnapshot, EditorContextSnapshot } from '../../protocols/editor.ts';
 import type { CameraState, CanvasViewportSize } from '../../protocols/canvas.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
 import type { GroupRecord } from '../../protocols/groups.ts';
@@ -41,7 +38,7 @@ import { moveTextAnchor } from '../../services/text-anchor-movement.ts';
 import { defineManifest } from '../manifest.ts';
 
 export const ANNOTATION_NAMESPACE = 'annotations';
-export const ANNOTATION_UI_NAMESPACE = 'annotationUI';
+const ANNOTATION_UI_NAMESPACE = 'annotationUI';
 const DEFAULT_RECT: FloatingPanelRect = { x: 420, y: 120, width: 380, height: 280 };
 
 export function createAnnotationsPlugin(

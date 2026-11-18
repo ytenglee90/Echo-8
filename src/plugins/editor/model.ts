@@ -7,21 +7,21 @@ import {
 } from '../../core/contracts.ts';
 import { countGraphemes } from '../../services/text-metrics.ts';
 import { removeOwnKeysInPlace } from '../../services/retired-data.ts';
-import type {
-  EditorContextSnapshot,
-  EditorDocumentInvalidation,
-  EditorOpenRequest,
-  EditorOpenRequested,
-  EditorOpenResult,
-  EditorRevealRequest,
-  EditorMetricsRequest,
-  EditorMetricsSnapshot,
-  EditorPaneState,
-  EditorSelectionSnapshot,
-  WritingActivityRequest,
-  WritingMetricsSnapshot,
+import {
+  type EditorContextSnapshot,
+  type EditorDocumentInvalidation,
+  type EditorOpenRequest,
+  type EditorOpenRequested,
+  type EditorOpenResult,
+  type EditorRevealRequest,
+  type EditorMetricsRequest,
+  type EditorMetricsSnapshot,
+  type EditorPaneState,
+  type EditorSelectionSnapshot,
+  type WritingActivityRequest,
+  type WritingMetricsSnapshot,
+  EDITOR_OPEN_REQUESTED_EVENT,
 } from '../../protocols/editor.ts';
-import { EDITOR_OPEN_REQUESTED_EVENT } from '../../protocols/editor.ts';
 import type { SelectionSnapshot } from '../../protocols/selection.ts';
 import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { defineManifest } from '../manifest.ts';
