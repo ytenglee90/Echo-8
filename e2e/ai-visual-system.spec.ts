@@ -98,17 +98,12 @@ test('assistant views share control typography, spacing and section headings', a
   expect(await provider.getByRole('heading', { name: '连接模型', exact: true }).evaluate(element => {
     const style = getComputedStyle(element); return [style.fontSize, style.fontWeight, style.lineHeight];
   })).toEqual(promptHeading);
-  const retrievalButton = provider.getByRole('button', { name: '打开检索设置', exact: true });
-  await retrievalButton.scrollIntoViewIfNeeded();
-  await expect(retrievalButton).toBeInViewport();
-  const providerBox = (await provider.locator('.ai-provider-connection-module').boundingBox())!;
-  expect((await retrievalButton.boundingBox())!.y).toBeGreaterThanOrEqual(providerBox.y + providerBox.height);
+  await expect(provider.getByRole('button', { name: '打开检索设置', exact: true })).toHaveCount(0);
   await provider.screenshot({ path: info.outputPath('ai-provider.png') });
   await page.setViewportSize({ width: 390, height: 844 });
-  await retrievalButton.scrollIntoViewIfNeeded();
-  await expect(retrievalButton).toBeInViewport();
   await expect.poll(() => provider.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  await provider.screenshot({ path: info.outputPath('ai-provider-footer-narrow.png') });
+  expect((await provider.locator('.ai-provider-transfer-actions').boundingBox())!.height).toBeLessThan(180);
+  await provider.screenshot({ path: info.outputPath('ai-provider-narrow.png') });
   await provider.getByRole('button', { name: '关闭 AI 模型连接', exact: true }).click();
   expect(await memory.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   expect((await memory.locator('.ai-memory-daily-action').boundingBox())!.height).toBeLessThan(160);

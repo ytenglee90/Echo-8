@@ -101,7 +101,6 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         ...Object.values(SEMANTIC_PROVIDER_COMMANDS),
         'aiProvider.restorePersonal',
         'system.preferences.set',
-        'retrieval.open@1',
       ],
       events: ['ai.provider.configuration.changed', 'document.replaced', UI_SURFACE_REVEALED_EVENT],
       signals: ['ai.provider.changed', SEMANTIC_PROVIDER_CHANGED_SIGNAL, AI_USAGE_CHANGED],

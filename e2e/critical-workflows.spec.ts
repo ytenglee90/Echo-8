@@ -3896,13 +3896,8 @@ test('AI connection form keeps the routine connection path clear', async ({ page
   await expect(memoryToolToggle).toBeDisabled();
 
   await expect(settings.getByRole('tab')).toHaveCount(0);
-  const retrievalButton = settings.getByRole('button', { name: /打开检索设置/u });
-  await expect(retrievalButton).toHaveAttribute('title', /语义模型和索引/u);
-  await expect(retrievalButton).toHaveCSS('cursor', 'pointer');
-  await expect(retrievalButton).toContainText('检索方式、语义模型与索引');
-  const beforeScroll = await settings.locator('.ai-provider-connection-module').boundingBox();
-  expect((await retrievalButton.boundingBox())!.y).toBeGreaterThanOrEqual(beforeScroll!.y + beforeScroll!.height);
-  await settings.getByRole('button', { name: '打开检索设置', exact: true }).click();
+  await expect(settings.getByRole('button', { name: '打开检索设置', exact: true })).toHaveCount(0);
+  await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '检索', exact: true }).click();
   const retrieval = page.getByRole('region', { name: '检索设置', exact: true });
   await expect(retrieval).toBeVisible();
   await expect(page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '检索', exact: true })).toBeVisible();

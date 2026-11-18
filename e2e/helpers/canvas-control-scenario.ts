@@ -67,24 +67,24 @@ export function canvasControlScenarios(url: string): void {
   test('switching a named card to a text box and entering immersive writing use no model', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
-    await seedCanvas(page, url, [{ title: '空白 24', body: '这是要保留的正文。' }], true);
+    await seedCanvas(page, url, [{ title: '空白 11', body: '这是要保留的正文。' }], true);
     await configure(page, url, 'openai', undefined, 'direct', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('切换空白24为文本框');
+    await ai.locator('.ai-composer textarea').fill('切换空白11为文本框');
     await ai.locator('.ai-composer textarea').press('Enter');
     const control = page.getByRole('region', { name: '画布控制', exact: true });
     await control.getByRole('button', { name: /^应用/u }).click();
-    await expect(page.locator('.text-node-card.text-box')).toContainText('空白 24');
+    await expect(page.locator('.text-node-card.text-box')).toContainText('空白 11');
     await control.getByRole('button', { name: '关闭画布控制', exact: true }).click();
     await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
-    await ai.locator('.ai-composer textarea').fill('打开空白24，沉浸写作模式');
+    await ai.locator('.ai-composer textarea').fill('打开空白11的沉浸写作模式');
     await ai.locator('.ai-composer textarea').press('Enter');
     await expect(page.getByRole('button', { name: '退出沉浸写作', exact: true })).toBeVisible();
     await expect(page.locator('.editor-writing-area').filter({ visible: true }).first()).toContainText('这是要保留的正文');
     await page.getByRole('button', { name: '退出沉浸写作', exact: true }).click();
     expect(calls).toBe(0);
   });
-  test('rewrite into a named new node generates only prose and creates an undoable result', async ({ page }) => {
+  for (const fieldOrder of ['rewrite-first', 'create-first'] as const) test('rewrite into a named new node generates only prose and creates an undoable result: ' + fieldOrder, async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => {
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
@@ -99,7 +99,9 @@ export function canvasControlScenarios(url: string): void {
     await seedCanvas(page, url, [{ title: '未命名节点', body: '原正文里只有这项事实。' }], true);
     await configure(page, url, 'openai', undefined, 'direct', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('改写未命名节点的内容，用新的节点插入内容，标题为周明瑞');
+    await ai.locator('.ai-composer textarea').fill(fieldOrder === 'rewrite-first'
+      ? '改写未命名节点的内容，用新的节点插入内容，标题为周明瑞'
+      : '用新的节点插入内容，标题为周明瑞，内容为改写后的未命名节点的内容，');
     await ai.locator('.ai-composer textarea').press('Enter');
     const result = page.getByRole('article', { name: /文本节点：周明瑞$/u });
     await expect(result).toContainText('周明瑞在晨光中醒来');
@@ -1419,7 +1421,7 @@ export function canvasControlScenarios(url: string): void {
     await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
     await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
     await openModelSettings(page);
-    await page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true }).getByRole('button', { name: '打开检索设置', exact: true }).click();
+    await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '检索', exact: true }).click();
     const settings = page.getByRole('region', { name: '检索设置', exact: true });
     const mode = settings.getByRole('combobox', { name: '检索方式', exact: true });
     await expect(mode).toHaveValue('local');
@@ -1437,7 +1439,7 @@ export function canvasControlScenarios(url: string): void {
     await settings.screenshot({ path: info.outputPath('retrieval-settings.png') });
     await settings.getByRole('button', { name: '关闭检索设置' }).click();
     await openModelSettings(page);
-    await page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true }).getByRole('button', { name: '打开检索设置', exact: true }).click();
+    await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: '检索', exact: true }).click();
     await expect(mode).toHaveValue('keyword');
     await mode.selectOption('cloud-fallback');
     await expect(settings).toContainText('云端连接仍需独立授权');

@@ -329,13 +329,6 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
         : message && <p className="ai-message">{message}</p>}
       {error && <p className="ai-error" role="alert">{error}</p>}
       </section>
-      <section className="ai-provider-retrieval-link" aria-label="检索方式">
-        <button type="button" className="ai-retrieval-settings-button" aria-label="打开检索设置" title="打开检索设置，管理检索方式、语义模型和索引"
-          disabled={!client.isCommandAvailable('retrieval.open@1')}
-          onClick={() => void client.dispatch('retrieval.open@1').catch(reason => setError(String(reason)))}>
-          <Icon name="search" size={17} /><span><strong>打开检索设置</strong><small>检索方式、语义模型与索引</small></span><Icon name="chevron-right" size={16} />
-        </button>
-      </section>
     </section>
   );
 }

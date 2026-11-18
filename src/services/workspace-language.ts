@@ -111,7 +111,7 @@ function objectAction(text: string, title: Title, literal: Title): Action | unde
   if (rename && !/书籍|群组|连线|正文|里的/u.test(rename[1]!)) {
     return { action: 'node.rename', arguments: { ...target(rename[1]!), title: literal(rename[2]!) } };
   }
-  const immersive = /^(?:全屏(?:阅读|编辑)\s*(.+)|(?:进入|切到)\s*(.+?)\s*的(?:沉浸(?:式)?(?:编辑|写作)|(?:专注|全屏)写作)(?:模式)?|打开\s*(.+?)[，,]\s*(?:进入|切到)?\s*(?:沉浸(?:式)?(?:编辑|写作)|专注写作)(?:模式)?)$/u.exec(text);
+  const immersive = /^(?:全屏(?:阅读|编辑)\s*(.+)|(?:进入|切到|打开|切换到)\s*(.+?)\s*的(?:沉浸(?:式)?(?:编辑|写作)|(?:专注|全屏)写作)(?:模式)?|打开\s*(.+?)[，,]\s*(?:进入|切到)?\s*(?:沉浸(?:式)?(?:编辑|写作)|专注写作)(?:模式)?)$/u.exec(text);
   if (immersive) return { action: 'editor.immersive.enter', arguments: target(immersive[1] ?? immersive[2] ?? immersive[3]!) };
   const close = /^(?:关闭\s*(.+?)(?:的)?(?:编辑窗格|编辑器|编辑页)|把(?:右侧)?\s*(.+?)(?:那个|的)?编辑器关掉|不再显示\s*(.+?)编辑页)$/u.exec(text);
   if (close) return { action: 'editor.close', arguments: target(close[1] ?? close[2] ?? close[3]!) };

@@ -15,6 +15,7 @@ import { nativeCanvasIntent } from '../src/services/native-canvas-intent.ts';
 import { classifyAITurn } from '../src/plugins/ai-assistant/turn-route.ts';
 import { compileLocalInstructions } from '../src/plugins/ai-assistant/local-turn-routing.ts';
 import { parseCanvasControlPlan } from '../src/services/canvas-control-validation.ts';
+import { cardRestructureTask } from '../src/plugins/ai-assistant/card-restructure.ts';
 import { planWorkspaceWithModel } from '../src/plugins/ai-assistant/workspace-model-planner.ts';
 import type { CanvasControlState } from '../src/protocols/canvas-control.ts';
 import type { GroupRecord } from '../src/protocols/groups.ts';
@@ -241,6 +242,9 @@ test('settings navigation, immersive writing and delete-all phrases route locall
     ['关闭指令与偏好', 'settings.personal.close'], ['关闭检索设置', 'settings.retrieval.close'],
     ['打开未命名节点，沉浸写作模式', 'editor.immersive.enter'],
     ['进入空白31的沉浸写作模式', 'editor.immersive.enter'],
+    ['打开空白11的沉浸写作模式', 'editor.immersive.enter'],
+    ['切到空白11的沉浸写作模式', 'editor.immersive.enter'],
+    ['切换到空白11的沉浸写作模式', 'editor.immersive.enter'],
   ]) {
     const route = classifyAITurn(prompt!);
     assert.equal((route.workspaceSteps ?? route.catalogIntent?.steps)?.[0]?.action, action, prompt);
@@ -297,4 +301,24 @@ test('interface model fallback sends only interface actions without canvas direc
   assert.deepEqual(payload.selectedIds, []);
   assert.ok(payload.actions.length < 30);
   assert.doesNotMatch(JSON.stringify(recorded), /不应发送/u);
+});
+
+
+test('rewrite creation binds creation, title and source fields in every complete order', () => {
+  const fields = ['用新的节点插入内容', '标题为周明瑞', '内容为改写后的未命名节点的内容'];
+  for (const order of [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]]) {
+    const prompt = order.map(i => fields[i]).join('，') + '，';
+    assert.deepEqual(cardRestructureTask(prompt), { names: ['未命名节点'], titles: ['周明瑞'], reconnect: false });
+    assert.equal(classifyAITurn(prompt).operation, 'canvas-control');
+    assert.equal(classifyAITurn(prompt, 'rewrite').operation, 'canvas-control');
+  }
+  assert.deepEqual(cardRestructureTask('改写「来源，旧稿」的正文，创建一个新节点，标题为「结果，第二稿」'), {
+    names: ['来源，旧稿'], titles: ['结果，第二稿'], reconnect: false,
+  });
+  for (const prompt of ['用新的节点插入内容，标题为周明瑞',
+    '用新的节点插入内容，标题为甲，标题为乙',
+    '用新的节点插入内容，标题为周明瑞，内容为改写后的未命名节点的内容，然后删除原节点',
+    '不要用新的节点插入内容，标题为周明瑞，内容为改写后的未命名节点的内容']) {
+    assert.equal(cardRestructureTask(prompt), undefined, prompt);
+  }
 });

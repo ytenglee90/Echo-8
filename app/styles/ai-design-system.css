@@ -94,7 +94,7 @@
 :is(.ai-floating-panel, .settings-center .ai-provider-panel) .ai-provider-settings-host > .ui-contribution-root:has(.ai-provider-panel) > .ai-provider-panel { margin: 0; padding: 0; gap: var(--ai-section-gap); border: 0; border-radius: 0; background: transparent; }
 :is(.ai-floating-panel, .settings-center .ai-provider-panel) :is(.ai-provider-transfer-actions, .ai-provider-connection-module) { padding: 12px; border-color: var(--border); border-radius: var(--ai-card-radius); }
 :is(.ai-floating-panel, .settings-center .ai-provider-panel) .ai-provider-transfer-actions { flex-wrap: wrap; gap: 12px; }
-:is(.ai-floating-panel, .settings-center .ai-provider-panel) .ai-provider-transfer-actions > div { flex: 1 1 180px; }
+:is(.ai-floating-panel, .settings-center .ai-provider-panel) .ai-provider-transfer-actions > div { flex: 1 1 auto; }
 :is(.ai-floating-panel, .settings-center .ai-provider-panel) .ai-provider-transfer-actions > span { gap: 8px; }
 :is(.ai-floating-panel, .settings-center .ai-provider-panel) .ai-provider-setup-intro h2 { font-size: 14px; line-height: 1.5; }
 :is(.ai-floating-panel, .settings-center .ai-provider-panel) .ai-provider-setup-intro p { line-height: 1.6; }

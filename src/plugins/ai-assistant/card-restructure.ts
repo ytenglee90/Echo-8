@@ -2,7 +2,7 @@ import type { PluginContext } from '../../core/contracts.ts';
 import type { AIContextSource, AIInlineReference, AIPreparedSource } from '../../protocols/ai.ts';
 import type { CanvasAgentQueryResult } from '../../protocols/canvas-agent.ts';
 import type { CanvasControlPlan } from '../../protocols/canvas-control.ts';
-import { naturalName, naturalNames } from '../../services/natural-canvas-rules.ts';
+import { naturalName, naturalNames, NATURAL_QUOTED_NAME } from '../../services/natural-canvas-rules.ts';
 import { canvasTitleAliases, normalizeCanvasTitle } from '../../services/canvas-titles.ts';
 import { readContextSource } from './context-source-reader.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
@@ -10,11 +10,37 @@ import { estimateAITokens } from './evidence-boundaries.ts';
 interface RestructureTask { names: string[]; titles: string[]; reconnect: boolean }
 export interface RestructureBinding { ids: string[]; titles: string[]; reconnect: boolean }
 
+/** Bind all three explicit fields regardless of their order; quoted names are data. */
+function rewriteIntoNewNode(text: string): RestructureTask | undefined {
+  if (text.includes('\u0000')) return undefined;
+  const literals: string[] = [];
+  const protectedText = text.replace(new RegExp(NATURAL_QUOTED_NAME, 'gu'), value => `\u0000${literals.push(value) - 1}\u0000`);
+  const clauses = protectedText.split(/[，,；;]/u).map(clause => clause.trim()).filter(Boolean);
+  if (clauses.length !== 3) return undefined;
+  const restore = (value: string) => naturalName(value.replace(/\u0000(\d+)\u0000/gu, (_, index: string) => literals[Number(index)]!));
+  let source: string | undefined;
+  let title: string | undefined;
+  let create = false;
+  for (const clause of clauses) {
+    const name = /^(?:标题|名称|名字)(?:为|是|叫|设为|设置为|[：:])\s*[：:]?\s*(.+)$/u.exec(clause);
+    if (name && !title) { title = restore(name[1]!); continue; }
+    const rewrite = /^(?:改写|重写|润色)\s*(.+?)(?:的)?(?:内容|正文|全文)$/u.exec(clause) ??
+      /^(?:内容|正文)(?:为|是|[：:])\s*[：:]?\s*(?:改写|重写|润色)后的\s*(.+?)(?:的)?(?:内容|正文|全文)$/u.exec(clause);
+    if (rewrite && !source) { source = restore(rewrite[1]!); continue; }
+    if (!create && /^(?:(?:用|使用)(?:一个|一张)?新(?:的)?(?:节点|卡片)(?:来)?(?:插入|写入|保存|存放)(?:内容|结果|正文|改写结果)?|(?:新建|创建|新增)(?:一个|一张)?(?:新(?:的)?)?(?:节点|卡片)|(?:写入|输出到?)(?:一个|一张)?新(?:的)?节点(?:内容|结果)?)$/u.test(clause)) {
+      create = true; continue;
+    }
+    return undefined;
+  }
+  return create && source && title && source.length <= 120 && title.length <= 120
+    ? { names: [source], titles: [title], reconnect: false } : undefined;
+}
+
 export function cardRestructureTask(prompt: string): RestructureTask | undefined {
-  const text = prompt.trim().replace(/^@画布操作\s+/u, '').replace(/^(?:请|帮我)\s*/u, '').replace(/[。！!]$/u, '');
+  const text = prompt.trim().replace(/^@画布操作\s+/u, '').replace(/^(?:请|帮我)\s*/u, '').replace(/[，,。！!]+$/u, '');
   const reconnect = /(?:重接|重新连接|迁移)(?:相关|原有)?连线/u.test(text);
-  const rewrite = /^(?:改写|重写|润色)\s*(.+?)(?:的)?(?:内容|正文|全文)[，,]\s*(?:用|使用|写入|输出到?)\s*(?:一个|一张)?新(?:的)?节点(?:插入|写入|保存|存放)?(?:内容|结果|改写结果)?[，,]\s*标题(?:为|是|叫|设为)\s*(.{1,120})$/u.exec(text);
-  if (rewrite) return { names: [naturalName(rewrite[1]!)], titles: [naturalName(rewrite[2]!)], reconnect: false };
+  const rewrite = rewriteIntoNewNode(text);
+  if (rewrite) return rewrite;
   const split = /^(?:把|将)\s*(.+?)\s*拆(?:分)?成\s*(.+?)(?:[二两三四五六七八九十\d]+\s*(?:张|个)(?:新卡|卡片?|节点)?)(?:[，,]\s*保留原卡)?(?:[，,]?\s*(?:并|再)?(?:重接|重新连接)(?:相关|原有)?连线)?$/u.exec(text);
   if (split) {
     const titles = naturalNames(split[2]!);
