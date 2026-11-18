@@ -585,7 +585,7 @@ test('the same requested switch state is idempotent and reads back the owner sta
 test('catalog sequences require every clause and keep quoted names and unsupported temporary restoration intact', () => {
   const sequence = readWorkspaceSequence('先把画布缩放到60%，然后打开模型连接设置，再显示小地图').intent;
   assert.equal(sequence?.parts?.length, 3);
-  assert.deepEqual(sequence?.steps.map(step => step.action), ['viewport.set', 'registered:ai-assistant:ai.open-provider-settings-action', 'minimap.open']);
+  assert.deepEqual(sequence?.steps.map(step => step.action), ['viewport.set', 'settings.models.open', 'minimap.open']);
   const unsupported = readWorkspaceSequence('缩放到60%，然后跳舞，再打开小地图');
   assert.equal(unsupported.matched, true);
   assert.equal(unsupported.intent, undefined);
@@ -893,4 +893,20 @@ test('a missing fragment instantiator prevents the complete duplicate transactio
   assert.equal(result.status, 'failed');
   assert.match(result.steps[0]!.message!, /部分对象无法实例化/u);
   assert.deepEqual(await nodes(), before);
+});
+
+
+test('local document actions edit the current cloud-backed book through normal owner transactions', async () => {
+  const fileState: PluginDefinition = {
+    manifest: defineManifest('import-export', 'Cloud book fixture', { providesCapabilities: ['file.state@1'] }),
+    start(context) { context.capabilities.provide({ key: 'file.state@1', invoke: () => ({ cloudProjectActive: true }) }); },
+  };
+  const { kernel, run, nodes } = await harness([fileState]);
+  await kernel.router.dispatch('node.create', { title: '云端节点', body: '保留正文' }, source);
+  const [node] = await nodes();
+  const receipt = await run('cloud-presentation', [{ id: 'present', action: 'node.presentation', arguments: { target: { id: node!.id }, presentation: 'text-box' } }]);
+  assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+  assert.equal((await nodes())[0]?.presentation, 'text-box');
+  await kernel.router.dispatch('history.undo', undefined, source);
+  assert.equal((await nodes())[0]?.presentation, 'card');
 });

@@ -22,10 +22,12 @@ import type { ContentSummary } from '../src/protocols/content.ts';
 import type { ConnectionGraphSnapshot } from '../src/protocols/connections.ts';
 import type { AIGenerateRequest, AIPreparedContext } from '../src/protocols/ai.ts';
 import type { KnownCapabilityType } from '../src/protocols/messages.ts';
+import { createShortcutCenterPlugin } from '../src/plugins/shortcut-center/model.ts';
+import { createAnnotationsPlugin } from '../src/plugins/annotations/model.ts';
 
 async function harness() {
   const kernel = new ApplicationKernel([createTextNodePlugin(), createSelectionPlugin(), createGroupsPlugin(), createConnectionsPlugin(),
-    createCanvasControlPlugin(), createPalettePlugin(), createEditorPlugin(), workspaceActionsPlugin]);
+    createCanvasControlPlugin(), createPalettePlugin(), createEditorPlugin(), createAnnotationsPlugin(), createShortcutCenterPlugin(), workspaceActionsPlugin]);
   await kernel.start();
   const dispatch = <T = unknown>(key: string, input?: unknown) => kernel.router.dispatch<T>(key, input, 'core.test');
   const context = { capabilities: { request: (key: string, input?: unknown, signal?: AbortSignal) => kernel.capabilities.request(key, input, signal),
@@ -227,4 +229,72 @@ for (const change of ['conversation', 'target-body', 'target-title', 'group-memb
     const content = await kernel.capabilities.request<{ text: string }>('content.read@1', { nodeId: node.id, start: 0, length: 100 });
     assert.equal(content.text, '模型在后台补全的正文，与群组归属无关。');
   }
+});
+
+
+test('settings navigation, immersive writing and delete-all phrases route locally with explicit targets', () => {
+  for (const [prompt, action] of [
+    ['打开指令与偏好', 'settings.personal.open'], ['请帮我打开我的用语', 'settings.personal.open'],
+    ['打开插件', 'settings.plugins.open'], ['关闭插件中心', 'settings.plugins.close'],
+    ['打开检索', 'settings.retrieval.open'], ['打开索引设置', 'settings.retrieval.open'],
+    ['打开云同步', 'settings.cloud.open'], ['打开模型连接设置', 'settings.models.open'],
+    ['关闭指令与偏好', 'settings.personal.close'], ['关闭检索设置', 'settings.retrieval.close'],
+    ['打开未命名节点，沉浸写作模式', 'editor.immersive.enter'],
+    ['进入空白31的沉浸写作模式', 'editor.immersive.enter'],
+  ]) {
+    const route = classifyAITurn(prompt!);
+    assert.equal((route.workspaceSteps ?? route.catalogIntent?.steps)?.[0]?.action, action, prompt);
+  }
+  for (const prompt of ['删除所有', '删掉全部', '移除所有']) {
+    const route = classifyAITurn(prompt);
+    assert.equal(route.local?.kind, 'remove');
+    assert.deepEqual(route.local?.names, ['所有节点']);
+  }
+  assert.equal(classifyAITurn('删除「所有」').local?.names[0], '所有');
+  assert.notEqual(classifyAITurn('不要打开插件').workspaceSteps?.[0]?.action, 'settings.plugins.open');
+});
+
+test('named text annotations bind a unique body offset and reject stale or repeated text', async () => {
+  const { kernel, dispatch, context, nodes } = await harness();
+  await dispatch('node.create', { title: '未命名节点', body: '本月水电费待核对。' });
+  const node = (await nodes()).find(node => node.title === '未命名节点')!;
+  const input = { preparationId: 'annotation-phrase', sessionId: 'annotation-phrase', prompt: '给未命名节点里的水电费添加注释', selectedIds: [], sourceIds: [node.id] };
+  const intent = nativeCanvasIntent(input.prompt)!;
+  assert.deepEqual(intent, { kind: 'annotation-create', name: '未命名节点', quote: '水电费' });
+  const action = await prepareNativeCanvasAction(context, input, intent);
+  await action.apply();
+  const annotations = await kernel.capabilities.request<import('../src/protocols/annotations.ts').AnnotationRecord[]>('annotations.list@1');
+  assert.deepEqual(annotations[0]?.target, { kind: 'text-range', targetId: node.id, offset: 2 });
+  await dispatch('history.undo');
+  assert.equal((await kernel.capabilities.request<unknown[]>('annotations.list@1')).length, 0);
+  await dispatch('selection.set', { ids: [node.id] });
+  const selectedAction = await prepareNativeCanvasAction(context, { ...input, selectedIds: [node.id] }, nativeCanvasIntent('给水电费添加注释')!);
+  await selectedAction.apply();
+  const selectedAnnotations = await kernel.capabilities.request<import('../src/protocols/annotations.ts').AnnotationRecord[]>('annotations.list@1');
+  assert.deepEqual(selectedAnnotations[0]?.target, { kind: 'text-range', targetId: node.id, offset: 2 });
+  await dispatch('history.undo');
+  const pending = await prepareNativeCanvasAction(context, input, intent);
+  await dispatch('content.applyDelta', { nodeId: node.id, start: 0, deleteCount: 0, insert: '修改', expectedRevision: node.revision });
+  await assert.rejects(pending.apply(), /正文已变化/u);
+  await dispatch('content.applyDelta', { nodeId: node.id, start: 0, deleteCount: 0, insert: '水电费', expectedRevision: (await nodes()).find(item => item.id === node.id)!.revision });
+  await assert.rejects(prepareNativeCanvasAction(context, input, intent), /出现多次/u);
+});
+
+test('interface model fallback sends only interface actions without canvas directory or selection', async () => {
+  const { context, dispatch } = await harness();
+  await dispatch('node.create', { title: '不应发送的私有标题', body: '不应发送的正文' });
+  let recorded: AIGenerateRequest | undefined;
+  const planner = { ...context, capabilities: { ...context.capabilities, request: async (key: string, input: unknown, signal?: AbortSignal) => {
+    if (key === 'ai.provider.catalog@1') return { activeId: 'chosen', options: [{ id: 'chosen', configured: true, contextWindowTokens: 16000 }] };
+    if (key === 'ai.generate@1') { recorded = input as AIGenerateRequest; return { text: JSON.stringify({ steps: [], clarification: '请指定设置页' }), provider: 'fixture', model: 'chosen' }; }
+    return context.capabilities.request(key as KnownCapabilityType, input, signal);
+  } } } as PluginContext;
+  await planWorkspaceWithModel(planner, { id: 'interface', sessionId: 'interface', prompt: '我想打开配置里那个管理页面', providerProfileId: 'chosen',
+    operation: 'canvas-control', sources: [], totalCharacters: 0, estimatedTokens: 0, createdAt: 1, expiresAt: Date.now() + 60000 }, new AbortController().signal);
+  assert.ok(recorded);
+  const payload = JSON.parse(recorded.messages[1]!.content);
+  assert.deepEqual(payload.directory, {});
+  assert.deepEqual(payload.selectedIds, []);
+  assert.ok(payload.actions.length < 30);
+  assert.doesNotMatch(JSON.stringify(recorded), /不应发送/u);
 });

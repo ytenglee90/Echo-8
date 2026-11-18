@@ -9868,7 +9868,7 @@ test('AI assistant keeps concurrent generation tasks and stream signals scoped t
   removeDelta();
 });
 
-test('AI model settings are embedded in the assistant slot and never claim the right rail', async () => {
+test('AI model settings own a settings-center page and legacy aliases preserve assistant state', async () => {
   const harness = createHarness();
   const assistant = createAIAssistantPlugin();
   const provider = createAIProviderPlugin({});
@@ -9882,22 +9882,28 @@ test('AI model settings are embedded in the assistant slot and never claim the r
     'content.summaries@1',
   )).length;
 
-  assert.deepEqual(harness.ui.list('ai.settings').map((item) => item.owner), ['ai-provider']);
+  assert.deepEqual(harness.ui.list('ai.settings'), []);
   assert.deepEqual(harness.ui.list('ai.retrieval'), []);
-  assert.equal(harness.ui.list('right.primary').some((item) => item.owner === 'ai-provider'), false);
+  const page = harness.ui.listSettingsPages().find(item => item.owner === 'ai-provider');
+  assert.equal(page?.settings?.order, 15);
+  assert.equal(page?.settings?.openCommand, 'aiProvider.open@1');
+  const before = await harness.router.ask<AIAssistantState>('ai.state', undefined, 'core.test');
   await harness.router.dispatch('ai.openProviderSettings', undefined, 'core.test');
-  const opened = await waitFor(async () => {
-    const state = await harness.router.ask<AIAssistantState>('ai.state', undefined, 'core.test');
-    return state.open && state.view === 'provider' ? state : undefined;
-  });
-  assert.ok(opened.activeSessionId);
+  assert.deepEqual(await harness.router.ask<AIAssistantState>('ai.state', undefined, 'core.test'), before);
+  assert.equal(harness.ui.topSurface(['right.primary'])?.id, 'ai-provider.settings');
+  assert.equal((await harness.router.ask<import('../src/plugins/ai-provider/types.ts').AIProviderPanelState>('aiProvider.state', undefined, 'core.test')).open, true);
+  await harness.router.dispatch('aiProvider.close@1', undefined, 'core.test');
+  assert.equal(harness.ui.topSurface(['right.primary']), undefined);
+  await harness.router.dispatch('ai.setView', 'provider', 'core.test');
+  assert.deepEqual(await harness.router.ask<AIAssistantState>('ai.state', undefined, 'core.test'), before);
+  assert.equal((await harness.router.ask<import('../src/plugins/ai-provider/types.ts').AIProviderPanelState>('aiProvider.state', undefined, 'core.test')).open, true);
   assert.equal(
     (await harness.capabilities.request<Array<{ id: string }>>('content.summaries@1')).length,
     nodeCountBeforeOpen,
   );
-  assert.equal(harness.ui.topSurface(['right.primary']), undefined);
-
   await harness.plugins.stop('ai-provider');
+  assert.equal(harness.ui.topSurface(['right.primary']), undefined);
+  assert.equal(harness.ui.listSettingsPages().some(item => item.owner === 'ai-provider'), false);
   assert.equal(harness.ui.list('ai.settings').length, 0);
   assert.equal(harness.ui.list('ai.retrieval').length, 0);
   assert.equal(harness.resources.count('ai-provider'), 0);

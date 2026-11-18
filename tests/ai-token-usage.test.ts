@@ -22,6 +22,9 @@ test('OpenAI-compatible wire turns serialize parallel tool calls and match their
   assert.equal(body.tool_choice, undefined);
   const ordinary = buildProviderRequest(profile, 'fake', { messages: [messages[0]!], temperature: 0.2, maxOutputTokens: 1024 }, false);
   assert.equal(JSON.parse(String(ordinary.init.body)).thinking, undefined);
+  const plan = buildProviderRequest(profile, 'fake', { messages: [messages[0]!], temperature: 0, maxOutputTokens: 512,
+    usageContext: { taskId: 'plan', sessionId: 'plan', purpose: 'plan' } }, false);
+  assert.deepEqual(JSON.parse(String(plan.init.body)).thinking, { type: 'disabled' });
 });
 import { applyAIProviderPreset } from '../src/plugins/ai-provider/presets.ts';
 import { parseTranscriptMessages } from '../src/plugins/ai-assistant/transcript-presentation.ts';

@@ -89,7 +89,7 @@ test('assistant workspace converts the legacy single-window state without creati
     sessionId: 'legacy',
     rect: { x: 60, y: 80, width: 640, height: 700 },
     composerHeight: 140,
-    view: 'provider',
+    view: 'chat',
     createdAt: 42,
   }]);
   assert.deepEqual(readAssistantInstancesFromWorkspace({
