@@ -106,19 +106,25 @@ export function workspaceActionsScenario(url: string): void {
     await openPane('比例甲', false);
     await openPane('比例乙', true);
     await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
-    const composer = page.getByRole('region', { name: 'AI 助手', exact: true }).locator('.ai-composer textarea');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const composer = ai.locator('.ai-composer textarea');
+    const ask = async (prompt: string) => {
+      const replies = ai.locator('.ai-chat-bubble.assistant:not(.ai-streaming-response)');
+      const count = await replies.count();
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      await composer.fill(prompt); await composer.press('Enter');
+      await expect(replies).toHaveCount(count + 1);
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    };
     // Leave enough width for the editor owner's minimum pane size at both requested ratios.
-    await composer.fill('把编辑区宽度设为1600像素');
-    await composer.press('Enter');
+    await ask('把编辑区宽度设为1600像素');
     await expect.poll(() => page.locator('.editor-dock').evaluate(dock => Math.round(dock.getBoundingClientRect().width))).toBe(1600);
-    await composer.fill('左边编辑器占三分之一，右边占三分之二');
-    await composer.press('Enter');
+    await ask('左边编辑器占三分之一，右边占三分之二');
     const widths = () => page.locator('.editor-pane').evaluateAll(panes => panes.map(pane => pane.getBoundingClientRect().width));
     await expect.poll(async () => { const values = await widths(); return values[1]! / values[0]!; }).toBeCloseTo(2, 1);
     await openPane('比例丙', true);
     await expect(page.locator('.editor-pane')).toHaveCount(3);
-    await composer.fill('并排编辑页按1:2:1分配宽度');
-    await composer.press('Enter');
+    await ask('并排编辑页按1:2:1分配宽度');
     await expect.poll(async () => { const values = await widths(); return values[1]! / values[0]!; }).toBeCloseTo(2, 1);
     await expect.poll(async () => { const values = await widths(); return values[2]! / values[0]!; }).toBeCloseTo(1, 1);
   });

@@ -187,8 +187,12 @@ export function canvasControlScenarios(url: string): void {
     await configure(page, url, 'openai', undefined, 'direct');
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     const ask = async (text: string) => {
+      const replies = ai.locator('.ai-chat-bubble.assistant:not(.ai-streaming-response)');
+      const count = await replies.count();
       await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
       await ai.locator('.ai-composer textarea').fill(text); await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(replies).toHaveCount(count + 1);
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
     };
     await ask('新建60张空白，60张空白打一个组');
     const frame = page.locator('.group-frame');
