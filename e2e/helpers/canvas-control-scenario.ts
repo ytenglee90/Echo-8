@@ -45,6 +45,9 @@ export function canvasControlScenarios(url: string): void {
     await ai.locator('.ai-composer textarea').press('Enter');
     await expect(ai.getByRole('article', { name: 'AI 正在流式生成', exact: true })).toContainText('尚未完成的流式内容');
     await ai.screenshot({ path: info.outputPath('stop-streamed-answer.png') });
+    await ai.locator('.ai-composer textarea').fill('下一条尚未发送的草稿');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.locator('.ai-composer textarea')).toHaveValue('下一条尚未发送的草稿');
     await ai.getByRole('button', { name: '停止本次生成', exact: true }).click();
     await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__modelStopFixture'))).toEqual({ calls: 1, aborted: true });
     await expect(ai.getByRole('article', { name: 'AI 正在流式生成', exact: true })).toHaveCount(0);
@@ -117,7 +120,15 @@ export function canvasControlScenarios(url: string): void {
     await page.route('https://canvas-control.test/**', route => { calls++; return route.fulfill({ status: 500, body: 'Unexpected model request' }); });
     await configure(page, url, 'openai', undefined, 'direct');
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    const ask = async (text: string) => { await ai.locator('.ai-composer textarea').fill(text); await ai.locator('.ai-composer textarea').press('Enter'); };
+    const ask = async (text: string) => {
+      const replies = ai.locator('.ai-chat-bubble.assistant:not(.ai-streaming-response)');
+      const count = await replies.count();
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      await ai.locator('.ai-composer textarea').fill(text);
+      await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(replies).toHaveCount(count + 1);
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    };
     await ask('画布缩放80%');
     await expect(page.getByRole('textbox', { name: '画布缩放 80%', exact: true })).toHaveValue('80');
     await ask('设置自动保存时间为1分钟');
@@ -757,8 +768,13 @@ export function canvasControlScenarios(url: string): void {
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
     const control = page.getByRole('region', { name: '画布控制', exact: true });
     const ask = async (prompt: string) => {
+      const replies = ai.locator('.ai-chat-bubble.assistant:not(.ai-streaming-response)');
+      const count = await replies.count();
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
       await ai.locator('.ai-composer textarea').fill(prompt);
       await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(replies).toHaveCount(count + 1);
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
     };
     for (const prompt of ['新建一张角色卡，叫人物卡', '新建一个叫武器卡的节点', '新建一个叫干扰卡的节点', '选中干扰卡']) {
       await ask(prompt);
