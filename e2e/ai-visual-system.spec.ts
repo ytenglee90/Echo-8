@@ -84,15 +84,22 @@ test('assistant views share control typography, spacing and section headings', a
   expect(memoryButton.radius).toBe(chatSelect.radius);
   await memory.screenshot({ path: info.outputPath('ai-memory.png') });
   await panel.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
-  await expect(panel.getByRole('button', { name: '打开检索设置', exact: true })).toBeInViewport();
   const provider = page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
   expect(await controlStyle(provider.locator('.ai-provider-profile-toolbar select'))).toEqual(formSelect);
   expect(await provider.getByRole('heading', { name: '连接模型', exact: true }).evaluate(element => {
     const style = getComputedStyle(element); return [style.fontSize, style.fontWeight, style.lineHeight];
   })).toEqual(promptHeading);
+  const retrievalButton = panel.getByRole('button', { name: '打开检索设置', exact: true });
+  await retrievalButton.scrollIntoViewIfNeeded();
+  await expect(retrievalButton).toBeInViewport();
+  const providerBox = (await provider.boundingBox())!;
+  expect((await retrievalButton.boundingBox())!.y).toBeGreaterThanOrEqual(providerBox.y + providerBox.height);
   await panel.screenshot({ path: info.outputPath('ai-provider.png') });
   await page.setViewportSize({ width: 390, height: 844 });
+  await retrievalButton.scrollIntoViewIfNeeded();
+  await expect(retrievalButton).toBeInViewport();
   await expect.poll(() => panel.locator('.ai-provider-settings-host').evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await panel.screenshot({ path: info.outputPath('ai-provider-footer-narrow.png') });
   await panel.getByRole('button', { name: 'AI 记忆中心', exact: true }).click();
   expect(await memory.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   expect((await memory.locator('.ai-memory-daily-action').boundingBox())!.height).toBeLessThan(160);

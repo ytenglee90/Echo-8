@@ -29,7 +29,7 @@
   text-align: center;
 }
 .ai-provider-settings-host:has(.ai-provider-panel) > .ai-provider-settings-unavailable { display: none; }
-.ai-provider-retrieval-link { flex: 0 0 auto; }
+.ai-provider-retrieval-link { flex: 0 0 auto; margin-top: auto; }
 .ai-retrieval-settings-button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--control-surface); color: var(--ink); text-align: left; cursor: pointer; }
 .ai-retrieval-settings-button > span { display: grid; gap: 2px; flex: 1; }
 .ai-retrieval-settings-button strong { font-size: 12px; font-weight: 600; }

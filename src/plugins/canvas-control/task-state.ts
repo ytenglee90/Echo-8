@@ -19,21 +19,43 @@ export interface StoredControlReview {
   after?: Record<string, string>;
   placement?: ControlRelativePlacement;
 }
-function nodeMarker(node: ContentSummary): string {
-  return JSON.stringify([node.revision, node.nodeRevision, node.title, node.x, node.y, node.width, node.height, node.titleColor, node.presentation, node.length]);
+type MarkerScope = 'document' | 'membership';
+function nodeMarker(node: ContentSummary, scope: MarkerScope): string {
+  return JSON.stringify([scope === 'membership' ? null : node.revision, scope === 'membership' ? null : node.nodeRevision, node.title, node.x, node.y, node.width, node.height, node.titleColor, node.presentation, scope === 'membership' ? null : node.length]);
 }
-export async function readTaskMarkers(context: PluginContext, ids: string[], signal?: AbortSignal) {
+export async function readTaskMarkers(context: PluginContext, ids: string[], signal?: AbortSignal, scope: MarkerScope = 'document') {
   const [nodes, owners, annotations] = await Promise.all([
     context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: ids }, signal),
     readControlOwners(context, signal),
     ids.some(id => id.startsWith('annotation:')) ? context.capabilities.request<AnnotationRecord[]>('annotations.list@1', undefined, signal).catch(() => []) : [],
   ]);
   const markers: Record<string, string> = Object.fromEntries(ids.map(id => [id, 'absent']));
-  for (const node of nodes) markers[node.id] = nodeMarker(node);
-  for (const group of owners.groups ?? []) if (ids.includes(group.id)) markers[group.id] = JSON.stringify(group);
-  for (const edge of owners.graph?.connections ?? []) if (ids.includes(edge.id)) markers[edge.id] = JSON.stringify(edge);
+  const labels: Record<string, string> = {};
+  for (const node of nodes) { markers[node.id] = nodeMarker(node, scope); labels[node.id] = `节点「${node.title.slice(0, 100)}」`; }
+  for (const group of owners.groups ?? []) if (ids.includes(group.id)) { markers[group.id] = JSON.stringify(group); labels[group.id] = `群组「${group.title.slice(0, 100)}」`; }
+  for (const edge of owners.graph?.connections ?? []) if (ids.includes(edge.id)) { markers[edge.id] = JSON.stringify(edge); labels[edge.id] = '连线'; }
   for (const annotation of annotations) if (ids.includes(annotation.id)) markers[annotation.id] = String(annotation.revision);
-  return { markers, nodes };
+  return { markers, nodes, labels };
+}
+
+/** Describe changed metadata only; never include text bodies or marker payloads. */
+export function taskMarkerChanges(before: string, after: string): string {
+  if (after === 'absent') return '对象已不存在';
+  if (before === 'absent') return '对象记录已重新出现';
+  const previous: unknown = JSON.parse(before);
+  const current: unknown = JSON.parse(after);
+  if (Array.isArray(previous) && Array.isArray(current)) {
+    const fields = ['正文修订', '对象属性修订', '标题', '横坐标', '纵坐标', '宽度', '高度', '颜色', '显示形式', '正文长度'];
+    return fields.filter((_, index) => previous[index] !== current[index]).join('、') || '对象记录';
+  }
+  if (previous && current && typeof previous === 'object' && typeof current === 'object') {
+    const labels: Record<string, string> = { title: '名称', memberIds: '成员列表', color: '颜色', titleStyle: '标题样式', titleMarks: '标题格式', from: '起点', to: '终点', revision: '记录修订', updatedAt: '更新时间' };
+    const fields = [...new Set([...Object.keys(previous), ...Object.keys(current)])].filter(key =>
+      JSON.stringify(Reflect.get(previous, key)) !== JSON.stringify(Reflect.get(current, key)));
+    const meaningful = fields.filter(key => !['revision', 'updatedAt'].includes(key));
+    return (meaningful.length ? meaningful : fields).map(key => labels[key] ?? '对象属性').join('、') || '对象记录';
+  }
+  return '记录修订';
 }
 const draftIds = (draft: StoredControlReview) => [...new Set([...draft.snapshot.writable, ...Object.keys(draft.before ?? {}), ...(draft.createdIds ?? [])])];
 

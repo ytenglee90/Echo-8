@@ -191,3 +191,40 @@ test('a model plan stays pending until the document owner preview is actually ap
   await dispatch('history.undo');
   assert.equal((await nodes()).find(current => current.id === node.id)?.titleColor, node.titleColor);
 });
+
+for (const change of ['conversation', 'target-body', 'target-title', 'group-members'] as const) test(`reviewed model membership removal validates ${change} updates and retains one undo`, async () => {
+  const { kernel, dispatch, context, nodes } = await harness();
+  for (const title of ['空白 1', '空白 2', '空白 3']) await dispatch('node.create', { title });
+  const members = (await nodes()).filter(node => /^空白 /u.test(node.title));
+  await dispatch('selection.set', { ids: members.map(node => node.id), mode: 'replace' });
+  await dispatch('group.create', { title: '新群组' });
+  const [group] = await kernel.capabilities.request<GroupRecord[]>('groups.list@1');
+  const node = members[0]!;
+  await dispatch('selection.set', { ids: [node.id], mode: 'replace' });
+  const planner = { ...context, capabilities: { ...context.capabilities, request: async (key: string, input: unknown, signal?: AbortSignal) => {
+    if (key === 'ai.provider.catalog@1') return { activeId: 'chosen', options: [{ id: 'chosen', configured: true }] };
+    if (key === 'ai.generate@1') return { text: JSON.stringify({ steps: [{ action: 'group.remove', arguments: { groupId: group!.id, nodeIds: [node.id] } }], clarification: '' }), provider: 'fixture', model: 'chosen' };
+    return context.capabilities.request(key as KnownCapabilityType, input, signal);
+  } } } as PluginContext;
+  await planWorkspaceWithModel(planner, { id: 'member-removal', sessionId: 'member-removal', prompt: '空白1踢出群组1', providerProfileId: 'chosen',
+    operation: 'general', sources: [], totalCharacters: 0, estimatedTokens: 0, createdAt: Date.now(), expiresAt: Date.now() + 60_000 }, new AbortController().signal);
+  const review = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;
+  await dispatch('node.create', { title: 'AI 对话原文', body: '模型已经解析，等待确认。' });
+  if (change === 'target-body') await dispatch('content.applyDelta', { nodeId: node.id, start: 0, deleteCount: 0, insert: '模型在后台补全的正文，与群组归属无关。', expectedRevision: node.revision });
+  if (change === 'target-title' || change === 'group-members') {
+    if (change === 'target-title') await dispatch('node.rename', { id: node.id, title: '已经改名' });
+    else await dispatch('group.membership.remove', { groupId: group!.id, nodeIds: [members[1]!.id] });
+    const before = await kernel.capabilities.request<GroupRecord[]>('groups.list@1');
+    await assert.rejects(dispatch('canvasControl.apply@1', { id: review.id }), change === 'target-title' ? /节点「已经改名」.*标题/u : /群组「新群组」.*成员列表/u);
+    assert.deepEqual(await kernel.capabilities.request<GroupRecord[]>('groups.list@1'), before);
+    return;
+  }
+  await dispatch('canvasControl.apply@1', { id: review.id });
+  assert.deepEqual((await kernel.capabilities.request<GroupRecord[]>('groups.list@1'))[0]!.memberIds, group!.memberIds.filter(id => id !== node.id));
+  await dispatch('history.undo');
+  assert.deepEqual((await kernel.capabilities.request<GroupRecord[]>('groups.list@1'))[0]!.memberIds, group!.memberIds);
+  if (change === 'target-body') {
+    const content = await kernel.capabilities.request<{ text: string }>('content.read@1', { nodeId: node.id, start: 0, length: 100 });
+    assert.equal(content.text, '模型在后台补全的正文，与群组归属无关。');
+  }
+});

@@ -11,7 +11,7 @@ import { aggregateTokenUsage, withTokenUsageEstimates } from '../../services/ai-
 import { workspaceReply } from './workspace-reply.ts';
 import { OPERATION_LOG_STAGE_V2, type OperationStageUpdateV2 } from '../../protocols/operation-log.ts';
 
-const PARAMETER_NAMES: Record<string, string> = { zoom: '倍率', title: '标题', target: '目标', nodeIds: '节点', sourceIds: '来源',
+const PARAMETER_NAMES: Record<string, string> = { zoom: '倍率', title: '标题', target: '目标', groupId: '群组', nodeIds: '节点', sourceIds: '来源',
   intervalMs: '自动保存间隔（毫秒）', chord: '快捷键', targetId: '动作', targetOwner: '所属功能', color: '颜色',
   x: '横坐标', y: '纵坐标', gap: '间距', width: '宽度', height: '高度', members: '成员', name: '名称', id: '对象' };
 

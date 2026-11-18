@@ -22,7 +22,7 @@ import { validateAIContextSearchRequest } from '../../protocols/ai.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
 import { defineManifest } from '../manifest.ts';
 import { captureControlSnapshot, controlInstruction, controlContextV2, deletionImpact, readControlOwners, type ControlSnapshot } from './context.ts';
-import { controlTaskState, readControlReviewStatus, readTaskMarkers, type StoredControlReview } from './task-state.ts';
+import { controlTaskState, readControlReviewStatus, readTaskMarkers, taskMarkerChanges, type StoredControlReview } from './task-state.ts';
 import { lineStyleFollowup, localLinePlan, localOperation, localPlan } from './local-operations.ts';
 import { discoverControlTargets } from './target-discovery.ts';
 import { arrangeControlNodes, resolveNaturalOperation, shadeColor, updateArrangement, type NaturalControlResult, type NaturalControlState } from './natural-operations.ts';
@@ -565,15 +565,19 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
           const id = createId('model-workspace-plan');
           const selectedIds = [...input.selectedIds];
           const sourceIds = [...input.sourceIds ?? []];
-          const expected = (await readTaskMarkers(context, sourceIds)).markers;
+          // Membership operations never read or replace the node body. A
+          // concurrent answer may update it without changing this intent.
+          const markerScope = plan.steps.every(step => step.action === 'group.add' || step.action === 'group.remove') ? 'membership' : 'document';
+          const expected = await readTaskMarkers(context, sourceIds, undefined, markerScope);
           let receipt: import('../../protocols/workspace-actions.ts').WorkspacePlanReceipt | undefined;
           const native = { label: `模型解析的 ${validation.steps.length} 项操作`, ids: sourceIds, review: true,
             pendingResult: () => receipt?.status === 'waiting', apply: async () => {
             if (!receipt) {
               const current = await context.capabilities.request<{ ids: string[] }>('selection.read@1');
               if (current.ids.length !== selectedIds.length || current.ids.some((value, index) => value !== selectedIds[index])) throw new Error('发送后选区已变化，请重新解析计划');
-              const live = (await readTaskMarkers(context, sourceIds)).markers;
-              if (sourceIds.some(id => live[id] !== expected[id])) throw new Error('计划引用的对象已变化，请重新解析');
+              const live = await readTaskMarkers(context, sourceIds, undefined, markerScope);
+              const changed = sourceIds.find(id => live.markers[id] !== expected.markers[id]);
+              if (changed) throw new Error(`计划引用的对象已变化：${live.labels[changed] ?? expected.labels[changed] ?? '指定对象'}（${taskMarkerChanges(expected.markers[changed]!, live.markers[changed]!)}），请重新解析`);
             }
             const { revision } = await context.queries.ask<{ revision: number }>('system.document.revision');
             const result = receipt?.status === 'waiting' ? await context.commands.invoke('workspace.plan.resume@1', { id: plan.id, apply: [] })

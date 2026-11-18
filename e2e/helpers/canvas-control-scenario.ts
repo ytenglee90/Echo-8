@@ -169,6 +169,51 @@ export function canvasControlScenarios(url: string): void {
     await page.getByRole('button', { name: '撤销', exact: true }).click();
     await expect(frame).toHaveAttribute('aria-label', '群组：我的人物组，包含 2 个节点');
   });
+  for (const bodyUpdate of [false, true]) test(`model removal from a numbered group handles pending body update ${bodyUpdate} and undoes once`, async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      calls++;
+      const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
+      const input = JSON.parse(request.messages.at(-1)!.content) as { directory?: { nodes: Array<{ id: string; title: string }>; groups: Array<{ id: string; number: number }> } };
+      const group = input.directory?.groups.find(group => group.number === 1);
+      const node = input.directory?.nodes.find(node => node.title.replaceAll(' ', '') === '空白1');
+      const output = !input.directory ? { actions: ['group.remove'], clarification: '' } : {
+        steps: [{ action: 'group.remove', arguments: { groupId: group!.id, nodeIds: [node!.id] } }], clarification: '',
+      };
+      return route.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+        json: { choices: [{ message: { role: 'assistant', content: JSON.stringify(output) }, finish_reason: 'stop' }] } });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const ask = async (text: string) => {
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      await ai.locator('.ai-composer textarea').fill(text); await ai.locator('.ai-composer textarea').press('Enter');
+    };
+    await ask('新建60张空白，60张空白打一个组');
+    const frame = page.locator('.group-frame');
+    await expect(frame).toHaveAttribute('aria-label', /包含 60 个节点/u);
+    await ask('选中空白1');
+    await expect(ai.getByRole('status')).toContainText('已选中');
+    if (bodyUpdate) {
+      await ask('把空白1打开在右侧');
+      await expect(page.locator('.editor-writing-area').first()).toBeVisible();
+    }
+    await ask('空白1踢出群组1');
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await expect(control.getByRole('list', { name: '模型解析步骤' })).toContainText('从指定群组移出');
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    if (bodyUpdate) {
+      await page.locator('.editor-writing-area').first().fill('预览生成后补全的正文，应在移出和撤销后保留。');
+      await page.getByRole('button', { name: '画布控制', exact: true }).click();
+    }
+    await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
+    await expect(frame).toHaveAttribute('aria-label', /包含 59 个节点/u);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(frame).toHaveAttribute('aria-label', /包含 60 个节点/u);
+    if (bodyUpdate) await expect(page.locator('.editor-writing-area').first()).toContainText('预览生成后补全的正文，应在移出和撤销后保留。');
+    expect(calls).toBeGreaterThanOrEqual(1);
+  });
   test('reported review supports select all, deselect all, editable titles and collision recovery without partial writes', async ({ page }, info) => {
     test.setTimeout(60_000);
     await page.addInitScript(() => Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true }));

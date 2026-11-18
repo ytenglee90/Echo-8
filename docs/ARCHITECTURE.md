@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+Membership-only model previews check stable object metadata, complete group state and captured selection while allowing unrelated target-body updates; other model plans retain full revision guards. Conflict messages identify changed objects and metadata fields without showing content. See ADR-0165.
+
 Assistant cancellation covers both context preparation and generation per session. Capability signals use native composition so caller cancellation remains connected after a streamed result is returned; provider-owned readers and controllers retain lifecycle cleanup responsibility. Late cancelled work cannot start a request or save an incomplete response. See ADR-0164.
 
 The AI settings owner consolidates feedback candidates, confirmed learned phrases and retained legacy spacing into a visible learning-record section under My Phrases; the separate defaults tab is retired without deleting account data. The composer owns a compact bottom control row with a named model selector and accessible web, template and memory icons. Group hover/focus exposes a numeric display label with owner-routed revision-checked inline rename. The raw workspace-plan command-palette entry is removed while its orchestration protocols remain. Twelve explicit runtime actions extend group, connection, editor and selection coverage through existing owner commands and readbacks. See ADR-0163.
