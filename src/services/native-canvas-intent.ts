@@ -13,7 +13,7 @@ export type NativeCanvasIntent =
   | { kind: 'paste' | 'undo' | 'redo' }
   | { kind: 'junction'; scope?: 'canvas'; line?: 'solid' | 'dashed' }
   | { kind: 'preferences'; property: 'toolbarBackground' | 'annotationColor' | 'editorChromeBackground' | 'editorBackground' | 'groupBackground'; color: string; label: string }
-  | { kind: 'annotation-create'; name?: string; body?: string }
+  | { kind: 'annotation-create'; name?: string; quote?: string; body?: string }
   | { kind: 'annotation-update'; body: string }
   | { kind: 'annotation-delete' }
   | { kind: 'annotation-color'; color: string };
@@ -80,6 +80,9 @@ export function nativeCanvasIntent(prompt: string): NativeCanvasIntent | undefin
   const value = add[2];
   // Bare multiline content and compound clauses require an explicit quoted literal.
   if (value && !literal.test(value) && /[\r\n，,；;。！？!?]/u.test(value)) return undefined;
+  const within = target && /^(.+?)(?:里|中|内)的\s*(.+)$/u.exec(target);
+  if (within) return { kind: 'annotation-create', name: naturalName(within[1]!), quote: naturalName(within[2]!),
+    ...(value ? { body: literal.test(value) ? value.slice(1, -1) : value } : {}) };
   return { kind: 'annotation-create', ...(target && !new RegExp(`^${selected}(?:节点|卡片|卡|群组)?$`, 'u').test(target) ? { name: naturalName(target) } : {}),
     ...(value ? { body: literal.test(value) && !value.startsWith('@[') ? value.slice(1, -1) : value } : {}) };
 }

@@ -10,6 +10,8 @@ import type { SelectionResolution, SelectionSnapshot } from '../../protocols/sel
 import { canvasTitleAliases, normalizeCanvasTitle } from '../../services/canvas-titles.ts';
 import type { NativeCanvasIntent } from '../../services/native-canvas-intent.ts';
 import { readTaskMarkers } from './task-state.ts';
+import type { ContentSummary } from '../../protocols/content.ts';
+import type { ContentSearchResultV2 } from '../../protocols/search.ts';
 
 export interface NativeCanvasAction {
   label: string;
@@ -200,15 +202,39 @@ export async function prepareNativeCanvasAction(context: PluginContext, input: C
   }
   if (intent.kind === 'annotation-create') {
     assertBodyLength(intent.body);
-    const target = intent.name ? await namedAnnotationTarget(context, intent.name, input.sourceIds) : annotationTarget(await selection());
+    let quote = intent.quote;
+    let target = intent.name ? await namedAnnotationTarget(context, intent.name, input.sourceIds) : undefined;
+    if (!target && intent.quote) throw new Error(`没有找到唯一可读取的节点「${intent.name}」。`);
+    const selectionBound = !target;
+    if (!target) {
+      target = annotationTarget(await selection());
+      if (intent.name && !quote) quote = intent.name;
+    }
+    let textRevision: number | undefined;
+    if (quote) {
+      if (target.kind !== 'text-node') throw new Error('正文文字注释需要指定一个文字节点。');
+      const result = await context.capabilities.request<ContentSearchResultV2>('content.search@2', {
+        query: quote, nodeIds: [target.targetId], matchCase: true, wholeWord: false, maxResults: 3,
+      });
+      const hits = result.hits.filter(hit => hit.field === 'body');
+      if (result.truncated || hits.length !== 1) throw new Error(hits.length
+        ? `「${quote}」在该节点出现多次，请先在编辑器中选中具体位置再添加注释。`
+        : `该节点正文中没有找到「${quote}」，请核对文字。`);
+      textRevision = hits[0]!.revision;
+      target = { kind: 'text-range', targetId: target.targetId, offset: hits[0]!.start };
+    }
     return action(`为${intent.name ? `「${intent.name}」` : '选中对象'}添加标注`, async () => {
-      if (!intent.name) await selection();
+      if (selectionBound) await selection();
       const exists = target.kind === 'group'
         ? (await context.capabilities.request<GroupRecord[]>('groups.list@1')).some(group => group.id === target.targetId)
         : (await context.capabilities.request<Array<{ id: string }>>('content.summariesById@1', { nodeIds: [target.targetId] })).some(node => node.id === target.targetId);
       if (!exists) throw new Error('标注对象已不存在，请重新指定。');
+      if (textRevision !== undefined) {
+        const [live] = await context.capabilities.request<ContentSummary[]>('content.summariesById@1', { nodeIds: [target.targetId] });
+        if (live?.revision !== textRevision) throw new Error('节点正文已变化，请重新定位注释文字。');
+      }
       await context.commands.invoke('annotation.create', { target, body: intent.body });
-      return '已添加标注，可一次撤销。';
+      return quote ? `已在「${quote}」处添加注释，可一次撤销。` : '已添加标注，可一次撤销。';
     }, [target.targetId]);
   }
 
@@ -258,7 +284,7 @@ function annotationTarget(selection: SelectionSnapshot): AnnotationTarget {
   return { kind: item.kind, targetId: item.id };
 }
 
-async function namedAnnotationTarget(context: PluginContext, name: string, sourceIds?: string[]): Promise<AnnotationTarget> {
+async function namedAnnotationTarget(context: PluginContext, name: string, sourceIds?: string[]): Promise<AnnotationTarget | undefined> {
   const key = normalizeCanvasTitle(name);
   const [catalogs, groups] = await Promise.all([
     context.capabilities.requestAll<AIContextCatalogContribution>('context.catalog@1'),
@@ -270,6 +296,6 @@ async function namedAnnotationTarget(context: PluginContext, name: string, sourc
     .map(node => ({ kind: 'text-node', targetId: node.sourceId }));
   if (!explicit.length) targets.push(...groups.filter(group => normalizeCanvasTitle(group.title) === key)
     .map(group => ({ kind: 'group' as const, targetId: group.id })));
-  if (targets.length !== 1) throw new Error(`请选中要添加标注的唯一对象「${name}」。`);
+  if (targets.length > 1) throw new Error(`请选中要添加标注的唯一对象「${name}」。`);
   return targets[0]!;
 }

@@ -1323,6 +1323,10 @@ test('opening a native book keeps its handle for direct subsequent saves', async
 
   await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
   const assistantPanel = page.getByRole('region', { name: 'AI 助手' });
+  const actions = assistantPanel.locator('.floating-panel-actions');
+  for (const name of ['AI 记忆中心', 'Prompt 模板', '配置模型平台与 KEY']) {
+    await expect(actions.getByRole('button', { name, exact: true })).toHaveCount(0);
+  }
   await assistantPanel.getByRole('button', { name: '选择本轮记忆，前往记忆中心', exact: true }).click();
   const memoryActions = page.getByRole('group', { name: '记忆文件操作' });
   await expect(memoryActions).toContainText('默认：书籍所在文件夹（首次需确认）');
@@ -3793,12 +3797,12 @@ test('AI memory and Prompt management views remain mounted through their governe
   await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
   const assistantPanel = page.getByRole('region', { name: 'AI 助手' });
   await expect(assistantPanel.locator('.floating-panel-title small')).toHaveText('记忆：新对话');
-  await expect(assistantPanel.getByRole('button', { name: 'Prompt 模板', exact: true })
+  await expect(assistantPanel.getByRole('button', { name: /^Prompt：/u })
     .locator('[data-icon="template"]')).toBeVisible();
   await expect(assistantPanel.getByText(/^当前记忆：/u)).toHaveCount(0);
   await expect(assistantPanel.getByRole('button', { name: '保存当前对话为记忆', exact: true })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Prompt 模板', exact: true }).click();
+  await page.getByRole('button', { name: /^Prompt：/u }).click();
   const promptCenter = page.getByRole('region', { name: 'AI Prompt 模板' });
   await expect(promptCenter).toBeVisible();
   await expect(promptCenter.getByText('当前模板', { exact: true })).toBeVisible();
@@ -3855,13 +3859,12 @@ test('AI connection form keeps the routine connection path clear', async ({ page
   const pluginCenter = page.getByRole('region', { name: '插件中心' });
   await pluginCenter.getByRole('switch', { name: '启用远程语义检索' }).click();
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
-  await page.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
-  const settings = page.getByRole('region', { name: 'AI 模型与连接' });
+  await executeCommand(page, '配置 AI 模型连接与密钥');
+  const settings = page.getByRole('region', { name: 'AI 模型连接与密钥' });
   await expect(settings).toBeVisible();
   const chatConnectionHeading = settings.getByRole('heading', { name: '连接模型', exact: true });
   await expect(chatConnectionHeading).toBeVisible();
-  const chatConnectionPanel = settings.locator('.ai-provider-panel');
+  const chatConnectionPanel = settings;
   const transferActions = settings.locator('.ai-provider-transfer-actions');
   await expect(transferActions.getByRole('button', { name: '导出配置' })).toBeVisible();
   await expect(transferActions.getByRole('button', { name: '从本地导入' })).toBeVisible();
@@ -3897,7 +3900,7 @@ test('AI connection form keeps the routine connection path clear', async ({ page
   await expect(retrievalButton).toHaveAttribute('title', /语义模型和索引/u);
   await expect(retrievalButton).toHaveCSS('cursor', 'pointer');
   await expect(retrievalButton).toContainText('检索方式、语义模型与索引');
-  const beforeScroll = await settings.locator('.ai-provider-panel').boundingBox();
+  const beforeScroll = await settings.locator('.ai-provider-connection-module').boundingBox();
   expect((await retrievalButton.boundingBox())!.y).toBeGreaterThanOrEqual(beforeScroll!.y + beforeScroll!.height);
   await settings.getByRole('button', { name: '打开检索设置', exact: true }).click();
   const retrieval = page.getByRole('region', { name: '检索设置', exact: true });

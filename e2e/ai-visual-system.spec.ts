@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { openModelSettings } from './helpers/model-settings.ts';
 
 async function controlStyle(locator: Locator) {
   return locator.evaluate(element => {
@@ -13,9 +14,14 @@ test('model selector follows the selected name and keeps composer actions visibl
   await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
   await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
   const panel = page.getByRole('region', { name: 'AI 助手', exact: true });
+  await expect(panel.getByRole('combobox', { name: '当前模型平台', exact: true })).toBeDisabled();
+  await expect(panel.locator('.ai-model-selector')).toContainText('模型未配置');
+  const composer = panel.locator('.ai-composer textarea');
+  await composer.fill('保留这个输入草稿');
+  await expect(panel.locator('.ai-composer-input')).toHaveCSS('box-shadow', 'none');
   const models = ['deepseek-flash', '中文模型 · reasoning-pro-2026', 'long-model-'.repeat(8)];
-  await panel.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
-  const provider = panel.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
+  await openModelSettings(page);
+  const provider = page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
   for (const model of models) {
     await provider.getByRole('button', { name: '新建模型连接', exact: true }).click();
     await provider.getByRole('combobox', { name: '选择平台', exact: true }).selectOption('openai');
@@ -24,8 +30,11 @@ test('model selector follows the selected name and keeps composer actions visibl
     await provider.getByRole('button', { name: '保存连接', exact: true }).click();
     await expect(provider.getByText('当前连接已就绪', { exact: true })).toBeVisible();
   }
+  await provider.getByRole('button', { name: '关闭 AI 模型连接', exact: true }).click();
   await panel.getByRole('button', { name: 'AI 对话', exact: true }).click();
   const select = panel.getByRole('combobox', { name: '当前模型平台', exact: true });
+  await expect(composer).toHaveValue('保留这个输入草稿');
+  await expect(select.locator('option')).toHaveText(models);
   const width = async () => (await select.boundingBox())!.width;
   await select.selectOption({ label: models[0] });
   await expect(select).toHaveAttribute('title', `切换模型：${models[0]}`);
@@ -83,24 +92,24 @@ test('assistant views share control typography, spacing and section headings', a
   expect(memoryButton.fontFamily).toBe(chatSelect.fontFamily);
   expect(memoryButton.radius).toBe(chatSelect.radius);
   await memory.screenshot({ path: info.outputPath('ai-memory.png') });
-  await panel.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
+  await openModelSettings(page);
   const provider = page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
   expect(await controlStyle(provider.locator('.ai-provider-profile-toolbar select'))).toEqual(formSelect);
   expect(await provider.getByRole('heading', { name: '连接模型', exact: true }).evaluate(element => {
     const style = getComputedStyle(element); return [style.fontSize, style.fontWeight, style.lineHeight];
   })).toEqual(promptHeading);
-  const retrievalButton = panel.getByRole('button', { name: '打开检索设置', exact: true });
+  const retrievalButton = provider.getByRole('button', { name: '打开检索设置', exact: true });
   await retrievalButton.scrollIntoViewIfNeeded();
   await expect(retrievalButton).toBeInViewport();
-  const providerBox = (await provider.boundingBox())!;
+  const providerBox = (await provider.locator('.ai-provider-connection-module').boundingBox())!;
   expect((await retrievalButton.boundingBox())!.y).toBeGreaterThanOrEqual(providerBox.y + providerBox.height);
-  await panel.screenshot({ path: info.outputPath('ai-provider.png') });
+  await provider.screenshot({ path: info.outputPath('ai-provider.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   await retrievalButton.scrollIntoViewIfNeeded();
   await expect(retrievalButton).toBeInViewport();
-  await expect.poll(() => panel.locator('.ai-provider-settings-host').evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  await panel.screenshot({ path: info.outputPath('ai-provider-footer-narrow.png') });
-  await panel.getByRole('button', { name: 'AI 记忆中心', exact: true }).click();
+  await expect.poll(() => provider.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await provider.screenshot({ path: info.outputPath('ai-provider-footer-narrow.png') });
+  await provider.getByRole('button', { name: '关闭 AI 模型连接', exact: true }).click();
   expect(await memory.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   expect((await memory.locator('.ai-memory-daily-action').boundingBox())!.height).toBeLessThan(160);
   await panel.screenshot({ path: info.outputPath('ai-memory-narrow.png') });
@@ -119,11 +128,14 @@ test('assistant controls retain the shared panel foreground in dark appearance',
   const panel = page.getByRole('region', { name: 'AI 助手', exact: true });
   await expect(panel).toHaveCSS('color', 'rgb(255, 255, 255)');
   for (const [button, selector] of [
-    ['Prompt 模板', '.ai-prompt-center select'], ['AI 记忆中心', '.ai-memory-daily-action strong'],
-    ['配置模型平台与 KEY', '.ai-provider-profile-toolbar select'],
-  ]) {
-    await panel.getByRole('button', { name: button, exact: true }).click();
+    [/^Prompt：/u, '.ai-prompt-center select'], ['选择本轮记忆，前往记忆中心', '.ai-memory-daily-action strong'],
+  ] as const) {
+    await panel.getByRole('button', { name: 'AI 对话', exact: true }).click();
+    await panel.getByRole('button', { name: button, exact: typeof button === 'string' }).click();
     await expect(panel.locator(selector)).toHaveCSS('color', 'rgb(255, 255, 255)');
   }
-  await panel.screenshot({ path: info.outputPath('ai-provider-dark.png') });
+  await openModelSettings(page);
+  const provider = page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
+  await expect(provider.locator('.ai-provider-profile-toolbar select')).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await provider.screenshot({ path: info.outputPath('ai-provider-dark.png') });
 });

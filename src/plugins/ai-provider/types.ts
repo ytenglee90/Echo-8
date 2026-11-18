@@ -29,6 +29,7 @@ export interface AIProviderConfiguration {
 }
 
 export interface AIProviderPanelState extends AIProviderPreferences {
+  open?: boolean;
   activeProfileId?: string;
   profiles: AIProviderProfileState[];
   hasSessionKey: boolean;
@@ -44,6 +45,8 @@ export interface AIProviderProfileDraft extends AIProviderPreferences {
 
 declare module '../../protocols/commands.ts' {
   interface ApplicationCommandMap {
+    'aiProvider.open@1': CommandContract<undefined, { open: true }>;
+    'aiProvider.close@1': CommandContract<undefined, { open: false }>;
     'aiProvider.profile.save': CommandContract<AIProviderProfileDraft, { id: string }>;
   }
 }

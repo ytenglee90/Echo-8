@@ -42,7 +42,7 @@
 .settings-navigation button[aria-current="page"] { background: var(--panel-hover); color: var(--ink); font-weight: 650; }
 .settings-center :is(button, input, select, summary):focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
 .settings-content { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; outline: none; }
-.settings-content > .ui-contribution-root > :is(.plugin-center, .shortcut-center, .diagnostic-center, .palette-panel, .file-panel, .cloud-sync-panel) {
+.settings-content > .ui-contribution-root > :is(.plugin-center, .shortcut-center, .diagnostic-center, .palette-panel, .file-panel, .cloud-sync-panel, .ai-provider-panel) {
   width: 100%;
   min-width: 0;
   min-height: 100%;
@@ -50,6 +50,15 @@
   border: 0;
   background: var(--panel);
 }
+.settings-center .ai-provider-panel { display: flex; flex-direction: column; gap: 16px; }
+.settings-center .ai-provider-panel > * { flex: 0 0 auto; }
+.settings-center .ai-provider-panel .settings-page-header { margin-bottom: 6px; }
+.settings-center .ai-provider-setup-intro h2 { margin: 0; font-size: 14px; line-height: 1.5; }
+.settings-center .ai-provider-setup-intro p { font-size: 12px; line-height: 1.6; }
+.settings-center .ai-provider-transfer-actions { flex-wrap: wrap; }
+.settings-center .ai-provider-transfer-actions > span { flex-wrap: wrap; }
+.settings-center .ai-provider-connection-module { min-width: 0; }
+.settings-center .ai-provider-panel input { min-width: 0; }
 .settings-page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 22px; }
 .settings-page-header > div:first-child { min-width: 0; }
 .settings-page-header h2 { margin: 0; color: var(--ink); font-size: 16px; font-weight: 650; letter-spacing: -.02em; line-height: 32px; }
@@ -95,6 +104,7 @@
 @media (max-width: 720px) {
   .application-shell[data-settings-open="true"] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "canvas"; }
   .application-shell[data-settings-open="true"] .right-rail { width: 100vw; min-width: 0; height: calc(100dvh - 56px); }
+  .application-shell[data-settings-open="true"] .floating-layer { display: none; }
 }
 @media (max-width: 480px) {
   .settings-center { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }

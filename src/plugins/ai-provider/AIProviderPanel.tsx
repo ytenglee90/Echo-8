@@ -4,6 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import { IconButton, Icon } from '../../ui/Icon.tsx';
 import { ProcessingLabel } from '../../ui/ProcessingIndicator.tsx';
+import { SettingsPageHeader } from '../../ui/SettingsPageHeader.tsx';
 import {
   chooseNativePersonalAIBackup,
   chooseNativePersonalAIBackupOpen,
@@ -142,8 +143,11 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
     })();
   };
 
+  if (!state.open) return null;
   return (
     <section className="ai-provider-panel" aria-label="AI 模型连接与密钥" aria-busy={busy || undefined}>
+      <SettingsPageHeader title="AI 模型连接" description="管理对话模型、连接密钥与配置迁移。" closeLabel="关闭 AI 模型连接"
+        onClose={() => void client.dispatch('aiProvider.close@1').catch(reason => setError(String(reason)))} />
       <header className="ai-provider-transfer-actions" aria-label="配置导出与导入">
         <div>
           <strong>配置迁移</strong>
@@ -324,6 +328,13 @@ export function AIProviderPanel({ client }: { client: ViewClient }) {
         ? <p className="ai-message" role="status"><ProcessingLabel size={9}>正在处理模型连接设置…</ProcessingLabel></p>
         : message && <p className="ai-message">{message}</p>}
       {error && <p className="ai-error" role="alert">{error}</p>}
+      </section>
+      <section className="ai-provider-retrieval-link" aria-label="检索方式">
+        <button type="button" className="ai-retrieval-settings-button" aria-label="打开检索设置" title="打开检索设置，管理检索方式、语义模型和索引"
+          disabled={!client.isCommandAvailable('retrieval.open@1')}
+          onClick={() => void client.dispatch('retrieval.open@1').catch(reason => setError(String(reason)))}>
+          <Icon name="search" size={17} /><span><strong>打开检索设置</strong><small>检索方式、语义模型与索引</small></span><Icon name="chevron-right" size={16} />
+        </button>
       </section>
     </section>
   );

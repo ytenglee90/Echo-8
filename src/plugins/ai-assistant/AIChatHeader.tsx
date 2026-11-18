@@ -43,7 +43,7 @@ export function AIChatHeader({
 }) {
   const modelLabel = selectedProvider
     ? selectedProvider.model || '未填写模型'
-    : '模型未配置';
+    : providerCatalog.options.length ? '请选择模型' : '模型未配置';
 
   return (
     <div className="ai-chat-topbar">
@@ -52,13 +52,13 @@ export function AIChatHeader({
           <span className="sr-only">大模型</span>
           <span className="ai-model-selector-size" aria-hidden="true">{modelLabel}</span>
           <select
-            value={selectedProviderId}
+            value={selectedProvider ? selectedProviderId : ''}
             aria-label="当前模型平台"
             title={`切换模型：${modelLabel}`}
             disabled={!providerSelectionAvailable || providerCatalog.options.length === 0}
             onChange={(event) => onSelectProvider(event.target.value)}
           >
-            <option value="" disabled>模型未配置</option>
+            {!selectedProvider && <option value="" disabled hidden>{modelLabel}</option>}
             {providerCatalog.options.map((option) => (
               <option key={option.id} value={option.id}>
                 {option.model || '未填写模型'}

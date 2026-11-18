@@ -16,6 +16,7 @@ import {
   type SessionKeyPayload,
 } from '../../services/provider-profile-payloads.ts';
 import { defineManifest } from '../manifest.ts';
+import { UI_SURFACE_REVEALED_EVENT, uiSurfaceRevealed } from '../../protocols/ui.ts';
 import { AIRequestTraceBuffer } from './request-trace.ts';
 import { AIUsageLedger } from './usage-ledger.ts';
 import { observeProviderUsage } from './usage-observer.ts';
@@ -81,7 +82,10 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
       category: 'provider',
       namespaces: [AI_PROVIDER_NAMESPACE],
       namespaceDomains: { [AI_PROVIDER_NAMESPACE]: 'workspace' },
+      sessionOnlyWorkspace: { [AI_PROVIDER_NAMESPACE]: ['open'] },
       commands: [
+        'aiProvider.open@1',
+        'aiProvider.close@1',
         'aiProvider.setPreferences',
         'aiProvider.profile.save',
         'aiProvider.profile.remove',
@@ -97,8 +101,9 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         ...Object.values(SEMANTIC_PROVIDER_COMMANDS),
         'aiProvider.restorePersonal',
         'system.preferences.set',
+        'retrieval.open@1',
       ],
-      events: ['ai.provider.configuration.changed', 'document.replaced'],
+      events: ['ai.provider.configuration.changed', 'document.replaced', UI_SURFACE_REVEALED_EVENT],
       signals: ['ai.provider.changed', SEMANTIC_PROVIDER_CHANGED_SIGNAL, AI_USAGE_CHANGED],
       queries: ['aiProvider.state'],
       asks: [
@@ -113,6 +118,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         'store.own.read',
         'store.own.write',
         'ui.ai-settings.contribute',
+        'ui.right.contribute',
         'network.ai.generate',
         'network.origin.manage',
         'preferences.manage',
@@ -171,6 +177,7 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         const activeState = active ? profileState(active) : undefined;
         return {
           ...(active ?? DEFAULT_PREFERENCES),
+          open: context.store.readValue(AI_PROVIDER_NAMESPACE, 'open') === true,
           activeProfileId: active?.id,
           profiles: configuration.profiles.map(profileState),
           hasSessionKey: activeState?.hasSessionKey ?? false,
@@ -550,12 +557,29 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
         void writePersonalBackup().catch((error) => context.diagnostics.warn('同步 AI 个人配置 TXT 失败', error));
       });
 
+      for (const open of [true, false] as const) context.commands.register({
+        type: open ? 'aiProvider.open@1' : 'aiProvider.close@1',
+        handle: () => {
+          if (open) context.ui.activateSurface('right.primary', 'ai-provider.settings', 'aiProvider.close@1');
+          else context.ui.deactivateSurface('right.primary', 'ai-provider.settings');
+          return {
+            result: { open },
+            transaction: {
+              label: open ? '打开 AI 模型连接设置' : '关闭 AI 模型连接设置',
+              history: false,
+              patches: [{ op: 'set' as const, domain: 'workspace' as const, namespace: AI_PROVIDER_NAMESPACE, key: 'open', value: open }],
+              events: open ? [{ type: UI_SURFACE_REVEALED_EVENT, payload: uiSurfaceRevealed('right.primary', 'ai-provider', 'ai-provider.settings') }] : [],
+            },
+          };
+        },
+      });
       context.ui.contribute({
         id: 'ai-provider.settings',
-        slot: 'ai.settings',
+        slot: 'right.primary',
         kind: 'view',
         label: 'AI 模型连接',
         component: panel,
+        settings: { version: 1, label: 'AI 模型连接', icon: 'key', order: 15, openCommand: 'aiProvider.open@1' },
         // The conversation connection is the first task on this page.
         priority: 84,
       });

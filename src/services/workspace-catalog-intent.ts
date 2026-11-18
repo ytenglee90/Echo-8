@@ -4,6 +4,7 @@ import { readWorkspaceSelectionReference, selectedWorkspaceName, workspaceCount 
 import { workspaceStructuralIntent } from './workspace-structural-intent.ts';
 import { workspaceDuplicateIntent } from './workspace-duplicate-intent.ts';
 import { palettePresetIntent } from './palette-preset-intent.ts';
+import { workspaceSurfaceAction } from './workspace-language.ts';
 
 type Binding = 'node' | 'paragraph' | 'paragraph-replacement' | 'node-ids' | 'two-nodes' | 'duplicate' | 'format' |
   'range-format' | 'range-reveal' | 'session' | 'assistant' | 'checkpoint' | 'clipboard-selection' |
@@ -345,6 +346,8 @@ export function workspaceCatalogIntent(prompt: string): CatalogIntent | undefine
     /(?:先)?(?:别|不要|不用|禁止|暂不)\s*(?:打开|开启|启用|清空)|^(?:先)?(?:别|不要|不用|禁止|暂不)\s*覆盖/u.test(text) ||
     /(?:然后|接着|随后|最后|否则|失败就|[；;]|(?:并且?|同时|再)\s*(?:打开|关闭|删除|写入|修改|上传|导出|保存)|[，,]\s*(?:(?:并|再|还要|把|将|给)(?!.*预览)|(?:统计|标黄|排列|删除|上传|另存)))/u.test(text)) return undefined;
   const disposition = canvasRequestDisposition(prompt);
+  const surface = disposition === 'normal' ? workspaceSurfaceAction(text) : undefined;
+  if (surface) return { input, steps: [{ id: 'catalog-1', action: surface }] };
   const known = workspaceDuplicateIntent(input) ?? workspaceStructuralIntent(text, input) ?? withArguments(text, input);
   if (known && (disposition === 'normal' || known.steps.every(step =>
     /^(?:content\.(?:read|diff|filter|search|draft\.preview|extract\.preview)|assistant\.context|recovery\.preview|format\.read|node\.(?:inspect|color)|group\.createExplicit|layout\.(?:inspect|plan)|canvas\.batch\.preview)$/u.test(step.action)))) {

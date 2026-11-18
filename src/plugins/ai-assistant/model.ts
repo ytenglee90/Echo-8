@@ -329,7 +329,7 @@ export function createAIAssistantPlugin(
         'canvasControl.revisePending@1',
         'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings', 'retrieval.open@1',
         'ai.context.prepare',
-        'aiProvider.profile.activate', 'ai.promptTemplate.restorePersonal', 'system.preferences.set',
+        'aiProvider.open@1', 'aiProvider.profile.activate', 'ai.promptTemplate.restorePersonal', 'system.preferences.set',
         'ai.memory.importFiles.commit',
         'editor.open',
       ],
@@ -753,7 +753,7 @@ export function createAIAssistantPlugin(
               ? { ...assistant, minimized: false, ...(view ? { view } : {}) }
               : assistant);
             return assistantWorkspaceTransaction(
-              view === 'provider' ? '打开 AI 模型与连接' : '打开 AI 助手',
+              '打开 AI 助手',
               next,
             );
           }
@@ -765,7 +765,7 @@ export function createAIAssistantPlugin(
           const assistant = createAssistant(session.id, view);
           if (active) {
             return assistantWorkspaceTransaction(
-              view === 'provider' ? '打开 AI 模型与连接' : '打开 AI 助手',
+              '打开 AI 助手',
               [assistant],
             );
           }
@@ -1090,13 +1090,7 @@ export function createAIAssistantPlugin(
       });
       context.commands.register({
         type: 'ai.openProviderSettings',
-        handle: async () => {
-          const result = await openAssistant('provider');
-          const assistants = readAssistantInstances();
-          activeAssistantId = assistants.find((item) => item.id === activeAssistantId)?.id ?? assistants[0]?.id;
-          context.ui.activateSurface('overlay.floating', 'ai.panel', 'ai.close');
-          return result;
-        },
+        handle: async () => ({ result: await context.commands.invoke('aiProvider.open@1') }),
       });
       context.commands.register<AssistantIdPayload | undefined>({
         type: 'ai.close',
@@ -1227,8 +1221,9 @@ export function createAIAssistantPlugin(
       context.commands.register<AIAssistantView | AssistantViewPayload>({
         type: 'ai.setView',
         validate: isAssistantViewCommandPayload,
-        handle: (payload) => {
+        handle: async (payload) => {
           const view = typeof payload === 'string' ? payload : payload.view;
+          if (view === 'provider') return { result: await context.commands.invoke('aiProvider.open@1') };
           const assistantId = typeof payload === 'string' ? undefined : payload.assistantId;
           const assistants = readAssistantInstances();
           return assistantWorkspaceTransaction('切换 AI 助手视图', assistants.map((assistant, index) =>

@@ -46,7 +46,8 @@ export function canvasCommandText(prompt: string): string {
 
 export function canvasRequestsAllNodes(prompt: string): boolean {
   const text = canvasCommandText(prompt).replace(new RegExp(NATURAL_QUOTED_NAME, 'gu'), ' ');
-  return /(?:(?:所有|全部)(?:的)?(?:文字)?(?:节点|卡片|文本框)|(?:节点|卡片|文本框)(?:全部|所有)|全画布)/u.test(text);
+  return /(?:(?:所有|全部)(?:的)?(?:文字)?(?:节点|卡片|文本框)|(?:节点|卡片|文本框)(?:全部|所有)|全画布)/u.test(text) ||
+    /^(?:删除|删掉|移除)(?:所有|全部)[。！!]?$/u.test(text.trim());
 }
 
 export type NaturalCanvasOperation =
@@ -348,6 +349,10 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
   const text = command.replace(/[。！？!?]$/u, '').trim();
   let match: RegExpExecArray | null;
   if (/^(?:如果|假如|假设|要是|先别|先不要|不要|别|不用|暂不|如何|怎么|怎样|解释|分析|总结|对比|比较)/u.test(text)) return undefined;
+  const switchPresentation = /^切换\s*(.+?)\s*(?:为|成)\s*(文本框|文字框|卡片|文字节点)$/u.exec(text);
+  if (switchPresentation) return { kind: 'presentation', names: names(switchPresentation[1]!),
+    presentation: /文本框|文字框/u.test(switchPresentation[2]!) ? 'text-box' : 'card' };
+  if (/^(?:删除|删掉|移除)(?:所有|全部)$/u.test(text)) return { kind: 'remove', names: ['所有节点'] };
   const spacing = /^(.*?)[，,\s]+(?:间距|间隔)\s*(?:为|设为)?\s*(\d{1,4})(?:\s*(?:px|像素))?$/iu.exec(text);
   if (spacing && Number(spacing[2]) <= 2000) {
     const base = parseCanvasOperation(spacing[1]!);

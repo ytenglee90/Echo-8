@@ -430,7 +430,7 @@ export function isAssistantInstanceState(value: unknown): value is AIAssistantIn
 }
 
 export function readAssistantView(value: unknown): AIAssistantState['view'] {
-  return isAssistantView(value) ? value : 'chat';
+  return isAssistantView(value) && value !== 'provider' ? value : 'chat';
 }
 
 export function isPromptTemplateIdPayload(value: unknown): value is PromptTemplateIdPayload {

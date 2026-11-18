@@ -8,11 +8,10 @@ import {
   useState,
   useSyncExternalStore,
   type CSSProperties,
-  type ReactNode,
 } from 'react';
-import type { UISlot, ViewClient } from '../../core/contracts.ts';
+import type { ViewClient } from '../../core/contracts.ts';
 import { FloatingPanel } from '../../ui/FloatingPanel.tsx';
-import { Icon, IconButton } from '../../ui/Icon.tsx';
+import { IconButton } from '../../ui/Icon.tsx';
 import { ProcessingIndicator } from '../../ui/ProcessingIndicator.tsx';
 import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import { AIMemoryCenter } from './AIMemoryViews.tsx';
@@ -53,10 +52,8 @@ import { useAIComposerController } from './use-ai-composer-controller.ts';
 const AI_DROP_OWNER = 'ai-assistant';
 export function AIAssistantPanel({
   client,
-  renderSlot,
 }: {
   client: ViewClient;
-  renderSlot?: (slot: UISlot) => ReactNode;
 }) {
   const stateVersion = useSyncExternalStore(client.subscribeState, client.getStateVersion, () => 0);
   const [assistants, setAssistants] = useState<AIAssistantInstanceState[]>([]);
@@ -80,7 +77,6 @@ export function AIAssistantPanel({
       key={assistant.id}
       assistantId={assistant.id}
       client={client}
-      renderSlot={renderSlot}
     />
   ))}</div>;
 }
@@ -88,15 +84,12 @@ export function AIAssistantPanel({
 function AIAssistantWindow({
   assistantId,
   client,
-  renderSlot,
 }: {
   assistantId: string;
   client: ViewClient;
-  renderSlot?: (slot: UISlot) => ReactNode;
 }) {
   const providerSelectionAvailable = useCommandAvailability(client, 'aiProvider.profile.activate');
   const operationLogAvailable = useCommandAvailability(client, 'diagnostics.operationLog.open@1');
-  const providerSettingsAvailable = providerSelectionAvailable;
   const ownVersion = useSyncExternalStore(client.subscribeState, () => client.getOwnStateVersion(AI_UI_NAMESPACE), () => 0);
   const capabilityVersion = useSyncExternalStore(client.subscribeCapabilities, client.getCapabilityVersion, () => 0);
   const [outputProposalId, setOutputProposalId] = useState('');
@@ -279,7 +272,6 @@ function AIAssistantWindow({
         client={client}
         assistantId={assistantId}
         view={state.view}
-        providerSettingsAvailable={providerSettingsAvailable}
         onError={setError}
       />}
     >
@@ -459,7 +451,7 @@ function AIAssistantWindow({
           error={error}
           onError={setError}
         />
-      ) : state.view === 'prompt' ? (
+      ) : (
         <AIPromptTemplateCenter
           key={`${assistantInstance?.promptTemplateId ?? 'default'}:${promptCatalog.templates.find((template) => template.id === assistantInstance?.promptTemplateId)?.updatedAt ?? 0}`}
           client={client}
@@ -467,18 +459,7 @@ function AIAssistantWindow({
           assistantId={assistantId}
           selectedTemplateId={assistantInstance?.promptTemplateId}
         />
-      ) : (
-        <section className="ai-provider-settings-host" aria-label="AI 模型与连接">
-          {renderSlot?.('ai.settings')}
-          <p className="ai-provider-settings-unavailable">模型连接插件当前不可用。</p>
-          <section className="ai-provider-retrieval-link" aria-label="检索方式">
-            <button type="button" className="ai-retrieval-settings-button" aria-label="打开检索设置" title="打开检索设置，管理检索方式、语义模型和索引"
-              disabled={!client.isCommandAvailable('retrieval.open@1')}
-              onClick={() => void client.dispatch('retrieval.open@1').catch(reason => setError(errorMessage(reason)))}>
-              <Icon name="search" size={17} /><span><strong>打开检索设置</strong><small>检索方式、语义模型与索引</small></span><Icon name="chevron-right" size={16} />
-            </button>
-          </section>
-        </section>
+
       )}
     </FloatingPanel>
   );

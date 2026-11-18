@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+Model connections own a settings-center page below cloud sync. Retained legacy assistant commands forward to that owner without creating sessions; memory and Prompt remain composer actions. Thirteen local settings adapters and explicit immersion, presentation, deletion and text-annotation phrasing avoid model requests. Interface-only model fallback excludes document metadata; cloud-backed current documents retain the same owner transactions and undo as local books. See ADR-0166.
+
 Membership-only model previews check stable object metadata, complete group state and captured selection while allowing unrelated target-body updates; other model plans retain full revision guards. Conflict messages identify changed objects and metadata fields without showing content. See ADR-0165.
 
 Assistant cancellation covers both context preparation and generation per session. Capability signals use native composition so caller cancellation remains connected after a streamed result is returned; provider-owned readers and controllers retain lifecycle cleanup responsibility. Late cancelled work cannot start a request or save an incomplete response. See ADR-0164.
@@ -86,7 +88,7 @@ Cloud book format 3 packs bounded small records into stable shared blocks and co
 
 - `src/core` is headless coordination and mandatory services. It contains no text-node, canvas, editor, group, connection, AI, or palette behavior.
 - `src/shell` owns layout and renders governed UI slots. It contains no feature data writes.
-- Embedded feature surfaces use governed slots too. The canvas owns only camera/input infrastructure and hosts `canvas.entities` plus `canvas.empty`; the text-node plugin contributes its renderer and empty-state action there without a feature-to-feature implementation import. Likewise, `ai.settings` is hosted inside the AI assistant while its content remains owned, permission-checked, and hot-removable by the AI provider plugin; it is not a right-rail surface.
+- Embedded feature surfaces use governed slots too. The canvas owns only camera/input infrastructure and hosts `canvas.entities` plus `canvas.empty`; the text-node plugin contributes its renderer and empty-state action there without a feature-to-feature implementation import. Model connections now use an AI-provider-owned `right.primary` settings contribution (ADR-0166); the legacy `ai.settings` slot remains registered for compatibility. Retrieval providers continue contributing through `ai.retrieval`.
 - Live AI transcripts are plugin-owned chunk records, not automatically created canvas nodes. The first save publishes one source node and one index node; later manual or interval-based saves update those same nodes through content-plan capabilities and the global transaction pipeline.
 - `src/plugins/<feature>` owns one feature and imports only core contracts or its own files. Feature plugins never import another feature plugin.
 - `src/protocols` contains public message and capability data shapes. It contains no implementation and prevents plugins from importing one another just to share a type.

@@ -37,10 +37,11 @@ const IMPLICIT_CANVAS_QUESTION = /(?:这|那)(?:两|二|三|四|五|几|\d+)张.
 const NO_MEMORY = /(?:不(?:要|用)|别|无需|禁止)(?:再|去)?(?:用|使用|读取|搜索|检索|参考|回查|查)?(?:我(?:们)?的)?(?:长期记忆|历史(?:记忆|记录)?|旧对话|过去的对话)/u;
 
 export function classifyAITurn(prompt: string, explicit?: AIOperation, requested: AIOperation = 'general') {
+  const restructureTask = cardRestructureTask(prompt);
   const text = canvasCommandText(prompt).replace(/「[^」\r\n]+」|『[^』\r\n]+』|“[^”\r\n]+”|"[^"\r\n]+"/gu, ' □ ').trim();
   const local = naturalCanvasOperation(prompt);
   const disposition = canvasRequestDisposition(prompt);
-  const allowsWorkspace = !explicit || explicit === 'general' || explicit === 'canvas-control';
+  const allowsWorkspace = !explicit || explicit === 'general' || explicit === 'canvas-control' || Boolean(restructureTask);
   const archiveSession = allowsWorkspace &&
     isCurrentConversationArchiveRequest(prompt);
   const compound = disposition !== 'read-only' && allowsWorkspace
@@ -66,7 +67,6 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const itemList = /^(?:(?:请|帮我)\s*)?(?:只|仅)?应用\s*第?\s*(\d+(?:\s*(?:[、，,和及与]|以及)\s*第?\s*\d+)*)\s*项[。！!]?$/u.exec(text);
   const applyItems = itemList?.[1]?.match(/\d+/gu)?.map(Number);
   const fieldTask = structuredFieldTask(prompt);
-  const restructureTask = cardRestructureTask(prompt);
   const creationText = !local ? canvasCreationWithText(prompt) : undefined;
   const canvas = OBJECT.test(text) || /@\[|@node:/u.test(prompt);
   const prospective = disposition === 'read-only' || disposition === 'preview' && !local ||
@@ -92,6 +92,7 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
     /画布|节点|卡片|连线|连接线|群组|编辑器|沉浸|快捷键|自动保存|小地图|工具栏/u.test(text) &&
     /^(?:请|帮我|麻烦|给我|我想|我要|把|将|设置|设定|修改|调整|让|进入|打开|关闭|选中|查看|查询|删除|清空)|(?:改为|改成|换成|调到|插入|加入|连接|缩放)/u.test(text);
   const operation = revisePending || isCanvasStatusFollowup(prompt) ? 'general'
+    : restructureTask && disposition === 'normal' ? 'canvas-control'
     : catalogIntent || archiveSession || native?.kind === 'connection-inspect' ? 'canvas-control' : disposition === 'read-only' ? 'general'
     : workspaceSteps || compound ? 'canvas-control' : disposition === 'preview' && !local ? 'general'
     : prospective && (!explicit || explicit === 'canvas-control') ? contentOperation ?? 'general' : explicit ?? (writeCommand || mixed || (!contentOperation && openCanvasTask) || indirectTask || workspaceRequest ? 'canvas-control'

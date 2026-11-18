@@ -72,12 +72,13 @@ export function workspaceActionsScenario(url: string): void {
     await composer.press('Enter');
     await expect(page.getByRole('textbox', { name: /画布缩放/u })).toHaveValue('60');
     await expect(page.getByRole('region', { name: '画布小地图', exact: true })).toBeVisible();
-    await expect(ai.getByRole('combobox', { name: /模型平台/u })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '关闭 AI 模型连接', exact: true }).click();
     await ai.getByRole('button', { name: 'AI 对话', exact: true }).click();
     await composer.fill('保存当前AI对话存档');
     await composer.press('Enter');
     await expect(ai.getByRole('status')).toContainText('当前对话原文与索引已保存到本地存档');
-    await ai.getByRole('button', { name: 'AI 记忆中心', exact: true }).click();
+    await ai.getByRole('button', { name: '选择本轮记忆，前往记忆中心', exact: true }).click();
     await ai.getByRole('button', { name: '打开原文', exact: true }).first().click();
     await expect(page.locator('.editor-writing-area')).toContainText('先把画布缩放到60%');
     expect(external).toEqual([]);

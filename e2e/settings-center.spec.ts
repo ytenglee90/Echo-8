@@ -20,9 +20,9 @@ test('settings shares navigation across owner pages and keeps command search ind
   await start(page);
   const center = page.getByRole('region', { name: '设置中心', exact: true });
   const nav = center.getByRole('navigation', { name: '设置分类' });
-  await expect(nav.getByRole('button')).toHaveText(['云同步', '书籍与恢复', '命令与快捷键', '外观', '检索', '指令与偏好', '插件', '内核与诊断']);
+  await expect(nav.getByRole('button')).toHaveText(['云同步', 'AI 模型连接', '书籍与恢复', '命令与快捷键', '外观', '检索', '指令与偏好', '插件', '内核与诊断']);
   for (const [category, heading] of [
-    ['外观', '全局颜色设置'], ['命令与快捷键', '命令与快捷键'], ['云同步', '云同步'],
+    ['AI 模型连接', 'AI 模型连接'], ['外观', '全局颜色设置'], ['命令与快捷键', '命令与快捷键'], ['云同步', '云同步'],
     ['书籍与恢复', '书籍与恢复'], ['检索', '检索'], ['指令与偏好', '指令与偏好'], ['插件', '插件'], ['内核与诊断', '内核与诊断'],
   ]) {
     await nav.getByRole('button', { name: category, exact: true }).click();

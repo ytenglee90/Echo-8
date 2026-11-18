@@ -134,7 +134,7 @@ export function buildProviderRequest(
           })) } : {}),
           ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
         })),
-        ...(deepSeek && toolConversation ? { thinking: { type: 'disabled' } } : {}),
+        ...(deepSeek && (toolConversation || input.usageContext?.purpose === 'plan') ? { thinking: { type: 'disabled' } } : {}),
         temperature: input.temperature,
         max_tokens: input.maxOutputTokens,
         ...(input.webSearch && webSearchMode === 'qwen' ? { enable_search: true } : {}),
@@ -295,7 +295,7 @@ export function parseCompletion(payload: unknown): Omit<AIGenerateResult, 'provi
   const text = finalized.text;
   const toolCalls = readToolCalls(message.tool_calls);
   if (!text && toolCalls.length === 0) {
-    if (finalized.reasoning) throw new Error('模型只返回了思考过程，没有返回最终答案；请重试或降低模型思考强度');
+    if (finalized.reasoning) throw new Error('模型只返回了思考过程，没有返回最终答案；本轮未完成，请重试或切换模型');
     throw new Error('模型返回了空内容');
   }
   if (text.length > 100_000) throw new Error('模型返回内容超过当前提案上限');

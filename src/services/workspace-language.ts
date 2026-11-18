@@ -43,19 +43,25 @@ const focusAtZoom = exact('在' + PERCENT + '(?:的)?缩放下(?:聚焦|定位)(
 const zoomQuestion = /^(?:(?:告诉我|查询|查看|查(?:看)?一下|读(?:出|取))\s*)?(?:现在|当前|目前)?\s*(?:画布|视口|视图|画面)(?:的|现在|当前|目前)?(?:缩放(?:比例|倍率)?|倍率|比例|放大了)(?:是(?:多少)?|多少|多大)?$/u;
 
 const surfaces = [
+  { name: /^(?:指令与偏好|个人用语与偏好|我的用语|个人用语|用语与偏好|指令列表)(?:设置|设置页|页面|面板)?$/u, open: 'settings.personal.open', close: 'settings.personal.close' },
+  { name: /^(?:插件|插件中心|插件管理|扩展管理)(?:设置|设置页|页面|面板)?$/u, open: 'settings.plugins.open', close: 'settings.plugins.close' },
+  { name: /^(?:检索|索引|语义检索)(?:设置|设置页|页面|面板)?$/u, open: 'settings.retrieval.open', close: 'settings.retrieval.close' },
+  { name: /^(?:AI\s*模型连接|模型连接|模型与连接|模型平台|模型密钥)(?:设置|设置页|页面|面板)?$/iu, open: 'settings.models.open', close: 'settings.models.close' },
+  { name: /^(?:云同步|账户同步)(?:设置|设置页|页面|面板)?$/u, open: 'settings.cloud.open', close: 'settings.cloud.close' },
   { name: /^(?:(?:右下角|画布)(?:的)?)?(?:小地图|缩略地图|导航小窗|导航图|迷你地图)$/u, open: 'minimap.open', close: 'minimap.close', read: 'minimap.read' },
   { name: /^(?:查找|搜索|搜索替换|查找替换)(?:窗口|面板)?$/u, open: 'search.open', close: 'search.close' },
   { name: /^(?:外观(?:设置)?|全局颜色(?:设置)?|配色|颜色设置)(?:窗口|面板)?$/u, open: 'palette.open', close: 'palette.close' },
   { name: /^(?:设置|工作区设置|设置中心)(?:窗口|面板)?$/u, open: 'settings.open' },
-  { name: /^(?:快捷键|按键设置|键盘快捷键)(?:窗口|面板)?$/u, open: 'settings.keys.open' },
-  { name: /^(?:诊断|本地诊断|运行诊断)(?:窗口|面板|中心)?$/u, open: 'diagnostics.open' },
-  { name: /^(?:实时)?(?:操作记录|操作日志)(?:窗口|面板)?$/u, open: 'diagnostics.log' },
-  { name: /^(?:文件|文件与恢复|书籍与恢复|文件管理)(?:窗口|面板)?$/u, open: 'file.panel' },
+  { name: /^(?:快捷键|按键设置|键盘快捷键|命令与快捷键)(?:窗口|面板)?$/u, open: 'settings.keys.open', close: 'settings.keys.close' },
+  { name: /^(?:诊断|内核与诊断|本地诊断|运行诊断)(?:窗口|面板|中心)?$/u, open: 'diagnostics.open', close: 'diagnostics.close' },
+  { name: /^(?:实时)?(?:操作记录|操作日志)(?:窗口|面板)?$/u, open: 'diagnostics.log', close: 'diagnostics.close' },
+  { name: /^(?:文件|文件与恢复|书籍与恢复|文件管理)(?:窗口|面板)?$/u, open: 'file.panel', close: 'file.panel.close' },
   { name: /^(?:书库(?:首页|列表)?|书籍(?:首页|列表))$/u, open: 'library.show', read: 'library.state' },
   { name: /^(?:(?:当前|现在|刚才)(?:的)?(?:书籍|书)(?:的)?|(?:当前|现在)(?:的)?)?画布$|^(?:刚才|之前|当前)(?:那|这)?本(?:书籍|书)$/u, open: 'library.canvas' },
 ] as const;
 
-function surfaceAction(clause: string): string | undefined {
+export function workspaceSurfaceAction(clause: string): string | undefined {
+  clause = clause.replace(/^(?:请|麻烦)?(?:帮我|为我)?\s*/u, '').replace(/[。！!]$/u, '');
   const command = /^(?:(?:从(?:当前)?书库)?(打开|开启|继续显示|显示|展开|进入|返回|回到|关闭|关掉|收起|隐藏|查看|查询|使用|回)\s*(.+)|(?:把|将)\s*(.+?)\s*(打开|开启|显示|展开|关闭|关掉|收起|隐藏)(?:来|出来|起来)?|(?:不要|别|不再)(显示|打开)\s*(.+?)(?:了)?)$/u.exec(clause);
   const question = /^(?:现在|当前)?(.+?)(?:目前|现在)?(?:打开了吗|开着吗|显示了吗|开没开|是否打开|是开还是关)$/u.exec(clause);
   if (!command && !question) return undefined;
@@ -105,8 +111,8 @@ function objectAction(text: string, title: Title, literal: Title): Action | unde
   if (rename && !/书籍|群组|连线|正文|里的/u.test(rename[1]!)) {
     return { action: 'node.rename', arguments: { ...target(rename[1]!), title: literal(rename[2]!) } };
   }
-  const immersive = /^(?:全屏(?:阅读|编辑)\s*(.+)|(?:进入|切到)\s*(.+?)\s*的(?:沉浸(?:式)?编辑|(?:专注|全屏)写作)(?:模式)?)$/u.exec(text);
-  if (immersive) return { action: 'editor.immersive.enter', arguments: target(immersive[1] ?? immersive[2]!) };
+  const immersive = /^(?:全屏(?:阅读|编辑)\s*(.+)|(?:进入|切到)\s*(.+?)\s*的(?:沉浸(?:式)?(?:编辑|写作)|(?:专注|全屏)写作)(?:模式)?|打开\s*(.+?)[，,]\s*(?:进入|切到)?\s*(?:沉浸(?:式)?(?:编辑|写作)|专注写作)(?:模式)?)$/u.exec(text);
+  if (immersive) return { action: 'editor.immersive.enter', arguments: target(immersive[1] ?? immersive[2] ?? immersive[3]!) };
   const close = /^(?:关闭\s*(.+?)(?:的)?(?:编辑窗格|编辑器|编辑页)|把(?:右侧)?\s*(.+?)(?:那个|的)?编辑器关掉|不再显示\s*(.+?)编辑页)$/u.exec(text);
   if (close) return { action: 'editor.close', arguments: target(close[1] ?? close[2] ?? close[3]!) };
   const open = /^(?:(?:在|用)(?:右侧|右边|编辑区|编辑器|编辑窗格)(?:中|里)?(?:打开|阅读|编辑)\s*(.+)|(?:把|将)\s*(.+?)\s*(?:显示|打开|放)在(?:右侧|右边|编辑区|编辑窗格)(?:中|里)?|(?:打开|编辑)\s*(.+?)\s*(?:到|至|在)(?:右侧|右边|编辑区|编辑窗格)(?:中|里)?)$/u.exec(text);
@@ -185,7 +191,7 @@ function parseClause(clause: string, title: Title, literal: Title): Action | und
   const focus = focusAtZoom.exec(clause);
   if (focus) return { action: 'viewport.set', arguments: { target: { title: title(focus[3]!) }, zoom: percentValue(focus) } };
   if (zoomQuestion.test(clause)) return { action: 'viewport.read' };
-  const surface = surfaceAction(clause);
+  const surface = workspaceSurfaceAction(clause);
   if (surface) return { action: surface };
   const simple = simpleActions.find(([pattern]) => pattern.test(clause));
   if (simple) return { action: simple[1] };
@@ -228,7 +234,8 @@ export function compileWorkspaceLanguage(prompt: string, knownTitles: ReadonlySe
     .replace(/(?:一下|吧)$/u, '').trim(), title, literal);
   const separator = /[,，;；、。]\s*|\s*(?:然后|接着|并且|同时|并|(?<!不)再)(?=\s*(?:打开|关闭|开启|展开|收起|关掉|聚焦|缩放|保持|把|将|显示|隐藏|删除|移除|修改|新建|创建))/u;
   // A location pair belongs to one action even when it contains a comma.
-  const single = !separator.test(text) || nodeMove.test(text) || relativeTenths.test(text.replace(/^(?:把|将)/u, '')) ? parse(text) : undefined;
+  const single = !separator.test(text) || nodeMove.test(text) || relativeTenths.test(text.replace(/^(?:把|将)/u, '')) ||
+    /^打开.+[，,]\s*(?:进入|切到)?\s*(?:沉浸(?:式)?(?:编辑|写作)|专注写作)(?:模式)?$/u.test(text) ? parse(text) : undefined;
   if (single) return [{ id: single.action === 'viewport.set' ? 'viewport' : 'step-1', ...single }];
   const clauses = text.split(separator).map(clause => clause.trim()).filter(Boolean);
   if (clauses.length < 2 || clauses.length > 8) return undefined;

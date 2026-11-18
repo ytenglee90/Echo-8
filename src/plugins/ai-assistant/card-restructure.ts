@@ -13,6 +13,8 @@ export interface RestructureBinding { ids: string[]; titles: string[]; reconnect
 export function cardRestructureTask(prompt: string): RestructureTask | undefined {
   const text = prompt.trim().replace(/^@画布操作\s+/u, '').replace(/^(?:请|帮我)\s*/u, '').replace(/[。！!]$/u, '');
   const reconnect = /(?:重接|重新连接|迁移)(?:相关|原有)?连线/u.test(text);
+  const rewrite = /^(?:改写|重写|润色)\s*(.+?)(?:的)?(?:内容|正文|全文)[，,]\s*(?:用|使用|写入|输出到?)\s*(?:一个|一张)?新(?:的)?节点(?:插入|写入|保存|存放)?(?:内容|结果|改写结果)?[，,]\s*标题(?:为|是|叫|设为)\s*(.{1,120})$/u.exec(text);
+  if (rewrite) return { names: [naturalName(rewrite[1]!)], titles: [naturalName(rewrite[2]!)], reconnect: false };
   const split = /^(?:把|将)\s*(.+?)\s*拆(?:分)?成\s*(.+?)(?:[二两三四五六七八九十\d]+\s*(?:张|个)(?:新卡|卡片?|节点)?)(?:[，,]\s*保留原卡)?(?:[，,]?\s*(?:并|再)?(?:重接|重新连接)(?:相关|原有)?连线)?$/u.exec(text);
   if (split) {
     const titles = naturalNames(split[2]!);

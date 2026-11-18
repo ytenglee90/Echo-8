@@ -115,7 +115,7 @@ export async function consumeAIGenerationStream(
       ? [{ id: call.id, name: call.name, arguments: call.arguments }]
       : []);
   if (!normalized && completedToolCalls.length === 0) {
-    if (reasoning.trim()) throw new Error('模型只返回了思考过程，没有返回最终答案；请重试或降低模型思考强度');
+    if (reasoning.trim()) throw new Error('模型只返回了思考过程，没有返回最终答案；本轮未完成，请重试或切换模型');
     throw new Error('模型返回了空内容');
   }
   const normalizedReasoning = reasoning.trim();
@@ -136,7 +136,7 @@ function normalizeAIGenerateResult(result: AIGenerateResult): AIGenerateResult {
   const text = result.text.trim();
   if (!text && !result.toolCalls?.length) {
     if (result.reasoning?.trim()) {
-      throw new Error('模型只返回了思考过程，没有返回最终答案；请重试或降低模型思考强度');
+      throw new Error('模型只返回了思考过程，没有返回最终答案；本轮未完成，请重试或切换模型');
     }
     throw new Error('模型返回了空内容');
   }

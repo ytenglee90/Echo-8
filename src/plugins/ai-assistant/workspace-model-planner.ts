@@ -5,7 +5,7 @@ import type { GroupRecord } from '../../protocols/groups.ts';
 import type { ConnectionGraphSnapshot } from '../../protocols/connections.ts';
 import type { WorkspaceActionIndex, WorkspacePlan, WorkspacePlanStep, WorkspacePlanValidation } from '../../protocols/workspace-actions.ts';
 import { canvasTitleAliases } from '../../services/canvas-titles.ts';
-import { isWorkspaceModelAction } from '../../services/workspace-model-actions.ts';
+import { isWorkspaceModelAction, isWorkspaceInterfaceRequest, isWorkspaceInterfaceAction, workspaceActionNeedsObjects } from '../../services/workspace-model-actions.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
 import { aggregateTokenUsage, withTokenUsageEstimates } from '../../services/ai-token-usage.ts';
 import { workspaceReply } from './workspace-reply.ts';
@@ -31,7 +31,8 @@ export async function planWorkspaceWithModel(context: PluginContext, prepared: A
     context.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1', undefined, signal).catch(() => undefined),
     context.capabilities.requestAll<AIContextCatalogContribution>('context.catalog@1', undefined, signal),
   ]);
-  const actions = index.actions.filter(isWorkspaceModelAction);
+  const interfaceOnly = isWorkspaceInterfaceRequest(prepared.prompt);
+  const actions = index.actions.filter(action => isWorkspaceModelAction(action) && (!interfaceOnly || isWorkspaceInterfaceAction(action)));
   if (!actions.length) throw new Error('当前没有可用于模型解析的工作区动作，请启用所需插件。');
   const allowed = new Map(actions.map(action => [action.id, action]));
   const selected = new Set(selection.ids);
@@ -60,10 +61,12 @@ export async function planWorkspaceWithModel(context: PluginContext, prepared: A
     truncated: nodes.length !== visibleNodes.length,
   };
   let planningActions = actions;
-  const userMessage = (includeObjects = true) => JSON.stringify({ request: prepared.prompt, selectedIds: selection.ids.filter(id => objectIds.has(id)),
-    directory: includeObjects ? directory : {},
+  const userMessage = (includeObjects = true) => {
+    const needsObjects = includeObjects && !interfaceOnly && planningActions.some(workspaceActionNeedsObjects);
+    return JSON.stringify({ request: prepared.prompt, selectedIds: needsObjects ? selection.ids.filter(id => objectIds.has(id)) : [],
+    directory: needsObjects ? directory : {},
     actions: planningActions.map(({ id, label, category, effect, inputSchema }) => ({ id, label, category, effect, inputSchema: compactSchema(inputSchema) })),
-  });
+  }); };
   const request: AIGenerateRequest = {
     providerId: prepared.providerProfileId, temperature: 0, maxOutputTokens: 2048,
     usageContext: { taskId: prepared.usageTaskId ?? prepared.sessionId, sessionId: prepared.sessionId, purpose: 'plan', outputKind: 'plan' },
@@ -144,10 +147,12 @@ export async function planWorkspaceWithModel(context: PluginContext, prepared: A
       checkReferences(step.arguments, '', Array.isArray(idSchema?.enum) ? idSchema.enum : []);
       return { id: `model-${i + 1}`, action: step.action, arguments: step.arguments, ...(i ? { dependsOn: [`model-${i}`] } : {}) };
     });
-    const plan: WorkspacePlan = { version: 1, id: createId('semantic'), steps, constraints: { documentRevision: revision.revision } };
+    const plan: WorkspacePlan = { version: 1, id: createId('semantic'), steps,
+      ...(!interfaceOnly ? { constraints: { documentRevision: revision.revision } } : {}) };
     const validation = await context.queries.ask<WorkspacePlanValidation>('workspace.plan.validate@1', plan);
     signal.throwIfAborted();
-    if (validation.steps.every(step => step.effect === 'query')) {
+    if (validation.steps.every(step => step.effect === 'query') ||
+      interfaceOnly && steps.every(step => isWorkspaceInterfaceAction(allowed.get(step.action)!))) {
       const receipt = await context.commands.dispatch('workspace.plan.run@1', plan);
       trace('completed', { reason: 'no-change' });
       return { ...response, usage, text: await workspaceReply(context, steps, receipt, signal) };

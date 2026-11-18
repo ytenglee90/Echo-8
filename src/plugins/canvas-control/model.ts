@@ -36,7 +36,7 @@ import { nativeCanvasIntent } from '../../services/native-canvas-intent.ts';
 import { prepareNativeCanvasAction } from './native-actions.ts';
 
 const CONTROL_UI_NAMESPACE = 'canvasControlUI';
-export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): PluginDefinition {
+export function createCanvasControlPlugin(panel?: unknown): PluginDefinition {
   return {
     manifest: defineManifest('canvas-control', 'AI 画布控制', {
       namespaces: [CONTROL_UI_NAMESPACE], namespaceDomains: { [CONTROL_UI_NAMESPACE]: 'workspace' },
@@ -51,9 +51,9 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       queries: ['canvasControl.state@1', 'canvasControl.reviewReceipt@1'],
       asks: ['workspace.plan.validate@1', 'history.state', 'system.actions', 'system.document.revision'],
       events: ['document.replaced', 'history.changed', 'canvas.appearance.changed', 'canvasControl.background.applied@1'], signals: [CANVAS_CONTROL_RESUME, CANVAS_CONTROL_RESULT, 'canvasControl.updated@1', 'appearance.color.preview', OPERATION_LOG_STAGE, OPERATION_LOG_STAGE_V2],
-      ui: ['canvas-control.panel', 'canvas-control.toolbar'], actions: ['canvas-control.open-action'],
+      ui: ['canvas-control.panel'], actions: ['canvas-control.open-action'],
       shortcuts: ['canvas-control.open-shortcut'],
-      permissions: ['store.own.read', 'store.own.write', 'content.context.read', 'history.manage', 'ui.top.contribute', 'ui.overlay.contribute', 'ui.action.register', 'ui.action.execute', 'ui.shortcut.register'],
+      permissions: ['store.own.read', 'store.own.write', 'content.context.read', 'history.manage', 'ui.overlay.contribute', 'ui.action.register', 'ui.action.execute', 'ui.shortcut.register'],
     }),
     start(context) {
       const snapshots = new Map<string, ControlSnapshot>();
@@ -1012,7 +1012,6 @@ export function createCanvasControlPlugin(panel?: unknown, toolbar?: unknown): P
       });
       context.events.subscribe('canvas.appearance.changed', () => { if (background) clearBackground(); });
       context.ui.contribute({ id: 'canvas-control.panel', slot: 'overlay.floating', kind: 'view', label: '画布控制', component: panel });
-      context.ui.contribute({ id: 'canvas-control.toolbar', slot: 'top.primary', kind: 'view', label: '画布控制', group: 'assist', priority: 80, component: toolbar });
       context.ui.action({ id: 'canvas-control.open-action', label: '画布控制', command: 'canvasControl.open@1', category: 'AI', keywords: ['操作', '节点', '群组', '连线', '控制'], priority: 40,
         localTool: { version: 1, effect: 'workspace', resultMode: 'returned', inputSchema: { type: 'null' } },
       });

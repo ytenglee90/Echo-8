@@ -1,6 +1,6 @@
 import { isRecord, type PluginContext, type PluginDefinition, type PluginSnapshot, type RegisteredAction } from '../../core/contracts.ts';
 import type { ContentSummary } from '../../protocols/content.ts';
-import type { FileRuntimeState, LocalFileTaskResult } from '../../protocols/files.ts';
+import type { LocalFileTaskResult } from '../../protocols/files.ts';
 import type { CanvasReviewReceipt } from '../../protocols/canvas-control.ts';
 import type {
   WorkspaceActionIndex, WorkspaceRuntimeCatalog, WorkspacePlan, WorkspacePlanReceipt, WorkspacePlanResume, WorkspacePlanStep, WorkspaceStepReceipt, WorkspaceTarget,
@@ -422,7 +422,6 @@ export function createWorkspaceActionsPlugin(panel?: unknown): PluginDefinition 
     } });
     context.commands.register<WorkspacePlan, WorkspacePlanReceipt>({ type: command, validate: isPlan, handle: async (input, envelope) => {
       const key = envelope.sourcePlugin + ':' + input.id;
-      const active = await activeOwners();
       const byId = new Map((await runtimeActions()).map(action => [action.descriptor.id, action]));
       const signature = JSON.stringify(input);
       if (signature.length > 256 * 1024) throw new Error('本地计划过大，请分批处理');
@@ -435,10 +434,6 @@ export function createWorkspaceActionsPlugin(panel?: unknown): PluginDefinition 
       const revision = input.constraints?.documentRevision;
       if (revision !== undefined && (await context.queries.ask<{ revision: number }>('system.document.revision')).revision !== revision) {
         throw new Error('书籍内容已变化，请重新准备计划');
-      }
-      if (active.has('import-export') && input.steps.some(step => byId.get(step.action)?.descriptor.effect === 'document')) {
-        const file = await context.capabilities.request<FileRuntimeState>('file.state@1');
-        if (file.cloudProjectActive) throw new Error('本地操作计划只能修改本地书籍');
       }
       const plan = structuredClone(input);
       const receipt = await execute(context, plan, byId);

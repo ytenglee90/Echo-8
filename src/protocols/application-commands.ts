@@ -9,6 +9,7 @@ type ValidatedCommand = CommandContract<unknown, unknown>;
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'pluginCenter.open': CommandContract<undefined>;
     'ai.assistant.activate': ValidatedCommand;
     'ai.assistant.attach': ValidatedCommand;
     'ai.assistant.continueMemory': ValidatedCommand;

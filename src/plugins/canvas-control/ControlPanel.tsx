@@ -3,14 +3,8 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ViewClient } from '../../core/contracts.ts';
 import type { CanvasControlState, CanvasControlReview, CanvasControlAction } from '../../protocols/canvas-control.ts';
 import { FloatingPanel } from '../../ui/FloatingPanel.tsx';
-import { IconButton } from '../../ui/Icon.tsx';
 import { controlActionLabel } from './planning.ts';
 
-export function CanvasControlToolbar({ client }: { client: ViewClient }) {
-  const state = useControlState(client);
-  if (!state.open && !state.reviews.length) return null;
-  return <IconButton icon="pointer" label="画布控制" onClick={() => void client.dispatch('canvasControl.open@1').catch(() => undefined)} />;
-}
 function useControlState(client: ViewClient): CanvasControlState {
   const version = useSyncExternalStore(client.subscribeState, () => client.getOwnStateVersion('canvasControlUI'), () => 0);
   const [refresh, setRefresh] = useState(0);
