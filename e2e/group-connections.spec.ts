@@ -119,6 +119,8 @@ for (const start of ['point', 'node', 'box', 'group']) test(`mixed selection mov
   const movedTogether = async () => {
     const current = await mixedPositions(page), dx = current.point[0] - before.point[0], dy = current.point[1] - before.point[1];
     if (Math.abs(dx) < 60) return false;
+    // The group preview is frame-coalesced: wait for the final pointer position before comparing its commit.
+    if (start === 'group' && (Math.abs(dx - 120) > 1.5 || Math.abs(dy - 80) > 1.5)) return false;
     return ['a', 'b', 'e', 'f'].every(id => Math.abs(current[`群组测试${id}`][0] - before[`群组测试${id}`][0] - dx) < 1.5 &&
       Math.abs(current[`群组测试${id}`][1] - before[`群组测试${id}`][1] - dy) < 1.5);
   };

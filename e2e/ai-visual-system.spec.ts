@@ -15,7 +15,7 @@ test('assistant views share control typography, spacing and section headings', a
   const panel = page.getByRole('region', { name: 'AI 助手', exact: true });
   const chatSelect = await controlStyle(panel.locator('.ai-model-selector select'));
   await panel.screenshot({ path: info.outputPath('ai-chat.png') });
-  await panel.getByRole('button', { name: 'Prompt 模板', exact: true }).click();
+  await panel.getByRole('button', { name: /^Prompt：/u }).click();
   const prompt = page.getByRole('region', { name: 'AI Prompt 模板', exact: true });
   const formSelect = await controlStyle(prompt.getByRole('combobox'));
   const { height: compactHeight, ...compactTypography } = chatSelect;
@@ -29,7 +29,8 @@ test('assistant views share control typography, spacing and section headings', a
   });
   const promptPadding = await prompt.evaluate(element => getComputedStyle(element).padding);
   await prompt.screenshot({ path: info.outputPath('ai-prompts.png') });
-  await panel.getByRole('button', { name: 'AI 记忆中心', exact: true }).click();
+  await panel.getByRole('button', { name: 'AI 对话', exact: true }).click();
+  await panel.getByRole('button', { name: '选择本轮记忆，前往记忆中心', exact: true }).click();
   const memory = page.getByRole('region', { name: 'AI 记忆中心', exact: true });
   expect(await memory.evaluate(element => getComputedStyle(element).padding)).toBe(promptPadding);
   expect(await memory.getByRole('heading', { name: '记忆库', exact: true }).evaluate(element => {
@@ -41,6 +42,7 @@ test('assistant views share control typography, spacing and section headings', a
   expect(memoryButton.radius).toBe(chatSelect.radius);
   await memory.screenshot({ path: info.outputPath('ai-memory.png') });
   await panel.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
+  await expect(panel.getByRole('button', { name: '打开检索设置', exact: true })).toBeInViewport();
   const provider = page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
   expect(await controlStyle(provider.locator('.ai-provider-profile-toolbar select'))).toEqual(formSelect);
   expect(await provider.getByRole('heading', { name: '连接模型', exact: true }).evaluate(element => {

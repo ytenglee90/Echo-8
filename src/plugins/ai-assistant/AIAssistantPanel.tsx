@@ -469,7 +469,6 @@ function AIAssistantWindow({
         />
       ) : (
         <section className="ai-provider-settings-host" aria-label="AI 模型与连接">
-          {renderSlot?.('ai.settings')}
           <section className="ai-provider-retrieval-link" aria-label="检索方式">
             <button type="button" className="ai-retrieval-settings-button" aria-label="打开检索设置" title="打开检索设置，管理检索方式、语义模型和索引"
               disabled={!client.isCommandAvailable('retrieval.open@1')}
@@ -477,6 +476,7 @@ function AIAssistantWindow({
               <Icon name="search" size={17} /><span><strong>打开检索设置</strong><small>检索方式、语义模型与索引</small></span><Icon name="chevron-right" size={16} />
             </button>
           </section>
+          {renderSlot?.('ai.settings')}
           <p className="ai-provider-settings-unavailable">模型连接插件当前不可用。</p>
         </section>
       )}
