@@ -8,6 +8,48 @@ async function controlStyle(locator: Locator) {
   });
 }
 
+test('model selector follows the selected name and keeps composer actions visible in narrow windows', async ({ page }, info) => {
+  await page.goto('/');
+  await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');
+  await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+  const panel = page.getByRole('region', { name: 'AI 助手', exact: true });
+  const models = ['deepseek-flash', '中文模型 · reasoning-pro-2026', 'long-model-'.repeat(8)];
+  await panel.getByRole('button', { name: '配置模型平台与 KEY', exact: true }).click();
+  const provider = panel.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
+  for (const model of models) {
+    await provider.getByRole('button', { name: '新建模型连接', exact: true }).click();
+    await provider.getByRole('combobox', { name: '选择平台', exact: true }).selectOption('openai');
+    await provider.getByLabel('模型', { exact: true }).fill(model);
+    await provider.getByLabel('API KEY', { exact: true }).fill('test-key-not-real');
+    await provider.getByRole('button', { name: '保存连接', exact: true }).click();
+    await expect(provider.getByText('当前连接已就绪', { exact: true })).toBeVisible();
+  }
+  await panel.getByRole('button', { name: 'AI 对话', exact: true }).click();
+  const select = panel.getByRole('combobox', { name: '当前模型平台', exact: true });
+  const width = async () => (await select.boundingBox())!.width;
+  await select.selectOption({ label: models[0] });
+  await expect(select).toHaveAttribute('title', `切换模型：${models[0]}`);
+  const shortWidth = await width();
+  expect(shortWidth).toBeGreaterThan(100);
+  expect(shortWidth).toBeLessThan(165);
+  await select.selectOption({ label: models[1] });
+  await expect.poll(width).toBeGreaterThan(shortWidth + 30);
+  await select.selectOption({ label: models[0] });
+  await expect.poll(width).toBeCloseTo(shortWidth, 0);
+  await select.focus();
+  await expect(select).toBeFocused();
+  await panel.screenshot({ path: info.outputPath('model-selector-fit.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await select.selectOption({ label: models[2] });
+  await expect(select).toHaveAttribute('title', `切换模型：${models[2]}`);
+  const footer = panel.locator('.ai-composer-footer');
+  await expect.poll(() => footer.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  for (const name of [/^Prompt：/u, '选择本轮记忆，前往记忆中心', '发送给模型']) {
+    await expect(footer.getByRole('button', { name, exact: typeof name === 'string' })).toBeInViewport();
+  }
+  await panel.screenshot({ path: info.outputPath('model-selector-narrow.png') });
+});
+
 test('assistant views share control typography, spacing and section headings', async ({ page }, info) => {
   await page.goto('/');
   await page.getByRole('region', { name: 'Echo-8 书库' }).press('Escape');

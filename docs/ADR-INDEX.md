@@ -10,6 +10,7 @@
 
 | ADR | 决策 | 状态／后续 |
 |---|---|---|
+| [0164](ADR-0164-MODEL-CANCELLATION-LIFETIME.md) | 模型取消信号的完整生命周期 | 有效；补充 0050、0162、0163，不改公开协议或文件格式 |
 | [0001](ADR-0001-MICROKERNEL.md) | Headless microkernel with governed plugin runtime | 有效 |
 | [0002](ADR-0002-GROUPS-CLIPBOARD.md) | Flat groups and provider-planned internal clipboard | 有效；群组标题由 0022 补充 |
 | [0003](ADR-0003-SEARCH-STATISTICS.md) | Revisioned literal search and explicit text measures | 有效；标题范围与导航由 0083 补充 |

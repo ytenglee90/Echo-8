@@ -137,21 +137,21 @@ export class CapabilityRegistry {
       return Promise.reject(new Error(`Capability unavailable: ${provider.key}`));
     }
     const controller = new AbortController();
-    const relayAbort = () => controller.abort(signal?.reason);
-    signal?.addEventListener('abort', relayAbort, { once: true });
-    if (signal?.aborted) relayAbort();
+    // Returned streams still belong to the caller after invoke resolves.
+    // Native composition preserves cancellation without a relay listener that
+    // would otherwise be detached before the provider finishes reading bytes.
+    const invocationSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     const controllers = this.controllers.get(provider.owner) ?? new Set<AbortController>();
     controllers.add(controller);
     this.controllers.set(provider.owner, controllers);
 
     let operation: Promise<unknown>;
     try {
-      operation = Promise.resolve(provider.invoke(input, controller.signal));
+      operation = Promise.resolve(provider.invoke(input, invocationSignal));
     } catch (error) {
       operation = Promise.reject(error);
     }
     const tracked = operation.then(result => this.authorizePlan(result, provider.owner)).finally(() => {
-      signal?.removeEventListener('abort', relayAbort);
       controllers.delete(controller);
       if (controllers.size === 0) this.controllers.delete(provider.owner);
       const ownerCalls = this.inFlight.get(provider.owner);

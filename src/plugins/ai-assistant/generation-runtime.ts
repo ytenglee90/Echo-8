@@ -660,11 +660,11 @@ export function registerAIGenerationRuntime(
     options.tasks.set(prepared.sessionId, task);
     void task.result.then(
       async (result) => {
-        if (options.tasks.get(prepared.sessionId) !== task) return;
+        if (options.tasks.get(prepared.sessionId) !== task) { logAnswer('cancelled'); return; }
         let directPlanId = recoveredDirectPlanId;
         const assembly = turnAssembly(prepared);
         if (prepared.operation === 'canvas-control' && !replayedCanvasReceipt && !assembly.localReply && !assembly.clarify && !assembly.route.archiveSession && !assembly.route.clarification && !assembly.route.applyItems && !assembly.route.native) {
-          if (options.tasks.get(prepared.sessionId) !== task) return;
+          if (options.tasks.get(prepared.sessionId) !== task) { logAnswer('cancelled'); return; }
           const offer = await context.commands.dispatch('canvasControl.offer@1', {
             preparationId: canvasTurnId(prepared), sessionId: prepared.sessionId, prompt: prepared.prompt,
             text: result.text, complete: result.finishReason !== 'length',
@@ -672,11 +672,13 @@ export function registerAIGenerationRuntime(
           result = { ...result, text: offer.message + (assembly.route.compound?.deferred ? '\n其余步骤已暂缓，可以之后再发送。' : ''), reasoning: undefined };
           directPlanId = offer.directPlanId;
         }
-        if (options.tasks.get(prepared.sessionId) === task) options.tasks.delete(prepared.sessionId);
+        if (options.tasks.get(prepared.sessionId) !== task) { logAnswer('cancelled'); return; }
         const recorded = await context.commands.dispatch('ai.generation.record', {
           preparationId: prepared.id,
           ...result,
         });
+        if (options.tasks.get(prepared.sessionId) !== task) { logAnswer('cancelled'); return; }
+        options.tasks.delete(prepared.sessionId);
         const completedSession = options.readSessions()[prepared.sessionId];
         prepared.transcriptRevisionAfterAssistant = completedSession?.transcriptRevision;
         const directResult = directPlanId ? await context.commands.dispatch('canvasControl.generate@1', { id: directPlanId }) : undefined;
@@ -723,7 +725,7 @@ export function registerAIGenerationRuntime(
         }
       },
       (error) => {
-        if (options.tasks.get(prepared.sessionId) !== task) return;
+        if (options.tasks.get(prepared.sessionId) !== task) { logAnswer('cancelled'); return; }
         logAnswer(generationFailure(error));
         if (options.tasks.get(prepared.sessionId) === task) options.tasks.delete(prepared.sessionId);
         if (isAbortError(error)) {
@@ -734,12 +736,13 @@ export function registerAIGenerationRuntime(
         recordGenerationError(context, options.stateBySession, options.actionBySession, prepared, error);
       },
     ).catch((error) => {
-      logAnswer(generationFailure(error));
       // The network task may succeed while the transcript transaction loses a
       // revision race. Scope that failure to this assistant and keep the other
       // concurrent sessions alive.
       const currentTask = options.tasks.get(prepared.sessionId);
       if (currentTask && currentTask !== task) return;
+      if (!currentTask && options.preparations.get(prepared.id) !== prepared) { logAnswer('cancelled'); return; }
+      logAnswer(generationFailure(error));
       if (currentTask === task) options.tasks.delete(prepared.sessionId);
       if (isAbortError(error)) return;
       recordGenerationError(context, options.stateBySession, options.actionBySession, prepared, error);

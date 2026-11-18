@@ -206,6 +206,7 @@ export async function fetchWithInitialRetry(
   let requestInit = init;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      assertNotAborted(signal);
       onRequest?.(endpoint, requestInit);
       const response = await fetcher(endpoint, requestInit);
       if (response.ok) return response;

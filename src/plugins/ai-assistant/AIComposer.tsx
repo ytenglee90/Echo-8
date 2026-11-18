@@ -74,6 +74,7 @@ export function AIComposer({
   onActiveMention,
 }: AIComposerProps) {
   const activeSuggestion = mentionSuggestions[activeMentionIndex];
+  const canStop = status === 'preparing' || status === 'generating';
   return (
     <div className={`ai-composer ${dropReady && !disabled ? 'reference-drop-ready' : ''}`}>
       <div
@@ -122,11 +123,11 @@ export function AIComposer({
         <div className="ai-composer-footer">
         {controls}
         <IconButton
-          icon={status === 'generating' ? 'stop' : 'send'}
-          label={status === 'generating' ? '停止本次生成' : '发送给模型'}
+          icon={canStop ? 'stop' : 'send'}
+          label={canStop ? '停止本次生成' : '发送给模型'}
           className="ai-send-button"
-          disabled={status !== 'generating' && sendDisabled}
-          onClick={status === 'generating' ? onStop : onSend}
+          disabled={!canStop && sendDisabled}
+          onClick={canStop ? onStop : onSend}
         />
         </div>
         {mentionMenuOpen && (

@@ -63,7 +63,7 @@ export interface AIAssistantState {
     lastError?: string;
   };
   generationRuntimeBySession: Record<string, {
-    state: 'generating' | 'error';
+    state: 'preparing' | 'generating' | 'error';
     message: string;
     preparationId?: string;
     sequence: number;

@@ -69,6 +69,8 @@ export function useAIWindowSignals({
         text: runtime.text,
         reasoning: runtime.reasoning,
       });
+    } else if (runtime.state === 'preparing') {
+      setStreamingResponse(undefined);
     }
   }, []);
 
@@ -112,6 +114,7 @@ export function useAIWindowSignals({
         } else if (message.payload.state === 'complete' || message.payload.state === 'idle') {
           cancelPendingDeltas();
           setStreamingResponse(undefined);
+          if (message.payload.state === 'idle') setPrepared(undefined);
         }
       },
     );

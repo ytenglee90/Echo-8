@@ -192,6 +192,7 @@ export function useAIComposerController({
   }, [applyPromptInsertion, insertSourceReference]);
 
   const submit = useCallback(async () => {
+    if (status === 'preparing' || status === 'generating') return;
     if (status === 'indexing') {
       onError('当前对话正在保存并建立索引，请稍候');
       return;

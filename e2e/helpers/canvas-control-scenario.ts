@@ -19,6 +19,99 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 
 export function canvasControlScenarios(url: string): void {
   test.beforeEach(async ({page})=>installLocalLanguageAssets(page));
+  test('stopping an active streamed answer closes its model connection and records cancellation', async ({ page }, info) => {
+    await page.addInitScript(() => {
+      const actualFetch = globalThis.fetch.bind(globalThis);
+      const fixture = { calls: 0, aborted: false };
+      Object.defineProperty(globalThis, '__modelStopFixture', { value: fixture });
+      globalThis.fetch = (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (!url.startsWith('https://canvas-control.test/')) return actualFetch(input, init);
+        fixture.calls++;
+        return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"尚未完成的流式内容"}}]}\n\n'));
+            init?.signal?.addEventListener('abort', () => {
+              fixture.aborted = true;
+              controller.error(init.signal!.reason);
+            }, { once: true });
+          },
+        }), { headers: { 'content-type': 'text/event-stream' } }));
+      };
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('@通用 为什么海水会涨潮？');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('article', { name: 'AI 正在流式生成', exact: true })).toContainText('尚未完成的流式内容');
+    await ai.screenshot({ path: info.outputPath('stop-streamed-answer.png') });
+    await ai.getByRole('button', { name: '停止本次生成', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__modelStopFixture'))).toEqual({ calls: 1, aborted: true });
+    await expect(ai.getByRole('article', { name: 'AI 正在流式生成', exact: true })).toHaveCount(0);
+    await expect(ai.locator('.ai-chat-bubble.assistant').filter({ hasText: '尚未完成的流式内容' })).toHaveCount(0);
+    await ai.getByRole('button', { name: '打开实时操作日志', exact: true }).click();
+    const logs = page.getByRole('region', { name: '实时操作日志', exact: true });
+    await expect(logs.getByRole('listitem').filter({ hasText: 'AI 回答' }).first()).toContainText('已取消');
+  });
+  test('stopping context preparation remains available after reopening the assistant', async ({ page }, info) => {
+    let waiting = false;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    await page.route(/https:\/\/huggingface\.co\/Xenova\/bge-small-zh-v1\.5\//u, async route => {
+      waiting = true;
+      await gate;
+      await route.fallback();
+    });
+    try {
+      await configure(page, url, 'openai', undefined, 'direct');
+      const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+      await ai.locator('.ai-composer textarea').fill('把这两张配成海港的感觉');
+      await ai.locator('.ai-composer textarea').press('Enter');
+      await expect.poll(() => waiting).toBe(true);
+      await expect(ai.getByRole('status')).toContainText('正在解析指令并核对工作区');
+      await ai.getByRole('button', { name: '关闭AI 助手', exact: true }).click();
+      await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
+      await expect(ai.getByRole('button', { name: '停止本次生成', exact: true })).toBeEnabled();
+      await ai.screenshot({ path: info.outputPath('stop-context-preparation.png') });
+      await ai.getByRole('button', { name: '停止本次生成', exact: true }).click();
+      await expect(ai.getByRole('status')).toContainText('已停止本次生成');
+      release();
+      await ai.locator('.ai-composer textarea').fill('新建一个叫「准备取消后」的节点');
+      await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(ai.getByRole('status')).toContainText('已直接完成 1 项操作');
+    } finally { release(); }
+  });
+  for (const mode of ['answer', 'planning'] as const) test(`stopping ${mode} aborts the model request and rejects its late response`, async ({ page }) => {
+    let calls = 0;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      calls++;
+      await held;
+      await route.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+        json: { choices: [{ message: { role: 'assistant', content: '迟到的模型答案不能写入' }, finish_reason: 'stop' }] } }).catch(() => undefined);
+    });
+    try {
+      await configure(page, url, 'openai', undefined, 'direct');
+      const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+      const input = ai.locator('.ai-composer textarea');
+      await input.fill(mode === 'answer' ? '@通用 为什么海水会涨潮？' : '把画布背景调整得更护眼');
+      await input.press('Enter');
+      await expect.poll(() => calls).toBe(1);
+      const aborted = page.waitForEvent('requestfailed', request => request.url().startsWith('https://canvas-control.test/'));
+      await ai.getByRole('button', { name: '停止本次生成', exact: true }).click();
+      await aborted;
+      await expect(ai.getByRole('status')).toContainText('已停止本次生成');
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      release();
+      await input.fill('新建一个叫「停止后仍可操作」的节点');
+      await input.press('Enter');
+      await expect(ai.getByRole('status')).toContainText('已直接完成 1 项操作');
+      await expect(ai.locator('.ai-chat-bubble.assistant')).not.toContainText('迟到的模型答案不能写入');
+      expect(calls).toBe(1);
+    } finally { release(); }
+  });
   test('reported zoom, autosave, shortcut and numbered immersive commands execute through actual owners without model calls', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => { calls++; return route.fulfill({ status: 500, body: 'Unexpected model request' }); });

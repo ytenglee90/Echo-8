@@ -145,10 +145,14 @@ export function registerAIRequestRuntime(
       options.generationActionBySession.delete(session.id);
       options.generationStateBySession.delete(session.id);
       options.preparationTasks.get(session.id)?.cancel();
+      const preparationMessage = mayLoadLocalLanguage ? '正在解析指令并核对工作区' : '正在按目录与关键词准备上下文';
+      options.generationStateBySession.set(session.id, {
+        state: 'preparing', message: preparationMessage, sequence: 0, text: '', reasoning: '',
+      });
       context.signals.emit('ai.state.invalidated');
       context.signals.emit('ai.status', {
         state: 'preparing',
-        message: mayLoadLocalLanguage ? '正在解析指令并核对工作区' : '正在按目录与关键词准备上下文',
+        message: preparationMessage,
         sessionId: session.id,
       } satisfies AIStatusSignal);
       const preparationId = createId('ai-context');
@@ -186,6 +190,7 @@ export function registerAIRequestRuntime(
         (prepared) => {
           if (options.preparationTasks.get(session.id) !== task) return;
           options.preparationTasks.delete(session.id);
+          options.generationStateBySession.delete(session.id);
           (prepared as PreparedGeneration).replayRequest = normalizedPayload;
           (prepared as PreparedGeneration).selectionAtSend = selectionAtSend;
           options.preparations.set(prepared.id, prepared);
@@ -415,24 +420,39 @@ export function registerAIRequestRuntime(
     type: 'ai.generation.cancel',
     validate: isGenerationCancelPayload,
     handle: (payload) => {
-      const targets = payload?.sessionId
-        ? [[payload.sessionId, options.generationTasks.get(payload.sessionId)] as const]
-        : [...options.generationTasks.entries()];
-      const cancelled = targets.some(([, task]) => Boolean(task));
-      const batch = targets.map(([sessionId]) => options.generationStateBySession.get(sessionId)?.batchProgress).find(Boolean);
-      for (const [sessionId, task] of targets) {
-        task?.cancel();
-        if (options.generationTasks.get(sessionId) === task) options.generationTasks.delete(sessionId);
+      const targets = payload?.sessionId ? [payload.sessionId] : [...new Set([
+        ...options.preparationTasks.keys(), ...options.generationTasks.keys(),
+      ])];
+      let cancelled = false;
+      for (const sessionId of targets) {
+        const preparation = options.preparationTasks.get(sessionId);
+        const generation = options.generationTasks.get(sessionId);
+        const batch = options.generationStateBySession.get(sessionId)?.batchProgress;
+        let pending = false;
+        for (const [id, prepared] of options.preparations) {
+          if (prepared.sessionId === sessionId && prepared.transcriptRevisionAfterAssistant === undefined) {
+            options.preparations.delete(id);
+            pending = true;
+          }
+        }
+        const stopped = Boolean(preparation || generation || pending);
+        cancelled ||= stopped;
+        // Relinquish ownership before aborting so late completions cannot
+        // publish a response or start a queued generation for this turn.
+        options.preparationTasks.delete(sessionId);
+        options.generationTasks.delete(sessionId);
+        preparation?.cancel();
+        generation?.cancel();
         options.generationStateBySession.delete(sessionId);
         options.generationActionBySession.delete(sessionId);
+        context.signals.emit('ai.status', {
+          state: 'idle',
+          message: stopped ? batch ? `已停止剩余批次；已创建 ${batch.completed}/${batch.total} 个节点，已提交批次可逐批撤销。` :
+            '已停止本次生成；已取消上下文准备并中断模型请求，未保存不完整内容' : '当前没有正在生成的内容',
+          sessionId,
+        } satisfies AIStatusSignal);
       }
       context.signals.emit('ai.state.invalidated');
-      context.signals.emit('ai.status', {
-        state: 'idle',
-        message: cancelled ? batch ? `已停止剩余批次；已创建 ${batch.completed}/${batch.total} 个节点，已提交批次可逐批撤销。` :
-          '已停止本次生成；未保存不完整内容' : '当前没有正在生成的内容',
-        sessionId: payload?.sessionId,
-      } satisfies AIStatusSignal);
       return { result: { cancelled } };
     },
   });

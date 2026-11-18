@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { AIPreparedContext } from '../src/protocols/ai.ts';
 import type { PluginContext } from '../src/core/contracts.ts';
-import type { PreparePayload } from '../src/plugins/ai-assistant/command-payloads.ts';
+import type { GenerationCancelPayload, PreparePayload } from '../src/plugins/ai-assistant/command-payloads.ts';
 import {
   prunePreparedContexts,
   requirePreparedContext,
@@ -88,4 +88,47 @@ test('a cancelled old preparation cannot replace the new turn or report a late e
   assert.equal(runtime.preparations.get(next.id), next);
   assert.equal(runtime.generationActionBySession.size, 0);
   assert.ok(!JSON.stringify(signals).includes('旧任务迟到的失败'));
+});
+
+for (const outcome of ['resolve', 'reject'] as const) test(`stopping preparation prevents a late ${outcome} from starting a model or changing another session`, async () => {
+  let prepare!: (payload: PreparePayload) => Promise<unknown>;
+  let cancel!: (payload: GenerationCancelPayload) => { result: { cancelled: boolean } };
+  let resolve!: (value: AIPreparedContext) => void;
+  let reject!: (error: Error) => void;
+  let aborted = false;
+  const signals: unknown[] = [];
+  const context = {
+    commands: { register(input: { type: string; handle: unknown }) {
+      if (input.type === 'ai.context.prepare') prepare = input.handle as typeof prepare;
+      if (input.type === 'ai.generation.cancel') cancel = input.handle as typeof cancel;
+    }, dispatch() { assert.fail('a cancelled preparation must not start generation'); } },
+    signals: { subscribe() {}, emit(name: string, value?: unknown) { signals.push({ name, value }); } },
+    tasks: { schedule() { return {
+      id: 'waiting-context', result: new Promise<AIPreparedContext>((yes, no) => { resolve = yes; reject = no; }),
+      cancel() { aborted = true; },
+    }; } },
+  } as unknown as PluginContext;
+  const runtime = {
+    preparations: new Map(), preparationTasks: new Map(), generationTasks: new Map(),
+    generationStateBySession: new Map(), generationActionBySession: new Map(), lastPrepareRequestBySession: new Map(),
+    lastMemoryUseBySession: new Map(),
+    readSessions: () => ({ 'session:1': { id: 'session:1', title: '测试', turns: 0, revision: 1, createdAt: 1, updatedAt: 1 } }),
+    readMemoryIndexes: () => ({}), readAssistantInstances: () => [],
+  };
+  registerAIRequestRuntime(context, runtime);
+  await prepare({ sessionId: 'session:1', prompt: '@通用 等待中的问题', operation: 'general', autoStart: true });
+  assert.equal(runtime.generationStateBySession.get('session:1').state, 'preparing');
+  const otherTask = { cancel() { assert.fail('must not abort another assistant'); } };
+  runtime.generationTasks.set('session:2', otherTask);
+  assert.deepEqual(cancel({ sessionId: 'session:1' }), { result: { cancelled: true } });
+  assert.equal(aborted, true);
+  assert.equal(runtime.generationTasks.get('session:2'), otherTask);
+  assert.equal(runtime.preparationTasks.size, 0);
+  assert.equal(runtime.generationStateBySession.has('session:1'), false);
+  const signalCount = signals.length;
+  if (outcome === 'resolve') resolve(prepared('late', Date.now() + 60_000));
+  else reject(new Error('late preparation failure'));
+  await new Promise(yes => setTimeout(yes, 0));
+  assert.equal(signals.length, signalCount);
+  assert.equal(runtime.preparations.size, 0);
 });

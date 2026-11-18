@@ -41,15 +41,20 @@ export function AIChatHeader({
   onToggleWebSearch: () => void;
   onOpenPromptTemplates: () => void;
 }) {
+  const modelLabel = selectedProvider
+    ? selectedProvider.model || '未填写模型'
+    : '模型未配置';
+
   return (
     <div className="ai-chat-topbar">
       <div className="ai-model-controls">
         <label className="ai-model-selector">
           <span className="sr-only">大模型</span>
+          <span className="ai-model-selector-size" aria-hidden="true">{modelLabel}</span>
           <select
             value={selectedProviderId}
             aria-label="当前模型平台"
-            title={selectedProvider?.model || '模型未配置'}
+            title={`切换模型：${modelLabel}`}
             disabled={!providerSelectionAvailable || providerCatalog.options.length === 0}
             onChange={(event) => onSelectProvider(event.target.value)}
           >

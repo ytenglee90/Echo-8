@@ -461,8 +461,9 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
           const accounting = observeProviderUsage(usageLedger, input, profile.id, profile.model, context.network.fetch);
           const controller = new AbortController();
           activeRequests.add(controller);
-          const abort = () => controller.abort();
-          signal?.addEventListener('abort', abort, { once: true });
+          const abort = () => controller.abort(signal?.reason);
+          if (signal?.aborted) abort();
+          else signal?.addEventListener('abort', abort, { once: true });
           try {
             const request = buildProviderRequest(profile, apiKey, input, false);
             const response = await fetchWithInitialRetry(
@@ -502,12 +503,13 @@ export function createAIProviderPlugin(panel?: unknown, semanticPanel?: unknown)
           const accounting = observeProviderUsage(usageLedger, input, profile.id, profile.model, context.network.fetch);
           const controller = new AbortController();
           activeRequests.add(controller);
-          const abort = () => controller.abort();
+          const abort = () => controller.abort(signal?.reason);
           const release = () => {
             signal?.removeEventListener('abort', abort);
             activeRequests.delete(controller);
           };
-          signal?.addEventListener('abort', abort, { once: true });
+          if (signal?.aborted) abort();
+          else signal?.addEventListener('abort', abort, { once: true });
           try {
             const request = buildProviderRequest(profile, apiKey, input, true);
             const response = await fetchWithInitialRetry(
