@@ -72,6 +72,7 @@ export interface WorkspacePlanReceipt {
   status: 'completed' | 'waiting' | 'partial' | 'failed' | 'cancelled' | 'expired';
   steps: WorkspaceStepReceipt[];
 }
+export interface WorkspacePlanValidation { steps: Array<{ label: string; effect: WorkspaceActionDescriptor['effect'] }> }
 
 export interface WorkspacePlanResume {
   id: string;
@@ -94,6 +95,7 @@ declare module './messages.ts' {
     'system.actionCatalog@1': MessageContract<undefined, WorkspaceRuntimeCatalog>;
     'system.action.validate@1': MessageContract<{ owner: string; id: string; arguments?: unknown }, { valid: boolean }>;
     'workspace.actions@1': MessageContract<undefined, WorkspaceActionIndex>;
+    'workspace.plan.validate@1': MessageContract<WorkspacePlan, WorkspacePlanValidation>;
     'workspace.coverage@1': MessageContract<undefined, WorkspaceCoverageReport>;
     'workspace.plan.receipt@1': MessageContract<{ id: string }, WorkspacePlanReceipt | undefined>;
     'workspace.plan.latest@1': MessageContract<undefined, { plan: WorkspacePlan; receipt: WorkspacePlanReceipt } | undefined>;

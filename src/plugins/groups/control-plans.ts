@@ -7,10 +7,11 @@ import { validateCanvasControlActions } from '../../services/canvas-control-vali
 import { computeGroupBounds } from './layout.ts';
 
 export function registerGroupControlPlans(context: PluginContext, readGroups: () => Record<string, GroupRecord>): void {
+  for (const version of [1, 2] as const) {
   context.capabilities.provide<CanvasControlGroupRequest, CanvasControlGroupPlan>({
-    key: 'canvasControl.groupsPlan@1',
+    key: `canvasControl.groupsPlan@${version}`,
     invoke: input => {
-      validateCanvasControlActions(input?.actions);
+      validateCanvasControlActions(input?.actions, false, version === 2 ? 3 : 1);
       if (input.actions.some(action => action.type !== 'create-group' && action.type !== 'update-group') || !Array.isArray(input.nodes) || !Array.isArray(input.expected)) throw new Error('群组操作计划无效');
       const groups = new Map(Object.values(readGroups()).map(group => [group.id, group]));
       const nodes = new Map(input.nodes.map(node => [node.id, node]));
@@ -56,4 +57,5 @@ export function registerGroupControlPlans(context: PluginContext, readGroups: ()
       };
     },
   });
+  }
 }

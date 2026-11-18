@@ -55,6 +55,7 @@ export interface GroupMembershipDropRequest extends GroupDropTargetRequest {
 
 declare module './commands.ts' {
   interface ApplicationCommandMap {
+    'group.rename@1': CommandContract<{ id: string; title: string; expectedRevision: number }>;
     'group.membership.applySelected@1': CommandContract<{ action: 'add' | 'remove' }, { changed: number }>;
   }
 }

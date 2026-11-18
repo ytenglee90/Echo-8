@@ -1,6 +1,7 @@
 import type { CanvasControlPurpose } from '../protocols/canvas-control.ts';
 import { extendedCanvasOperation, naturalColor, naturalTargetFilter, NATURAL_QUOTED_NAME, type ExtendedCanvasOperation } from './natural-canvas-rules.ts';
 import { palettePresetIntent } from './palette-preset-intent.ts';
+import { connectionColorIntent } from './connection-color-intent.ts';
 import type { PalettePresetId } from '../protocols/appearance.ts';
 
 /** Deterministic, conservative hints. Ambiguous requests retain the full path. */
@@ -299,6 +300,7 @@ export function naturalCanvasOperation(prompt: string): NaturalCanvasOperation |
   let command = canvasIntentText(prompt);
   const disposition = canvasRequestDisposition(prompt);
   if (disposition === 'read-only') return undefined;
+  if (connectionColorIntent(command.replace(/[。！!]$/u, '').trim())) return undefined;
   const preset = disposition === 'normal' && palettePresetIntent(command);
   if (preset) return { kind: 'preset', names: [], id: preset };
   const protectedMove = preserveColor.exec(command);
@@ -336,7 +338,10 @@ export function naturalCanvasOperation(prompt: string): NaturalCanvasOperation |
   }
   const explicitContent = /^\s*@画布操作\s+/u.test(prompt) ? canvasContentTarget(prompt) : undefined;
   if (explicitContent) return { kind: 'content', ...explicitContent };
-  return parseCanvasOperation(command.replace(/^(?:再|然后|接着)\s*(?=把|将|给|换|改|往|向|移|连|接到|指向|排|归到|切|转)/u, ''));
+  const parsed = parseCanvasOperation(command.replace(/^(?:再|然后|接着)\s*(?=把|将|给|换|改|往|向|移|连|接到|指向|排|归到|切|转)/u, ''));
+  if (parsed?.names.some(name => /改(?:为|成)|设(?:置)?为|我(?:现在|当前)?选中|所有内容|全部内容/u.test(name) &&
+    !['「', '『', '“', '"'].some((quote, i) => command.includes(quote + name + ['」', '』', '”', '"'][i])))) return undefined;
+  return parsed;
 }
 
 function parseCanvasOperation(command: string): NaturalCanvasOperation | undefined {
@@ -414,9 +419,6 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
   }
   if (/^(?:切换|换|更换)(?:一)?(?:个|种)?(?:应用)?主题$/u.test(text)) return { kind: 'choose-theme', names: [] };
   if (/^(?:换个颜色|改个颜色|给它换个色)$/u.test(text)) return { kind: 'choose-color', names: ['它们'] };
-  if (/^(?:把|将)?(?:画布背景|背景色)(?:调整|调|改)得?(?:更|稍微)?(?:护眼|舒服|柔和)(?:一点)?$/u.test(text)) {
-    return { kind: 'choose-color', names: [], background: true };
-  }
   if ((match = /^(?:(?:把|将|给)\s*)?(.+?)(?:的标题栏)?(?:换|改)(?:一)?(?:个|种)?颜色$/u.exec(text))) {
     const target = name(match[1]!);
     return { kind: 'choose-color', names: target === '画布背景' ? [] : names(match[1]!), background: target === '画布背景' };
@@ -480,7 +482,7 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
     const targets = naturalTargetFilter(match[1]!) ? [match[1]!] : names(match[1]!);
     if (targets.length > 1 || naturalTargetFilter(match[1]!) || /^(?:选中(?:的)?(?:节点|卡片)?|选区|它们|这几个|这两个)$/u.test(targets[0] ?? '')) return { kind: 'group', names: targets };
   }
-  if ((match = /^(?:把|将)?(.+?)(?:也)?(?:加入|加进)(?:去)?\s*(.*)$/u.exec(text))) return { kind: 'group-add', names: names(match[1]!), title: name(match[2]!) || undefined };
+  if ((match = /^(?:把|将)?(.+?)(?:也)?(?:加入|加进)(?:去)?\s*(.*)$/u.exec(text))) return { kind: 'group-add', names: names(match[1]!), title: /^(?:群组|分组|组)$/u.test(match[2]!.trim()) ? undefined : name(match[2]!) || undefined };
   if ((match = /^(?:(?:把|将)?(.+?))?(?:归到|放到|移入|收进|放进)\s*(.+?组)(?:里|内|中)?$/u.exec(text))) return { kind: 'group-add', names: match[1] ? names(match[1]) : ['它们'], title: name(match[2]!) };
   if ((match = /^(?:把|将)?(.+?)(?:移出|移除出)\s*(.*)$/u.exec(text))) return { kind: 'group-remove', names: [name(match[1]!)], title: name(match[2]!) || undefined };
   if ((match = /^(?:把|将)?(.+?)(?:改组名为|重命名为)\s*(.+)$/u.exec(text))) return { kind: 'group-rename', names: [name(match[1]!)], title: name(match[2]!) };

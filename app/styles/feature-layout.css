@@ -35,6 +35,11 @@
 .group-membership-content strong { font-size: 12px; }
 .group-membership-content p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .group-membership-options { display: grid; gap: 6px; }
+.group-management-row, .group-management-create { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.group-management-row label, .group-management-create label { display: grid; flex: 1 1 180px; gap: 5px; font-size: 12px; }
+.group-management-row input, .group-management-create input { min-width: 0; width: 100%; padding: 7px; color: var(--ink); background: var(--control-surface); border: 1px solid var(--border); border-radius: 6px; }
+.group-management-row button, .group-management-create button { padding: 7px; color: var(--ink); background: var(--control-surface); border: 1px solid var(--border); border-radius: 6px; }
+.group-management-row small { padding-bottom: 8px; color: var(--muted); }
 .group-membership-options button {
   display: flex;
   align-items: center;

@@ -19,6 +19,121 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 
 export function canvasControlScenarios(url: string): void {
   test.beforeEach(async ({page})=>installLocalLanguageAssets(page));
+  test('reported zoom, autosave, shortcut and numbered immersive commands execute through actual owners without model calls', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.fulfill({ status: 500, body: 'Unexpected model request' }); });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const ask = async (text: string) => { await ai.locator('.ai-composer textarea').fill(text); await ai.locator('.ai-composer textarea').press('Enter'); };
+    await ask('画布缩放80%');
+    await expect(page.getByRole('textbox', { name: '画布缩放 80%', exact: true })).toHaveValue('80');
+    await ask('设置自动保存时间为1分钟');
+    await expect(ai.getByRole('status')).toContainText('自动保存间隔为 60 秒');
+    await ask('设置放大画布的快捷键为：ctrl+]');
+    await expect(ai.getByRole('status')).toContainText('快捷键已保存为');
+    await ask('新建一个叫「空白 31」的节点');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项操作');
+    await ask('进入空白31的沉浸编辑');
+    await expect(page.getByRole('region', { name: '沉浸式写作', exact: true })).toBeVisible();
+    expect(calls).toBe(0);
+  });
+  test('group management exposes actual names, renaming and member counts', async ({ page }) => {
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('新建两张管理测试，两张管理测试打一个组');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 3 项操作');
+    await page.getByRole('button', { name: '群组管理', exact: true }).click();
+    const panel = page.getByRole('dialog', { name: '加入或移出已有群组', exact: true });
+    await expect(panel.getByRole('region', { name: '全部群组' })).toBeVisible();
+    await panel.getByRole('textbox', { name: '群组 1 名称', exact: true }).fill('我的人物组');
+    await panel.getByRole('button', { name: '保存名称', exact: true }).click();
+    await expect(panel.getByRole('form', { name: '管理群组 我的人物组', exact: true })).toContainText('2 个节点');
+    await panel.getByRole('button', { name: '关闭群组成员管理', exact: true }).click();
+    await expect(page.locator('.group-name-badge')).toContainText('我的人物组');
+  });
+  test('reported review supports select all, deselect all, editable titles and collision recovery without partial writes', async ({ page }, info) => {
+    test.setTimeout(60_000);
+    await page.addInitScript(() => Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true }));
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const ask = async (text: string) => { await ai.locator('.ai-composer textarea').fill(text); await ai.locator('.ai-composer textarea').press('Enter'); };
+    const savedObjects = async () => {
+      await page.getByRole('button', { name: '命令面板', exact: true }).click();
+      const palette = page.getByRole('dialog', { name: '命令面板' });
+      await palette.getByRole('textbox', { name: '搜索命令' }).fill('另存本地副本');
+      const downloading = page.waitForEvent('download');
+      await palette.getByRole('option', { name: /^另存本地副本/u }).click();
+      const stream = await (await downloading).createReadStream();
+      const chunks: Buffer[] = []; for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+      const project = await parseProject(new Blob([Buffer.concat(chunks)]));
+      return Object.fromEntries(['textNode', 'groups', 'connections'].map(namespace =>
+        [namespace, Object.keys(project.document.namespaces[namespace] ?? {}).sort()]));
+    };
+    await ask('新建一个叫「空白 1」的节点');
+    await expect(ai.getByRole('status')).toContainText('已直接完成 1 项操作');
+    const before = await savedObjects();
+    await openControl(page);
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await control.getByRole('combobox', { name: '画布生成方式', exact: true }).selectOption('review');
+    await control.getByRole('button', { name: '关闭画布控制', exact: true }).click();
+    await ask('生成60张空白，三张人物，两张角色，一张势力，一张地图，地图连接势力实线。60张空白打一个组');
+    await expect(control.getByRole('checkbox')).toHaveCount(69);
+    await expect(control.getByText('已选 69 / 69 项', { exact: true })).toBeVisible();
+    await control.getByRole('button', { name: '取消全选', exact: true }).click();
+    await expect(control.getByRole('button', { name: '应用选中的 0 项', exact: true })).toBeDisabled();
+    await control.getByRole('button', { name: '全选', exact: true }).click();
+    await control.getByRole('textbox', { name: '第 1 项新建标题', exact: true }).fill('空白 1');
+    await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
+    await expect(control.getByRole('alert')).toContainText('已被使用');
+    expect(await savedObjects()).toEqual(before);
+    await control.getByRole('button', { name: '一键避开重名', exact: true }).click();
+    await expect(control.getByRole('textbox', { name: '第 1 项新建标题', exact: true })).not.toHaveValue('空白 1');
+    await control.getByRole('textbox', { name: '第 1 项新建标题', exact: true }).fill('我的第一张空白');
+    await control.screenshot({ path: info.outputPath('select-all-and-edit-titles.png') });
+    await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
+    await expect(control).toContainText('已回读核对 69 项操作');
+    const applied = await savedObjects();
+    expect(applied.textNode).toHaveLength(before.textNode!.length + 67);
+    expect(applied.groups).toHaveLength(before.groups!.length + 1);
+    expect(applied.connections).toHaveLength(before.connections!.length + 1);
+    await expect(page.locator('.group-frame')).toHaveCount(1);
+  });
+  test('semantic fallback uses the chosen model and waits for confirmation while model selection stays beside the composer', async ({ page }, info) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      calls++;
+      const body = JSON.stringify({ steps: [{ action: 'appearance.preset.apply', arguments: { id: 'eye-care' } }], clarification: '' });
+      return route.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+        json: { choices: [{ message: { role: 'assistant', content: body }, finish_reason: 'stop' }], usage: { prompt_tokens: 99, completion_tokens: 25 } } });
+    });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('把画布背景调整得更护眼');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('status')).toContainText('尚未执行');
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await expect(control.getByRole('list', { name: '模型解析步骤' })).toContainText('切换完整主题配色');
+    expect(calls).toBe(2);
+    await expect(page.locator('.canvas-surface')).not.toHaveCSS('background-color', 'rgb(228, 232, 218)');
+    await expect(ai.getByRole('combobox', { name: '当前模型平台' })).toBeVisible();
+    const model = await ai.getByRole('combobox', { name: '当前模型平台' }).boundingBox();
+    const input = await ai.locator('.ai-composer textarea').boundingBox();
+    expect(model!.y).toBeLessThan(input!.y); expect(input!.y - model!.y).toBeLessThan(120);
+    await control.getByRole('button', { name: '应用整份计划', exact: true }).click();
+    await expect(page.locator('.canvas-surface')).toHaveCSS('background-color', 'rgb(228, 232, 218)');
+    await control.getByRole('button', { name: '关闭画布控制', exact: true }).click();
+    await ai.locator('.ai-composer textarea').fill('帮我换成暗调'); await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.locator('.canvas-surface')).toHaveCSS('background-color', 'rgb(24, 25, 27)');
+    await ai.getByRole('button', { name: '查看发送内容', exact: true }).first().click();
+    const inspection = page.getByRole('dialog', { name: '本轮发送内容', exact: true });
+    await expect(inspection).toBeVisible();
+    const ink = await inspection.evaluate(element => getComputedStyle(element).color);
+    expect((ink.match(/\d+/gu) ?? []).slice(0, 3).every(value => Number(value) > 180)).toBe(true);
+    await expect(inspection.getByLabel('实际请求正文').first()).toBeVisible();
+    await inspection.screenshot({ path: info.outputPath('model-plan-request-inspection.png') });
+  });
   test('conversational theme names apply all three complete presets locally and the chooser matches the interface', async ({ page }, info) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => {
@@ -61,7 +176,7 @@ export function canvasControlScenarios(url: string): void {
     await page.screenshot({ path: info.outputPath('assistant-eye-care-theme.png') });
     expect(calls).toBe(0);
   });
-  test('all canvas controls keep themes backgrounds annotations and unknown operations local with a configured model', async ({ page }) => {
+  test('supported canvas controls keep themes backgrounds and annotations local with a configured model', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => {
       if (route.request().method() !== 'OPTIONS') calls++;
@@ -90,7 +205,6 @@ export function canvasControlScenarios(url: string): void {
     await send('放大画布', '已更新画布视图或选区');
     await send('取消选择', '已更新画布视图或选区');
     await send('把不存在的卡片改成蓝色', '没有找到');
-    await send('@画布操作 调整背景纹理的模糊度', '只在本地处理');
     await send('执行本地命令：打开查找替换', '已提交本地命令');
     await expect(page.getByRole('region', { name: '查找替换', exact: true })).toBeVisible();
     expect(calls).toBe(0);
@@ -515,6 +629,7 @@ export function canvasControlScenarios(url: string): void {
     await ask('把甲项改成蓝色，然后把乙项改成蓝色，再把丙项改成蓝色');
     const review = control.getByRole('region', { name: '画布操作计划', exact: true }).first();
     await expect(review.getByRole('checkbox')).toHaveCount(3);
+    await control.getByRole('button', { name: '取消全选', exact: true }).click();
     await review.getByRole('checkbox', { name: '修改文字对象 · 甲项' }).check();
     await review.getByRole('checkbox', { name: '修改文字对象 · 丙项' }).check();
     await control.getByRole('button', { name: '应用选中的 2 项' }).click();
@@ -695,9 +810,14 @@ export function canvasControlScenarios(url: string): void {
     await expect(output).not.toContainText('保留第三段前的原段。');
   });
 
-  test('unsupported narrative canvas commands ask locally without partial writes or model calls', async ({ page }) => {
+  test('unresolved narrative requests use the current model and a clarification never produces partial writes', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      calls++;
+      return route.fulfill({ json: { choices: [{ message: { content: JSON.stringify({ actions: [], clarification: '请补充人物资料和创建方式。' }) }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 30, completion_tokens: 10 } }, headers: { 'access-control-allow-origin': '*' } });
+    });
     await configure(page, url, 'openai', undefined, 'direct');
     const before = await page.locator('.text-node-card').count();
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
@@ -705,8 +825,8 @@ export function canvasControlScenarios(url: string): void {
     await ai.locator('.ai-composer textarea').press('Enter');
     await expect(ai.getByRole('status')).toContainText(/本地|补充|说明|不能可靠/u);
     await expect(page.locator('.text-node-card')).toHaveCount(before);
-    expect(calls).toBe(0);
-    await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 0 · 输出 0');
+    expect(calls).toBe(1);
+    await expect(ai.getByLabel('本轮 Token 用量').last()).toHaveText('本轮 Token：输入 30 · 输出 10');
   });
 
   test('a rejecting model endpoint cannot interfere with a complete local canvas command', async ({ page }) => {
@@ -1518,13 +1638,10 @@ export function canvasControlScenarios(url: string): void {
     await page.getByRole('button', { name: '重做', exact: true }).click(); await expect(hero).toBeVisible();
   });
   test('a 17-operation review scrolls inside a short viewport with apply always visible', async ({ page }, info) => {
-    const largePlan: CanvasControlPlan = { version: 1, actions: Array.from({ length: 17 }, (_, index) => ({ type: 'create-node' as const, ref: `long-${index}`, title: `长计划节点 ${index + 1}`, text: '长计划正文。'.repeat(80) })) };
-    await page.route('https://canvas-control.test/**', route => route.request().method() === 'OPTIONS'
-      ? route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } })
-      : route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(largePlan) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n` }));
+    await page.route('https://canvas-control.test/**', route => route.abort());
     await configure(page, url);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill('@画布操作 生成17个独立对象。');
+    await ai.locator('.ai-composer textarea').fill('创建17张长计划节点');
     await ai.getByRole('button', { name: '发送给模型', exact: true }).click();
     const control = page.getByRole('region', { name: '画布控制', exact: true });
     await expect(control.getByText('17 项操作', { exact: true })).toBeVisible();

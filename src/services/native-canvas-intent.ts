@@ -1,8 +1,11 @@
 import { canvasIntentText } from './ai-task-route.ts';
 import { naturalColor, naturalName, NATURAL_QUOTED_NAME } from './natural-canvas-rules.ts';
 import { palettePresetIntent } from './palette-preset-intent.ts';
+import { connectionColorIntent, type ConnectionColorIntent } from './connection-color-intent.ts';
 
 export type NativeCanvasIntent =
+  | ConnectionColorIntent
+  | { kind: 'connection-inspect' }
   | { kind: 'action'; label: string }
   | { kind: 'view'; action: 'zoom-in' | 'zoom-out' | 'reset-zoom' | 'focus' | 'select-all' | 'clear-selection' | 'minimap-open' | 'minimap-close' }
   | { kind: 'preset'; id: 'bright' | 'dark' | 'eye-care' }
@@ -22,6 +25,7 @@ const literal = new RegExp(`^(${NATURAL_QUOTED_NAME})$`, 'u');
 /** Whole-clause matches only. Values between quotes are kept as data. */
 export function nativeCanvasIntent(prompt: string): NativeCanvasIntent | undefined {
   const text = canvasIntentText(prompt).replace(/[。！!]$/u, '').trim();
+  if (/^(?:(?:请|帮我|告诉我|看看|查看|查询)\s*)?(?:我)?(?:现在|当前)?(?:所)?选中(?:的)?(?:连接线|连线)(?:分别)?(?:都)?(?:连接(?:了)?(?:什么|哪些(?:节点|对象)?)|连(?:到|着)(?:哪里|什么)|(?:的)?(?:起点|终点|端点)(?:和终点|和起点)?(?:是(?:什么|谁))?)[？?]?$/u.test(text)) return { kind: 'connection-inspect' };
   const localAction = /^执行(?:本地)?命令[：:]\s*(.{1,120})$/u.exec(text);
   if (localAction) return { kind: 'action', label: naturalName(localAction[1]!) };
   if (/^(?:修改|调整|更改|改|打开)(?:全局)?(?:主题|背景(?:颜色|色)?|注释颜色|批注颜色|标注颜色|外观|颜色设置)$/u.test(text)) {
@@ -30,6 +34,8 @@ export function nativeCanvasIntent(prompt: string): NativeCanvasIntent | undefin
   if (/^切换小地图$/u.test(text)) return { kind: 'action', label: '打开或关闭小地图' };
   const preset = palettePresetIntent(text);
   if (preset) return { kind: 'preset', id: preset };
+  const connectionColor = connectionColorIntent(text);
+  if (connectionColor) return connectionColor;
   const views: Array<[RegExp, Extract<NativeCanvasIntent, { kind: 'view' }>['action']]> = [
     [/^(?:放大|放大画布|画布放大)(?:一点|一级)?$/u, 'zoom-in'],
     [/^(?:缩小|缩小画布|画布缩小)(?:一点|一级)?$/u, 'zoom-out'],

@@ -57,18 +57,16 @@ test('extended instruction aliases and per-layout defaults persist, preview and 
     await form.getByRole('combobox', { name: '动作类别' }).selectOption('排版');
     await form.getByRole('combobox', { name: '对应动作' }).selectOption('vertical');
     await form.getByRole('spinbutton', { name: '本用语的间距（可选）' }).fill('120');
-    await form.getByRole('textbox', { name: '个人用语' }).fill('往下摆松些');
+    await form.getByRole('textbox', { name: '个人用语', exact: true }).fill('往下摆松些\n向下排松点');
     await expect(form.getByRole('status')).toContainText('把选中节点垂直排列，间距 120');
     await panel.screenshot({ path: info.outputPath('personal-alias-preview.png') });
     await form.getByRole('button', { name: '添加', exact: true }).click();
     const read = () => JSON.parse(String(a.assistant()?.body_json));
-    await expect.poll(() => read()).toMatchObject({ schemaVersion: 2, entries: [{ kind: 'phrase', action: 'vertical', gap: 120 }] });
+    await expect.poll(() => read()).toMatchObject({ schemaVersion: 2, entries: [{ kind: 'phrase', action: 'vertical', gap: 120 }, { kind: 'phrase', action: 'vertical', gap: 120 }] });
     await panel.getByRole('tab', { name: '默认偏好', exact: true }).click();
-    await panel.getByRole('button', { name: '添加条目', exact: true }).click();
-    await form.getByRole('combobox', { name: '排列方式' }).selectOption('grid');
-    await form.getByRole('spinbutton', { name: '默认间距' }).fill('90');
-    await form.getByRole('button', { name: '添加', exact: true }).click();
-    await expect.poll(() => read().entries).toHaveLength(2);
+    await panel.getByRole('spinbutton', { name: '网格默认间距' }).fill('90');
+    await panel.getByRole('button', { name: '保存网格默认值', exact: true }).click();
+    await expect.poll(() => read().entries).toHaveLength(3);
     await panel.getByRole('button', { name: '关闭指令与偏好' }).click();
     await command(page, '全选画布节点');
     await page.getByRole('button', { name: /^打开 AI 助手/u }).click();
@@ -81,6 +79,7 @@ test('extended instruction aliases and per-layout defaults persist, preview and 
     const restored = second.getByRole('region', { name: 'AI 指令与偏好', exact: true });
     await restored.getByRole('tab', { name: '我的用语', exact: true }).click();
     await expect(restored).toContainText('往下摆松些');
+    await expect(restored).toContainText('向下排松点');
     await restored.getByRole('tab', { name: '默认偏好', exact: true }).click();
     await expect(restored).toContainText('网格默认间距 90');
   } finally { await a.close(); }
@@ -201,6 +200,7 @@ test('three verified horizontal arrangements suggest an account preference witho
       await panel.getByRole('tab', { name: '默认偏好', exact: true }).click();
     };
     await open();
+    await panel.getByRole('tab', { name: '我的用语', exact: true }).click();
     await panel.getByRole('switch', { name: '从反馈学习' }).click();
     const read = () => JSON.parse(String(a.assistant()?.body_json));
     await expect.poll(() => read().learning).toBe(true);

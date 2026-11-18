@@ -465,7 +465,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
                 height: bounds.height,
                 ...(groupColor ? { '--group-background': groupColor } : {}),
               } as CSSProperties}
-              aria-label={`群组，包含 ${members.length} 个节点`}
+              aria-label={`群组：${group.title}，包含 ${members.length} 个节点`}
               aria-pressed={isSelected}
               role="button"
               tabIndex={0}
@@ -486,6 +486,7 @@ export function GroupLayer({ client }: { client: ViewClient }) {
                 });
               }}
             >
+              <span className="group-name-badge" style={{ fontSize: 12 / camera.zoom }}>{group.title} · {members.length}</span>
               {connectionAvailable && (['left', 'right'] as const).map(side => <button
                 key={side} type="button" className={`group-connection-port ${side}`} aria-label={`从群组${side === 'left' ? '左' : '右'}侧连接`}
                 data-group-id={group.id} title="拖动连接到节点、群组或中转点"

@@ -83,7 +83,7 @@ export function createGroupsPlugin(
       ],
       optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'canvas.viewport@1', 'layout.snap@1', 'connections.graph@1', 'connections.targets@1', 'connections.detachPlan@1'],
       providesCapabilities: [
-        'canvasControl.groupsPlan@1',
+        'canvasControl.groupsPlan@1', 'canvasControl.groupsPlan@2',
         'canvas.overview@1',
         'connections.targets@1',
         'groups.list@1',
@@ -102,6 +102,7 @@ export function createGroupsPlugin(
       ],
       commands: [
         'group.create',
+        'group.rename@1',
         'group.toggleSelection',
         'group.ungroup',
         'group.ungroupSelection',
@@ -113,6 +114,7 @@ export function createGroupsPlugin(
         'group.membership.applySelected@1',
       ],
       dispatches: [
+        'canvas.focusSelection',
         'group.membership.add',
         'canvas.camera.commit',
         'selection.set',
@@ -257,6 +259,20 @@ export function createGroupsPlugin(
         },
       });
 
+      context.commands.register({ type: 'group.rename@1',
+        validate: (input): input is { id: string; title: string; expectedRevision: number } => isRecord(input) &&
+          Object.keys(input).every(key => ['id', 'title', 'expectedRevision'].includes(key)) && typeof input.id === 'string' &&
+          typeof input.title === 'string' && input.title.trim().length > 0 && input.title.length <= 300 &&
+          Number.isSafeInteger(input.expectedRevision) && Number(input.expectedRevision) >= 1,
+        handle: input => {
+          const group = readGroups()[input.id];
+          if (!group || group.revision !== input.expectedRevision) throw new Error('群组已变化，请刷新后重试');
+          const title = input.title.trim();
+          if (title === group.title) return {};
+          return { transaction: { label: `群组改名为「${title}」`, patches: [{ op: 'set' as const, domain: 'document' as const,
+            namespace: GROUP_NAMESPACE, key: group.id, value: { ...group, title, titleMarks: [], revision: group.revision + 1, updatedAt: Date.now() } }],
+          events: [{ type: 'group.appearance.changed', payload: { ids: [group.id] } }] } };
+        } });
       context.commands.register<GroupIdPayload>({
         type: 'group.ungroup',
         validate: isGroupIdPayload,

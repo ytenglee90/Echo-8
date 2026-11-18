@@ -34,6 +34,8 @@ export function GroupMembershipPanel({ client }: { client: ViewClient }) {
   const [error, setError] = useState<string>();
   const [groupsVersion, setGroupsVersion] = useState(0);
   const [contentVersion, setContentVersion] = useState(0);
+  const [newTitle, setNewTitle] = useState('');
+  const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
 
   useEffect(
     () => client.subscribeSignal('groups.invalidated', () => setGroupsVersion((version) => version + 1)),
@@ -141,12 +143,31 @@ export function GroupMembershipPanel({ client }: { client: ViewClient }) {
         <header>
           <div>
             <span className="eyebrow">群组成员</span>
-            <h2>加入 / 踢出已有群组</h2>
+            <h2>群组管理</h2>
           </div>
           <IconButton icon="close" label="关闭群组成员管理" onClick={close} />
         </header>
 
         <div className="group-membership-content">
+          {ungroupedNodeIds.length >= 2 && <form className="group-management-create" onSubmit={event => {
+            event.preventDefault(); setError(undefined);
+            void client.dispatch('group.create', { title: newTitle.trim() || '新群组' }).then(() => setNewTitle(''))
+              .catch(reason => setError(String(reason)));
+          }}><label>新群组名称<input aria-label="新群组名称" value={newTitle} maxLength={300} onChange={event => setNewTitle(event.target.value)} placeholder="例如：人物组" /></label>
+            <button type="submit">将选中 {ungroupedNodeIds.length} 个节点建组</button></form>}
+          {groups.length > 0 && <section aria-label="全部群组"><strong>全部群组 · {groups.length}</strong>
+            {groups.map(group => <form key={group.id} className="group-management-row" aria-label={`管理群组 ${group.title}`} onSubmit={event => {
+              event.preventDefault(); setError(undefined);
+              void client.dispatch('group.rename@1', { id: group.id, title: renameDrafts[group.id] ?? group.title, expectedRevision: group.revision })
+                .then(() => setRenameDrafts(current => { const next = { ...current }; delete next[group.id]; return next; }))
+                .catch(reason => setError(String(reason)));
+            }}><label>名称<input aria-label={`群组 ${groupNumber.get(group.id)} 名称`} value={renameDrafts[group.id] ?? group.title} maxLength={300}
+              onChange={event => setRenameDrafts(current => ({ ...current, [group.id]: event.target.value }))} /></label>
+              <small>{group.memberIds.length} 个节点</small><button type="submit">保存名称</button>
+              <button type="button" onClick={() => { void client.dispatch('selection.set', { ids: [group.id], mode: 'replace' })
+                .then(() => client.dispatch('canvas.focusSelection')).then(() => close()).catch(reason => setError(String(reason))); }}>定位</button>
+            </form>)}
+          </section>}
           {ungroupedNodeIds.length > 0 && (
             <section>
               <strong>将 {ungroupedNodeIds.length} 个选中文字节点加入</strong>
@@ -154,7 +175,7 @@ export function GroupMembershipPanel({ client }: { client: ViewClient }) {
               <div className="group-membership-options">
                 {groups.map((group) => (
                   <button type="button" key={group.id} onClick={() => add(group.id)}>
-                    <span>群组 {groupNumber.get(group.id)}</span>
+                    <span>{group.title}</span>
                     <small>{group.memberIds.length} 个节点</small>
                   </button>
                 ))}
@@ -168,7 +189,7 @@ export function GroupMembershipPanel({ client }: { client: ViewClient }) {
             if (!group || members.length === 0) return null;
             return (
               <section key={groupId}>
-                <strong>从群组 {groupNumber.get(group.id)} 踢出 {members.length} 个选中文字节点</strong>
+                <strong>从「{group.title}」踢出 {members.length} 个选中文字节点</strong>
                 <button className="primary-button" type="button" onClick={() => remove(groupId, members)}>
                   踢出选中节点
                 </button>
@@ -178,7 +199,7 @@ export function GroupMembershipPanel({ client }: { client: ViewClient }) {
 
           {selectedGroup && groupedSelections.length === 0 && ungroupedNodeIds.length === 0 && (
             <section>
-              <strong>从群组 {groupNumber.get(selectedGroup.id)} 选择要踢出的节点</strong>
+              <strong>从「{selectedGroup.title}」选择要踢出的节点</strong>
               <p>群组在画布上保持独立选择；在这里选择具体成员。</p>
               <div className="group-membership-options member-list">
                 {selectedGroup.memberIds.map((nodeId) => (
@@ -194,7 +215,7 @@ export function GroupMembershipPanel({ client }: { client: ViewClient }) {
           {!hasOperation && (
             <div className="group-membership-empty">
               <strong>没有可处理的选中项</strong>
-              <span>请选择画布上的文字节点或一个已有群组后再打开。</span>
+              <span>可以先查看、改名或定位已有群组；选择文字节点后可创建群组或调整成员。</span>
             </div>
           )}
           {groups.length === 0 && (

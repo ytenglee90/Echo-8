@@ -45,7 +45,8 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
     isCurrentConversationArchiveRequest(prompt);
   const compound = disposition !== 'read-only' && allowsWorkspace
     ? readDeferredCanvasTurn(prompt) ?? readCompoundTurn(prompt) : undefined;
-  const nativeCandidate = disposition === 'normal' ? nativeCanvasIntent(prompt) : undefined;
+  const candidate = nativeCanvasIntent(prompt);
+  const nativeCandidate = disposition === 'normal' || candidate?.kind === 'connection-inspect' ? candidate : undefined;
   const copyIntent = nativeCandidate?.kind === 'copy' ? workspaceCatalogIntent(prompt) : undefined;
   const native = copyIntent?.steps[0]?.selection && copyIntent.steps[0].action === 'clipboard.copy' ? undefined : nativeCandidate;
   const workspaceSteps = !native && !compound && disposition === 'normal' && allowsWorkspace
@@ -87,10 +88,13 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const indirectTask = !prospective && !DISCUSSION.test(text) &&
     (/^(?:请\s*|帮我\s*)?让.{1,90}(?:资料|正文|设定).{0,50}(?:更完整|补充|建立联系)/u.test(text) ||
       /落实到画布|^让(?:当前)?画布.{0,12}出现|换成.{0,60}关系改成/u.test(text));
+  const workspaceRequest = !contentOperation && disposition === 'normal' && !DISCUSSION.test(text) &&
+    /画布|节点|卡片|连线|连接线|群组|编辑器|沉浸|快捷键|自动保存|小地图|工具栏/u.test(text) &&
+    /^(?:请|帮我|麻烦|给我|我想|我要|把|将|设置|设定|修改|调整|让|进入|打开|关闭|选中|查看|查询|删除|清空)|(?:改为|改成|换成|调到|插入|加入|连接|缩放)/u.test(text);
   const operation = revisePending || isCanvasStatusFollowup(prompt) ? 'general'
-    : catalogIntent || archiveSession ? 'canvas-control' : disposition === 'read-only' ? 'general'
+    : catalogIntent || archiveSession || native?.kind === 'connection-inspect' ? 'canvas-control' : disposition === 'read-only' ? 'general'
     : workspaceSteps || compound ? 'canvas-control' : disposition === 'preview' && !local ? 'general'
-    : prospective && (!explicit || explicit === 'canvas-control') ? contentOperation ?? 'general' : explicit ?? (writeCommand || mixed || (!contentOperation && openCanvasTask) || indirectTask ? 'canvas-control'
+    : prospective && (!explicit || explicit === 'canvas-control') ? contentOperation ?? 'general' : explicit ?? (writeCommand || mixed || (!contentOperation && openCanvasTask) || indirectTask || workspaceRequest ? 'canvas-control'
     : requested !== 'general' ? requested : contentOperation ?? 'general');
   const category = operation === 'canvas-control' ? (compound && !compound.deferred || mixed && !interpretedSearch) ? 'mixed' : 'operation' : 'chat';
   const excludesHistory = NO_MEMORY.test(text);
@@ -103,7 +107,12 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
     Boolean(local && ['find', 'relations', 'filter', 'search', 'narrow', 'shortest-path', 'audit-names'].includes(local.kind)));
   const mechanical = geometryOnly || lookupOnly || Boolean(category === 'operation' && native) || local?.kind === 'arrange-followup' || (category === 'operation' && !history && !draft && !continuation &&
     Boolean(local && ['color', 'background', 'theme', 'line', 'connect', 'rename', 'presentation', 'group', 'group-add', 'group-remove', 'ungroup'].includes(local.kind)));
-  const clarification = (!explicit || explicit === 'general') && !writeCommand && !mixed && /^(?:(?:请|帮我)\s*)?(?:处理|弄|改|收|整理)一下\s*(?:这个|它|这张卡|这张卡片)?[。！!]?$/u.test(text)
+  const insertion = /^(?:把|将)?\s*.{1,120}?\s*插入(?:到)?\s*.{1,120}?\s*(?:中|里面|里)[。！!]?$/u.test(canvasCommandText(prompt)) &&
+    !/正文|文本|文字|内容|引用|链接|群组|分组/u.test(text);
+  const ambiguousClear = /^(?:删除|删掉|清空|清除)(?:所有|全部)(?:的)?内容[。！!]?$/u.test(text);
+  const clarification = ambiguousClear ? '你要清空选中卡片的正文，还是删除当前画布全部对象？请明确范围；删除前会显示确认预览，画布尚未修改。'
+    : insertion ? '“插入”需要明确方式：将来源卡正文追加到目标卡、建立引用连线，还是加入群组？请选择一种；画布尚未修改。'
+    : (!explicit || explicit === 'general') && !writeCommand && !mixed && /^(?:(?:请|帮我)\s*)?(?:处理|弄|改|收|整理)一下\s*(?:这个|它|这张卡|这张卡片)?[。！!]?$/u.test(text)
     ? '你希望我在画布上修改什么，还是先讨论怎么改？' : undefined;
   return {
     category, operation, local, disposition, repeatCreation, native: category === 'operation' ? native : undefined, history, draft, continuation, mechanical, geometryOnly, interpretedSearch, lookupOnly,

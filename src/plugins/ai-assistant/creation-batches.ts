@@ -3,7 +3,6 @@ import type { CanvasControlAdmission, CanvasControlReceipt } from '../../protoco
 import { naturalCanvasOperation } from '../../services/ai-task-route.ts';
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
 import { normalizeCanvasTitle } from '../../services/canvas-titles.ts';
-import type { ContentSummary } from '../../protocols/content.ts';
 
 export const MAX_LOCAL_CREATIONS = 400;
 export const CREATION_BATCH_SIZE = 80;
@@ -16,7 +15,6 @@ export async function runCreationBatches(context: PluginContext, input: CanvasCo
   const batchCount = Math.ceil(instructions.length / CREATION_BATCH_SIZE);
   const previousBatches = new Map<number, CanvasControlReceipt>();
   const titles = new Set<string>();
-  const existing = new Set((await context.capabilities.request<ContentSummary[]>('content.summaries@1', undefined, signal)).map(node => normalizeCanvasTitle(node.title)));
   for (let offset = 0; offset < instructions.length; offset += CREATION_BATCH_SIZE) {
     const previous = await context.capabilities.request<CanvasControlReceipt | undefined>('canvasControl.receipt@1',
       { sessionId: input.sessionId, preparationId: `${input.preparationId}:batch-${offset / CREATION_BATCH_SIZE + 1}` }, signal);
@@ -28,7 +26,7 @@ export async function runCreationBatches(context: PluginContext, input: CanvasCo
       const operation = naturalCanvasOperation(text);
       if (operation?.kind !== 'create' || operation.names.length) throw new Error('自动分批只接受独立新建任务。');
       const title = normalizeCanvasTitle(operation.title);
-      if (titles.has(title) || !previous && existing.has(title)) throw new Error(`分批任务中的标题「${operation.title}」已被使用，请更换名称。画布尚未修改。`);
+      if (titles.has(title)) throw new Error(`分批任务重复指定标题「${operation.title}」，请明确不同名称。画布尚未修改。`);
       titles.add(title);
     }
   }

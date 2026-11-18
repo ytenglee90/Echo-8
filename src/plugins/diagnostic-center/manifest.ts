@@ -11,7 +11,7 @@ export const diagnosticCenterManifest = defineManifest('diagnostic-center', '诊
   optionalCapabilities: ['search.index.status@1'],
   commands: ['diagnostics.open', 'diagnostics.close', 'diagnostics.operationLog.open@1'],
   queries: ['diagnostics.state'],
-  asks: ['diagnostics.state', 'system.runtime', OPERATION_LOG_QUERY_V2],
+  asks: ['workspace.actions@1', 'diagnostics.state', 'system.runtime', OPERATION_LOG_QUERY_V2],
   signals: [OPERATION_LOG_CHANGED],
   actions: ['diagnostic-center.operation-log'],
   ui: ['diagnostic-center.panel'],

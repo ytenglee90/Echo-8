@@ -329,7 +329,7 @@ async function execute(
 export function createWorkspaceActionsPlugin(panel?: unknown): PluginDefinition { return {
   manifest: defineManifest('workspace-actions', '本地工作区动作', {
     commands: [command, 'workspace.plan.resume@1', 'workspace.plan.cancel@1', 'workspace.actions.open@1', 'workspace.actions.close@1'],
-    queries: [query, 'workspace.plan.receipt@1', 'workspace.plan.latest@1', 'workspace.queryTask@1', 'workspace.actions.state@1', 'workspace.coverage@1'],
+    queries: [query, 'workspace.plan.validate@1', 'workspace.plan.receipt@1', 'workspace.plan.latest@1', 'workspace.queryTask@1', 'workspace.actions.state@1', 'workspace.coverage@1'],
     namespaces: [WORKSPACE_ACTIONS_NAMESPACE], namespaceDomains: { [WORKSPACE_ACTIONS_NAMESPACE]: 'workspace' },
     sessionOnlyWorkspace: { [WORKSPACE_ACTIONS_NAMESPACE]: true },
     ui: ['workspace-actions.panel'], actions: ['workspace-actions.open'], shortcuts: ['workspace-actions.open-shortcut'],
@@ -418,6 +418,12 @@ export function createWorkspaceActionsPlugin(panel?: unknown): PluginDefinition 
     } });
     context.queries.register({ type: 'workspace.coverage@1', handle: async () =>
       buildCoverage(await context.queries.ask<WorkspaceActionIndex>(query), await runtimeActions()) });
+    context.queries.register({ type: 'workspace.plan.validate@1', validate: isPlan, handle: async input => {
+      const byId = new Map((await runtimeActions()).map(action => [action.descriptor.id, action]));
+      if (JSON.stringify(input).length > 256 * 1024) throw new Error('计划超过验证上限');
+      await preflight(context, input, byId);
+      return { steps: input.steps.map(step => ({ label: byId.get(step.action)!.descriptor.label, effect: byId.get(step.action)!.descriptor.effect })) };
+    } });
     context.commands.register<WorkspacePlan, WorkspacePlanReceipt>({ type: command, validate: isPlan, handle: async (input, envelope) => {
       const key = envelope.sourcePlugin + ':' + input.id;
       const active = await activeOwners();

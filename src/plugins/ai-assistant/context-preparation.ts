@@ -274,7 +274,7 @@ export async function prepareAIContext(
   const local = recoveryPrompt
     ? { clarification: await checkCanvasRecovery(context, session.id, recoveryPrompt, signal) }
     : (!explicitAtOperation(payload.prompt) || explicitAtOperation(payload.prompt) === 'canvas-control') && !naturalMemoryDirective(payload.prompt)
-      ? await interpretLocalTurn(context, payload.prompt, route, signal) : {};
+      ? await interpretLocalTurn(context, payload.prompt, route, signal, payload.providerProfileId) : {};
   if (local.instructions) {
     route = { ...classifyAITurn(local.instructions[0]!, 'canvas-control'), workspaceSteps: undefined, purpose: 'general', geometryOnly: false };
     payload = { ...payload, operation: 'canvas-control' };

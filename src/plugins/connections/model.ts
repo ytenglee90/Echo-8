@@ -106,7 +106,7 @@ export function createConnectionsPlugin(connectionLayer?: unknown, toolbarAction
       ],
       optionalCapabilities: ['canvas.camera@1', 'canvas.appearance@1', 'canvas.pointer@1', 'canvas.viewport@1', 'layout.snap@1', 'connections.targets@1', 'selection.resolve@1'],
       providesCapabilities: [
-        'canvasControl.connectionsPlan@1',
+        'canvasControl.connectionsPlan@1', 'canvasControl.connectionsPlan@2',
         'entity.movePlan@1',
         'connections.detachPlan@1',
         'connections.targetAt@1',

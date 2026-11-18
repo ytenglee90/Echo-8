@@ -5,10 +5,11 @@ import { validateCanvasControlActions } from '../../services/canvas-control-vali
 import { assertJunctionChanges } from './junctions.ts';
 
 export function registerConnectionControlPlans(context: PluginContext, readConnections: () => Record<string, ConnectionRecord>): void {
+  for (const version of [1, 2] as const) {
   context.capabilities.provide<CanvasControlConnectionRequest, CanvasControlPatchPlan>({
-    key: 'canvasControl.connectionsPlan@1',
+    key: `canvasControl.connectionsPlan@${version}`,
     invoke: input => {
-      validateCanvasControlActions(input?.actions);
+      validateCanvasControlActions(input?.actions, false, version === 2 ? 3 : 1);
       if (input.actions.some(action => action.type !== 'create-connection' && action.type !== 'update-connection') || !Array.isArray(input.expected) || !Array.isArray(input.nodes)) throw new Error('连线操作计划无效');
       const originals = Object.values(readConnections());
       const connections = new Map(originals.map(edge => [edge.id, edge]));
@@ -48,4 +49,5 @@ export function registerConnectionControlPlans(context: PluginContext, readConne
       };
     },
   });
+  }
 }

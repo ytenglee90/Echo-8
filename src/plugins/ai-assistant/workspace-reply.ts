@@ -21,6 +21,7 @@ const brief = (value: unknown, length = 1200) => typeof value === 'string'
 function describeReadback(action: string, raw: unknown): string | undefined {
   const result = isRecord(raw) ? raw : {};
   switch (action) {
+    case 'shortcuts.set': return typeof result.chord === 'string' ? `快捷键已保存为 ${result.chord.replace(/mod/gu, 'Ctrl/⌘')}` : undefined;
     case 'registered:cloud-sync:cloud-sync.save-as-action':
       return result.open === true ? '已打开云端另存设置，请填写名称并确认' : undefined;
     case 'registered:text-assist:text-assist.load-rules-file-action':

@@ -66,7 +66,7 @@ export async function controlTaskState(context: PluginContext, drafts: StoredCon
       actions: draft.review.actions.slice(0, 12).map(action => ({ ...action, ...('text' in action && action.text ? { text: action.text.slice(0, 120), textLength: action.text.length } : {}),
         ...('append' in action && action.append ? { append: action.append.slice(0, 120), appendLength: action.append.length } : {}),
         ...('edit' in action && action.edit ? { edit: { ...action.edit, insert: action.edit.insert.slice(0, 120), insertLength: action.edit.insert.length } } : {}) })),
-      actionCount: draft.native ? 1 : draft.review.actions.length, omittedActions: Math.max(0, draft.review.actions.length - 12),
+      actionCount: draft.review.workspaceSteps?.length ?? (draft.native ? 1 : draft.review.actions.length), omittedActions: Math.max(0, draft.review.actions.length - 12),
       targets: current.nodes.map(node => ({ id: node.id, title: node.title.slice(0, 80), revision: node.revision })),
       ...(draft.review.error ? { error: draft.review.error } : {}),
     });

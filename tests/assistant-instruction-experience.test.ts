@@ -70,13 +70,23 @@ test('independent creation resumes after cancellation without duplicates and und
   await kernel.router.dispatch('history.undo', undefined, 'core.test');
   assert.equal((await nodes()).length, initial);
   const mixed = compileLocalInstructions('新建90张空白，90张空白打一个组', classifyAITurn('新建90张空白，90张空白打一个组'));
-  assert.match(mixed?.clarification ?? '', /91 项操作/u);
+  assert.equal(mixed?.instructions?.length, 91);
+  const largeAdmission = { preparationId: 'large-group', sessionId: 'large-group', prompt: '新建90张空白，90张空白打一个组' };
+  const large = await kernel.capabilities.request<{ text: string }>('canvasControl.localCreationPlan@1', { ...largeAdmission, instructions: mixed!.instructions });
+  const offer = await kernel.router.dispatch<{ directPlanId: string }>('canvasControl.offer@1', { ...largeAdmission, text: large.text, complete: true }, 'core.test');
+  await kernel.router.dispatch('canvasControl.generate@1', { id: offer.directPlanId }, 'core.test');
+  assert.equal((await nodes()).length, initial + 90);
+  assert.equal((await kernel.capabilities.request<GroupRecord[]>('groups.list@1'))[0]?.memberIds.length, 90);
+  await kernel.router.dispatch('history.undo', undefined, 'core.test');
+  assert.equal((await nodes()).length, initial);
   await assert.rejects(runCreationBatches(context, { ...input, preparationId: 'bad' }, [...instructions, '删除选中的节点'], new AbortController().signal, () => undefined));
   assert.equal((await nodes()).length, initial);
   await kernel.router.dispatch('node.create', { title: '空白 120' }, 'core.test');
-  await assert.rejects(runCreationBatches(context, { ...input, preparationId: 'late-title-collision' }, instructions,
-    new AbortController().signal, () => undefined), /标题「空白 120」已被使用/u);
-  assert.equal((await nodes()).length, initial + 1, 'a conflict in the final batch must prevent the first batch from writing');
+  assert.match(await runCreationBatches(context, { ...input, preparationId: 'late-title-collision' }, instructions,
+    new AbortController().signal, () => undefined), /已创建 120 个节点/u);
+  const after = await nodes();
+  assert.equal(after.length, initial + 121);
+  assert.equal(new Set(after.map(node => node.title)).size, after.length, 'existing titles are skipped without dropping requested creations');
 });
 
 test('catalog aliases use local routes, preserve old preferences and respect availability and explicit parameters', () => {

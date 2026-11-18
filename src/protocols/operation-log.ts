@@ -7,7 +7,7 @@ export const OPERATION_LOG_STAGE_V2 = 'system.operationLog.stage@2';
 export type OperationStatus = 'queued' | 'running' | 'paused' | 'retrying' | 'waiting' | 'completed' |
   'pending' | 'applied' | 'failed' | 'timed-out' | 'cancelled' | 'dismissed' | 'expired';
 
-export type OperationPhase = 'ai-routing' | 'ai-context-review' | 'ai-model-response' | 'ai-answer' | 'ai-writeback' | 'canvas-targets' | 'canvas-read' | 'canvas-validation' | 'canvas-verification' | 'canvas-plan' | 'canvas-background';
+export type OperationPhase = 'ai-workspace-plan' | 'ai-routing' | 'ai-context-review' | 'ai-model-response' | 'ai-answer' | 'ai-writeback' | 'canvas-targets' | 'canvas-read' | 'canvas-validation' | 'canvas-verification' | 'canvas-plan' | 'canvas-background';
 
 export interface OperationStageUpdate {
   id: string;
@@ -50,6 +50,10 @@ export type OperationReason = 'local-rule' | 'model-plan' | 'needs-target' | 'am
   'review-existing' | 'review-preference' | 'ready-direct' | 'invalid-plan' | 'stale-target' |
   'plugin-unavailable' | 'scope-limit' | 'commit-failed' | 'model-http-error' | 'model-timeout' | 'verified' | 'verification-mismatch' | 'verification-unavailable' | 'no-change' | 'cancelled' | 'expired' | 'applied';
 export interface OperationDetail {
+  task?: 'conversation' | 'body-generation' | 'semantic-plan' | 'query';
+  outputCharacters?: number;
+  sourceCount?: number;
+  actionIds?: string[];
   step?: OperationStep;
   route?: 'local' | 'model' | 'conversation';
   intent?: 'create' | 'content' | 'connect' | 'arrange' | 'move' | 'color' | 'presentation' | 'group' | 'find' | 'other';

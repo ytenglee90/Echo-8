@@ -11,7 +11,8 @@ export async function resolveNaturalBatch(
   const actions: CanvasControlAction[] = [];
   const targets = new Set<string>();
   const draftTitles = new Map<string, string>();
-  let state: NaturalControlState = { ...previous, draftTitles, unfinishedConnection: undefined };
+  const reservedCreationTitles = [...(previous.reservedCreationTitles ?? [])];
+  let state: NaturalControlState = { ...previous, draftTitles, reservedCreationTitles, unfinishedConnection: undefined };
   for (const [index, step] of steps.entries()) {
     if (['theme', 'preset', 'choose-theme', 'background', 'select', 'find', 'narrow'].includes(step.kind) || (step.kind === 'choose-color' && step.background)) {
       return fail('请单独发送视图、设置和筛选范围调整指令。');
@@ -27,10 +28,12 @@ export async function resolveNaturalBatch(
     const created: string[] = [];
     for (const action of result.plan.actions) {
       if (action.type === 'create-node') {
-        const key = action.title.normalize('NFKC').trim().toLocaleLowerCase();
+        // Later clauses refer to the requested name, even when the owner allocates a different title.
+        const key = (step.kind === 'create' ? step.title : action.title).normalize('NFKC').trim().toLocaleLowerCase();
         if (draftTitles.has(key)) return fail(`组合操作重复新建「${action.title}」。`);
         const ref = resolveId(action.ref);
         draftTitles.set(key, ref);
+        reservedCreationTitles.push(action.title);
         created.push(ref);
         actions.push({ ...action, ref });
       } else if (action.type === 'update-node') {
@@ -73,6 +76,6 @@ export async function resolveNaturalBatch(
     result.targets?.forEach(id => targets.add(id));
     state = { ...state, ...result.next, ...(created.length ? { ids: created } : {}) };
   }
-  if (!actions.length || actions.length > 80 || targets.size > 80) return fail('组合任务需要 1 到 80 项操作，请缩小范围。');
-  return { plan: { version: 2, actions }, targets: [...targets] };
+  if (!actions.length || actions.length > (previous.creationOnly ? 512 : 80) || targets.size > 80) return fail('组合任务超过本次允许的操作范围，请缩小范围。');
+  return { plan: { version: previous.creationOnly ? 3 : 2, actions }, targets: [...targets] };
 }

@@ -15,6 +15,7 @@ export interface NativeCanvasAction {
   label: string;
   ids: string[];
   review: boolean;
+  pendingResult?(): boolean;
   apply(): Promise<string>;
 }
 
@@ -23,7 +24,7 @@ const sameIds = (a: readonly string[], b: readonly string[]) => {
   return a.length === ids.size && a.every(id => ids.has(id));
 };
 
-export async function prepareNativeCanvasAction(context: PluginContext, input: CanvasControlNativeRequest, intent: NativeCanvasIntent): Promise<NativeCanvasAction> {
+export async function prepareNativeCanvasAction(context: PluginContext, input: CanvasControlNativeRequest, intent: NativeCanvasIntent, defaultScope: 'selection' | 'canvas' = 'selection'): Promise<NativeCanvasAction> {
   const selection = async () => {
     const current = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
     if (!input.selectedIds || !sameIds(input.selectedIds, current.ids)) throw new Error('选区已变化，请重新选定目标后发送。');
@@ -56,6 +57,49 @@ export async function prepareNativeCanvasAction(context: PluginContext, input: C
     await context.commands.invoke('palette.applyPreset@1', { id: intent.id });
     return `已切换为${PALETTE_PRESET_LABELS[intent.id]}主题，完整配色已应用。`;
   });
+  if (intent.kind === 'connection-color') {
+    const current = await context.capabilities.request<SelectionSnapshot>('selection.read@1');
+    const chosen = current.items.filter(item => item.kind === 'connection').map(item => item.id);
+    const global = intent.scope === 'canvas' || !intent.scope && !chosen.length && defaultScope === 'canvas';
+    if (!global && (!chosen.length || !input.selectedIds || !sameIds(input.selectedIds, current.ids))) {
+      throw new Error('请先选中要改色的连接线，或说“全部连接线改为蓝色”。');
+    }
+    const read = async () => (await context.capabilities.requestAll<AppearanceReadContribution>('appearance.read@1', {
+      mode: global ? 'global' : 'selection', selectedIds: global ? [] : chosen,
+      ...(global ? {} : { selectedItems: current.items.filter(item => chosen.includes(item.id)) }),
+    })).flatMap(part => part.targets).filter(target => target.kind === 'connection-line').flatMap(target => target.entities);
+    const entities = await read();
+    if (!entities.length) throw new Error('当前范围没有可改色的连接线。');
+    if (entities.length > 10_000) throw new Error('本次连接线超过 10000 条，请缩小范围。');
+    return action(`将 ${entities.length} 条连接线改为 ${intent.color}`, async () => {
+      const live = await read();
+      const byId = new Map(live.map(entity => [entity.id, entity]));
+      if (live.length !== entities.length || entities.some(entity => {
+        const next = byId.get(entity.id);
+        return !next || next.revision !== entity.revision || next.expectedColor !== entity.expectedColor;
+      })) throw new Error('连接线或其颜色已变化，请重新发送要求。');
+      await context.commands.invoke('palette.applyAppearance', { kind: 'connection-line', color: intent.color, entities });
+      return `已将 ${entities.length} 条连接线改为 ${intent.color}，可一次撤销。`;
+    }, entities.map(entity => entity.id));
+  }
+  if (intent.kind === 'connection-inspect') {
+    const current = await selection();
+    const ids = current.items.filter(item => item.kind === 'connection').map(item => item.id);
+    if (!ids.length) throw new Error('请先选中要查看的连接线。');
+    const [graph, groups] = await Promise.all([
+      context.capabilities.request<ConnectionGraphSnapshot>('connections.graph@1'),
+      context.capabilities.request<GroupRecord[]>('groups.list@1').catch(() => []),
+    ]);
+    const selectedEdges = graph.connections.filter(edge => ids.includes(edge.id));
+    if (selectedEdges.length !== ids.length) throw new Error('选中的连接线已变化，请重新选择。');
+    const endpointIds = [...new Set(selectedEdges.flatMap(edge => [edge.from.nodeId, edge.to.nodeId]))];
+    const nodes = await context.capabilities.request<import('../../protocols/content.ts').ContentSummary[]>('content.summariesById@1', { nodeIds: endpointIds });
+    const titles = new Map([...nodes.map(node => [node.id, node.title] as const), ...groups.map(group => [group.id, group.title] as const),
+      ...graph.junctions.map((point, index) => [point.id, `中转点 ${index + 1}`] as const)]);
+    const message = `选中的 ${selectedEdges.length} 条连接线：\n` + selectedEdges.map((edge, index) =>
+      `${index + 1}. ${titles.get(edge.from.nodeId) ?? '已失效端点'} → ${titles.get(edge.to.nodeId) ?? '已失效端点'}（${isTitleConnection(edge) ? '虚线' : '实线'}）`).join('\n');
+    return action('查看选中连线端点', async () => message);
+  }
   if (intent.kind === 'undo' || intent.kind === 'redo') {
     const undo = intent.kind === 'undo';
     const label = undo ? '撤销' : '重做';

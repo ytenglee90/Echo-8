@@ -17,6 +17,8 @@ export interface NaturalControlState {
   ids: string[]; lineId?: string; groupId?: string; pendingLine?: string; draftTitles?: ReadonlyMap<string, string>;
   frozenSelection?: string[];
   createdIds?: string[];
+  reservedCreationTitles?: string[];
+  creationOnly?: boolean;
   pendingTask?: { goal: string; question: string };
   lastPlacement?: ControlRelativePlacement;
   lastArrangement?: ControlArrangement;
@@ -252,8 +254,8 @@ export async function resolveNaturalOperation(
       navigation: { heading: pronoun.test(name) ? '选择操作对象' : `选择「${name}」`, choice: true, items } };
   };
   const makePlan = (actions: CanvasControlAction[], targets: string[], next?: NaturalControlResult['next']): NaturalControlResult => {
-    if (actions.length > 80 || new Set(targets).size > 80) return answer('目标超过 80 项，请按群组或范围分批操作。');
     const drafts = new Set(previous.draftTitles?.values());
+    if (actions.length > 80 || new Set(targets.filter(id => !drafts.has(id))).size > 80) return answer('目标超过 80 项，请按群组或范围分批操作。');
     return { plan: { version: 2, actions }, targets: targets.filter(id => !drafts.has(id)), focus: targets.filter(id => sources.has(id)), next };
   };
   if (operation.kind === 'batch') return resolveNaturalBatch(operation.steps, previous, (step, state) =>
@@ -414,7 +416,9 @@ export async function resolveNaturalOperation(
     if (operation.names.length && !anchor) return answer('请指定唯一的参照节点。');
     const width = operation.presentation === 'text-box' ? 240 : 340;
     const height = 220;
-    return makePlan([{ type: 'create-node', ref: 'natural-node', title: operation.title, presentation: operation.presentation, width, height,
+    const titlePlan = await context.capabilities.request<{ resolvedTitle: string }>('content.createPlan@1',
+      { title: operation.title, reservedTitles: previous.reservedCreationTitles }, signal);
+    return makePlan([{ type: 'create-node', ref: 'natural-node', title: titlePlan.resolvedTitle, presentation: operation.presentation, width, height,
       ...(operation.template === 'character' ? { text: CHARACTER_CARD_BODY } : {}),
       ...(anchor ? { x: operation.side === 'left' ? anchor.x - width - 60 : operation.side === 'right' ? anchor.x + anchor.width + 60 : anchor.x,
         y: operation.side === 'above' ? anchor.y - height - 60 : operation.side === 'below' ? anchor.y + anchor.height + 60 : anchor.y } : {}) }], unique);
@@ -511,7 +515,7 @@ export async function resolveNaturalOperation(
     if (!group) {
       if (operation.title || !groups.length) return answer('请说出群组名称，或先创建要沿用的群组。');
       const items = groups.filter(item => operation.kind === 'group-add' || item.memberIds.some(id => unique.includes(id)))
-        .slice(0, 80).map(item => ({ id: item.id, label: item.title }));
+        .slice(0, 80).map(item => ({ id: item.id, label: `${item.title} · ${item.memberIds.length} 个节点` }));
       if (!items.length) return answer('这些节点当前没有可移出的群组。');
       return { ...answer('请选择群组，选完会继续原操作。'), choice: { name: choiceName, ids: items.map(item => item.id) },
         navigation: { heading: '选择目标群组', choice: true, items } };

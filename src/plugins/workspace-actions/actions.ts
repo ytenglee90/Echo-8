@@ -14,6 +14,7 @@ import type { WorkspaceActionDescriptor, WorkspaceTarget } from '../../protocols
 import { parseCanvasControlPlan } from '../../services/canvas-control-validation.ts';
 import { isResultReference } from './result-references.ts';
 import { scheduleWorkspaceQuery } from './query-tasks.ts';
+import { canvasTitleAliases } from '../../services/canvas-titles.ts';
 
 type Args = Record<string, unknown>;
 type Rule = { description: string; test: (value: unknown) => boolean; optional?: boolean; schema?: Record<string, unknown> };
@@ -180,7 +181,8 @@ const nameKey = (name: string) => name.trim().normalize('NFKC').toLocaleLowerCas
 
 export function matchingNodes(nodes: ContentSummary[], name: string): ContentSummary[] {
   const key = nameKey(name);
-  return nodes.filter(node => nameKey(node.title) === key);
+  const exact = nodes.filter(node => nameKey(node.title) === key);
+  return exact.length ? exact : nodes.filter(node => canvasTitleAliases(node.title).some(alias => nameKey(alias) === key));
 }
 
 const cameraSet = command('viewport.set', 'canvas', '设置画布中心、缩放或平移', '视口', 'workspace', 'canvas.viewport.set@1',
@@ -300,7 +302,18 @@ export const localActions: LocalAction[] = [
   command('editor.width', 'editor', '设置编辑区宽度', '编辑器', 'workspace', 'editor.setDockWidth', { width: number(100, 10000) }),
   capability('editor.read', 'editor', '读取已打开编辑窗格', '编辑器', 'editor.context@1'),
   command('editor.immersive.exit', 'editor', '退出沉浸编辑', '编辑器', 'workspace', 'editor.exitImmersive'),
-  command('editor.immersive.enter', 'editor', '进入沉浸编辑', '编辑器', 'workspace', 'editor.enterImmersive', { target }, lookupNodeId),
+  action('editor.immersive.enter', 'editor', '进入沉浸编辑', '编辑器', 'workspace', { target }, {
+    commands: ['editor.open', 'editor.enterImmersive'], queries: ['editor.state'], capabilities: [],
+    run: async (context, args, resolve) => {
+      const node = await resolve(asTarget(args.target));
+      const opened = await context.commands.invoke('editor.open', { id: node.id, mode: 'add' });
+      if (opened.status === 'limit') return { status: 'waiting', message: '请先选择要替换的编辑窗格，再进入沉浸编辑。', result: opened };
+      await context.commands.invoke('editor.enterImmersive', { id: node.id });
+      const state = await context.queries.ask<{ immersivePane?: string }>('editor.state');
+      if (state.immersivePane !== node.id) throw new Error('未能进入目标节点的沉浸编辑');
+      return { result: { targetId: node.id, title: node.title, immersive: true } };
+    },
+  }),
   command('search.open', 'search-replace', '打开查找面板', '面板', 'workspace', 'search.open'),
   command('search.close', 'search-replace', '关闭查找面板', '面板', 'workspace', 'search.close'),
   command('palette.open', 'palette', '打开外观面板', '面板', 'workspace', 'palette.open'),
@@ -534,7 +547,13 @@ export const localActions: LocalAction[] = [
   query('cloud.state', 'cloud-sync', '读取已缓存的同步和授权状态', '书库', 'cloudSync.state'),
   query('shortcuts.read', 'shortcut-center', '读取快捷键设置', '设置', 'shortcuts.state'),
   command('shortcuts.set', 'shortcut-center', '修改已有快捷键', '设置', 'workspace', 'shortcuts.setOverride',
-    { targetOwner: string(200), targetId: string(200), chord: string(100) }),
+    { targetOwner: string(200), targetId: string(200), chord: string(100) }, undefined,
+    async (context, _result, args) => {
+      const state = await context.queries.ask<{ overrides: Array<{ targetOwner: string; targetId: string; chord?: string }> }>('shortcuts.state');
+      const saved = state.overrides.find(entry => entry.targetOwner === args.targetOwner && entry.targetId === args.targetId);
+      if (!saved?.chord) throw new Error('快捷键未能保存，请检查冲突');
+      return { result: { chord: saved.chord, targetId: saved.targetId } };
+    }),
   command('shortcuts.reset', 'shortcut-center', '恢复指定快捷键', '设置', 'workspace', 'shortcuts.resetOverride',
     { targetOwner: string(200), targetId: string(200) }),
   query('diagnostics.read', 'diagnostic-center', '读取本地诊断', '诊断', 'system.diagnostics'),

@@ -148,7 +148,7 @@ export function registerAIRequestRuntime(
       context.signals.emit('ai.state.invalidated');
       context.signals.emit('ai.status', {
         state: 'preparing',
-        message: mayLoadLocalLanguage ? '正在本地理解指令，首次使用可能需要下载语义模型' : '正在按目录与关键词准备上下文',
+        message: mayLoadLocalLanguage ? '正在解析指令并核对工作区' : '正在按目录与关键词准备上下文',
         sessionId: session.id,
       } satisfies AIStatusSignal);
       const preparationId = createId('ai-context');

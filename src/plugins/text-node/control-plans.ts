@@ -10,7 +10,7 @@ import type { TextContentRecord } from './content-storage.ts';
 
 export function registerTextControlPlans(runtime: TextNodeCapabilityRuntime): void {
   const { context, buildCreateTransaction } = runtime;
-  for (const version of [1, 2] as const) {
+  for (const version of [1, 2, 3] as const) {
   context.capabilities.provide<CanvasControlNodeRequest, CanvasControlNodePlan>({
     key: `canvasControl.nodesPlan@${version}`,
     invoke: async (input, signal) => {

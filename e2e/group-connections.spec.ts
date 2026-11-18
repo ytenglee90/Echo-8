@@ -246,13 +246,13 @@ test('removing a member keeps the group connector on its remaining frame through
   await page.keyboard.down('Control');
   await drag(page, { x: header!.x + 30, y: header!.y + 10 }, { x: 190, y: 270 }); await page.keyboard.up('Control');
   const frame = page.locator('.group-frame[data-group-id="g1"]');
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 3 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 3 个节点');
   await drag(page, await port(page, 'g1', 'right'), await port(page, 'g2', 'left'));
   const line = page.locator('.connection-hit-area'), initial = await line.getAttribute('d');
   const moved = await member.locator('header strong').boundingBox();
   await page.keyboard.down('Control'); await page.mouse.move(moved!.x + 30, moved!.y + 10); await page.mouse.down();
   await page.mouse.move(580, 570, { steps: 12 });
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 2 个节点');
   const remaining = await frame.evaluate(element => {
     const style = (element as HTMLElement).style;
     return { x: parseFloat(style.left) + parseFloat(style.width), y: parseFloat(style.top) + parseFloat(style.height) / 2 };
@@ -260,8 +260,8 @@ test('removing a member keeps the group connector on its remaining frame through
   await expect.poll(async () => (await line.getAttribute('d'))!.match(/-?\d+(?:\.\d+)?/gu)!.map(Number).slice(0, 2)).toEqual([remaining.x, remaining.y]);
   const preview = await line.getAttribute('d');
   await page.mouse.up(); await page.keyboard.up('Control');
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点'); await expect(line).toHaveAttribute('d', preview!);
-  await page.keyboard.press('Control+z'); await expect(frame).toHaveAttribute('aria-label', '群组，包含 3 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 2 个节点'); await expect(line).toHaveAttribute('d', preview!);
+  await page.keyboard.press('Control+z'); await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 3 个节点');
   await expect(line).toHaveAttribute('d', initial!);
 });
 
@@ -296,7 +296,7 @@ for (const textBox of [false, true]) test(`Alt copying a grouped ${textBox ? 'te
   await expect.poll(bounds).toEqual(original);
   await page.mouse.up(); await page.keyboard.up('Alt');
   await expect(page.locator('.text-node-card:not(.duplicate-origin)')).toHaveCount(7);
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 2 个节点');
   await expect.poll(bounds).toEqual(original);
   await expect(connection).toHaveAttribute('d', path!);
   await page.keyboard.press('Control+z');
@@ -320,31 +320,31 @@ test('Ctrl dragging selected nodes and text boxes adds or removes the whole batc
   await page.keyboard.down('Control');
   await page.mouse.move(title!.x + 30, title!.y + 10); await page.mouse.down();
   await page.mouse.move(190, 270, { steps: 10 });
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 4 个节点');
   await page.mouse.up(); await page.keyboard.up('Control');
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 4 个节点');
   await expect(page.locator('.text-node-card.selected')).toHaveCount(2);
   await page.keyboard.press('Control+z');
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 2 个节点');
   await page.keyboard.press('Control+Shift+z');
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 4 个节点');
   const movedTitle = await box.locator('.text-box-title').boundingBox();
   await page.keyboard.down('Control');
   await page.mouse.move(movedTitle!.x + 30, movedTitle!.y + 10); await page.mouse.down();
   await page.mouse.move(560, 230, { steps: 10 });
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 2 个节点');
   // Releasing the modifier before the pointer keeps membership and commits only movement.
   await page.keyboard.up('Control'); await page.mouse.up();
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 4 个节点');
   await page.keyboard.press('Control+z');
   await expect.poll(async () => (await box.locator('.text-box-title').boundingBox())!.x).toBeCloseTo(movedTitle!.x);
   const resetTitle = await box.locator('.text-box-title').boundingBox();
   await page.keyboard.down('Control');
   await drag(page, { x: resetTitle!.x + 30, y: resetTitle!.y + 10 }, { x: 560, y: 230 });
   await page.keyboard.up('Control');
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 2 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 2 个节点');
   await page.keyboard.press('Control+z');
-  await expect(frame).toHaveAttribute('aria-label', '群组，包含 4 个节点');
+  await expect(frame).toHaveAttribute('aria-label', '群组：g1，包含 4 个节点');
 });
 
 for (const side of ['左', '右']) test(`title ${side} port stays chosen through preview and commit, then selects the current side beyond the alignment band and undo`, async ({ page }) => {

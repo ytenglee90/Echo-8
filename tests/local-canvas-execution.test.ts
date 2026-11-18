@@ -51,8 +51,7 @@ async function generate(prompt: string, local: { handled: boolean; text?: string
             yield { type: 'complete', usage: { inputTokens: 32, outputTokens: 12 } };
           })() };
         }
-        // A configured provider must never enable an operation-planning fallback.
-        if (key === 'ai.provider.catalog@1') return { activeId: 'paid', options: [{ id: 'paid', configured: true, canvasToolCallingSupported: true }] };
+        if (key === 'ai.provider.catalog@1') return { activeId: 'paid', options: [{ id: 'paid', configured: false, canvasToolCallingSupported: true }] };
         throw new Error(`unexpected capability: ${key}`);
       },
       async requestAll() { return []; },
@@ -68,15 +67,15 @@ async function generate(prompt: string, local: { handled: boolean; text?: string
   return { result, requests, offered, sent };
 }
 
-test('all unresolved and unsupported canvas controls stay local even with a configured provider', async () => {
+test('unresolved controls with no configured model ask for configuration without a paid request; missing literal targets stay local', async () => {
   for (const prompt of ['把画布背景调整得更护眼', '调整注释颜色的透明度', '@画布操作 未支持的插件操作']) {
     const result = await generate(prompt, { handled: false });
     assert.equal(result.result.provider, 'local');
     assert.deepEqual(result.result.usage, { inputTokens: 0, outputTokens: 0 });
-    assert.match(result.result.text, /只在本地处理/u);
+    assert.match(result.result.text, /配置或选择模型/u);
     assert.equal(result.sent, undefined);
     assert.equal(result.offered, undefined);
-    assert.ok(!result.requests.includes('ai.provider.catalog@1'));
+    assert.ok(result.requests.includes('ai.provider.catalog@1'));
   }
   const result = await generate('把不存在的卡片改成蓝色', { handled: true, unresolvedTarget: true,
     text: JSON.stringify({ version: 1, actions: [], answer: '没有找到指定卡片' }) });

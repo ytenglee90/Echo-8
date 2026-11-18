@@ -18,7 +18,6 @@ import { useCommandAvailability } from '../../ui/runtime-hooks.ts';
 import { AIMemoryCenter } from './AIMemoryViews.tsx';
 import { AIAssistantWindowActions } from './AIAssistantWindowActions.tsx';
 import { AIChatHeader } from './AIChatHeader.tsx';
-import { AIWorkspaceContext } from './AIWorkspaceContext.tsx';
 import {
   AIChatEmptyState,
   AICommandHints,
@@ -289,30 +288,6 @@ function AIAssistantWindow({
         aria-label="AI 对话"
         style={{ '--ai-composer-height': `${composerHeight}px` } as CSSProperties}
       >
-        <AIWorkspaceContext client={client} />
-        <AIChatHeader
-          client={client}
-          assistantId={assistantId}
-          providerSelectionAvailable={providerSelectionAvailable}
-          providerCatalog={providerCatalog}
-          selectedProviderId={selectedProviderId}
-          selectedProvider={selectedProvider}
-          webSearchEnabled={assistantInstance?.webSearchEnabled === true}
-          selectedPromptTemplate={selectedPromptTemplate}
-          memoryCatalog={memoryCatalog}
-          selectedMemorySourceIds={new Set(assistantInstance?.memorySourceIds ?? [])}
-          contextMode={assistantInstance?.contextMode ?? 'automatic'}
-          onSelectProvider={(resourceId) => void run(() => client.dispatch(
-            'ai.assistant.setProvider',
-            { assistantId, resourceId },
-          ))}
-          onToggleWebSearch={() => void run(() => client.dispatch('ai.assistant.setWebSearch', {
-            assistantId,
-            enabled: !assistantInstance?.webSearchEnabled,
-          }))}
-          onOpenPromptTemplates={() => void client.dispatch('ai.setView', { assistantId, view: 'prompt' })}
-        />
-
         <div className="ai-chat-feed-frame">
           <div
             id={`ai-chat-feed-${assistantId}`}
@@ -434,6 +409,7 @@ function AIAssistantWindow({
           <AIChatScrollbar feedId={`ai-chat-feed-${assistantId}`} feedRef={feedRef} />
         </div>
 
+        <div className="ai-chat-input-area">
         {memorySuggestion && dismissedMemorySuggestion !== memorySuggestion.id && (
           <AIMemorySuggestionNotice
             suggestion={memorySuggestion}
@@ -444,8 +420,26 @@ function AIAssistantWindow({
             onDismiss={() => setDismissedMemorySuggestion(memorySuggestion.id)}
           />
         )}
-
+        <AIChatHeader
+          client={client}
+          assistantId={assistantId}
+          providerSelectionAvailable={providerSelectionAvailable}
+          providerCatalog={providerCatalog}
+          selectedProviderId={selectedProviderId}
+          selectedProvider={selectedProvider}
+          webSearchEnabled={assistantInstance?.webSearchEnabled === true}
+          selectedPromptTemplate={selectedPromptTemplate}
+          memoryCatalog={memoryCatalog}
+          selectedMemorySourceIds={new Set(assistantInstance?.memorySourceIds ?? [])}
+          contextMode={assistantInstance?.contextMode ?? 'automatic'}
+          onSelectProvider={(resourceId) => void run(() => client.dispatch('ai.assistant.setProvider', { assistantId, resourceId }))}
+          onToggleWebSearch={() => void run(() => client.dispatch('ai.assistant.setWebSearch', {
+            assistantId, enabled: !assistantInstance?.webSearchEnabled,
+          }))}
+          onOpenPromptTemplates={() => void client.dispatch('ai.setView', { assistantId, view: 'prompt' })}
+        />
         <AIComposer {...composerProps} />
+        </div>
       </section> : state.view === 'memory' ? (
         <AIMemoryCenter
           client={client}

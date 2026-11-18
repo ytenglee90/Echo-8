@@ -191,7 +191,7 @@
 
 | [0156](ADR-0156-LOCAL-NUMBERED-CONNECTIONS-AND-JUNCTIONS.md) | 编号连线与共用中转点的本地操作 | 有效，补充 0153、0154 和 0155，新增连接线所有者命令 v1 |
 
-| [0157](ADR-0157-LOCAL-ONLY-CANVAS-CONTROL.md) | 画布控制只在本地执行，云端仅生成已绑定范围的正文 | 有效，取代早期助手云端画布规划与对象定位兜底 |
+| [0157](ADR-0157-LOCAL-ONLY-CANVAS-CONTROL.md) | 画布控制只在本地执行，云端仅生成已绑定范围的正文 | 部分被 0162 替代，允许当前模型兜底解析；所有者执行及正文范围规则保留 |
 
 | [0158](ADR-0158-ASSISTANT-COMPOUND-TURNS-AND-ACCOUNT-PREFERENCES.md) | 助手组合任务、账户用语与偏好 | 有效，补充 0127、0133、0155、0157 |
 
@@ -200,5 +200,7 @@
 | [0160](ADR-0160-ASSISTANT-INSTRUCTIONS-AND-PREFERENCES.md) | 指令与偏好、账户配置 v2 与独立新建分批 | 有效，补充 0157、0158、0159 |
 
 | [0161](ADR-0161-ASSISTANT-COMPLETE-THEME-PRESETS.md) | 自然语言切换明调、暗调、护眼完整主题 | 有效，补充 0079、0157、0160 |
+
+| [0162](ADR-0162-REVIEWED-SEMANTIC-WORKSPACE-CONTROLS.md) | 模型辅助解析、可核对计划与大批量新建 | 有效，部分替代 0157，补充 0159–0161，保留旧协议和书籍格式 |
 
 新增 ADR 时必须使用下一个未占用编号，同时在本表登记状态和明确的替代关系。不要通过删除旧文件来“解决”冲突。

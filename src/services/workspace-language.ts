@@ -35,7 +35,7 @@ function numericValue(text: string): number {
 const percentValue = (match: RegExpExecArray, start = 1) => numericValue(match[start] ?? match[start + 1]!) / 100;
 const exact = (pattern: string) => new RegExp('^' + pattern + '$', 'u');
 const absoluteZoom = exact('(?:把|将)?' + VIEW + '\\s*(?:' + ZOOM +
-  '(?:设定?(?:为|成|到)|调(?:整)?(?:到|成|为)|到|至|为|保持在?)|(?:缩|放大|缩小)(?:到|至)|(?:设(?:为|成)|调(?:到|至))|保持在?)\\s*' + PERCENT);
+  '(?:设(?:置|定)?(?:为|成|到)|调(?:整)?(?:到|成|为)|到|至|为|保持在?)?|(?:缩|放大|缩小)(?:到|至)|(?:设(?:为|成)|调(?:到|至))|保持在?)\\s*' + PERCENT);
 const relativeZoom = exact('(?:把|将)?' + VIEW + '\\s*(?:' + ZOOM + ')?(?:乘以\\s*(' + DECIMAL + ')|(?:在' +
   VIEW + '(?:' + PERCENT + ')?的基础上)?(缩小|放大)\\s*' + PERCENT + ')');
 const relativeTenths = exact('(?:把|将)?' + VIEW + '(缩小|放大)\\s*(' + NUMBER + ')成(?:[,，]\\s*(?:留下|保留)原来的(' + NUMBER + ')成)?');

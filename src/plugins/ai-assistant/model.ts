@@ -237,7 +237,7 @@ export function createAIAssistantPlugin(
         'entity.deletePlan@1',
       ],
       optionalCapabilities: [
-        'language.embed@1', 'canvasControl.localPlan@2', 'canvasControl.prepareCompound@1', 'canvasControl.completeCompound@1',
+          'canvasControl.localCreationPlan@1', 'connections.graph@1', 'language.embed@1', 'canvasControl.localPlan@2', 'canvasControl.prepareCompound@1', 'canvasControl.completeCompound@1',
         'account.assistantPreferences@1', 'account.assistantPreferences@2',
         'groups.list@1',
         'annotations.list@1',
@@ -323,8 +323,8 @@ export function createAIAssistantPlugin(
         'ai.memory.candidate.dismiss',
       ],
       dispatches: [
-        'workspace.plan.run@1',
-        'canvasControl.offer@1', 'canvasControl.native@1', 'canvasControl.generate@1', 'canvasControl.applyItems@1', 'canvasControl.scope@1', 'diagnostics.operationLog.open@1',
+        'canvasControl.offerWorkspace@1', 'workspace.plan.run@1',
+        'canvasControl.offer@1', 'canvasControl.native@1', 'canvasControl.generate@1', 'canvasControl.applyItems@1', 'canvasControl.applyItems@2', 'canvasControl.scope@1', 'diagnostics.operationLog.open@1',
         'ai.personal.update@1',
         'canvasControl.revisePending@1',
         'ai.open', 'ai.closeAll', 'ai.assistant.openNew', 'ai.assistant.attach', 'ai.assistant.removeDeletedWindow', 'ai.openProviderSettings', 'retrieval.open@1',
@@ -376,7 +376,7 @@ export function createAIAssistantPlugin(
         'system.persistence',
         'system.document.revision',
         'workspace.plan.receipt@1',
-        'workspace.actions@1', 'system.recovery.list', 'system.shortcuts', 'editor.openPanes',
+        'workspace.plan.validate@1', 'workspace.actions@1', 'system.recovery.list', 'system.shortcuts', 'editor.openPanes',
         'system.preferences.get',
       ],
       signals: [

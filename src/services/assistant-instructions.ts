@@ -1,5 +1,6 @@
 import type { WorkspaceActionDescriptor, WorkspaceActionIndex } from '../protocols/workspace-actions.ts';
 import type { AssistantInstruction } from '../protocols/assistant-preferences.ts';
+import { isWorkspaceModelAction } from './workspace-model-actions.ts';
 
 type Definition = Pick<AssistantInstruction, 'id' | 'action' | 'label' | 'category' | 'example' | 'requirement' | 'gap'>;
 const selected = '作用于发送时选中的对象。';
@@ -61,7 +62,7 @@ export function assistantInstructionCatalog(index: WorkspaceActionIndex): Assist
     if (definitions.length) return definitions.map(item => ({ ...item, available, customizable: available }));
     const example = registeredExample(action);
     return [{ id: action.id, action: action.id, label: action.label, category: action.category, example,
-      available, customizable: available && Boolean(example),
+      available, customizable: available && Boolean(example), modelEligible: isWorkspaceModelAction(action),
       requirement: action.status === 'inactive' ? '对应功能当前未启用。' : action.status === 'manual' ? '从对应功能界面操作。' :
         example ? '沿用对应功能的参数校验、确认和撤销规则。' : '此动作尚未提供可自定义的自然语言说法，请从对应功能界面使用。' }];
   });

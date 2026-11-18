@@ -77,7 +77,7 @@ export async function planControlApplication(context: PluginContext, snapshot: C
   });
   let plannedNodes: ContentSummary[] = [];
   if (nodeActions.length) {
-    const part = await context.capabilities.request<CanvasControlNodePlan>(nodeActions.some(action => action.edit) ? 'canvasControl.nodesPlan@2' : 'canvasControl.nodesPlan@1', { actions: nodeActions, expected: snapshot.nodes }, signal);
+    const part = await context.capabilities.request<CanvasControlNodePlan>(plan.version === 3 ? 'canvasControl.nodesPlan@3' : nodeActions.some(action => action.edit) ? 'canvasControl.nodesPlan@2' : 'canvasControl.nodesPlan@1', { actions: nodeActions, expected: snapshot.nodes }, signal);
     parts.push(part); plannedNodes = part.nodes;
     for (const [ref, id] of Object.entries(part.created)) aliases.set(ref, id);
   }
@@ -87,14 +87,14 @@ export async function planControlApplication(context: PluginContext, snapshot: C
     .map(action => ({ ...action, ...('members' in action && action.members ? { members: action.members.map(resolve) } : {}) }));
   let targets = await context.capabilities.request<import('../../protocols/connections.ts').ConnectionTarget[]>('connections.targets@1', { nodes: [...nodes.values()] }, signal).catch(optionalControlOwner) ?? [];
   if (groupActions.length) {
-    const part = await context.capabilities.request<CanvasControlGroupPlan>('canvasControl.groupsPlan@1', { actions: groupActions, expected: snapshot.groups, nodes: [...nodes.values()] }, signal);
+    const part = await context.capabilities.request<CanvasControlGroupPlan>(plan.version === 3 ? 'canvasControl.groupsPlan@2' : 'canvasControl.groupsPlan@1', { actions: groupActions, expected: snapshot.groups, nodes: [...nodes.values()] }, signal);
     parts.push(part); targets = part.targets.map(target => ({ ...target, kind: 'group' }));
     for (const [ref, id] of Object.entries(part.created)) aliases.set(ref, id);
   }
   const connectionActions: ControlConnectionAction[] = plan.actions.filter((action): action is ControlConnectionAction => action.type === 'create-connection' || action.type === 'update-connection')
     .map(action => ({ ...action, ...(action.from ? { from: resolve(action.from) } : {}), ...(action.to ? { to: resolve(action.to) } : {}) }));
   if (connectionActions.length) {
-    const part = await context.capabilities.request<CanvasControlPatchPlan>('canvasControl.connectionsPlan@1', { actions: connectionActions, expected: snapshot.graph.connections, nodes: [...nodes.values(), ...targets] }, signal);
+    const part = await context.capabilities.request<CanvasControlPatchPlan>(plan.version === 3 ? 'canvasControl.connectionsPlan@2' : 'canvasControl.connectionsPlan@1', { actions: connectionActions, expected: snapshot.graph.connections, nodes: [...nodes.values(), ...targets] }, signal);
     parts.push(part);
     for (const [ref, id] of Object.entries(part.created)) aliases.set(ref, id);
   }

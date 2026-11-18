@@ -776,7 +776,7 @@ test('failed persistence admission keeps a proposal retryable and concurrent acc
 test('control schema rejects executable commands, extra fields, invalid refs and incomplete data', () => {
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":['), /完整/u);
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":[{"type":"eval","code":"alert(1)"}]}'), /未知/u);
-  assert.throws(() => parseCanvasControlPlan('{"version":3,"actions":[]}'), /版本/u);
+  assert.throws(() => parseCanvasControlPlan('{"version":4,"actions":[]}'), /版本/u);
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":[{"type":"create-node","ref":"a","title":"A","url":"secret"}]}'), /字段/u);
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":[{"type":"update-node","id":"a","text":"x","append":"y"}]}'), /同时/u);
   assert.throws(() => parseCanvasControlPlan('{"version":1,"actions":[{"type":"create-node","ref":"__proto__","title":"A"}]}'), /代号/u);

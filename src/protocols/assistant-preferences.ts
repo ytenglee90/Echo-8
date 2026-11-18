@@ -4,7 +4,7 @@ export const ASSISTANT_PREFERENCE_ACTIONS = ['group', 'horizontal', 'vertical'] 
 export type AssistantPreferenceAction = string;
 export interface AssistantInstruction {
   id: string; action: string; label: string; category: string; example?: string; requirement: string;
-  available: boolean; customizable: boolean; gap?: boolean;
+  available: boolean; customizable: boolean; gap?: boolean; modelEligible?: boolean;
 }
 interface PreferenceBase { id: string; enabled: boolean; bookId?: string; origin?: 'manual' | 'explicit' | 'feedback' }
 export type AssistantPreferenceEntry = PreferenceBase & (

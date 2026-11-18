@@ -21,15 +21,16 @@ function requireInput(condition: unknown, message: string): asserts condition {
 function id(value: unknown): value is string {
   return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,199}$/u.test(value);
 }
-export function validateCanvasControlActions(value: unknown, allowEmpty = false, version: 1 | 2 = 1): asserts value is CanvasControlAction[] {
-  requireInput(Array.isArray(value) && (allowEmpty || value.length > 0) && value.length <= CANVAS_CONTROL_MAX_ACTIONS, '画布计划须包含最多 100 项操作');
+export function validateCanvasControlActions(value: unknown, allowEmpty = false, version: 1 | 2 | 3 = 1): asserts value is CanvasControlAction[] {
+  requireInput(Array.isArray(value) && (allowEmpty || value.length > 0) && value.length <= (version === 3 ? 512 : CANVAS_CONTROL_MAX_ACTIONS), '画布计划超过当前版本的操作上限');
   const refs = new Set<string>();
   const changed = new Set<string>();
   let textLength = 0;
   for (const action of value) {
     requireInput(record(action) && typeof action.type === 'string' && Object.hasOwn(FIELDS, action.type), '画布计划包含未知操作');
     const type = action.type as CanvasControlAction['type'];
-    requireInput(Object.keys(action).every(key => FIELDS[type].includes(key) || (version === 2 && type === 'update-node' && key === 'edit')), '画布计划包含不支持的字段');
+    if (version === 3) requireInput(type.startsWith('create-'), '版本 3 只允许创建新对象，已有对象修改须使用原协议');
+    requireInput(Object.keys(action).every(key => FIELDS[type].includes(key) || (version >= 2 && type === 'update-node' && key === 'edit')), '画布计划包含不支持的字段');
     if (type.startsWith('create-')) {
       requireInput(id(action.ref) && !refs.has(action.ref), '新对象代号无效或重复');
       refs.add(action.ref);
@@ -47,7 +48,7 @@ export function validateCanvasControlActions(value: unknown, allowEmpty = false,
     requireInput(action.text === undefined || action.append === undefined, '不能同时替换和追加同一正文');
     if (action.edit !== undefined) {
       const edit = action.edit;
-      requireInput(version === 2 && type === 'update-node' && record(edit) && Object.keys(edit).every(key => ['start', 'deleteCount', 'insert', 'expectedRevision'].includes(key)) &&
+      requireInput(version >= 2 && type === 'update-node' && record(edit) && Object.keys(edit).every(key => ['start', 'deleteCount', 'insert', 'expectedRevision'].includes(key)) &&
         Number.isSafeInteger(edit.start) && Number(edit.start) >= 0 && Number.isSafeInteger(edit.deleteCount) && Number(edit.deleteCount) >= 0 &&
         Number.isSafeInteger(edit.expectedRevision) && Number(edit.expectedRevision) >= 1 && typeof edit.insert === 'string', '局部修改范围或修订无效');
       requireInput(action.text === undefined && action.append === undefined, '局部修改不能同时替换全文或追加');
@@ -66,7 +67,7 @@ export function validateCanvasControlActions(value: unknown, allowEmpty = false,
     if (type === 'create-group') requireInput(Array.isArray(action.members), '新群组缺少成员');
     for (const key of ['members', 'ids'] as const) if (action[key] !== undefined) {
       const ids = action[key];
-      requireInput(Array.isArray(ids) && ids.length > 0 && ids.length <= CANVAS_CONTROL_MAX_OBJECTS && ids.every(id), '对象列表无效或超过 80 项');
+      requireInput(Array.isArray(ids) && ids.length > 0 && ids.length <= (version === 3 ? 400 : CANVAS_CONTROL_MAX_OBJECTS) && ids.every(id), `对象列表无效或超过 ${version === 3 ? 400 : CANVAS_CONTROL_MAX_OBJECTS} 项`);
       requireInput(new Set(ids).size === ids.length, '对象列表中有重复项');
       if (key === 'ids') for (const target of ids) {
         requireInput(!changed.has(target), '不能同时修改和删除同一对象');
@@ -78,6 +79,15 @@ export function validateCanvasControlActions(value: unknown, allowEmpty = false,
   requireInput(textLength <= CANVAS_CONTROL_MAX_TEXT, '本次画布操作文字超过十万字符，请分批生成');
   requireInput([...refs].every(ref => !changed.has(ref)), '请把新对象的全部字段放在创建操作里');
 }
+function validateCreationDependencies(actions: CanvasControlAction[]): void {
+    const nodeRefs = new Set(actions.flatMap(action => action.type === 'create-node' ? [action.ref] : []));
+    const endpointRefs = new Set([...nodeRefs, ...actions.flatMap(action => action.type === 'create-group' ? [action.ref] : [])]);
+    requireInput(nodeRefs.size <= 400, '新建组合最多包含 400 个新节点');
+    for (const action of actions) {
+      if (action.type === 'create-group') requireInput(action.members.every(ref => nodeRefs.has(ref)), '新建群组只能依赖本计划的新节点');
+      if (action.type === 'create-connection') requireInput(endpointRefs.has(action.from) && endpointRefs.has(action.to), '新建连线只能依赖本计划的新节点或群组');
+    }
+}
 export function parseCanvasControlPlan(text: string): CanvasControlPlan {
   requireInput(text.length <= CANVAS_CONTROL_MAX_TEXT + 30_000, '画布计划过长，请分批生成');
   const trimmed = text.replace(/^\uFEFF/u, '').trim();
@@ -85,8 +95,9 @@ export function parseCanvasControlPlan(text: string): CanvasControlPlan {
   let value: unknown;
   try { value = JSON.parse(fenced?.[1] ?? trimmed) as unknown; }
   catch { throw new Error('AI 未返回完整的画布操作计划，请重新生成'); }
-  requireInput(record(value) && (value.version === 1 || value.version === 2) && Object.keys(value).every(key => key === 'version' || key === 'actions' || key === 'answer'), '画布操作计划版本或字段不正确');
+  requireInput(record(value) && (value.version === 1 || value.version === 2 || value.version === 3) && Object.keys(value).every(key => key === 'version' || key === 'actions' || key === 'answer'), '画布操作计划版本或字段不正确');
   requireInput(value.answer === undefined || (typeof value.answer === 'string' && value.answer.length <= 4000), '画布答复过长');
   validateCanvasControlActions(value.actions, true, value.version);
+  if (value.version === 3) validateCreationDependencies(value.actions);
   return { version: value.version, actions: value.actions, ...(typeof value.answer === 'string' ? { answer: value.answer } : {}) };
 }

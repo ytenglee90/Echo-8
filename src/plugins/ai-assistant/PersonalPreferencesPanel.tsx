@@ -39,6 +39,7 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
     .then(result => { setInstructions(result.instructions); setCatalogError(''); }).catch(reason => setCatalogError(String(reason)));
   const importInput = useRef<HTMLInputElement>(null);
   const editorInput = useRef<HTMLInputElement>(null);
+  const phraseInput = useRef<HTMLTextAreaElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
   const returnToAdd = useRef(false);
   useEffect(() => {
@@ -60,7 +61,7 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
   const editing = Boolean(edit);
   const editId = edit?.id;
   useEffect(() => {
-    if (editing) editorInput.current?.focus();
+    if (editing) { phraseInput.current?.focus(); editorInput.current?.focus(); }
     else if (returnToAdd.current) {
       returnToAdd.current = false;
       addButton.current?.focus();
@@ -97,22 +98,28 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
     if (!preferences || !edit || disabled) return;
     const base = { id: edit.id ?? createId('ai-personal'), enabled: preferences.entries.find(item => item.id === edit.id)?.enabled ?? true,
       bookId: edit.bookId, origin: 'manual' as const };
+    const phrases = edit.phrase.split(/\r?\n/u).map(phrase => phrase.trim()).filter(Boolean);
+    if (edit.kind === 'phrase' && (!phrases.length || edit.id && phrases.length > 1 || phrases.length > 30)) {
+      setFormError(edit.id ? '编辑单条用语时请输入一种说法；添加条目可以每行填写一种。' : '每行一种说法，一次最多添加 30 种。'); return;
+    }
     const entry: AssistantPreferenceEntry = edit.kind === 'phrase'
       ? { ...base, kind: 'phrase', phrase: edit.phrase.trim(), action: edit.action, status: 'active', evidence: 1,
         ...(account?.extended && chosenAction?.gap && edit.gap.trim() ? { gap: Number(edit.gap) } : {}) }
       : { ...base, kind: 'gap', gap: Number(edit.gap), ...(account?.extended ? { layout: edit.layout ?? 'horizontal' } : {}) };
     if (entry.kind === 'phrase') {
-      const standard = classifyAITurn(entry.phrase);
-      if (standard.local || standard.native || standard.workspaceSteps || standard.catalogIntent || standard.compound || standard.operation !== 'general') {
+      const conflict = phrases.some(phrase => { const standard = classifyAITurn(phrase);
+        return standard.local || standard.native || standard.workspaceSteps || standard.catalogIntent || standard.compound || standard.operation !== 'general'; });
+      if (conflict) {
         setFormError('这句话已有内置含义，请换一种个人说法，避免覆盖标准指令。'); return;
       }
       if (!chosenAction || !preview) { setFormError('对应动作当前不可用，请重新选择。'); return; }
     }
-    if (entries.some(item => item.id !== entry.id && sameEntry(item, entry))) {
+    const additions: AssistantPreferenceEntry[] = entry.kind === 'phrase' ? phrases.map((phrase, index) => ({ ...entry, phrase, id: index === 0 ? entry.id : createId('ai-personal') })) : [entry];
+    if (new Set(phrases.map(preferencePhrase)).size !== phrases.length || additions.some(entry => entries.some(item => item.id !== entry.id && sameEntry(item, entry)))) {
       setFormError('这个适用范围已有同名条目，请编辑原条目。');
       return;
     }
-    const next = { ...(account?.extended ? upgradeAssistantPreferences(preferences) : preferences), entries: putPreferenceEntry(entries, entry) };
+    const next = { ...(account?.extended ? upgradeAssistantPreferences(preferences) : preferences), entries: additions.reduce((all, entry) => putPreferenceEntry(all, entry), entries) };
     if (!isAssistantPreferences(next)) {
       setFormError(edit.kind === 'gap' ? '请输入 0 到 2000 的整数。' : '请输入 1 到 80 个字符的用语。');
       return;
@@ -173,10 +180,11 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
       <div className="ai-personal-heading"><p>{instructions.length} 项动作 · {instructions.filter(item => item.customizable).length} 项支持个人用语</p>
         <button type="button" className="toolbar-button" onClick={() => void refreshCatalog()}>刷新指令</button></div>
       {catalogError && <p role="alert">暂时无法读取指令目录，请刷新重试。{catalogError}</p>}
+      <p className="ai-instruction-help">本地指令直接解析；“模型解析”使用当前模型理解，修改计划先确认。“功能界面”需从对应界面使用。</p>
       <ul className="ai-instruction-cards">{filteredInstructions.map(item => <li key={item.id}>
-        <div className="ai-personal-heading"><strong>{item.label}</strong><small>{item.category} · {item.available ? item.example ? '支持指令' : '功能界面' : '当前不可用'}</small></div>
+        <div className="ai-personal-heading"><strong>{item.label}</strong><small>{item.category} · {item.available ? item.example ? '本地指令' : item.modelEligible ? '模型解析' : '功能界面' : '当前不可用'}</small></div>
         {item.example && <p className="ai-instruction-example">例如：{item.example}</p>}
-        {item.requirement && <p>{item.requirement}</p>}
+        {item.example && item.requirement && item.requirement !== '沿用对应功能的参数校验、确认和撤销规则。' && <small className="ai-instruction-requirement">{item.requirement}</small>}
         {item.customizable && <button type="button" className="toolbar-button" disabled={disabled || !account?.extended && !(ASSISTANT_PREFERENCE_ACTIONS as readonly string[]).includes(item.id)}
           onClick={() => { setActionCategory(item.category); openEditor({ ...emptyEdit, action: item.id, gap: '' }); }}>设置个人用语</button>}
       </li>)}</ul>
@@ -186,7 +194,21 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
     {tab !== 'all' && account?.available && !account.extended && <p className="settings-empty">升级云同步中的个人数据服务后，可为更多动作设置用语及竖排、网格间距。原有用语继续可用。</p>}
     {state.busy && <p role="status" className="settings-page-summary">正在同步账户设置…</p>}
     {(error || state.error) && <p role="alert" className="ai-personal-error">{error || state.error}</p>}
+    {!preferences && tab === 'defaults' && <><p className="ai-preference-purpose">未明确指定参数时，使用这里的默认值。连接账户后可以保存；本次指令指定的参数优先。</p>
+      <LayoutDefaults entries={[]} extended disabled save={() => undefined} remove={() => undefined} /></>}
+    {!preferences && tab === 'phrases' && <p className="ai-preference-purpose">我的用语用于设置你习惯的说法，例如“收一下”“归到一块儿”都对应“给选中节点编组”。一个动作可保存多种说法。</p>}
     {preferences && tab !== 'all' && <>
+      <p className="ai-preference-purpose">{tab === 'phrases' ? '把你的不同说法对应到同一个动作。一个动作可有多种用语。' : '没有明确指定参数时，采用这里的默认值；本次指令中的参数优先。'}</p>
+      {tab === 'defaults' && <LayoutDefaults entries={entries} bookId={account?.bookId} extended={account?.extended === true} disabled={disabled}
+        save={entry => run(change({ ...preferences, entries: putPreferenceEntry(entries, entry) }))}
+        remove={id => run(change({ ...preferences, entries: entries.filter(entry => entry.id !== id) }))} />}
+      {tab === 'defaults' && entries.some(entry => entry.kind === 'gap' && isPreferenceCandidate(entry)) && <ul className="ai-personal-entries">
+        {entries.filter(entry => entry.kind === 'gap' && isPreferenceCandidate(entry)).map(entry => <li key={entry.id}>
+          <span>{entryLabel(entry)} · 待确认</span><button type="button" disabled={disabled} onClick={() => run(change({ ...preferences,
+            entries: putPreferenceEntry(entries, { ...entry, enabled: true, origin: 'explicit' }) }))}>确认生效</button>
+        </li>)}
+      </ul>}
+      {tab === 'phrases' && <>
       <div className="ai-personal-switches" role="group" aria-label="使用与学习">
         <PreferenceSwitch label="使用个人用语与偏好" description="在识别画布指令时应用已启用的条目。"
           checked={preferences.enabled} disabled={disabled} toggle={() => run(change({ ...preferences, enabled: !preferences.enabled }))} />
@@ -196,9 +218,9 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
 
       <div className="ai-personal-list">
         <div className="ai-personal-heading">
-          <h3>{tab === 'defaults' ? '默认参数' : '个人用语'}</h3>
+          <h3>个人用语</h3>
           <button ref={addButton} type="button" className="toolbar-button" hidden={editing} disabled={disabled}
-            onClick={() => { setActionCategory(''); openEditor({ ...emptyEdit, kind: tab === 'defaults' ? 'gap' : 'phrase' }); }}><Icon name="add" size={14} />添加条目</button>
+            onClick={() => { setActionCategory(''); openEditor({ ...emptyEdit, kind: 'phrase' }); }}><Icon name="add" size={14} />添加条目</button>
         </div>
 
         {edit && <form className="ai-personal-editor" aria-label={edit.id ? '编辑条目' : '添加条目'} onSubmit={saveEdit}>
@@ -225,9 +247,10 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
               {chosenAction?.gap && account?.extended && <label className="ai-personal-field">本用语的间距（可选）<input type="number" min={0} max={2000} placeholder="使用默认间距" value={edit.gap}
                 onChange={event => openEditor({ ...edit, gap: event.target.value })} /></label>}
               <label className="ai-personal-field">个人用语
-                <input ref={editorInput} placeholder="例如：收一下" maxLength={80} value={edit.phrase}
+                <textarea ref={phraseInput} placeholder={'每行一种说法，例如：\n收一下\n归到一块儿'} maxLength={2500} rows={3} value={edit.phrase}
                   onChange={event => openEditor({ ...edit, phrase: event.target.value })} />
               </label>
+              <small>一个动作支持多种说法；每行一种，每种最多 80 字。</small>
             </> : <><label className="ai-personal-field">排列方式<select value={edit.layout ?? 'horizontal'} onChange={event => openEditor({ ...edit, layout: event.target.value as Edit['layout'] })}>
               <option value="horizontal">横排</option>{account?.extended && <><option value="vertical">竖排</option><option value="grid">网格</option></>}
             </select></label><label className="ai-personal-field">默认间距
@@ -285,10 +308,11 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
             })}
           </ul> : <p className="settings-empty">没有匹配的条目。</p>}
         </> : !edit && <div className="ai-personal-empty">
-          <strong>{tab === 'defaults' ? '尚未设置默认参数' : '尚未添加个人用语'}</strong>
-          <p>{tab === 'defaults' ? '未设置时沿用应用默认值；本次指令指定的参数始终优先。' : '内置指令已经可用。可从全部指令选择动作，为它添加自己习惯的说法。'}</p>
+          <strong>尚未添加个人用语</strong>
+          <p>内置指令已经可用。可从全部指令选择动作，为它添加自己习惯的多种说法。</p>
         </div>}
       </div>
+      </>}
 
       <details className="settings-details ai-personal-transfer">
         <summary>导入与导出</summary>
@@ -328,6 +352,37 @@ export function PersonalPreferencesPanel({ client }: { client: ViewClient }) {
       </details>
     </>}
     </div>
+  </section>;
+}
+
+function LayoutDefaults({ entries, bookId, extended, disabled, save, remove }: {
+  entries: AssistantPreferenceEntry[]; bookId?: string; extended: boolean; disabled: boolean;
+  save: (entry: AssistantPreferenceEntry) => void; remove: (id: string) => void;
+}) {
+  const [scope, setScope] = useState('');
+  const [values, setValues] = useState<Record<string, string>>({});
+  const labels = { horizontal: '横排', vertical: '竖排', grid: '网格' } as const;
+  return <section className="ai-layout-defaults" aria-label="默认排列参数">
+    <label className="ai-personal-field">适用范围<select value={scope} onChange={event => { setScope(event.target.value); setValues({}); }}>
+      <option value="">全部书籍</option>{bookId && <option value={bookId}>当前云端书籍</option>}</select></label>
+    {(Object.keys(labels) as Array<keyof typeof labels>).map(layout => {
+      const entry = entries.find((entry): entry is Extract<AssistantPreferenceEntry, { kind: 'gap' }> => entry.kind === 'gap' &&
+        (entry.layout ?? 'horizontal') === layout && (entry.bookId ?? '') === scope);
+      const key = scope + ':' + layout;
+      const value = values[key] ?? String(entry?.gap ?? 80);
+      const enabled = !disabled && (extended || layout === 'horizontal');
+      return <form key={key} className="ai-layout-default-row" aria-label={`${labels[layout]}默认参数`} onSubmit={event => {
+        event.preventDefault();
+        if (!value.trim() || !Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 2000) return;
+        save({ id: entry?.id ?? createId('ai-default'), kind: 'gap', gap: Number(value), enabled: true, origin: 'manual',
+          ...(scope ? { bookId: scope } : {}), ...(extended ? { layout } : {}) });
+      }}><div><strong>{labels[layout]}</strong><small>{entry ? `${labels[layout]}默认间距 ${entry.gap}${entry.enabled ? ' · 已启用' : ' · 未启用'}` : '沿用应用默认间距 80'}</small></div>
+        <label>间距（像素）<input aria-label={`${labels[layout]}默认间距`} type="number" min={0} max={2000} required disabled={!enabled} value={value}
+          onChange={event => setValues(current => ({ ...current, [key]: event.target.value }))} /></label>
+        <button type="submit" disabled={!enabled}>保存{labels[layout]}默认值</button>
+        {entry && <button type="button" disabled={!enabled} onClick={() => { remove(entry.id); setValues(current => { const next = { ...current }; delete next[key]; return next; }); }}>恢复默认</button>}
+      </form>;
+    })}
   </section>;
 }
 

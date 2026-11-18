@@ -646,6 +646,7 @@
 }
 .group-frame.selected::after { border: 3px solid var(--canvas-selection, var(--selection)); }
 .group-frame:not(.selected):focus-visible { outline: 2px solid var(--canvas-selection, var(--selection)); outline-offset: 3px; }
+.group-name-badge { position: absolute; left: 10px; top: 3px; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; color: var(--ink); background: var(--panel); border-radius: 4px; padding: 1px 5px; pointer-events: none; }
 .group-connection-port {
   position: absolute; top: 50%; transform: translate(-50%, -50%);
   width: 18px; height: 18px; padding: 0; border-radius: 4px;

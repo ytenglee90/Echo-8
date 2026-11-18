@@ -26,7 +26,7 @@ export type ControlConnectionAction =
   | { type: 'create-connection'; ref: string; from: string; to: string; line: 'solid' | 'dashed'; label?: string; color?: string }
   | { type: 'update-connection'; id: string; from?: string; to?: string; line?: 'solid' | 'dashed'; label?: string; color?: string };
 export type CanvasControlAction = ControlNodeAction | ControlGroupAction | ControlConnectionAction | { type: 'delete'; ids: string[] };
-export interface CanvasControlPlan { version: 1 | 2; actions: CanvasControlAction[]; answer?: string }
+export interface CanvasControlPlan { version: 1 | 2 | 3; actions: CanvasControlAction[]; answer?: string }
 
 /** Bounded metadata captured only for an explicitly requested canvas-control turn. */
 export interface CanvasControlAdmission {
@@ -97,9 +97,10 @@ export interface CanvasControlConnectionRequest {
 }
 export interface CanvasControlReview {
   nativeLabel?: string;
+  workspaceSteps?: string[];
   verification?: import('./canvas-agent.ts').CanvasControlVerification;
   replacement?: { count: number; nodeCount: number; from: string; to: string; examples: string[] };
-  planVersion?: 1 | 2;
+  planVersion?: 1 | 2 | 3;
   id: string;
   sessionId: string;
   createdAt: number;
@@ -127,11 +128,15 @@ declare module './commands.ts' {
     'canvasControl.scope@1': CommandContract<{ scope: 'selection' | 'canvas' }>;
     'canvasControl.execution@1': CommandContract<{ execution: 'direct' | 'review' }>;
     'canvasControl.offer@1': CommandContract<CanvasControlOffer, { message: string; directPlanId?: string }>;
+    'canvasControl.offerWorkspace@1': CommandContract<CanvasControlAdmission & { plan: import('./workspace-actions.ts').WorkspacePlan; selectedIds: string[]; descriptions: string[] }, { message: string }>;
     'canvasControl.workspacePreview@1': CommandContract<WorkspaceCanvasPreview, { reviewId: string; message: string }>;
     'canvasControl.native@1': CommandContract<CanvasControlNativeRequest, { message: string }>;
     'canvasControl.generate@1': CommandContract<{ id: string }, { message: string }>;
     'canvasControl.apply@1': CommandContract<{ id: string }, { createdIds: string[] }>;
     'canvasControl.applyItems@1': CommandContract<{ id: string; items: number[] } | { sessionId: string; items: number[] }, { createdIds: string[] }>;
+    'canvasControl.applyItems@2': CommandContract<{ id: string; items: number[] } | { sessionId: string; items: number[] }, { createdIds: string[] }>;
+    'canvasControl.updateTitle@1': CommandContract<{ id: string; item: number; title: string }>;
+    'canvasControl.resolveTitles@1': CommandContract<{ id: string }>;
     'canvasControl.commit@1': CommandContract<{ id: string; token: string }, { createdIds: string[]; created?: Record<string, string> }>;
     'canvasControl.dismiss@1': CommandContract<{ id: string }>;
     'canvasControl.revisePending@1': CommandContract<{ sessionId: string; change: 'cancel' | 'keep-nodes' }, { message: string }>;
@@ -146,14 +151,18 @@ declare module './messages.ts' {
     'canvasControl.context@2': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
     'canvasControl.context@3': MessageContract<CanvasControlAdmission & { purpose?: CanvasControlPurpose }, CanvasControlContextV2>;
     'canvasControl.localPlan@1': MessageContract<CanvasControlAdmission, { handled: boolean; text?: string; unresolvedTarget?: boolean }>;
+    'canvasControl.localCreationPlan@1': MessageContract<CanvasControlAdmission & { instructions: string[] }, { handled: boolean; text?: string; unresolvedTarget?: boolean }>;
     'canvasControl.localPlan@2': MessageContract<CanvasControlAdmission & { instructions: string[]; expectedSelectionCount?: number }, { handled: boolean; text?: string; unresolvedTarget?: boolean }>;
     'canvasControl.taskState@1': MessageContract<{ sessionId: string; targetIds?: string[] }, CanvasControlTaskState>;
     'canvasControl.receipt@1': MessageContract<{ sessionId: string; preparationId?: string; goal?: string }, CanvasControlReceipt | undefined>;
     'canvasControl.context@1': MessageContract<CanvasControlAdmission, { instruction: string }>;
     'canvasControl.nodesPlan@1': MessageContract<CanvasControlNodeRequest, CanvasControlNodePlan>;
     'canvasControl.nodesPlan@2': MessageContract<CanvasControlNodeRequest, CanvasControlNodePlan>;
+    'canvasControl.nodesPlan@3': MessageContract<CanvasControlNodeRequest, CanvasControlNodePlan>;
     'canvasControl.groupsPlan@1': MessageContract<CanvasControlGroupRequest, CanvasControlGroupPlan>;
+    'canvasControl.groupsPlan@2': MessageContract<CanvasControlGroupRequest, CanvasControlGroupPlan>;
     'canvasControl.connectionsPlan@1': MessageContract<CanvasControlConnectionRequest, CanvasControlPatchPlan>;
+    'canvasControl.connectionsPlan@2': MessageContract<CanvasControlConnectionRequest, CanvasControlPatchPlan>;
   }
   interface ApplicationQueryMap {
     'canvasControl.state@1': MessageContract<undefined, CanvasControlState>;

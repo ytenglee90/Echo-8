@@ -12,6 +12,7 @@ const STATUS: Record<OperationStatus, string> = {
 };
 
 const LABELS: Readonly<Record<string, string>> = {
+  'ai-workspace-plan': '模型解析工作区计划',
   'ai-conversation-autosave-delay': '等待自动保存对话', 'search-index-rebuild': '更新画布检索索引',
   'ai-routing': '识别本轮要求', 'canvas-targets': '定位画布对象', 'canvas-validation': '校验画布计划',
   'canvas-verification': '回读核对画布结果', 'canvas-read': '分段读取节点正文',
@@ -28,7 +29,8 @@ const LABELS: Readonly<Record<string, string>> = {
 };
 const STEPS = { route: '识别意图', targets: '定位对象', read: '读取正文', model: '生成计划', validate: '校验计划', review: '等待执行', commit: '提交修改', verify: '回读核对', done: '结束' };
 const QUERY_MODES = { state: '当前能力与会话状态', selection: '当前选区', recent: '近期对象', search: '关键词与语义检索', all: '分页查看画布', relations: '查看对象关系' };
-const ROUTES = { local: '本地执行规则', model: '模型规划', conversation: '普通对话或正文任务' };
+const ROUTES = { local: '本地执行规则', model: '调用当前模型', conversation: '对话或正文任务' };
+const TASKS = { conversation: '生成普通回答', 'body-generation': '生成已绑定目标的正文', 'semantic-plan': '解析结构化工作区计划', query: '读取工作区状态' };
 const SCOPES = { canvas: '当前全画布', selection: '当前选区', named: '指定名称或会话对象', conversation: '当前对话' };
 const INTENTS = { create: '创建节点', content: '写入节点正文', connect: '连接节点', arrange: '排列节点', move: '移动节点',
   color: '调整颜色', presentation: '切换卡片或文本框', group: '处理群组', find: '查找对象', other: '其他画布操作' };
@@ -48,9 +50,12 @@ const REASONS = {
   'no-change': '本轮未产生修改动作', cancelled: '操作已取消', expired: '计划已过期', applied: '修改已提交到画布，可撤销',
 };
 
-function DetailText({ detail }: { detail: OperationDetail }) {
+function DetailText({ detail, labels = {} }: { detail: OperationDetail; labels?: Record<string, string> }) {
   return <>
     {detail.route && <span>{ROUTES[detail.route]}</span>}
+    {detail.task && <span>{TASKS[detail.task]}</span>}
+    {detail.outputCharacters !== undefined && <span>返回 {detail.outputCharacters} 字符</span>}
+    {detail.sourceCount !== undefined && <span>使用 {detail.sourceCount} 个来源</span>}
     {detail.intent && <span>{INTENTS[detail.intent]}</span>}
     {detail.scope && <span>范围 · {SCOPES[detail.scope]}</span>}
     {detail.matched !== undefined && <span>命中 {detail.matched} 个对象</span>}
@@ -61,6 +66,7 @@ function DetailText({ detail }: { detail: OperationDetail }) {
     {detail.checked !== undefined && <span>已核对 {detail.checked} 项</span>}
     {detail.mismatchCount !== undefined && detail.mismatchCount > 0 && <span>{detail.mismatchCount} 处差异</span>}
     {detail.actions?.map(action => <span key={action.type}>{ACTIONS[action.type]} {action.count} 项</span>)}
+    {detail.actionIds?.map((action, index) => <span key={index}>步骤 {index + 1} · {labels[action] ?? LABELS[action] ?? action}</span>)}
   </>;
 }
 
@@ -79,6 +85,14 @@ export function OperationLogPanel({ client }: { client: ViewClient }) {
   const [filter, setFilter] = useState('all');
   const [relatedId, setRelatedId] = useState<string>();
   const [limit, setLimit] = useState(30);
+  const [actionLabels, setActionLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let active = true;
+    void client.ask<import('../../protocols/workspace-actions.ts').WorkspaceActionIndex>('workspace.actions@1').then(index => {
+      if (active) setActionLabels(Object.fromEntries(index.actions.map(action => [action.id, action.label])));
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [client]);
 
   useEffect(() => {
     let active = true;
@@ -112,17 +126,17 @@ export function OperationLogPanel({ client }: { client: ViewClient }) {
       </select>
     </label></header>
     {relatedId && <button type="button" className="toolbar-button" onClick={() => setRelatedId(undefined)}>清除同轮筛选</button>}
-    <p>保留当前页面最近 240 条完成记录及进行中的操作。</p>
+    <p>保留当前页面最近 240 条完成记录及进行中的任务，涵盖聊天、正文、查询、画布、检索、保存与索引；不保留密钥或正文副本。</p>
     {error ? <p role="alert">无法读取操作日志。</p>
       : !visible ? <p><ProcessingLabel size={10}>正在读取操作日志…</ProcessingLabel></p>
         : visible.length === 0 ? <p className="diagnostic-empty">暂无匹配的操作。</p>
-          : <ol>{visible.slice(0, limit).map(entry => <OperationRow key={entry.id} entry={entry} now={now}
+          : <ol>{visible.slice(0, limit).map(entry => <OperationRow key={entry.id} entry={entry} now={now} labels={actionLabels}
             onRelated={entry.relatedId && !relatedId ? () => { setRelatedId(entry.relatedId); setFilter('all'); setLimit(30); } : undefined} />)}</ol>}
     {visible && visible.length > limit && <button type="button" className="toolbar-button" onClick={() => setLimit(limit + 30)}>加载更多</button>}
   </section>;
 }
 
-function OperationRow({ entry, now, onRelated }: { entry: OperationLogEntry; now: number; onRelated?: () => void }) {
+function OperationRow({ entry, now, onRelated, labels }: { entry: OperationLogEntry; now: number; onRelated?: () => void; labels: Record<string, string> }) {
   const elapsed = (entry.finishedAt ?? now) - entry.createdAt;
   const percent = entry.progress && entry.progress > 0 ? Math.round(entry.progress * 100) : 0;
   const attemptElapsed = entry.startedAt === undefined ? undefined : (entry.finishedAt ?? now) - entry.startedAt;
@@ -134,7 +148,7 @@ function OperationRow({ entry, now, onRelated }: { entry: OperationLogEntry; now
     <div className="operation-log-row-title">
       <strong>{label}</strong><span data-status={entry.status}>{status}</span>
     </div>
-    {entry.detail && <div className="operation-log-row-meta"><DetailText detail={entry.detail} /></div>}
+    {entry.detail && <div className="operation-log-row-meta"><DetailText detail={entry.detail} labels={labels} /></div>}
     {entry.detail?.reason && <p className="operation-log-explanation">{REASONS[entry.detail.reason]}</p>}
     {entry.kind === 'task' && entry.status === 'running' &&
       <progress aria-label={`${label} 进度`} max={100} value={percent > 0 ? percent : undefined} />}
@@ -160,9 +174,9 @@ function OperationRow({ entry, now, onRelated }: { entry: OperationLogEntry; now
       <ol>{entry.steps.map((step, index) => <li key={index}>
         <div className="operation-log-row-meta">
           <time>{new Date(step.at).toLocaleTimeString('zh-CN', { hour12: false })}</time>
-          <span>{step.detail?.step ? STEPS[step.detail.step] : label}</span><span>{STATUS[step.status]}</span>
+          <span>{step.detail?.step === 'model' && step.detail.task ? TASKS[step.detail.task] : step.detail?.step ? STEPS[step.detail.step] : label}</span><span>{STATUS[step.status]}</span>
         </div>
-        {step.detail && <div className="operation-log-row-meta"><DetailText detail={step.detail} /></div>}
+        {step.detail && <div className="operation-log-row-meta"><DetailText detail={step.detail} labels={labels} /></div>}
         {step.detail?.reason && <p>{REASONS[step.detail.reason]}</p>}
       </li>)}</ol>
     </details>}

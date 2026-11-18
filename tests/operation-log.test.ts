@@ -85,3 +85,25 @@ test('detailed logs retain verified steps and action counts while v1 and raw use
   entry.detail!.matched = 99;
   assert.equal(log.snapshotDetailed().entries[0]?.detail?.matched, 6);
 });
+
+test('semantic and conversation logs retain bounded actual metadata including 400 creations without raw content', () => {
+  const log = new OperationLog(() => undefined);
+  log.stage('ai-assistant', { id: 'semantic', phase: 'ai-workspace-plan', state: 'completed', detail: {
+    task: 'semantic-plan', actionIds: ['viewport.set', 'editor.immersive.enter', 'invalid content'],
+    sourceCount: 2, outputCharacters: 420, prompt: 'private-request', body: 'private-body',
+  } });
+  log.stage('canvas-control', { id: 'large', phase: 'canvas-plan', state: 'applied', detail: {
+    actions: [{ type: 'create-node', count: 400 }, { type: 'create-group', count: 1 }, { type: 'delete', count: 513 }],
+  } });
+  log.stage('ai-assistant', { id: 'conversation', phase: 'ai-answer', state: 'completed', detail: {
+    task: 'conversation', outputCharacters: 120, sourceCount: 0,
+  } });
+  const entries = log.snapshotDetailed().entries;
+  const semantic = entries.find(entry => entry.code === 'ai-workspace-plan')!;
+  assert.equal(semantic.detail?.task, 'semantic-plan');
+  assert.deepEqual(semantic.detail?.actionIds, ['viewport.set', 'editor.immersive.enter']);
+  assert.equal(semantic.detail?.sourceCount, 2);
+  assert.deepEqual(entries.find(entry => entry.code === 'canvas-plan')?.detail?.actions, [{ type: 'create-node', count: 400 }, { type: 'create-group', count: 1 }]);
+  assert.equal(entries.find(entry => entry.code === 'ai-answer')?.detail?.task, 'conversation');
+  assert.doesNotMatch(JSON.stringify(log.snapshotDetailed()), /private-|invalid content/u);
+});

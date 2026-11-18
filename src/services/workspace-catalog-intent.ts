@@ -54,7 +54,7 @@ const verb = {
   read: /^(?:查看|查询|检查|读取|读出|看(?:看|一下)|让我看看|给我(?:看看|看|一份)|一份|列出|列一下|告诉我|现在|当前|哪些|上一步)|是否|有没有|多少|几次|多大|有哪|开着吗|打开了吗|在哪里|里.{0,6}有什么|内容给我$/u,
   open: /打开|开启|显示|展开|进入|弹出|带我去|让我(?:选择|编辑)/u,
   close: /关闭|关掉|收起|隐藏|停(?:止|用)|不要再|不再显示/u,
-  set: /设(?:置)?(?:为|成)|改(?:成|为|用)|换成|调(?:整)?到|绑定/u,
+  set: /^(?:设置|设定|修改|调整)|设(?:置)?(?:为|成)|改(?:成|为|用)|换成|调(?:整)?到|绑定/u,
   export: /导出|另存|保存|给我一份/u,
   next: /下(?:一|个)(?:个|条|处)?/u,
   previous: /上(?:一|个)(?:个|条|处)?|前一处/u,
@@ -192,7 +192,7 @@ function withArguments(text: string, input: string): Omit<CatalogIntent, 'input'
     return { ...one('shortcuts.reset', undefined, 'shortcut'), operand: input };
   }
   if ((subject.shortcuts.test(text) || /绑定/u.test(text)) && verb.set.test(text)) {
-    const chord = /(?:改为|改成|设置成|设为|绑定(?:为|到)?)\s*([a-z0-9+加 -]+)[。！!]?$/iu.exec(input)?.[1];
+    const chord = /(?:改为|改成|设置成|设为|快捷键为|快捷键设为|绑定(?:为|到)?)\s*[：:]?\s*((?:(?:ctrl|control|cmd|command|meta|mod|alt|shift)\s*[+加]\s*)+(?:[a-z0-9[\]\-=/.,;']|F\d{1,2}|space|enter|escape))[。！!]?$/iu.exec(input)?.[1];
     if (chord) return { ...one('shortcuts.set', { chord }, 'shortcut'), operand: input.slice(0, input.lastIndexOf(chord)) };
   }
   if (/模板/u.test(text) && /选择|使用|切到|切换|设为|改为/u.test(text) && /助手|会话|本轮|已有/u.test(text)) {

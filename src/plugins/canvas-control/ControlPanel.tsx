@@ -30,16 +30,35 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
   const [rect, setRect] = useState({ x: 780, y: 100, width: 460, height: 620 });
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [itemSelection, setItemSelection] = useState<{ planId: string; items: number[] }>();
+  const [titleEdits, setTitleEdits] = useState<{ planId: string; titles: Record<number, string> }>();
   const pending = state.reviews.filter(review => review.status === 'pending');
   const activeReview = pending.find(review => review.id === selectedPlanId) ?? pending.at(-1);
-  const selectedItems = itemSelection?.planId === activeReview?.id ? itemSelection?.items ?? [] : [];
+  const itemCount = activeReview?.replacement?.examples.length ?? (activeReview?.nativeLabel ? 1 : activeReview?.actions.length ?? 0);
+  const allItems = Array.from({ length: itemCount }, (_, index) => index + 1);
+  const selectedItems = itemSelection && itemSelection.planId === activeReview?.id ? itemSelection.items : allItems;
+  const allSelected = selectedItems.length === itemCount;
+  const hasTitleEdits = titleEdits && titleEdits.planId === activeReview?.id && Object.keys(titleEdits.titles).length > 0;
   const toggleItem = (planId: string, item: number, checked: boolean) =>
     setItemSelection({ planId, items: checked ? [...selectedItems, item] : selectedItems.filter(index => index !== item) });
   if (!state.open) return null;
+  const saveTitles = async (review: CanvasControlReview) => {
+    if (titleEdits?.planId !== review.id) return;
+    const edits = Object.entries(titleEdits.titles);
+    if (edits.some(([, title]) => !title.trim() || title.length > 300)) throw new Error('新建标题须为 1 到 300 字符');
+    for (const [item, title] of edits) await client.dispatch('canvasControl.updateTitle@1', { id: review.id, item: Number(item), title });
+    setTitleEdits(undefined);
+  };
+  const resolveTitles = async (review: CanvasControlReview) => {
+    setBusy(true); setError('');
+    try { await saveTitles(review); await client.dispatch('canvasControl.resolveTitles@1', { id: review.id }); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  };
   const apply = async (review: CanvasControlReview, items?: number[]) => {
     setBusy(true); setError('');
     try {
-      const result = items ? await client.dispatch('canvasControl.applyItems@1', { id: review.id, items })
+      await saveTitles(review);
+      const result = items ? await client.dispatch('canvasControl.applyItems@2', { id: review.id, items })
         : await client.dispatch('canvasControl.apply@1', { id: review.id });
       if (result.createdIds.length) {
         await client.dispatch('selection.set', { ids: result.createdIds, mode: 'replace' });
@@ -81,6 +100,7 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
       {!state.reviews.length && <p className="canvas-control-empty">操作计划将在这里显示。</p>}
       {[...state.reviews].reverse().map(review => <section className="canvas-control-review" key={review.id} aria-label="画布操作计划">
         <header><strong>{review.nativeLabel ?? (review.replacement ? `${review.replacement.nodeCount} 个节点 · ${review.replacement.count} 处正文` : `${review.actions.length} 项操作`)}</strong><span>{review.status === 'applied' ? '已应用' : review.status === 'dismissed' ? '已放弃' : '等待确认'}</span></header>
+        {review.workspaceSteps && <ol aria-label="模型解析步骤">{review.workspaceSteps.map((description, index) => <li key={index}>{description}</li>)}</ol>}
         {review.verification && <p role={review.verification.status === 'verified' ? undefined : 'alert'}>
           {review.verification.status === 'verified' ? `已回读核对 ${review.verification.checked} 项操作` :
             review.verification.status === 'mismatch' ? `修改已提交，核对发现 ${review.verification.mismatches.length} 处差异，请检查画布或撤销` : '修改已提交，本轮回读暂不可用，请检查画布'}
@@ -103,6 +123,12 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
               onChange={event => toggleItem(review.id, index + 1, event.target.checked)} />
             <strong>{controlActionLabel(action, review.titles)}</strong>
           </label> : <strong>{controlActionLabel(action, review.titles)}</strong>}
+          {review.id === activeReview?.id && (action.type === 'create-node' || action.type === 'create-group') && <label>
+            新建标题<input type="text" aria-label={`第 ${index + 1} 项新建标题`} maxLength={300} disabled={busy}
+              value={titleEdits?.planId === review.id ? titleEdits.titles[index + 1] ?? action.title : action.title}
+              onChange={event => setTitleEdits(current => ({ planId: review.id,
+                titles: { ...(current?.planId === review.id ? current.titles : {}), [index + 1]: event.target.value } }))} />
+          </label>}
           <ActionDetails action={action} titles={review.titles} />
         </li>)}</ol>
       </section>)}
@@ -112,7 +138,16 @@ export function CanvasControlPanel({ client }: { client: ViewClient }) {
       {pending.length > 1 && <label>待应用计划<select aria-label="选择待应用计划" value={activeReview?.id ?? ''} onChange={event => { setSelectedPlanId(event.target.value); setError(''); }} disabled={busy}>
         {[...pending].reverse().map(review => <option key={review.id} value={review.id}>{review.nativeLabel ?? (review.replacement ? `${review.replacement.count} 处替换` : `${review.actions.length} 项`)} · {new Date(review.createdAt).toLocaleTimeString('zh-CN')}</option>)}
       </select></label>}
-      {activeReview ? <div className="canvas-control-action-row"><span>{activeReview.replacement ? `${activeReview.replacement.count} 处待替换` : `${activeReview.nativeLabel ? 1 : activeReview.actions.length} 项待应用`}</span><button className="primary-button" disabled={busy} onClick={() => void apply(activeReview, selectedItems.length ? selectedItems : undefined)}>{busy ? '正在应用…' : selectedItems.length ? `应用选中的 ${selectedItems.length} 项` : '应用整份计划'}</button><button disabled={busy} onClick={() => dismiss(activeReview.id)}>放弃</button></div>
+      {activeReview && itemCount > 1 && <div className="canvas-control-action-row" aria-label="批量选择操作">
+        <span aria-live="polite">已选 {selectedItems.length} / {itemCount} 项</span>
+        <button disabled={busy || allSelected} onClick={() => setItemSelection({ planId: activeReview.id, items: allItems })}>全选</button>
+        <button disabled={busy || !selectedItems.length} onClick={() => setItemSelection({ planId: activeReview.id, items: [] })}>取消全选</button>
+      </div>}
+      {activeReview?.actions.some(action => action.type === 'create-node') && <div className="canvas-control-action-row">
+        <span>{hasTitleEdits ? '标题修改将在应用时保存' : '新建标题可直接编辑'}</span>
+        <button disabled={busy} onClick={() => void resolveTitles(activeReview)}>一键避开重名</button>
+      </div>}
+      {activeReview ? <div className="canvas-control-action-row"><span>{activeReview.replacement ? `${activeReview.replacement.count} 处待替换` : `${activeReview.nativeLabel ? 1 : activeReview.actions.length} 项待应用`}</span><button className="primary-button" disabled={busy || !selectedItems.length} onClick={() => void apply(activeReview, allSelected ? undefined : selectedItems)}>{busy ? '正在应用…' : allSelected ? '应用整份计划' : `应用选中的 ${selectedItems.length} 项`}</button><button disabled={busy} onClick={() => dismiss(activeReview.id)}>放弃</button></div>
         : <span className="canvas-control-note">{state.reviews.length ? '没有待应用计划，已生成的内容可在画布查看。' : '生成结果会直接出现在画布；也可切换为先预览。'}</span>}
     </footer>
     </div>

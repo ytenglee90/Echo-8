@@ -1,5 +1,6 @@
 import type { PluginContext } from '../../core/contracts.ts';
 import type { LocalLanguageResult } from '../../protocols/local-language.ts';
+import type { AIProviderCatalog } from '../../protocols/ai.ts';
 import { predictLocalIntent } from '../../services/local-intent-semantics.ts';
 import { compileLocalClause, isLocalDiscussion, LOCAL_GROUP_CLAUSE, localInstructionContext, splitLocalInstruction } from './local-instruction-parser.ts';
 import { isAbortError, isCapabilityUnavailable } from './runtime-errors.ts';
@@ -39,9 +40,9 @@ async function classifyLocally(context: PluginContext, texts: string[], signal: 
 
 const describesGroup = (clause: string) => LOCAL_GROUP_CLAUSE.test(clause);
 const describesLink = (clause: string) => /连接|指向|连到/u.test(clause);
-const operationLimit = (instructions: string[]) => instructions.length > MAX_LOCAL_CREATIONS
-  ? `本次解析为 ${instructions.length} 项操作，独立新建最多支持 ${MAX_LOCAL_CREATIONS} 项。画布尚未修改。`
-  : instructions.length > 80 && instructions.some(text => naturalCanvasOperation(text)?.kind !== 'create')
+const operationLimit = (instructions: string[]) => instructions.length > 512 || instructions.filter(text => naturalCanvasOperation(text)?.kind === 'create').length > MAX_LOCAL_CREATIONS
+  ? `本次解析为 ${instructions.length} 项操作，新建最多支持 ${MAX_LOCAL_CREATIONS} 个节点及其分组和连线。画布尚未修改。`
+  : instructions.length > 80 && instructions.some(text => !['create', 'group', 'connect', 'connect-many'].includes(naturalCanvasOperation(text)?.kind ?? ''))
     ? `本次解析为 ${instructions.length} 项操作。包含分组、连线或已有对象修改时，最多支持 80 项原子操作；独立新建可自动分批。画布尚未修改。` : undefined;
 
 function explicitClauseKind(clause: string, hasCreated: boolean, generateBatch: boolean): 'create' | 'group' | 'connect' | undefined {
@@ -95,7 +96,7 @@ function compileWithoutModel(input: NonNullable<ReturnType<typeof localTurnInput
     }
     if (!compiled?.length) return undefined;
     instructions.push(...compiled);
-    if (instructions.length > MAX_LOCAL_CREATIONS) return { clarification: operationLimit(instructions) };
+    if (instructions.length > 512) return { clarification: operationLimit(instructions) };
   }
   const clarification = operationLimit(instructions);
   return clarification ? { clarification } : { instructions, expectedSelectionCount: slots.expectedSelectionCount };
@@ -107,7 +108,7 @@ export function compileLocalInstructions(prompt: string, route: AITurnRoute): Lo
 }
 
 /** The current user text is the only authority. No canvas body is classified. */
-export async function interpretLocalTurn(context: PluginContext, prompt: string, route: AITurnRoute, signal: AbortSignal): Promise<LocalTurnInterpretation> {
+export async function interpretLocalTurn(context: PluginContext, prompt: string, route: AITurnRoute, signal: AbortSignal, providerId?: string): Promise<LocalTurnInterpretation> {
   const input = localTurnInput(prompt, route);
   if (!input) return {};
   if (!input.clauses.length || input.clauses.length > 16) {
@@ -116,6 +117,12 @@ export async function interpretLocalTurn(context: PluginContext, prompt: string,
   const compiled = compileWithoutModel(input);
   if (compiled) return compiled;
   if (input.exactCreations) return interpretLocalClauses(context, prompt, route, input, signal);
+  if (route.operation === 'canvas-control') {
+    let providers: AIProviderCatalog | undefined;
+    try { providers = await context.capabilities.request<AIProviderCatalog>('ai.provider.catalog@1', undefined, signal); } catch { signal.throwIfAborted(); }
+    signal.throwIfAborted();
+    if (Array.isArray(providers?.options) && providers.options.some(option => option.id === (providerId ?? providers.activeId) && option.configured)) return {};
+  }
   const deadline = AbortSignal.timeout(LOCAL_LANGUAGE_TIMEOUT_MS);
   try {
     return await interpretLocalClauses(context, prompt, route, input, AbortSignal.any([signal, deadline]));
@@ -157,7 +164,7 @@ async function interpretLocalClauses(
       clarification: '请补充要操作的对象、数量或具体改法，画布尚未修改。',
     };
     instructions.push(...compiled);
-    if (instructions.length > MAX_LOCAL_CREATIONS) return { clarification: operationLimit(instructions) };
+    if (instructions.length > 512) return { clarification: operationLimit(instructions) };
   }
   const clarification = operationLimit(instructions);
   return clarification ? { clarification } : { instructions, expectedSelectionCount: slots.expectedSelectionCount };

@@ -29,5 +29,6 @@ export function GroupActions({ client }: { client: ViewClient }) {
   const icon = mode === 'add' ? 'group-add' : mode === 'remove' ? 'group-remove' : mode === 'ungroup' ? 'ungroup' : 'group';
   const label = mode === 'add' ? '加入群组' : mode === 'remove' ? '踢出群组' : mode === 'ungroup' ? '取消群组' : '创建群组';
   const apply = (action: 'add' | 'remove') => void client.dispatch('group.membership.applySelected@1', { action });
-  return <IconButton icon={icon} label={label} disabled={!ready} onClick={() => mode === 'add' || mode === 'remove' ? apply(mode) : void client.dispatch('group.toggleSelection')} />;
+  return <><IconButton icon={icon} label={label} disabled={!ready} onClick={() => mode === 'add' || mode === 'remove' ? apply(mode) : void client.dispatch('group.toggleSelection')} />
+    <IconButton icon="group" label="群组管理" onClick={() => void client.dispatch('group.membership.open')} /></>;
 }
