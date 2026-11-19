@@ -5,10 +5,11 @@ import { workspaceStructuralIntent } from './workspace-structural-intent.ts';
 import { workspaceDuplicateIntent } from './workspace-duplicate-intent.ts';
 import { palettePresetIntent } from './palette-preset-intent.ts';
 import { workspaceSurfaceAction } from './workspace-language.ts';
+import { assistantSimpleControl, workspaceSimpleControl } from './workspace-controls.ts';
 
 type Binding = 'node' | 'paragraph' | 'paragraph-replacement' | 'node-ids' | 'two-nodes' | 'duplicate' | 'format' |
   'range-format' | 'range-reveal' | 'session' | 'assistant' | 'checkpoint' | 'clipboard-selection' |
-  'paragraph-extract' | 'group' | 'group-members' | 'group-member' | 'members' | 'annotation' | 'clipboard-paste' | 'shortcut' | 'template' | 'import-text' | 'pane-ratios' | 'selected-node';
+  'paragraph-extract' | 'group' | 'group-members' | 'group-member' | 'members' | 'annotation' | 'clipboard-paste' | 'shortcut' | 'template' | 'provider' | 'selected-editor' | 'import-text' | 'pane-ratios' | 'selected-node';
 
 export interface CatalogIntent {
   steps: WorkspaceLanguageStep[];
@@ -23,7 +24,7 @@ export interface CatalogIntent {
 }
 
 export function catalogUsesSelection(intent: CatalogIntent | undefined): boolean {
-  return Boolean(intent && (['two-nodes', 'node-ids', 'clipboard-selection', 'selected-node'].includes(intent.binding ?? '') ||
+  return Boolean(intent && (['two-nodes', 'node-ids', 'clipboard-selection', 'selected-node', 'selected-editor'].includes(intent.binding ?? '') ||
     intent.steps.some(step => step.selection) || intent.parts?.some(catalogUsesSelection)));
 }
 
@@ -148,6 +149,9 @@ function numericTime(text: string) {
 function withArguments(text: string, input: string): Omit<CatalogIntent, 'input'> | undefined {
   const one = (action: string, args?: Record<string, unknown>, binding?: Binding) =>
     ({ steps: [{ id: 'catalog-1', action, arguments: args }], binding });
+  const provider = /^(?:(?:把|将)?(?:当前助手的)?模型(?:连接)?(?:切换|切|改|换|设)(?:为|到|成)|切换模型(?:连接)?(?:为|到|成)|(?:切换到|改用|使用)模型(?:连接)?)\s*(.+?)[。！!]?$/u.exec(input);
+  if (provider) return { ...one('assistant.provider', undefined, 'provider'), operand: provider[1]!.replace(/^[「『“"]|[」』”"]$/gu, '').trim() };
+  if (/^(?:打开|编辑|阅读)(?:当前)?选中(?:的)?(?:节点|卡片|正文)(?:的正文|编辑器)?[。！!]?$/u.test(input)) return one('editor.open', undefined, 'selected-editor');
   const preset = palettePresetIntent(canvasIntentText(input));
   if (preset) return one('appearance.preset.apply', { id: preset });
   if (/规则/u.test(text) && /纠错|校对/u.test(text) && /txt|文本格式/iu.test(text) &&
@@ -346,6 +350,10 @@ export function workspaceCatalogIntent(prompt: string): CatalogIntent | undefine
     /(?:先)?(?:别|不要|不用|禁止|暂不)\s*(?:打开|开启|启用|清空)|^(?:先)?(?:别|不要|不用|禁止|暂不)\s*覆盖/u.test(text) ||
     /(?:然后|接着|随后|最后|否则|失败就|[；;]|(?:并且?|同时|再)\s*(?:打开|关闭|删除|写入|修改|上传|导出|保存)|[，,]\s*(?:(?:并|再|还要|把|将|给)(?!.*预览)|(?:统计|标黄|排列|删除|上传|另存)))/u.test(text)) return undefined;
   const disposition = canvasRequestDisposition(prompt);
+  const simpleControl = disposition === 'normal' ? workspaceSimpleControl(input) : undefined;
+  if (simpleControl) return { input, steps: [{ id: 'catalog-1', ...simpleControl }] };
+  const assistantControl = disposition === 'normal' ? assistantSimpleControl(input) : undefined;
+  if (assistantControl) return { input, steps: [{ id: 'catalog-1', action: assistantControl.action, arguments: assistantControl.arguments }], binding: assistantControl.binding };
   const surface = disposition === 'normal' ? workspaceSurfaceAction(text) : undefined;
   if (surface) return { input, steps: [{ id: 'catalog-1', action: surface }] };
   const known = workspaceDuplicateIntent(input) ?? workspaceStructuralIntent(text, input) ?? withArguments(text, input);
@@ -358,6 +366,7 @@ export function workspaceCatalogIntent(prompt: string): CatalogIntent | undefine
     /^(?:让我|给我)看看/u.test(text) && /日志|执行记录/u.test(text);
   const explicitClose = verb.close.test(text) && !verb.read.test(text) &&
     !/(?:关闭|收起|隐藏)的.+(?:打开|显示|展开)[。！!]?$/u.test(text);
+  if ((explicitOpen || explicitClose) && /[，,；;]/u.test(text)) return undefined;
   // Close requests address a UI surface only. Do not interpret removal of notes, files or sessions.
   if (disposition === 'normal' && explicitClose && !/删除|去掉|清除|同时|全部资料/u.test(text)) {
     const candidates = closes.filter(([noun]) => noun.test(text));

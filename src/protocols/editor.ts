@@ -145,6 +145,8 @@ declare module './commands.ts' {
     'editor.clearFormat': CommandContract<{ id?: string } | undefined, boolean>;
     'editor.open': CommandContract<EditorOpenRequest, EditorOpenResult>;
     'editor.closeAll': CommandContract<undefined, boolean>;
+    'editor.closeActive': CommandContract<undefined, boolean>;
+    'editor.toggleImmersive': CommandContract<undefined, boolean>;
     'content.applyDelta': CommandContract<ApplyContentDeltaRequest, ApplyContentDeltaResult>;
     'content.moveRange': CommandContract<MoveContentRangeRequest, ApplyContentDeltaResult>;
   }

@@ -426,6 +426,17 @@ export class ApplicationKernel {
         return { result: { opened: true } };
       },
     });
+    this.router.registerCommand<undefined, { closed: boolean }>('core.ui', {
+      type: 'system.ui.closeSettings@1',
+      validate: (payload): payload is undefined => payload === undefined,
+      handle: async (_payload, envelope) => {
+        const surface = this.ui.topSurface(['right.primary']);
+        const page = surface && this.ui.listSettingsPages().find(page => page.owner === surface.owner && page.id === surface.id);
+        if (!page || !surface?.closeCommand) return { result: { closed: false } };
+        await this.router.invoke(surface.closeCommand, undefined, surface.owner, envelope);
+        return { result: { closed: true } };
+      },
+    });
     this.router.registerQuery<undefined, RegisteredShortcut[]>('core.shortcuts', {
       type: 'system.shortcuts',
       handle: () => this.ui.listShortcuts(),

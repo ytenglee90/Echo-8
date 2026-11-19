@@ -55,6 +55,20 @@ async function bindCatalogArguments(
     return { assistantId };
   }
   if (binding === 'session') return { sessionId };
+  if (binding === 'selected-editor') {
+    if (selectedIds?.length !== 1) throw new MissingWorkspaceArgument('请在发送时选中唯一要打开的节点。');
+    const nodes = await context.capabilities.request<ContentSummary[]>('content.canvasSummariesById@1', { nodeIds: selectedIds }, signal);
+    if (nodes.length !== 1) throw new MissingWorkspaceArgument('发送时选中的对象不是可编辑的文字节点。');
+    return { target: { id: nodes[0]!.id } };
+  }
+  if (binding === 'provider') {
+    if (!assistantId) throw new MissingWorkspaceArgument('请从需要切换模型的助手窗口发送。');
+    const catalog = await context.capabilities.request<{ options: Array<{ id: string; label: string; model: string; configured: boolean }> }>('ai.provider.catalog@1', undefined, signal);
+    const name = workspaceNameKey(intent.operand ?? '');
+    const matches = catalog.options.filter(option => option.configured && [option.id, option.label, option.model].some(value => workspaceNameKey(value) === name));
+    if (matches.length !== 1) throw new MissingWorkspaceArgument('请指定已配置的唯一模型名称；模型不存在或同名时不会自动选择。');
+    return { assistantId, resourceId: matches[0]!.id };
+  }
   if (binding === 'pane-ratios') {
     const panes = await context.queries.ask<string[]>('editor.openPanes');
     if (!intent.ratioWeights || panes.length !== intent.ratioWeights.length) {

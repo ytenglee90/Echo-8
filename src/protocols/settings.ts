@@ -11,5 +11,6 @@ export interface SettingsPageContributionV1 {
 declare module './commands.ts' {
   interface ApplicationCommandMap {
     'system.ui.openSettings@1': CommandContract<undefined, { opened: boolean }>;
+    'system.ui.closeSettings@1': CommandContract<undefined, { closed: boolean }>;
   }
 }

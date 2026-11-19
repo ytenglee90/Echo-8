@@ -15,6 +15,7 @@ import { parseCanvasControlPlan } from '../../services/canvas-control-validation
 import { isResultReference } from './result-references.ts';
 import { scheduleWorkspaceQuery } from './query-tasks.ts';
 import { canvasTitleAliases } from '../../services/canvas-titles.ts';
+import { DEFAULT_AUTOSAVE_INTERVAL_MS } from '../../protocols/files.ts';
 
 type Args = Record<string, unknown>;
 type Rule = { description: string; test: (value: unknown) => boolean; optional?: boolean; schema?: Record<string, unknown> };
@@ -257,6 +258,7 @@ export const localActions: LocalAction[] = [
     }, ['minimap.state@1'],
   )),
   capability('minimap.read', 'minimap', '读取小地图状态', '面板', 'minimap.state@1'),
+  setOrToggle('minimap.toggle', 'minimap', '切换小地图', '面板', 'minimap.toggle', 'minimap.state@1', 'open'),
   capability('selection.read', 'selection', '读取选区', '选择', 'selection.read@1'),
   selectionSet,
   command('selection.clear', 'selection', '清空选区', '选择', 'workspace', 'selection.clear', {}, undefined,
@@ -302,6 +304,19 @@ export const localActions: LocalAction[] = [
   command('editor.width', 'editor', '设置编辑区宽度', '编辑器', 'workspace', 'editor.setDockWidth', { width: number(100, 10000) }),
   capability('editor.read', 'editor', '读取已打开编辑窗格', '编辑器', 'editor.context@1'),
   command('editor.immersive.exit', 'editor', '退出沉浸编辑', '编辑器', 'workspace', 'editor.exitImmersive'),
+  action('editor.immersive.current', 'editor', '进入当前编辑器的沉浸写作模式', '编辑器', 'workspace', {}, {
+    commands: ['editor.enterImmersive'], queries: ['editor.state'], capabilities: [],
+    run: async context => {
+      const state = await context.queries.ask<{ activePane?: string }>('editor.state');
+      if (!state.activePane) throw new Error('请先打开要沉浸写作的节点，或在指令中提供节点名称。');
+      await context.commands.invoke('editor.enterImmersive', { id: state.activePane });
+      const after = await context.queries.ask<{ immersivePane?: string }>('editor.state');
+      if (after.immersivePane !== state.activePane) throw new Error('未能进入当前编辑器的沉浸写作模式');
+      return { result: { targetId: state.activePane, immersive: true } };
+    },
+  }),
+  command('editor.immersive.toggle', 'editor', '切换当前编辑器沉浸写作模式', '编辑器', 'workspace', 'editor.toggleImmersive'),
+  command('editor.formatBrush.toggle', 'editor', '切换格式刷', '编辑器', 'workspace', 'editor.toggleFormatBrush'),
   action('editor.immersive.enter', 'editor', '进入沉浸编辑', '编辑器', 'workspace', { target }, {
     commands: ['editor.open', 'editor.enterImmersive'], queries: ['editor.state'], capabilities: [],
     run: async (context, args, resolve) => {
@@ -430,6 +445,11 @@ export const localActions: LocalAction[] = [
   command('history.undo', 'history-controls', '撤销文档改动', '历史', 'document', 'history.undo'),
   command('history.redo', 'history-controls', '重做文档改动', '历史', 'document', 'history.redo'),
   command('settings.open', 'shortcut-center', '打开工作区设置', '设置', 'workspace', 'system.ui.openSettings@1'),
+  command('settings.close', 'shortcut-center', '关闭设置中心', '设置', 'workspace', 'system.ui.closeSettings@1'),
+  command('commands.open', 'command-palette', '打开命令面板', '面板', 'workspace', 'commandPalette.open'),
+  command('commands.close', 'command-palette', '关闭命令面板', '面板', 'workspace', 'commandPalette.close'),
+  command('canvasControl.open', 'canvas-control', '打开画布控制面板', '面板', 'workspace', 'canvasControl.open@1'),
+  command('canvasControl.close', 'canvas-control', '关闭画布控制面板', '面板', 'workspace', 'canvasControl.close@1'),
   command('settings.personal.open', 'ai-assistant', '打开指令与偏好', '设置', 'workspace', 'ai.personal.open@1'),
   command('settings.personal.close', 'ai-assistant', '关闭指令与偏好', '设置', 'workspace', 'ai.personal.close@1'),
   command('settings.plugins.open', 'plugin-center', '打开插件中心', '设置', 'workspace', 'pluginCenter.open'),
@@ -449,7 +469,16 @@ export const localActions: LocalAction[] = [
   command('diagnostics.open', 'diagnostic-center', '打开诊断面板', '诊断', 'workspace', 'diagnostics.open'),
   command('diagnostics.log', 'diagnostic-center', '打开操作记录', '诊断', 'workspace', 'diagnostics.operationLog.open@1'),
   command('assistant.open', 'ai-assistant', '打开助手窗口', '助手', 'workspace', 'ai.open'),
-  command('assistant.close', 'ai-assistant', '关闭助手窗口', '助手', 'workspace', 'ai.closeAll'),
+  command('assistant.close', 'ai-assistant', '关闭全部助手窗口', '助手', 'workspace', 'ai.closeAll'),
+  command('assistant.closeCurrent', 'ai-assistant', '关闭当前助手窗口', '助手', 'workspace', 'ai.close', { assistantId: string(200) }),
+  command('assistant.view', 'ai-assistant', '切换助手对话、记忆或模板页面', '助手', 'workspace', 'ai.setView',
+    { assistantId: string(200), view: oneOf('chat', 'memory', 'prompt') }, undefined,
+    async (context, _result, args) => {
+      const state = await context.queries.ask<{ assistants: Array<{ id: string; view: string }> }>('ai.state');
+      const assistant = state.assistants.find(assistant => assistant.id === args.assistantId);
+      if (!assistant || assistant.view !== args.view) throw new Error('助手页面没有切换到所请求的视图');
+      return { result: { assistantId: assistant.id, view: assistant.view } };
+    }),
   query('workspace.state', 'canvas', '读取当前工作区运行状态', '工作区', 'system.runtime'),
   action('node.inspect', 'text-node', '读取节点位置、尺寸和修订', '查询', 'query', { target }, {
     commands: [], queries: [], capabilities: [],
@@ -461,6 +490,7 @@ export const localActions: LocalAction[] = [
   capability('viewport.size', 'canvas', '读取画布可视区域', '视口', 'canvas.viewport@1'),
   command('selection.all', 'selection', '全选当前画布范围', '选择', 'workspace', 'selection.all'),
   command('editor.activate', 'editor', '聚焦已有编辑窗格', '编辑器', 'workspace', 'editor.activate', { target }, lookupNodeId),
+  command('editor.closeActive', 'editor', '关闭当前编辑器', '编辑器', 'workspace', 'editor.closeActive'),
   command('editor.closeAll', 'editor', '关闭全部编辑窗格', '编辑器', 'workspace', 'editor.closeAll'),
   command('editor.next', 'editor', '切换到下一个编辑窗格', '编辑器', 'workspace', 'editor.activateNext'),
   command('editor.previous', 'editor', '切换到上一个编辑窗格', '编辑器', 'workspace', 'editor.activatePrevious'),
@@ -556,6 +586,18 @@ export const localActions: LocalAction[] = [
   query('persistence.preferences', 'import-export', '读取自动保存偏好', '保存恢复', 'system.persistence.preferences@1'),
   command('persistence.interval', 'import-export', '设置自动保存间隔', '保存恢复', 'workspace', 'system.persistence.setAutosaveInterval',
     { intervalMs: number(0, 86400000, true) }),
+  action('persistence.enabled', 'import-export', '切换自动保存', '保存恢复', 'workspace', { enabled: optional(boolean) }, {
+    commands: ['system.persistence.setAutosaveInterval'], queries: ['system.persistence.preferences@1'], capabilities: [],
+    run: async (context, args) => {
+      const before = await context.queries.ask<{ autosaveIntervalMs: number }>('system.persistence.preferences@1');
+      const enabled = typeof args.enabled === 'boolean' ? args.enabled : before.autosaveIntervalMs === 0;
+      const intervalMs = enabled ? before.autosaveIntervalMs || DEFAULT_AUTOSAVE_INTERVAL_MS : 0;
+      await context.commands.invoke('system.persistence.setAutosaveInterval', { intervalMs });
+      const after = await context.queries.ask<{ autosaveIntervalMs: number }>('system.persistence.preferences@1');
+      if (after.autosaveIntervalMs !== intervalMs) throw new Error('自动保存开关回读不一致');
+      return { result: { enabled, intervalMs } };
+    },
+  }),
   query('recovery.preview', 'import-export', '预览恢复点差异', '恢复', 'system.recovery.preview', { id: string(200) }),
   query('cloud.state', 'cloud-sync', '读取已缓存的同步和授权状态', '书库', 'cloudSync.state'),
   query('shortcuts.read', 'shortcut-center', '读取快捷键设置', '设置', 'shortcuts.state'),
@@ -578,7 +620,31 @@ export const localActions: LocalAction[] = [
   command('assistant.cancel', 'ai-assistant', '停止指定会话生成', '助手', 'workspace', 'ai.generation.cancel', { sessionId: string(200) }),
   command('assistant.context', 'ai-assistant', '设置本轮资料模式', '助手', 'workspace', 'ai.assistant.setContextMode',
     { assistantId: string(200), mode: oneOf('automatic', 'explicit-only') }),
+  command('assistant.provider', 'ai-assistant', '切换当前助手的模型连接', '助手', 'workspace', 'ai.assistant.setProvider',
+    { assistantId: string(200), resourceId: string(200) }),
 ];
+
+for (const [id, label, message, field] of [
+  ['assistant.web', '切换当前助手联网', 'ai.assistant.setWebSearch', 'webSearchEnabled'],
+  ['assistant.autoMemory', '切换当前助手自动记忆候选', 'ai.assistant.setAutoMemoryCandidates', 'autoMemoryCandidates'],
+] as const) localActions.push(action(id, 'ai-assistant', label, '助手', 'workspace', {
+  assistantId: string(200), enabled: optional(boolean),
+}, {
+  commands: [message], queries: ['ai.state'], capabilities: [],
+  run: async (context, args) => {
+    const read = async () => {
+      const state = await context.queries.ask<{ assistants: Array<{ id: string; webSearchEnabled?: boolean; autoMemoryCandidates?: boolean }> }>('ai.state');
+      const assistant = state.assistants.find(assistant => assistant.id === args.assistantId);
+      if (!assistant) throw new Error('发送指令的助手窗口已经关闭');
+      return assistant;
+    };
+    const before = await read();
+    const enabled = typeof args.enabled === 'boolean' ? args.enabled : !before[field];
+    await context.commands.invoke(message, { assistantId: String(args.assistantId), enabled });
+    if (Boolean((await read())[field]) !== enabled) throw new Error('助手开关回读不一致');
+    return { result: { assistantId: args.assistantId, enabled } };
+  },
+}));
 
 export async function documentPreview(context: PluginContext, plan: CanvasControlPlan, sourceIds?: string[]): Promise<Outcome> {
   const { revision } = await context.queries.ask<{ revision: number }>('system.document.revision');

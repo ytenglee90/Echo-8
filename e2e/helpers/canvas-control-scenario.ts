@@ -21,6 +21,116 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 
 export function canvasControlScenarios(url: string): void {
   test.beforeEach(async ({page})=>installLocalLanguageAssets(page));
+  test('switching to a configured model and opening the captured selected node use no model', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await seedCanvas(page, url, [{ title: '本地打开测试', body: '应当由编辑器直接打开的正文。' }], true);
+    await configure(page, url, 'openai', 'local-model-one', 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await openModelSettings(page);
+    const provider = page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true });
+    await provider.getByRole('button', { name: '新建模型连接', exact: true }).click();
+    await provider.getByRole('combobox', { name: '选择平台', exact: true }).selectOption('openai');
+    await provider.getByLabel('模型', { exact: true }).fill('local-model-two');
+    await provider.getByLabel('API KEY', { exact: true }).fill('test-key-not-real');
+    await provider.getByRole('button', { name: '保存连接', exact: true }).click();
+    await expect(provider.getByText('当前连接已就绪', { exact: true })).toBeVisible();
+    await provider.getByRole('button', { name: '关闭 AI 模型连接', exact: true }).click();
+    const ask = async (text: string) => {
+      const replies = ai.locator('.ai-chat-bubble.assistant:not(.ai-streaming-response)');
+      const count = await replies.count();
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      await ai.locator('.ai-composer textarea').fill(text);
+      await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(replies).toHaveCount(count + 1);
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      await expect(ai.locator('.ai-error')).toHaveCount(0);
+    };
+    for (const model of ['local-model-one', 'local-model-two']) {
+      await ask('切换模型为' + model);
+      await expect(ai.getByRole('combobox', { name: '当前模型平台', exact: true }).locator('option:checked')).toHaveText(model);
+    }
+    await page.getByRole('article', { name: /文本节点：本地打开测试$/u }).click();
+    await ask('打开选中的节点');
+    await expect(page.locator('.editor-writing-area').filter({ visible: true }).first()).toContainText('应当由编辑器直接打开的正文');
+    await ask('关闭当前编辑器');
+    await expect(page.locator('.editor-writing-area').filter({ visible: true })).toHaveCount(0);
+    await ask('打开「本地打开测试」');
+    await expect(page.locator('.editor-writing-area').filter({ visible: true }).first()).toContainText('应当由编辑器直接打开的正文');
+    await ask('关闭「本地打开测试」');
+    await expect(page.locator('.editor-writing-area').filter({ visible: true })).toHaveCount(0);
+    expect(calls).toBe(0);
+  });
+  test('simple surface sequences and assistant views execute without model requests', async ({ page }) => {
+    test.setTimeout(60000);
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await page.setViewportSize({ width: 1800, height: 1000 });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const send = async (text: string) => {
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      await ai.locator('.ai-composer textarea').fill(text);
+      await ai.locator('.ai-composer textarea').press('Enter');
+    };
+    for (const name of ['群组管理', '设置中心', '插件管理', '检索设置', 'AI模型连接', '云同步', '快捷键面板', '指令与偏好', '外观设置', '查找替换面板', '命令面板', '画布控制面板']) {
+      const replies = ai.locator('.ai-chat-bubble.assistant:not(.ai-streaming-response)');
+      const count = await replies.count();
+      await send(`打开${name}，然后关闭${name}`);
+      await expect(replies).toHaveCount(count + 1);
+      await expect(ai.locator('.ai-error')).toHaveCount(0);
+      await expect(ai.getByLabel('本轮 Token 用量', { exact: true }).last()).toContainText('输入 0 · 输出 0');
+      await expect(page.getByRole('region', { name: '设置中心', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('dialog', { name: '加入或移出已有群组', exact: true })).toHaveCount(0);
+    }
+    for (const [request, region] of [['打开记忆中心', 'AI 记忆中心'], ['打开Prompt模板中心', 'AI Prompt 模板']]) {
+      await send(request!);
+      await expect(page.getByRole('region', { name: region!, exact: true })).toBeVisible();
+      await ai.getByRole('button', { name: 'AI 对话', exact: true }).click();
+    }
+    await send('切回AI对话');
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    expect(calls).toBe(0);
+  });
+  test('simple switches tools and missing-value acknowledgements never call a model', async ({ page }) => {
+    test.setTimeout(60000);
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await configure(page, url, 'openai', undefined, 'direct');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const ask = async (text: string) => {
+      const replies = ai.locator('.ai-chat-bubble.assistant:not(.ai-streaming-response)');
+      const count = await replies.count();
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      await ai.locator('.ai-composer textarea').fill(text);
+      await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(replies).toHaveCount(count + 1);
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      await expect(ai.locator('.ai-error')).toHaveCount(0);
+      await expect(ai.getByLabel('本轮 Token 用量', { exact: true }).last()).toContainText('输入 0 · 输出 0');
+    };
+    for (const name of ['智能参考线', '吸附', '本地纠错', '本地补全', '自动保存', '联网搜索', '自动记忆候选']) {
+      await ask('打开' + name);
+      await ask('关闭' + name);
+      await ask('切换' + name);
+      await ask('关闭' + name);
+    }
+    await ask('打开自动取材');
+    await ask('关闭自动取材');
+    await ask('切到手形工具');
+    await expect(page.getByRole('button', { name: /^手抓工具/u })).toHaveAttribute('aria-pressed', 'true');
+    await ask('切到选择工具');
+    await expect(page.getByRole('button', { name: /^选择工具/u })).toHaveAttribute('aria-pressed', 'true');
+    await ask('打开小地图');
+    await ask('不要关闭小地图');
+    await expect(page.getByRole('region', { name: '画布小地图', exact: true })).toBeVisible();
+    for (const prompt of ['切换画布工具', '打开节点']) await ask(prompt);
+    expect(calls).toBe(0);
+    await ai.locator('.ai-composer textarea').fill('关闭当前助手窗口');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai).toHaveCount(0);
+    expect(calls).toBe(0);
+  });
   test('settings page instructions execute locally with a configured provider and zero model calls', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });

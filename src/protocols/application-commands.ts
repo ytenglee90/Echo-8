@@ -23,6 +23,7 @@ declare module './commands.ts' {
     'ai.assistant.setPromptTemplate': ValidatedCommand;
     'ai.assistant.setProvider': ValidatedCommand;
     'ai.assistant.setWebSearch': ValidatedCommand;
+    'ai.assistant.setAutoMemoryCandidates': ValidatedCommand;
     'ai.close': ValidatedCommand;
     'ai.closeAll': ValidatedCommand;
     'ai.context.discard': ValidatedCommand;
@@ -79,6 +80,7 @@ declare module './commands.ts' {
     'clipboard.duplicateSelectionAt': ValidatedCommand;
     'clipboard.paste': ValidatedCommand;
     'commandPalette.close': ValidatedCommand;
+    'commandPalette.open': ValidatedCommand;
     'content.materializeCopy': ValidatedCommand;
     'content.migrateStorage': ValidatedCommand;
     'diagnostics.close': ValidatedCommand;

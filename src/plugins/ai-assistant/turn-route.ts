@@ -18,6 +18,7 @@ import { readCompoundTurn, readDeferredCanvasTurn } from './compound-turn.ts';
 import type { PersonalTurn } from './personal-preferences.ts';
 import { isStandaloneConversation } from './context-intent.ts';
 import { compileWorkspaceLanguage } from '../../services/workspace-language.ts';
+import { workspaceControlClarification } from '../../services/workspace-controls.ts';
 import { workspaceCatalogIntent } from '../../services/workspace-catalog-intent.ts';
 import { readWorkspaceSequence } from '../../services/workspace-sequence-intent.ts';
 import { isCurrentConversationArchiveRequest } from '../../services/conversation-archive-intent.ts';
@@ -111,7 +112,8 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const insertion = /^(?:把|将)?\s*.{1,120}?\s*插入(?:到)?\s*.{1,120}?\s*(?:中|里面|里)[。！!]?$/u.test(canvasCommandText(prompt)) &&
     !/正文|文本|文字|内容|引用|链接|群组|分组/u.test(text);
   const ambiguousClear = /^(?:删除|删掉|清空|清除)(?:所有|全部)(?:的)?内容[。！!]?$/u.test(text);
-  const clarification = ambiguousClear ? '你要清空选中卡片的正文，还是删除当前画布全部对象？请明确范围；删除前会显示确认预览，画布尚未修改。'
+  const controlClarification = workspaceControlClarification(prompt);
+  const clarification = controlClarification ? controlClarification : ambiguousClear ? '你要清空选中卡片的正文，还是删除当前画布全部对象？请明确范围；删除前会显示确认预览，画布尚未修改。'
     : insertion ? '“插入”需要明确方式：将来源卡正文追加到目标卡、建立引用连线，还是加入群组？请选择一种；画布尚未修改。'
     : (!explicit || explicit === 'general') && !writeCommand && !mixed && /^(?:(?:请|帮我)\s*)?(?:处理|弄|改|收|整理)一下\s*(?:这个|它|这张卡|这张卡片)?[。！!]?$/u.test(text)
     ? '你希望我在画布上修改什么，还是先讨论怎么改？' : undefined;
