@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+Workspace command candidates and weak local operands share a conservative semantic handoff. Typed incomplete parsing may use the selected model; actual owner errors stay local. Model workspace steps execute through owners and stable receipts, while document edits retain review. Sender identity is application-bound, interface planning excludes canvas metadata, and referenced-object guards tolerate unrelated document revisions. See ADR-0168.
+
 Complete open/close/switch instructions share a local control compiler and live action coverage checks. Sender-bound assistant views and configured-model selection remain local, while missing values and unavailable targets clarify without paid planning. The versioned UI close-settings command invokes only the active registered settings owner. Existing feature commands retain transactions, history and readback. See ADR-0167.
 
 Model connections own a settings-center page below cloud sync. Retained legacy assistant commands forward to that owner without creating sessions; memory and Prompt remain composer actions. Thirteen local settings adapters and explicit immersion, presentation, deletion and text-annotation phrasing avoid model requests. Interface-only model fallback excludes document metadata; cloud-backed current documents retain the same owner transactions and undo as local books. See ADR-0166.

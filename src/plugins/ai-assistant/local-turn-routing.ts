@@ -15,6 +15,7 @@ export interface LocalTurnInterpretation {
   instructions?: string[];
   expectedSelectionCount?: number;
   clarification?: string;
+  needsModel?: true;
 }
 
 const CREATE_PREFIX = /^(?:在(?:当前)?画布上\s*)?(?:新建|创建|新增|造|制作|添加|做|建|搞|来|摆)\s*(?=[零一二两三四五六七八九十百\d]+\s*[张个份块])/u;
@@ -61,7 +62,7 @@ function localTurnInput(prompt: string, route: AITurnRoute) {
   const startsWithCreation = CREATE_PREFIX.test(clauses[0] ?? '') || generateBatch;
   const compoundCreation = startsWithCreation && clauses.length > 1 &&
     !clauses.slice(1).some(clause => /^(?:叫|就叫|名为|命名为|标题(?:是|为))/u.test(clause));
-  if (route.workspaceSteps || route.catalogIntent || route.applyItems || route.fieldTask || route.restructureTask || route.creationText || route.history || route.category === 'mixed' ||
+  if (route.semanticFallback || route.workspaceSteps || route.catalogIntent || route.applyItems || route.fieldTask || route.restructureTask || route.creationText || route.history || route.category === 'mixed' ||
     route.disposition !== 'normal' || route.repeatCreation || isCanvasStatusFollowup(prompt) || isCanvasFailureFollowup(prompt) ||
     route.clarification || !['general', 'canvas-control'].includes(route.operation) || route.local && !compoundCreation || route.native ||
     route.interpretedSearch || isLocalDiscussion(prompt) ||
@@ -145,7 +146,7 @@ async function interpretLocalClauses(
   if (!knownCanvas) {
     const [intent] = whole ?? [];
     if (!intent || intent.kind === 'chat' || intent.kind === 'generate') return {};
-    if (intent.score < 0.55 || intent.margin < 0.15) return route.readCanvas ? { clarification: UNCLEAR } : {};
+    if (intent.score < 0.55 || intent.margin < 0.15) return route.readCanvas ? { clarification: UNCLEAR, needsModel: true } : {};
   }
   const scores = exactCreations ? undefined : clauses.length === 1 && whole ? whole : await classifyLocally(context, clauses, signal);
   const slots = localInstructionContext();
@@ -154,14 +155,14 @@ async function interpretLocalClauses(
     let kind: Parameters<typeof compileLocalClause>[1] | undefined = explicitClauseKind(clause, slots.created.length > 0, generateBatch);
     if (!kind) {
       const predicted = scores?.[index];
-      if (!predicted) return instructions.length ? { clarification: UNCLEAR } : {};
-      if (predicted.kind === 'generate' || predicted.kind === 'chat') return instructions.length ? { clarification: UNCLEAR } : {};
-      if (predicted.score < 0.55 || predicted.margin < 0.15) return knownCanvas && !startsWithCreation ? {} : { clarification: UNCLEAR };
+      if (!predicted) return instructions.length ? { clarification: UNCLEAR, needsModel: true } : {};
+      if (predicted.kind === 'generate' || predicted.kind === 'chat') return instructions.length ? { clarification: UNCLEAR, needsModel: true } : {};
+      if (predicted.score < 0.55 || predicted.margin < 0.15) return knownCanvas && !startsWithCreation ? {} : { clarification: UNCLEAR, needsModel: true };
       kind = predicted.kind;
     }
     const compiled = compileLocalClause(clause, kind, slots);
     if (!compiled?.length) return !startsWithCreation && !instructions.length && knownCanvas ? {} : {
-      clarification: '请补充要操作的对象、数量或具体改法，画布尚未修改。',
+      clarification: '请补充要操作的对象、数量或具体改法，画布尚未修改。', needsModel: true,
     };
     instructions.push(...compiled);
     if (instructions.length > 512) return { clarification: operationLimit(instructions) };

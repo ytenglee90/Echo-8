@@ -4,6 +4,7 @@ import { parseProject, serializeProject } from '../../src/plugins/import-export/
 import { ApplicationKernel } from '../../src/core/kernel.ts';
 import { createSelectionPlugin } from '../../src/plugins/selection/model.ts';
 import { createTextNodePlugin } from '../../src/plugins/text-node/plugin.ts';
+import { createConnectionsPlugin } from '../../src/plugins/connections/model.ts';
 import type { ProjectSource } from '../../src/protocols/files.ts';
 import { installLocalLanguageAssets } from './local-language-assets.ts';
 import { openModelSettings } from './model-settings.ts';
@@ -21,6 +22,92 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 
 export function canvasControlScenarios(url: string): void {
   test.beforeEach(async ({page})=>installLocalLanguageAssets(page));
+  test('unrecognized interface wording reaches the selected model once and executes without canvas metadata', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      const body = route.request().postDataJSON() as { messages: Array<{ content: string }> };
+      const payload = JSON.parse(body.messages.at(-1)!.content);
+      expect(payload.directory).toEqual({}); expect(payload.selectedIds).toEqual([]);
+      expect(JSON.stringify(body)).not.toContain('不能发给解析模型的标题');
+      expect(JSON.stringify(body)).not.toContain('不能发给解析模型的正文');
+      const action = calls === 1 ? 'group.management.open' : 'settings.models.open';
+      expect(payload.actions.some((entry: { id: string }) => entry.id === action)).toBe(true);
+      const content = JSON.stringify({ steps: [{ action, arguments: {} }], clarification: '' });
+      return route.fulfill({ headers: { 'access-control-allow-origin': '*' },
+        json: { choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 30, completion_tokens: 10 } } });
+    });
+    await page.setViewportSize({ width: 1800, height: 1000 });
+    await seedCanvas(page, url, [{ title: '不能发给解析模型的标题', body: '不能发给解析模型的正文' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('把分组的那个管理窗口叫出来');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.getByRole('dialog', { name: '加入或移出已有群组', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '关闭群组成员管理', exact: true }).click();
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    await ai.locator('.ai-composer textarea').fill('让我看看能调模型的那个页面');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '关闭 AI 模型连接', exact: true }).click();
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    expect(calls).toBe(2);
+    await expect(ai.locator('.ai-chat-bubble.assistant').last()).toContainText('模型解析已完成');
+  });
+  test('a weak title lookup reaches model parsing and returns real connection endpoints', async ({ page }) => {
+    let calls = 0;
+    let selections = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      const body = route.request().postDataJSON() as { messages: Array<{ content: string }> };
+      const payload = JSON.parse(body.messages.at(-1)!.content);
+      if (!payload.directory) {
+        selections++;
+        return route.fulfill({ headers: { 'access-control-allow-origin': '*' },
+          json: { choices: [{ message: { role: 'assistant', content: JSON.stringify({ actions: ['connection.inspect'], clarification: '' }) }, finish_reason: 'stop' }] } });
+      }
+      const edge = payload.directory.connections[0] as { id: string };
+      expect(payload.selectedIds).toEqual([edge.id]);
+      const content = JSON.stringify({ steps: [{ action: 'connection.inspect', arguments: { id: edge.id } }], clarification: '' });
+      return route.fulfill({ headers: { 'access-control-allow-origin': '*' },
+        json: { choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] } });
+    });
+    await seedCanvas(page, url, [{ title: '端点甲' }, { title: '端点乙' }], true, true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const edge = page.locator('.connection-hit-area').first();
+    const point = await edge.evaluate(element => {
+      const path = element as SVGPathElement; const position = path.getPointAtLength(path.getTotalLength() / 2);
+      const transformed = new DOMPoint(position.x, position.y).matrixTransform(path.getScreenCTM()!);
+      return { x: transformed.x, y: transformed.y };
+    });
+    await page.mouse.click(point.x, point.y);
+    await expect(edge).toHaveAttribute('aria-pressed', 'true');
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('找到选中连线的另一个端点');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    const reply = ai.locator('.ai-chat-bubble.assistant').last();
+    await expect(reply).toContainText('端点甲'); await expect(reply).toContainText('端点乙');
+    await expect(reply).not.toContainText('没有找到名为');
+    expect(calls).toBe(1 + selections); expect(calls).toBeLessThanOrEqual(2);
+  });
+  test('a real command-like title and a missing explicit target both remain local without paid guessing', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await seedCanvas(page, url, [{ title: '选中连线的另一个端点', body: '这个标题必须保持字面值' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('找到选中连线的另一个端点');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.locator('.ai-chat-bubble.assistant').last()).toContainText('选中连线的另一个端点');
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    await ai.locator('.ai-composer textarea').fill('打开「确实不存在的卡片」的编辑器');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    await expect(ai.getByLabel('本轮 Token 用量', { exact: true }).last()).toContainText('输入 0 · 输出 0');
+    expect(calls).toBe(0);
+  });
   test('switching to a configured model and opening the captured selected node use no model', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
@@ -117,6 +204,10 @@ export function canvasControlScenarios(url: string): void {
     }
     await ask('打开自动取材');
     await ask('关闭自动取材');
+    await ask('画布缩放到八成');
+    await expect(page.getByRole('textbox', { name: '画布缩放 80%', exact: true })).toHaveValue('80');
+    await ask('画布缩放为 一点五倍');
+    await expect(page.getByRole('textbox', { name: '画布缩放 150%', exact: true })).toHaveValue('150');
     await ask('切到手形工具');
     await expect(page.getByRole('button', { name: /^手抓工具/u })).toHaveAttribute('aria-pressed', 'true');
     await ask('切到选择工具');
@@ -2218,17 +2309,20 @@ async function openControl(page: Page): Promise<void> {
   await palette.getByRole('option', { name: /^画布控制/u }).click();
 }
 
-async function seedCanvas(page: Page, url: string, nodes: Array<{ title: string; body?: string; color?: string }>, clean = false): Promise<void> {
-  const kernel = new ApplicationKernel([createTextNodePlugin(), ...(clean ? [createSelectionPlugin()] : [])]);
+async function seedCanvas(page: Page, url: string, nodes: Array<{ title: string; body?: string; color?: string }>, clean = false, connect = false): Promise<void> {
+  const kernel = new ApplicationKernel([createTextNodePlugin(), ...(clean ? [createSelectionPlugin()] : []), ...(connect ? [createConnectionsPlugin()] : [])]);
   await kernel.start();
   if (clean) {
     const initial = await kernel.capabilities.request<Array<{id: string}>>('content.summaries@1');
     await kernel.router.dispatch('selection.set', { ids: initial.map(node => node.id) }, 'core.test');
     await kernel.router.dispatch('selection.delete', undefined, 'core.test');
   }
-  for (const [index, node] of nodes.entries()) await kernel.router.dispatch('node.create', { ...node, x: index * 440, y: 240 }, 'core.test');
+  const created: string[] = [];
+  for (const [index, node] of nodes.entries()) created.push((await kernel.router.dispatch<{ id: string }>('node.create', { ...node, x: index * 440, y: 240 }, 'core.test')).id);
+  if (connect) await kernel.router.dispatch('connection.create', { from: { nodeId: created[0], side: 'right' }, to: { nodeId: created[1], side: 'left' } }, 'core.test');
   const source = await kernel.router.ask<ProjectSource>('system.project.source', undefined, 'core.test');
   const book = await serializeProject(source);
+  if (connect) await kernel.plugins.stop('connections');
   if (clean) await kernel.plugins.stop('selection');
   await kernel.plugins.stop('text-node');
   await page.goto(url);

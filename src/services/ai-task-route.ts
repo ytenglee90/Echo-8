@@ -471,7 +471,7 @@ function parseCanvasOperation(command: string): NaturalCanvasOperation | undefin
   if ((match = /^(?:把|将)?(?:应用)?主题\s*(?:切到|切换到|改成|改为|设为|设置为|换成)\s*(深色|浅色|亮色|暗色)(?:模式|主题)?$/u.exec(text) ??
     /^(?:切换|修改|更改)(?:应用)?主题(?:到|为|成)\s*(深色|浅色|亮色|暗色)(?:模式|主题)?$/u.exec(text) ??
     /^(?:切到|切换到|换成|启用|打开)\s*(深色|浅色|亮色|暗色)(?:应用)?(?:主题|模式)$/u.exec(text))) return { kind: 'theme', names: [], theme: /深|暗/u.test(match[1]!) ? 'dark' : 'light' };
-  if ((match = /^(?:把|将)?\s*(.+?)\s*(?:切成|切换为|切换成|转成|转为|转换成|换成|改成)\s*(文本框|文字框|卡片|文字节点)$/u.exec(text))) {
+  if ((match = /^(?:把|将)?\s*(.+?)\s*(?:切成|切换为|切换成|转成|转为|转换成|转换为|变成|变为|换成|改成|改为)\s*(文本框|文字框|卡片|文字节点)$/u.exec(text))) {
     const group = /^(.*?)(?:里|内|中)的(?:文字)?节点$/u.exec(match[1]!);
     const filter = naturalTargetFilter(match[1]!);
     return { kind: 'presentation', names: filter ? [match[1]!.trim()] : group ? [name(group[1]!)] : names(match[1]!), presentation: /文本框|文字框/u.test(match[2]!) ? 'text-box' : 'card', members: Boolean(group) && !filter };

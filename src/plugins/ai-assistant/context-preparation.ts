@@ -38,7 +38,7 @@ import {
 } from './memory-retrieval.ts';
 import { extractTerms } from './memory-terms.ts';
 import { sessionTranscriptSourceId } from './transcript-storage.ts';
-import { canvasCommandText, canvasDraftTopic, isCanvasStatusFollowup, isFocusedCanvasContentTask } from '../../services/ai-task-route.ts';
+import { canvasCommandText, canvasDraftTopic, isCanvasStatusFollowup, isFocusedCanvasContentTask, naturalCanvasOperation } from '../../services/ai-task-route.ts';
 import { readParagraphTarget } from './paragraph-target.ts';
 import { operationCreatesWriteback } from './operations.ts';
 import { bindNaturalWriteback, naturalWritebackIntent, readBoundWriteback, writebackTaskInstructions } from './natural-writeback.ts';
@@ -94,6 +94,14 @@ export async function prepareAIContext(
   selectionAtSend?: string[],
 ): Promise<AIPreparedContext> {
   let route = turnRoute ?? classifyAITurn(payload.prompt, explicitAtOperation(payload.prompt) ?? payload.operation);
+  if (route.semanticFallback) {
+    const parsed = naturalCanvasOperation(payload.prompt);
+    const nodes = await context.capabilities.request<ContentSummary[]>('content.summaries@1', undefined, signal)
+      .catch(error => { if (isCapabilityUnavailable(error, 'content.summaries@1')) return []; throw error; });
+    if (parsed?.names.length && parsed.names.every(name => nodes.some(node => normalizeCanvasTitle(node.title) === normalizeCanvasTitle(name)))) {
+      route = { ...route, local: parsed, semanticFallback: false };
+    }
+  }
   if (personalTurn) {
     const instruction = personalTurn.instruction;
     if (instruction) {
@@ -287,7 +295,7 @@ export async function prepareAIContext(
       localSourceIds: local.instructions
         ? [...new Set([...(payload.references ?? []).filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
           ...parseExplicitReferences(payload.prompt)])] : undefined,
-      ...(local.clarification ? { clarify: local.clarification } : {}), ...binding });
+      ...(local.clarification ? { clarify: local.clarification, fallbackToModel: local.needsModel } : {}), ...binding });
   const localMemoryDirective = naturalMemoryDirective(payload.prompt);
   if (localMemoryDirective) {
     const createdAt = Date.now();

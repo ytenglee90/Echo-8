@@ -1,4 +1,5 @@
 import type { WorkspacePlanStep } from '../protocols/workspace-actions.ts';
+import { workspaceRequestText } from './workspace-request-intent.ts';
 
 type Control = Pick<WorkspacePlanStep, 'action' | 'arguments'>;
 
@@ -28,11 +29,11 @@ const surfaces = [
   { names: '标注窗口|注释窗口|批注窗口|标注面板|注释面板|批注面板', close: 'annotation.close' },
 ] as const;
 
-const OPEN = '打开|开启|显示|展开|进入|弹出|返回|回到|切换到|切到|切回|转到|回|使用|继续显示';
-const CLOSE = '关闭|关掉|关上|收起|隐藏|退出';
-const SWITCH = '切换|开关';
+const OPEN = '打开|开启|显示|展开|进入|弹出|返回|回到|切换到|切到|切回|转到|回|使用|继续显示|调出|唤出|呼出|叫出|调|看看';
+const CLOSE = '关闭|关掉|关上|收起|隐藏|退出|关|退掉';
+const SWITCH = '切换|切一下|开关';
 export function controlText(input: string): string {
-  return input.trim().replace(/^(?:(?:请你?|麻烦你?|帮我|给我|我要|我想要?|让我|带我)\s*)+/u, '')
+  return workspaceRequestText(input).replace(/^(?:带我)\s*/u, '')
     .replace(/(?:一下|吧|就好|就行)?[。！!]*$/u, '').trim();
 }
 
@@ -41,8 +42,8 @@ function controlOperand(input: string): { name: string; operation: 'open' | 'clo
   const query = /^(?:(?:查看|查询)(?:一下)?\s*)?(?:现在|当前)?(.+?)(?:目前|现在)?(?:打开了吗|开着吗|显示了吗|开没开|是否打开|是开还是关)[？?]?$/u.exec(text);
   if (query) return { name: query[1]!, operation: 'read' };
   const command = new RegExp('^(?:从(?:当前)?书库)?(' + OPEN + '|' + CLOSE + '|查看|查询|' + SWITCH + ')\\s*(.+)$', 'u').exec(text);
-  const reversed = new RegExp('^(?:把|将)\\s*(.+?)\\s*(' + OPEN + '|' + CLOSE + ')(?:来|出来|起来)?$', 'u').exec(text);
-  const hide = /^(?:不要|不再)显示\s*(.+?)(?:了)?$/u.exec(text);
+  const reversed = new RegExp('^(?:把|将)?\\s*(.+?)\\s*(' + OPEN + '|' + CLOSE + ')(?:来|出来|起来|了)?$', 'u').exec(text);
+  const hide = /^(?:不要|别|不再)显示\s*(.+?)(?:了)?$/u.exec(text);
   if (!command && !reversed && !hide) return undefined;
   const verb = command?.[1] ?? reversed?.[2] ?? '隐藏';
   return { name: command?.[2] ?? reversed?.[1] ?? hide![1]!, operation: /^(?:查看|查询)$/u.test(verb) ? 'read'
@@ -52,10 +53,12 @@ function controlOperand(input: string): { name: string; operation: 'open' | 'clo
 export function workspaceSurfaceAction(input: string): string | undefined {
   const operand = controlOperand(input);
   if (!operand) return undefined;
-  const name = operand.name.replace(/\s+/gu, '').replace(/(?:设置页|设置页面|设置面板|设置|页面|面板|窗口|中心)$/u, '');
+  const normalize = (name: string) => name.replace(/\s+/gu, '').replace(/(?:给我|替我)$/u, '')
+    .replace(/^(?:那个|这个)/u, '').replace(/(?:设置页|设置页面|设置面板|设置|页面|面板|窗口|中心|界面|那一页|页)$/u, '').replace(/的/gu, '').toLowerCase();
+  const name = normalize(operand.name);
   const surface = surfaces.find(item => item.names.split('|').some(alias =>
     alias.toLowerCase() === operand.name.replace(/\s+/gu, '').toLowerCase() ||
-    alias.replace(/(?:设置|页面|面板|窗口|中心)$/u, '').toLowerCase() === name.toLowerCase()));
+    normalize(alias) === name));
   return surface && (surface as Partial<Record<typeof operand.operation, string>>)[operand.operation];
 }
 
@@ -73,8 +76,10 @@ export function workspaceSimpleControl(input: string): Control | undefined {
   if (surface) return { action: surface };
   const text = controlText(input);
   const enabled = /^(启用|停用|禁用)\s*(.+)$/u.exec(text);
-  const operand = enabled ? { name: enabled[2]!, operation: enabled[1] === '启用' ? 'open' as const : 'close' as const } : controlOperand(text);
-  const item = operand && switches.find(item => item.names.split('|').includes(operand.name));
+  const state = /^(?:把|将)?\s*(.+?)(?:的)?(?:设为|设置为|改为|改成|切换为|切换到)\s*(开启|打开|启用|关闭|关掉|停用)$/u.exec(text);
+  const operand = state ? { name: state[1]!, operation: /关闭|关掉|停用/u.test(state[2]!) ? 'close' as const : 'open' as const }
+    : enabled ? { name: enabled[2]!, operation: enabled[1] === '启用' ? 'open' as const : 'close' as const } : controlOperand(text);
+  const item = operand && switches.find(item => item.names.split('|').includes(operand.name.replace(/的?(?:状态|功能|开关)$/u, '')));
   if (item && operand && operand.operation !== 'read') return { action: item.action,
     ...(operand.operation === 'toggle' ? {} : { arguments: { enabled: operand.operation === 'open' } }) };
   if (/^(?:退出|关闭|关掉|离开)(?:沉浸(?:式)?(?:编辑|写作)?|专注(?:编辑|写作)?|全屏(?:编辑|写作)?)(?:模式)?$/u.test(text) ||
@@ -84,6 +89,8 @@ export function workspaceSimpleControl(input: string): Control | undefined {
   if (/^(?:切换|开关)(?:当前编辑器的)?格式刷$/u.test(text)) return { action: 'editor.formatBrush.toggle' };
   if (/^(?:关闭|关掉|收起)(?:当前|这个|当前的)?(?:编辑器|编辑窗格|编辑页)$/u.test(text)) return { action: 'editor.closeActive' };
   if (/^(?:关闭|关掉|收起)(?:全部|所有)(?:的)?(?:编辑器|编辑窗格|编辑页)$/u.test(text)) return { action: 'editor.closeAll' };
+  if (/^(?:上一步|刚才那一步)(?:撤销|撤回)$|^(?:撤回|退回)上一步$/u.test(text)) return { action: 'history.undo' };
+  if (/^(?:上一步|刚才撤销的那一步)重做$|^恢复刚才撤销的操作$/u.test(text)) return { action: 'history.redo' };
   const pane = /^(?:切换?到?|切回|跳到|回到|激活)(?:右侧|右边)?(?:第)?(下一个|下一张|下个|上一个|上一张|上个|前一个)(?:编辑窗格|编辑器|编辑页|文档|窗格)$/u.exec(text);
   if (pane) return { action: /^下/u.test(pane[1]!) ? 'editor.next' : 'editor.previous' };
   const tool = /^(?:(?:把|将)?(?:画布)?(?:当前)?工具(?:切换|切|设|改|换)(?:为|到|成)?|(?:切换?|改用|使用|用|换)(?:到|成|为)?)\s*(?:拖动画布的)?(手抓|手形|手型|抓手|平移|选择|框选|选取|箭头)(?:工具|模式)?(?:平移画面)?$/u.exec(text);

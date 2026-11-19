@@ -38,7 +38,7 @@ function numericValue(text: string): number {
 const percentValue = (match: RegExpExecArray, start = 1) => numericValue(match[start] ?? match[start + 1]!) / 100;
 const exact = (pattern: string) => new RegExp('^' + pattern + '$', 'u');
 const absoluteZoom = exact('(?:把|将)?' + VIEW + '\\s*(?:' + ZOOM +
-  '(?:设(?:置|定)?(?:为|成|到)|调(?:整)?(?:到|成|为)|到|至|为|保持在?)?|(?:缩|放大|缩小)(?:到|至)|(?:设(?:为|成)|调(?:到|至))|保持在?)\\s*' + PERCENT);
+  '(?:设(?:置|定)?(?:为|成|到)|调(?:整)?(?:到|至|成|为)|到|至|为|保持在?)?|(?:缩|放大|缩小)(?:到|至)|(?:设(?:为|成)|调(?:到|至))|保持在?)\\s*' + PERCENT);
 const relativeZoom = exact('(?:把|将)?' + VIEW + '\\s*(?:' + ZOOM + ')?(?:乘以\\s*(' + DECIMAL + ')|(?:在' +
   VIEW + '(?:' + PERCENT + ')?的基础上)?(缩小|放大)\\s*' + PERCENT + ')');
 const relativeTenths = exact('(?:把|将)?' + VIEW + '(缩小|放大)\\s*(' + NUMBER + ')成(?:[,，]\\s*(?:留下|保留)原来的(' + NUMBER + ')成)?');
@@ -83,8 +83,10 @@ function objectAction(text: string, title: Title, literal: Title): Action | unde
   if (rename && !/书籍|群组|连线|正文|里的/u.test(rename[1]!)) {
     return { action: 'node.rename', arguments: { ...target(rename[1]!), title: literal(rename[2]!) } };
   }
-  const immersive = /^(?:全屏(?:阅读|编辑)\s*(.+)|(?:进入|切到|打开|切换到)\s*(.+?)\s*的(?:沉浸(?:式)?(?:编辑|写作)|(?:专注|全屏)写作)(?:模式)?|打开\s*(.+?)[，,]\s*(?:进入|切到)?\s*(?:沉浸(?:式)?(?:编辑|写作)|专注写作)(?:模式)?)$/u.exec(text);
-  if (immersive) return { action: 'editor.immersive.enter', arguments: target(immersive[1] ?? immersive[2] ?? immersive[3]!) };
+  const immersive = /^(?:全屏(?:阅读|编辑)\s*(.+)|(?:进入|切到|打开|切换到)\s*(.+?)\s*的(?:沉浸(?:式)?(?:编辑|写作)|(?:专注|全屏)写作)(?:模式)?|打开\s*(.+?)[，,]\s*(?:进入|切到)?\s*(?:沉浸(?:式)?(?:编辑|写作)|专注写作)(?:模式)?|(?:让|把|将)\s*(.+?)\s*(?:进入|切换到)(?:沉浸(?:式)?(?:编辑|写作)|专注写作)(?:模式)?)$/u.exec(text);
+  if (immersive) return { action: 'editor.immersive.enter', arguments: target(immersive[1] ?? immersive[2] ?? immersive[3] ?? immersive[4]!) };
+  const reversedEditor = /^(?:把|将)\s*(.+?)(?:的)?(?:正文|编辑器|编辑窗格)\s*(打开|关掉|关闭)$/u.exec(text);
+  if (reversedEditor) return { action: reversedEditor[2] === '打开' ? 'editor.open' : 'editor.close', arguments: target(reversedEditor[1]!) };
   const namedEditor = /^(?:打开|进入|编辑|阅读)\s*(.+?)(?:的)?(?:正文|编辑器|编辑窗格|编辑页)$/u.exec(text);
   if (namedEditor && /^(?:当前)?选中/u.test(namedEditor[1]!)) return undefined;
   if (namedEditor) return { action: 'editor.open', arguments: target(namedEditor[1]!) };
@@ -158,6 +160,8 @@ function selectionLayout(clause: string): Action | undefined {
 function parseClause(clause: string, title: Title, literal: Title): Action | undefined {
   const zoom = absoluteZoom.exec(clause);
   if (zoom) return { action: 'viewport.set', arguments: { zoom: percentValue(zoom) } };
+  const ratio = exact('(?:把|将)?' + VIEW + '(?:' + ZOOM + ')?(?:设(?:置)?(?:为|成)|调(?:整)?(?:为|到|至)|缩放到|为|到|至)?\\s*(' + NUMBER + ')(倍|成)').exec(clause);
+  if (ratio) return { action: 'viewport.set', arguments: { zoom: numericValue(ratio[1]!) / (ratio[2] === '成' ? 10 : 1) } };
   const scale = relativeZoom.exec(clause);
   if (scale) return { action: 'viewport.scale', arguments: { factor: scale[1] ? numericValue(scale[1])
     : 1 + (scale[4] === '缩小' ? -1 : 1) * percentValue(scale, 5),

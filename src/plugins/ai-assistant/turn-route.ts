@@ -23,6 +23,7 @@ import { workspaceCatalogIntent } from '../../services/workspace-catalog-intent.
 import { readWorkspaceSequence } from '../../services/workspace-sequence-intent.ts';
 import { isCurrentConversationArchiveRequest } from '../../services/conversation-archive-intent.ts';
 import { isWorkspacePreviewRequest } from '../../services/workspace-structural-intent.ts';
+import { isWorkspaceCommandRequest, needsSemanticCanvasParsing } from '../../services/workspace-request-intent.ts';
 
 const OBJECT = /画布|卡(?:片)?|节点|文本框|群组|选区|连线|这条线|主题|背景|注释|批注|标注|导航栏|工具栏|编辑器|小地图|视图|缩放/u;
 const ANALYSIS = /总结|概括|归纳|对比|比较|分析|检查|核对|找出|根据|结合|参考/u;
@@ -40,7 +41,9 @@ const NO_MEMORY = /(?:不(?:要|用)|别|无需|禁止)(?:再|去)?(?:用|使用
 export function classifyAITurn(prompt: string, explicit?: AIOperation, requested: AIOperation = 'general') {
   const restructureTask = cardRestructureTask(prompt);
   const text = canvasCommandText(prompt).replace(/「[^」\r\n]+」|『[^』\r\n]+』|“[^”\r\n]+”|"[^"\r\n]+"/gu, ' □ ').trim();
-  const local = naturalCanvasOperation(prompt);
+  const parsedLocal = naturalCanvasOperation(prompt);
+  const semanticFallback = needsSemanticCanvasParsing(prompt, parsedLocal);
+  const local = semanticFallback ? undefined : parsedLocal;
   const disposition = canvasRequestDisposition(prompt);
   const allowsWorkspace = !explicit || explicit === 'general' || explicit === 'canvas-control' || Boolean(restructureTask);
   const archiveSession = allowsWorkspace &&
@@ -89,9 +92,7 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const indirectTask = !prospective && !DISCUSSION.test(text) &&
     (/^(?:请\s*|帮我\s*)?让.{1,90}(?:资料|正文|设定).{0,50}(?:更完整|补充|建立联系)/u.test(text) ||
       /落实到画布|^让(?:当前)?画布.{0,12}出现|换成.{0,60}关系改成/u.test(text));
-  const workspaceRequest = !contentOperation && disposition === 'normal' && !DISCUSSION.test(text) &&
-    /画布|节点|卡片|连线|连接线|群组|编辑器|沉浸|快捷键|自动保存|小地图|工具栏/u.test(text) &&
-    /^(?:请|帮我|麻烦|给我|我想|我要|把|将|设置|设定|修改|调整|让|进入|打开|关闭|选中|查看|查询|删除|清空)|(?:改为|改成|换成|调到|插入|加入|连接|缩放)/u.test(text);
+  const workspaceRequest = !contentOperation && disposition === 'normal' && (semanticFallback || isWorkspaceCommandRequest(prompt));
   const operation = revisePending || isCanvasStatusFollowup(prompt) ? 'general'
     : restructureTask && disposition === 'normal' ? 'canvas-control'
     : catalogIntent || archiveSession || native?.kind === 'connection-inspect' ? 'canvas-control' : disposition === 'read-only' ? 'general'
@@ -118,7 +119,7 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
     : (!explicit || explicit === 'general') && !writeCommand && !mixed && /^(?:(?:请|帮我)\s*)?(?:处理|弄|改|收|整理)一下\s*(?:这个|它|这张卡|这张卡片)?[。！!]?$/u.test(text)
     ? '你希望我在画布上修改什么，还是先讨论怎么改？' : undefined;
   return {
-    category, operation, local, disposition, repeatCreation, native: category === 'operation' ? native : undefined, history, draft, continuation, mechanical, geometryOnly, interpretedSearch, lookupOnly,
+    category, operation, local, semanticFallback: semanticFallback && !workspaceSteps && !catalogIntent && !native && !compound, disposition, repeatCreation, native: category === 'operation' ? native : undefined, history, draft, continuation, mechanical, geometryOnly, interpretedSearch, lookupOnly,
     excludesHistory, revisePending, workspaceSteps, archiveSession, catalogIntent: operation === 'canvas-control' ? catalogIntent : undefined,
     compound: operation === 'canvas-control' ? compound : undefined,
     readCanvas: category !== 'chat' || !standalone && (canvas || IMPLICIT_CANVAS_QUESTION.test(text) || /(?:这两张|这三张|它们).{0,10}(?:怎么连|如何连接)/u.test(text)),
@@ -155,6 +156,8 @@ export interface TurnAssembly {
   ownerId?: string;
   refreshed?: boolean;
   workspaceLocalPrompt?: string;
+  fallbackToModel?: boolean;
+  workspacePlanId?: string;
 }
 
 // Preparation objects are short-lived and never serialize the routing state into a book.

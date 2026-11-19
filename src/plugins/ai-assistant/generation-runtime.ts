@@ -206,21 +206,30 @@ export function registerAIGenerationRuntime(
         userEntryLength: prepared.userEntryLength,
         userTurn: prepared.userTurn,
       };
-      rememberTurnAssembly(refreshed, { ...turnAssembly(fresh), ownerId: fresh.id, refreshed: stale });
+      const priorAssembly = turnAssembly(prepared);
+      const freshAssembly = turnAssembly(fresh);
+      rememberTurnAssembly(refreshed, { ...freshAssembly, ownerId: fresh.id, refreshed: stale,
+        ...(priorAssembly.workspacePlanId ? { workspacePlanId: priorAssembly.workspacePlanId,
+          route: { ...freshAssembly.route, workspaceSteps: priorAssembly.route.workspaceSteps } } : {}),
+      });
       prepared = refreshed;
       options.preparations.set(prepared.id, prepared);
     };
     const runWithRecovery = async (signal: AbortSignal, runTurn: () => Promise<AIGenerateResult>) => {
       if (prepared.followupAction === 'retry' && prepared.operation === 'canvas-control') {
-        const workspaceSteps = turnAssembly(prepared).route.workspaceSteps;
+        const retryAssembly = turnAssembly(prepared);
+        const workspaceSteps = retryAssembly.route.workspaceSteps;
         if (workspaceSteps) {
-          const receipt = await context.queries.ask<WorkspacePlanReceipt | undefined>('workspace.plan.receipt@1', { id: canvasTurnId(prepared) });
+          let receipt = await context.queries.ask<WorkspacePlanReceipt | undefined>('workspace.plan.receipt@1', { id: retryAssembly.workspacePlanId ?? canvasTurnId(prepared) });
           signal.throwIfAborted();
+          if (receipt?.status === 'waiting' && retryAssembly.workspacePlanId) receipt = await context.commands.dispatch('workspace.plan.resume@1', { id: receipt.id, apply: [] });
           if (receipt) {
             replayedCanvasReceipt = true;
             const text = await workspaceReply(context, workspaceSteps, receipt, signal);
             return { text, provider: 'local', model: '本地工作区动作', usage: { inputTokens: 0, outputTokens: 0 } };
           }
+          if (retryAssembly.workspacePlanId) return { text: '原执行回执已失效，不能自动重复操作。请先核对当前界面，再重新发送要求。',
+            provider: 'local', model: '执行回执', usage: { inputTokens: 0, outputTokens: 0 } };
         }
         const receipt = await readCanvasReceipt(context, prepared.sessionId, signal, { preparationId: canvasTurnId(prepared) });
         if (receipt || prepared.appliedItemsMessage) {
@@ -255,6 +264,10 @@ export function registerAIGenerationRuntime(
         if (prepared.localMemoryDirective) return { text: '已确认并记入当前对话。', provider: 'local', model: '正式记忆', usage: { inputTokens: 0, outputTokens: 0 } };
         const assembly = turnAssembly(prepared);
         const { route } = assembly;
+        const parseWithModel = () => planWorkspaceWithModel(context, prepared, signal, plan => {
+          assembly.workspacePlanId = plan.id;
+          assembly.route = { ...assembly.route, workspaceSteps: plan.steps };
+        });
         if (assembly.personalTurn?.update) {
           signal.throwIfAborted();
           await context.commands.dispatch('ai.personal.update@1', assembly.personalTurn.update);
@@ -272,8 +285,8 @@ export function registerAIGenerationRuntime(
         }
         const clarification = assembly.clarify ?? route.clarification;
         if (clarification) {
-          if (!route.clarification && /不能可靠确定|请补充要操作的对象|只在本地处理/u.test(clarification)) {
-            const result = await planWorkspaceWithModel(context, prepared, signal);
+          if (!route.clarification && assembly.fallbackToModel) {
+            const result = await parseWithModel();
             assembly.localReply = result.text; return result;
           }
           return { text: clarification, provider: 'local', model: '任务澄清', usage: { inputTokens: 0, outputTokens: 0 } };
@@ -317,7 +330,7 @@ export function registerAIGenerationRuntime(
           return { text: plan.text, provider: 'local', model: route.fieldTask?.kind === 'change' ? '字段写入' : '历史原文恢复',
             usage: { inputTokens: 0, outputTokens: 0 } };
         }
-        if (route.category === 'operation' && !assembly.compoundTargets) {
+        if (route.category === 'operation' && !assembly.compoundTargets && !route.semanticFallback) {
           const instructions = assembly.localInstructions ?? (assembly.workspaceLocalPrompt ? [assembly.workspaceLocalPrompt] : undefined);
           if (prepared.selectionAtSend && /选中|选区/u.test(instructions?.join(' ') ?? prepared.prompt)) {
             const current = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
@@ -348,7 +361,7 @@ export function registerAIGenerationRuntime(
           if (instructions) throw new Error('本地画布操作能力不可用，请启用 AI 画布控制插件。');
         }
         if (prepared.operation === 'canvas-control' && !requestsCanvasTextGeneration(route) && !prepared.writebackTarget) {
-          const result = await planWorkspaceWithModel(context, prepared, signal);
+          const result = await parseWithModel();
           assembly.localReply = result.text; return result;
         }
         const interpretSearch = route.interpretedSearch;

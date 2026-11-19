@@ -139,21 +139,18 @@ test('model fallback uses current provider metadata and registered actions, requ
   const prepared: AIPreparedContext = { id: 'semantic-turn', sessionId: 'semantic-session', prompt: '请带我进入空白31的沉浸编辑', providerProfileId: 'chosen',
     operation: 'canvas-control', sources: [], totalCharacters: 0, estimatedTokens: 0, createdAt: Date.now(), expiresAt: Date.now() + 60000 };
   const response = await planWorkspaceWithModel(planner, prepared, new AbortController().signal);
-  assert.match(response.text, /尚未执行/u);
+  assert.match(response.text, /模型解析已完成/u);
   assert.equal(request?.providerId, 'chosen');
   assert.ok(!JSON.stringify(request).includes('正文不应发送给解析器'));
-  assert.deepEqual(await kernel.router.ask('editor.openPanes', undefined, 'core.test'), []);
-  const state = await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test');
-  assert.equal(state.reviews.at(-1)?.workspaceSteps?.length, 1);
-  await dispatch('canvasControl.apply@1', { id: state.reviews.at(-1)!.id });
+  assert.equal((await kernel.router.ask<string[]>('editor.openPanes', undefined, 'core.test')).length, 1);
   const editor = await kernel.router.ask<{ immersivePane?: string }>('editor.state', undefined, 'core.test');
   assert.ok(editor.immersivePane);
   output = { steps: [{ action: 'invented.deleteEverything', arguments: { target: { title: '空白31' } } }], clarification: '' };
   await assert.rejects(planWorkspaceWithModel(planner, { ...prepared, id: 'invalid' }, new AbortController().signal), /未开放动作/u);
   output = { steps: [{ action: 'selection.resolve', arguments: { ids: ['not-in-directory'] } }], clarification: '' };
   await assert.rejects(planWorkspaceWithModel(planner, { ...prepared, id: 'invalid-ids' }, new AbortController().signal), /未提供的对象/u);
-  output = { steps: [{ action: 'editor.immersive.enter', arguments: { target: { title: '空白31' } } }], clarification: '' };
-  await planWorkspaceWithModel(planner, { ...prepared, id: 'changed-after-review' }, new AbortController().signal);
+  output = { steps: [{ action: 'node.color', arguments: { target: { title: '空白31' }, color: '#3568a8' } }], clarification: '' };
+  await planWorkspaceWithModel(planner, { ...prepared, prompt: '调整空白31的颜色', id: 'changed-after-review' }, new AbortController().signal);
   const pending = (await kernel.router.ask<CanvasControlState>('canvasControl.state@1', undefined, 'core.test')).reviews.at(-1)!;
   const target = (await kernel.capabilities.request<ContentSummary[]>('content.summaries@1')).find(node => node.title === '空白 31')!;
   await dispatch('node.rename', { id: target.id, title: '更新后的标题' });

@@ -140,6 +140,27 @@ export async function workspaceReply(
       case 'library.state':
         if (typeof result.open === 'boolean') summaries.push(result.open ? '当前显示书库' : '当前显示画布');
         break;
+      case 'connection.inspect': {
+        const from = isRecord(result.from) ? result.from.nodeId : undefined;
+        const to = isRecord(result.to) ? result.to.nodeId : undefined;
+        if (typeof from === 'string' && typeof to === 'string') {
+          const nodes = await readNames(context, [from, to], signal);
+          const names = new Map(nodes.map(node => [node.id, node.title]));
+          if (!names.has(from) || !names.has(to)) {
+            const groups = await context.capabilities.request<Array<{ id: string; title: string }>>('groups.list@1', undefined, signal)
+              .catch(error => { if (isCapabilityUnavailable(error, 'groups.list@1')) return []; throw error; });
+            for (const group of groups) names.set(group.id, group.title);
+          }
+          summaries.push('连接线从「' + (names.get(from) ?? '不可用对象') + '」指向「' + (names.get(to) ?? '不可用对象') + '」');
+        }
+        break;
+      }
+      case 'group.inspect': {
+        if (typeof result.title !== 'string' || !Array.isArray(result.memberIds)) break;
+        const nodes = await readNames(context, result.memberIds.filter((id): id is string => typeof id === 'string').slice(0, 20), signal);
+        summaries.push('群组「' + result.title + '」有 ' + result.memberIds.length + ' 个成员' + (nodes.length ? '：' + nodes.map(node => '「' + node.title + '」').join('、') : ''));
+        break;
+      }
       case 'content.find': {
         const names = Array.isArray(result.matches) ? result.matches.flatMap(match =>
           isRecord(match) && typeof match.title === 'string' ? ['「' + match.title + '」'] : []) : [];
