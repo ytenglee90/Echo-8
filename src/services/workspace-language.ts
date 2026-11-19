@@ -240,17 +240,31 @@ export function compileWorkspaceLanguage(prompt: string, knownTitles: ReadonlySe
     .replace(/^(?:(?:麻烦|请|帮我|给我|我要|我想要|先|再|让我|带我)\s*)+/u, '')
     .replace(/^(?:仍然用|继续用)(?=\s*(?:[0-9０-９]|百分之))/u, '保持')
     .replace(/(?:一下|吧)$/u, '').trim(), title, literal);
-  const separator = /[,，;；、。]\s*|\s*(?:然后|接着|并且|同时|并|(?<!不)再)(?=\s*(?:打开|关闭|开启|展开|收起|关掉|聚焦|缩放|保持|把|将|显示|隐藏|删除|移除|修改|新建|创建))/u;
+  const separator = /[,，;；。]\s*|\s*(?:然后|接着|随后|最后|并且|同时|并|以及|和|(?<!不)再)(?=\s*(?:打开|关闭|开启|展开|收起|关掉|进入|退出|切换|切到|聚焦|缩放|保持|把|将|给|显示|隐藏|删除|移除|修改|设置|保存|新建|创建|撤销|重做|启用|停用|放大|缩小))/u;
+  const parseParallel = (value: string): Action[] | undefined => {
+    const parallel = /^(打开|展开|关闭|关掉|显示|隐藏)\s*(.+?)(的正文|的编辑器|的编辑窗格|的编辑页)?$/u.exec(workspaceRequestText(value));
+    if (!parallel || knownTitles.has(workspaceNameKey(literal(parallel[2]!)))) return undefined;
+    const operands = parallel[2]!.split(/、|以及|和|与/u).map(value => value.trim()).filter(Boolean);
+    if (operands.length < 2 || operands.length > 3) return undefined;
+    const actions = operands.map(operand => parse(parallel[1] + operand + (parallel[3] ?? '')));
+    return actions.every(action => action && (['editor.open', 'editor.close'].includes(action.action) ||
+      !action.arguments && /\.(?:open|close)$|^settings\./u.test(action.action))) ? actions.map(action => action!.action === 'editor.open'
+        ? { ...action!, arguments: { ...action!.arguments, mode: 'add' } } : action!) : undefined;
+  };
+  const parallel = !separator.test(text) ? parseParallel(text) : undefined;
+  if (parallel) return parallel.map((action, index) => ({ id: 'parallel-' + index, ...action }));
   // A location pair belongs to one action even when it contains a comma.
   const single = !separator.test(text) || nodeMove.test(text) || relativeTenths.test(text.replace(/^(?:把|将)/u, '')) ||
     /^打开.+[，,]\s*(?:进入|切到)?\s*(?:沉浸(?:式)?(?:编辑|写作)|专注写作)(?:模式)?$/u.test(text) ? parse(text) : undefined;
   if (single) return [{ id: single.action === 'viewport.set' ? 'viewport' : 'step-1', ...single }];
   const clauses = text.split(separator).map(clause => clause.trim()).filter(Boolean);
-  if (clauses.length < 2 || clauses.length > 8) return undefined;
+  if (clauses.length < 2 || clauses.length > 24) return undefined;
   const actions: Action[] = [];
   let previousTarget: Record<string, unknown> | undefined;
   for (const clause of clauses) {
     if (noMovement.test(clause.trim())) continue;
+    const multiple = parseParallel(clause);
+    if (multiple) { actions.push(...multiple); previousTarget = undefined; continue; }
     const parsed = parse(clause);
     if (!parsed) return undefined;
     const bound = bindLocalWorkspacePronouns([parsed], previousTarget, /\uE000/u.test(clause));

@@ -1,7 +1,7 @@
 import type { NaturalCanvasOperation } from './ai-task-route.ts';
 import { NATURAL_QUOTED_NAME, naturalName } from './natural-canvas-rules.ts';
 
-const SUBJECT = /工作区|画布|节点|卡片|文本框|连接线|连线|群组|分组|编组|编辑器|窗格|沉浸|主题|配色|工具|面板|菜单|窗口|界面|页面|标签|查找|搜索|小地图|吸附|参考线|快捷键|自动保存|书库|指令|偏好|配置|设置|插件|检索|索引|记忆中心|模型|模板|选中|选区|prompt/iu;
+const SUBJECT = /工作区|画布|节点|卡片|正文|文本框|连接线|连线|群组|分组|编组|编辑器|窗格|沉浸|主题|配色|工具|面板|菜单|窗口|界面|页面|标签|查找|搜索|小地图|吸附|参考线|快捷键|自动保存|书库|指令|偏好|配置|设置|插件|检索|索引|记忆中心|模型|模板|选中|选区|prompt/iu;
 const IMPERATIVE = /^(?:把|将|给|让|打开|关闭|开启|关掉|关上|收起|展开|显示|隐藏|进入|退出|切换|切到|换|改|调|设|选|删|移|清|连|断开|取消|恢复|返回|回到|聚焦|定位|找|查|看|列出|读出|启用|停用|禁用|唤出|呼出|叫出|去|到|翻|亮出|弹开|停止|暂停|重置|还原|放大|缩小|横排|竖排|整理)/u;
 
 export function workspaceRequestText(prompt: string): string {

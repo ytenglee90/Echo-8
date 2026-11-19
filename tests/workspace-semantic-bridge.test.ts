@@ -1,3 +1,4 @@
+import { semanticModelFixture } from './helpers/semantic-model-fixture.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ApplicationKernel } from '../src/core/kernel.ts';
@@ -84,6 +85,8 @@ async function harness(t: { after(callback: () => Promise<void>): void }) {
     capabilities: { request: async (key: string, input?: unknown, signal?: AbortSignal) => {
       if (key === 'ai.provider.catalog@1') return { activeId: 'selected', options: [{ id: 'selected', configured: true }] };
       if (key === 'ai.generate@1') {
+        const graph = semanticModelFixture(input as AIGenerateRequest);
+        if (graph) return { provider: 'fixture', model: 'semantic', text: JSON.stringify(graph), usage: { inputTokens: 0, outputTokens: 0 } };
         calls++; recorded = input as AIGenerateRequest; await duringResponse?.();
         const result = typeof output === 'function' ? await output(recorded, calls) : output;
         return { provider: 'fixture', model: 'selected', text: JSON.stringify(result), usage: { inputTokens: 20, outputTokens: 10 } };
@@ -329,7 +332,7 @@ test('cancellation after an observation stops the continuation before it opens a
   assert.equal(h.calls(), 2); assert.deepEqual(await h.kernel.router.ask('editor.openPanes', undefined, 'core.test'), []);
 });
 
-test('a correction and two distinct observations share the same four-call budget and aggregate usage', async t => {
+test('decomposition, correction and observations share the same four-call budget and stop before further execution', async t => {
   const h = await harness(t);
   const a = await h.dispatch<{ id: string }>('node.create', { title: '甲卡' });
   const b = await h.dispatch<{ id: string }>('node.create', { title: '乙卡' });
@@ -340,9 +343,9 @@ test('a correction and two distinct observations share the same four-call budget
     return { version: 2, phase: 'final', steps: [{ id: 'open', action: 'editor.open', arguments: { target: { id: b.id } } }],
       coverage: [{ requirementId: 'r1', status: 'observed', stepIds: ['o1.q', 'o2.q'] }, { requirementId: 'r2', status: 'planned', stepIds: ['open'] }], clarification: '' };
   });
-  const reply = await planWorkspaceWithModel(h.context, preparation('先比较甲乙卡片的尺寸，再打开更宽的那个'), new AbortController().signal);
-  assert.equal(h.calls(), 4); assert.equal(reply.usage?.inputTokens, 80);
-  assert.deepEqual(await h.kernel.router.ask('editor.openPanes', undefined, 'core.test'), [b.id]);
+  await assert.rejects(planWorkspaceWithModel(h.context, preparation('先比较甲乙卡片的尺寸，再打开更宽的那个'), new AbortController().signal), /达到预算/u);
+  assert.equal(h.calls(), 3); // One decomposition plus three mapping attempts consumes four total calls.
+  assert.deepEqual(await h.kernel.router.ask('editor.openPanes', undefined, 'core.test'), []);
 });
 
 test('model steps can use the existing 24-step owner limit instead of the former 12-step parsing limit', async t => {

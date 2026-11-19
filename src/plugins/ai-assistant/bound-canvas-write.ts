@@ -6,9 +6,10 @@ import { canvasCommandText, naturalCanvasOperation } from '../../services/ai-tas
 import { compileLocalInstructions } from './local-turn-routing.ts';
 import { classifyAITurn, type TurnAssembly } from './turn-route.ts';
 import type { FieldTarget } from './structured-fields.ts';
+import { isUsableGeneratedBody } from './text-composition.ts';
 
 export type BoundCanvasWrite =
-  | { kind: 'create'; plan: CanvasControlPlan; titles: string[] }
+  | { kind: 'create'; plan: CanvasControlPlan; titles: string[]; instruction?: string }
   | { kind: 'write'; target: FieldTarget; instruction: string }
   | { kind: 'fields'; targets: FieldTarget[]; field: string; sourceNumbers: number[]; replacedValues?: string[] };
 
@@ -37,6 +38,12 @@ export function resolveBoundCanvasWrite(
       item.kind === 'text' && item.complete === true && item.revision === node?.revision);
     return node && source ? { node, source, whole: source.start === 0 && source.length === node.length } : undefined;
   };
+  if (assembly.compositionWriteTarget) {
+    const target = assembly.compositionWriteTarget;
+    const resolved = resolve(target.id);
+    if (!resolved?.whole || resolved.node.revision !== target.expectedRevision) return undefined;
+    return { kind: 'write', target, instruction: `按本轮要求处理指定来源正文，只输出要${target.deleteCount ? '替换' : '追加'}到目标节点的实际正文。${route.textComposition?.instruction ?? ''}` };
+  }
   if (assembly.restructure) {
     const binding = assembly.restructure;
     if (!binding.ids.every(id => resolve(id)?.whole)) return undefined;
@@ -50,7 +57,7 @@ export function resolveBoundCanvasWrite(
       if (from !== to) actions.push({ type: 'update-connection', id: edge.id,
         ...(from ? { from: 'local-text-0' } : { to: 'local-text-0' }) });
     }
-    return { kind: 'create', plan: { version: 2, actions }, titles: binding.titles };
+    return { kind: 'create', plan: { version: 2, actions }, titles: binding.titles, instruction: binding.instruction };
   }
   if (fields?.length && field && fields.every(target => {
     const resolved = resolve(target.id);
@@ -106,7 +113,7 @@ function appendTo(node: CanvasAgentQueryResult['nodes'][number], instruction: st
 
 export function boundCanvasWriteInstructions(write: BoundCanvasWrite): string {
   const rules = '应用已核对本轮写入目标和范围，并将本地提交。只输出 JSON，不要调用画布工具或输出操作计划。';
-  if (write.kind === 'create') return `${rules} 按以下标题的顺序生成正文：${JSON.stringify(write.titles)}。只输出 {"texts":["正文", "..."]}，不要返回标题、对象 ID、坐标或其他操作字段。`;
+  if (write.kind === 'create') return `${rules} ${write.instruction ?? ''} 按以下标题的顺序生成正文：${JSON.stringify(write.titles)}。只输出 {"texts":["正文", "..."]}，不要返回标题、对象 ID、坐标或其他操作字段，不要用“见下方改写正文”等占位说明代替正文。`;
   return write.kind === 'fields'
     ? `${rules} 按来源编号 ${write.sourceNumbers.join('、')} 的顺序，为每张卡提供一行「${write.field}」的值。要求修改时给出与原值不同的新值。输出 {"texts":["字段值", "..."]}，每个元素只含值。`
     : `${rules} ${write.instruction} 输出 {"text":"可直接写入的正文"}，正文从内容本身开始。`;
@@ -120,7 +127,7 @@ export function buildBoundCanvasWritePlan(write: BoundCanvasWrite, output: strin
   if (!isRecord(value) || Object.keys(value).length !== 1) throw invalid();
   if (write.kind === 'create') {
     const texts = value.texts;
-    if (!Array.isArray(texts) || texts.length !== write.titles.length || texts.some(text => typeof text !== 'string' || !text.trim())) throw invalid();
+    if (!Array.isArray(texts) || texts.length !== write.titles.length || texts.some(text => !isUsableGeneratedBody(text))) throw invalid();
     let index = 0;
     return { ...write.plan, actions: write.plan.actions.map(action => action.type === 'create-node'
       ? { ...action, text: (texts[index++] as string).trim() } : { ...action }) };
@@ -130,7 +137,7 @@ export function buildBoundCanvasWritePlan(write: BoundCanvasWrite, output: strin
   if (!Array.isArray(texts) || texts.length !== targets.length) throw invalid();
   const actions = targets.map(({ id, start, deleteCount, expectedRevision, prefix }, index) => {
     const text: unknown = texts[index];
-    if (typeof text !== 'string' || !text.trim() || (write.kind === 'fields' &&
+    if (typeof text !== 'string' || !text.trim() || write.kind === 'write' && !isUsableGeneratedBody(text) || (write.kind === 'fields' &&
       (/[\r\n]/u.test(text.trim()) || (deleteCount > 0 && text.trim() === write.replacedValues?.[index])))) throw invalid();
     return { type: 'update-node' as const, id, edit: { start, deleteCount, expectedRevision, insert: prefix + text.trim() } };
   });

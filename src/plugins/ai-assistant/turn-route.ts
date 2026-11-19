@@ -25,6 +25,7 @@ import { isCurrentConversationArchiveRequest } from '../../services/conversation
 import { isWorkspacePreviewRequest } from '../../services/workspace-structural-intent.ts';
 import { isWorkspaceCommandRequest, needsSemanticCanvasParsing, localCanvasCoversModifiers } from '../../services/workspace-request-intent.ts';
 import { workspaceRequirements } from '../../services/workspace-semantic-plan.ts';
+import { isTextCompositionRequest, readTextComposition } from './text-composition.ts';
 
 const OBJECT = /画布|卡(?:片)?|节点|文本框|群组|选区|连线|这条线|主题|背景|注释|批注|标注|导航栏|工具栏|编辑器|小地图|视图|缩放/u;
 const ANALYSIS = /总结|概括|归纳|对比|比较|分析|检查|核对|找出|根据|结合|参考/u;
@@ -40,24 +41,26 @@ const IMPLICIT_CANVAS_QUESTION = /(?:这|那)(?:两|二|三|四|五|几|\d+)张.
 const NO_MEMORY = /(?:不(?:要|用)|别|无需|禁止)(?:再|去)?(?:用|使用|读取|搜索|检索|参考|回查|查)?(?:我(?:们)?的)?(?:长期记忆|历史(?:记忆|记录)?|旧对话|过去的对话)/u;
 
 export function classifyAITurn(prompt: string, explicit?: AIOperation, requested: AIOperation = 'general') {
+  const textComposition = readTextComposition(prompt);
+  const compositionCandidate = Boolean(textComposition) || isTextCompositionRequest(prompt);
   const restructureTask = cardRestructureTask(prompt);
   const text = canvasCommandText(prompt).replace(/「[^」\r\n]+」|『[^』\r\n]+』|“[^”\r\n]+”|"[^"\r\n]+"/gu, ' □ ').trim();
   const parsedLocal = naturalCanvasOperation(prompt);
   const semanticFallback = needsSemanticCanvasParsing(prompt, parsedLocal);
-  const local = semanticFallback ? undefined : parsedLocal;
+  const local = semanticFallback || compositionCandidate ? undefined : parsedLocal;
   const disposition = canvasRequestDisposition(prompt);
-  const allowsWorkspace = !explicit || explicit === 'general' || explicit === 'canvas-control' || Boolean(restructureTask);
+  const allowsWorkspace = !explicit || explicit === 'general' || explicit === 'canvas-control' || Boolean(restructureTask) || compositionCandidate;
   const archiveSession = allowsWorkspace &&
     isCurrentConversationArchiveRequest(prompt);
-  const compound = disposition !== 'read-only' && allowsWorkspace
+  const compound = !compositionCandidate && disposition !== 'read-only' && allowsWorkspace
     ? readDeferredCanvasTurn(prompt) ?? readCompoundTurn(prompt) : undefined;
   const candidate = nativeCanvasIntent(prompt);
-  const nativeCandidate = disposition === 'normal' || candidate?.kind === 'connection-inspect' ? candidate : undefined;
+  const nativeCandidate = !compositionCandidate && (disposition === 'normal' || candidate?.kind === 'connection-inspect') ? candidate : undefined;
   const copyIntent = nativeCandidate?.kind === 'copy' ? workspaceCatalogIntent(prompt) : undefined;
   const native = copyIntent?.steps[0]?.selection && copyIntent.steps[0].action === 'clipboard.copy' ? undefined : nativeCandidate;
-  const workspaceSteps = !native && !compound && disposition === 'normal' && allowsWorkspace
+  const workspaceSteps = !compositionCandidate && !native && !compound && disposition === 'normal' && allowsWorkspace
     ? compileWorkspaceLanguage(prompt) : undefined;
-  const canUseCatalog = !native && !compound && !workspaceSteps && allowsWorkspace;
+  const canUseCatalog = !compositionCandidate && !native && !compound && !workspaceSteps && allowsWorkspace;
   const sequence = canUseCatalog && !copyIntent ? readWorkspaceSequence(prompt) : undefined;
   const catalogCandidate = canUseCatalog
     ? copyIntent ?? (sequence?.matched ? sequence.intent : workspaceCatalogIntent(prompt)) : undefined;
@@ -72,7 +75,7 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const itemList = /^(?:(?:请|帮我)\s*)?(?:只|仅)?应用\s*第?\s*(\d+(?:\s*(?:[、，,和及与]|以及)\s*第?\s*\d+)*)\s*项[。！!]?$/u.exec(text);
   const applyItems = itemList?.[1]?.match(/\d+/gu)?.map(Number);
   const fieldTask = structuredFieldTask(prompt);
-  const creationText = !local ? canvasCreationWithText(prompt) : undefined;
+  const creationText = !compositionCandidate && !local ? canvasCreationWithText(prompt) : undefined;
   const canvas = OBJECT.test(text) || /@\[|@node:/u.test(prompt);
   const prospective = disposition === 'read-only' || disposition === 'preview' && !local ||
     !local && /^(?:如果|假如|假设|要是|先别|先不要|不要|别|不用|暂不)/u.test(canvasIntentText(text));
@@ -100,7 +103,7 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
   const incompleteSequence = workspaceRequest && requirements.length > 1 && !localCanvasCoversModifiers(prompt, parsedLocal, requirements.map(req => req.text)) && !workspaceSteps && !catalogIntent &&
     !compound && !restructureTask && !creationText && parsedLocal?.kind !== 'create';
   const operation = revisePending || isCanvasStatusFollowup(prompt) ? 'general'
-    : restructureTask && disposition === 'normal' ? 'canvas-control'
+    : (restructureTask || compositionCandidate) && disposition === 'normal' ? 'canvas-control'
     : catalogIntent || archiveSession || native?.kind === 'connection-inspect' ? 'canvas-control' : disposition === 'read-only' ? 'general'
     : workspaceSteps || compound ? 'canvas-control' : disposition === 'preview' && !local ? 'general'
     : prospective && (!explicit || explicit === 'canvas-control') ? contentOperation ?? 'general' : explicit ?? (writeCommand || mixed || (!contentOperation && openCanvasTask) || indirectTask || workspaceRequest ? 'canvas-control'
@@ -132,7 +135,7 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
     compound: operation === 'canvas-control' ? compound : undefined,
     readCanvas: category !== 'chat' || !standalone && (canvas || IMPLICIT_CANVAS_QUESTION.test(text) || /(?:这两张|这三张|它们).{0,10}(?:怎么连|如何连接)/u.test(text)),
     purpose: category === 'mixed' ? 'general' as const : canvasControlPurpose(prompt),
-    clarification, applyItems, fieldTask, restructureTask, creationText,
+    clarification, applyItems, fieldTask, restructureTask, creationText, textComposition, compositionCandidate,
   } as const;
 }
 
@@ -149,6 +152,8 @@ export interface TurnAssembly {
   explicitCanvasIds?: string[];
   canvasDraftBound?: boolean;
   boundCanvasWrite?: BoundCanvasWrite;
+  textDraft?: string;
+  compositionWriteTarget?: FieldTarget;
   compoundTargets?: CanvasCompoundTarget[];
   personalTurn?: PersonalTurn;
   recoveryPrompt?: string;

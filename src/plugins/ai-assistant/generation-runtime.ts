@@ -27,10 +27,11 @@ import { initialCanvasAgentState, runCanvasAgentLoop } from './canvas-agent-tool
 import { canvasTurnId, rememberTurnAssembly, turnAssembly } from './turn-route.ts';
 import { prepareAIContext } from './context-preparation.ts';
 import { canvasReceiptReply, readCanvasReceipt } from './canvas-recovery.ts';
-import { LOCAL_CANVAS_CONTENT_TARGET, requestsCanvasTextGeneration } from './canvas-execution-policy.ts';
+import { requestsCanvasTextGeneration } from './canvas-execution-policy.ts';
 import { compoundGenerateRequest, readCompoundOutput } from './compound-turn.ts';
 import { revalidatePreparedSources } from './context-source-reader.ts';
-import { operationCreatesWriteback } from './operations.ts';
+import { operationCreatesWriteback, operationLabel } from './operations.ts';
+import { textCompositionSteps } from './text-composition.ts';
 import { nativeConversation } from './request-evidence.ts';
 import { isAbortError, isCanvasRevisionConflict, isCapabilityUnavailable } from './runtime-errors.ts';
 import { workspaceReply } from './workspace-reply.ts';
@@ -259,15 +260,40 @@ export function registerAIGenerationRuntime(
       priority: 16,
       timeoutMs: 5 * 60_000,
       estimatedCost: 4,
-      run: (signal, report, control) => runWithRecovery(signal, async () => {
+      run: (signal, report, control) => runWithRecovery(signal, async function executePreparedTurn(): Promise<AIGenerateResult> {
         report(0.1);
         if (prepared.localMemoryDirective) return { text: '已确认并记入当前对话。', provider: 'local', model: '正式记忆', usage: { inputTokens: 0, outputTokens: 0 } };
         const assembly = turnAssembly(prepared);
         const { route } = assembly;
-        const parseWithModel = () => planWorkspaceWithModel(context, prepared, signal, plan => {
-          assembly.workspacePlanId = plan.id;
-          assembly.route = { ...assembly.route, workspaceSteps: plan.steps };
-        });
+        const parseWithModel = async (allowComposition = false): Promise<AIGenerateResult> => {
+          const parsed = await planWorkspaceWithModel(context, prepared, signal, plan => {
+            assembly.workspacePlanId = plan.id;
+            assembly.route = { ...assembly.route, workspaceSteps: plan.steps };
+          }, allowComposition);
+          if (!parsed.composition) { assembly.localReply = parsed.text; return parsed; }
+          requestUsages.push(parsed.usage);
+          const session = options.readSessions()[prepared.sessionId];
+          if (!session) throw new Error('当前会话已关闭，正文工作流未执行。');
+          const prior = prepared;
+          const fresh = await prepareAIContext(context, session, options.readMemoryIndexes(), {
+            ...prepared.replayRequest, sessionId: prepared.sessionId, assistantId: prepared.assistantId,
+            prompt: prepared.prompt, operation: 'canvas-control', providerProfileId: prepared.providerProfileId,
+          }, signal, report, undefined, undefined, prepared.id, { ...assembly.route,
+            category: 'operation', operation: 'canvas-control', compositionCandidate: true, textComposition: parsed.composition,
+            local: undefined, native: undefined, workspaceSteps: undefined, catalogIntent: undefined, draft: false,
+            creationText: undefined, compound: undefined, fieldTask: undefined, restructureTask: undefined, semanticFallback: false,
+          }, undefined, prepared.selectionAtSend);
+          prepared = { ...prior, ...fresh };
+          rememberTurnAssembly(prepared, { ...turnAssembly(fresh), ownerId: canvasTurnId(prior) });
+          options.preparations.set(prepared.id, prepared);
+          if (turnAssembly(prepared).clarify) {
+            const text = turnAssembly(prepared).clarify!;
+            turnAssembly(prepared).localReply = text;
+            return { text, provider: parsed.provider, model: parsed.model, usage: parsed.usage };
+          }
+          return executePreparedTurn();
+        };
+        if (route.compositionCandidate && !route.textComposition) return parseWithModel(true);
         if (assembly.personalTurn?.update) {
           signal.throwIfAborted();
           await context.commands.dispatch('ai.personal.update@1', assembly.personalTurn.update);
@@ -330,7 +356,7 @@ export function registerAIGenerationRuntime(
           return { text: plan.text, provider: 'local', model: route.fieldTask?.kind === 'change' ? '字段写入' : '历史原文恢复',
             usage: { inputTokens: 0, outputTokens: 0 } };
         }
-        if (route.category === 'operation' && !assembly.compoundTargets && (!route.semanticFallback || Boolean(assembly.localInstructions?.length))) {
+        if (route.category === 'operation' && !route.compositionCandidate && !assembly.compoundTargets && (!route.semanticFallback || Boolean(assembly.localInstructions?.length))) {
           const instructions = assembly.localInstructions ?? (assembly.workspaceLocalPrompt ? [assembly.workspaceLocalPrompt] : undefined);
           if (prepared.selectionAtSend && /选中|选区/u.test(instructions?.join(' ') ?? prepared.prompt)) {
             const current = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
@@ -382,8 +408,13 @@ export function registerAIGenerationRuntime(
           signal,
         );
         if (prepared.operation === 'canvas-control' && !assembly.boundCanvasWrite && !assembly.compoundTargets) {
-          assembly.localReply = LOCAL_CANVAS_CONTENT_TARGET;
-          return { text: assembly.localReply, provider: 'local', model: '本地操作澄清', usage: { inputTokens: 0, outputTokens: 0 } };
+          return parseWithModel(route.compositionCandidate);
+        }
+        if (assembly.textDraft && assembly.boundCanvasWrite?.kind === 'create') {
+          await revalidatePreparedSources(context, prepared.sources, { signal,
+            allowUnchangedRangeRevisionAdvanceFor: new Set(prepared.sources.filter(source => source.kind === 'conversation').map(source => source.sourceId)) });
+          const plan = buildBoundCanvasWritePlan(assembly.boundCanvasWrite, JSON.stringify({ texts: [assembly.textDraft] }));
+          return { text: JSON.stringify(plan), provider: 'local', model: '对话正文写入', usage: aggregateTokenUsage(requestUsages) ?? { inputTokens: 0, outputTokens: 0 } };
         }
         if (route.draft) {
           const draft = assembly.canvasDraftBound ? prepared.sources.filter(source => source.reason === 'recent-conversation' && source.complete === true)
@@ -683,6 +714,13 @@ export function registerAIGenerationRuntime(
             text: result.text, complete: result.finishReason !== 'length',
           });
           result = { ...result, text: offer.message + (assembly.route.compound?.deferred ? '\n其余步骤已暂缓，可以之后再发送。' : ''), reasoning: undefined };
+          if (assembly.route.textComposition && assembly.boundCanvasWrite?.kind === 'create') {
+            const task = assembly.route.textComposition;
+            const steps = textCompositionSteps(task);
+            const title = assembly.boundCanvasWrite.titles[0];
+            const sourceTitles = prepared.sources.filter(source => source.kind === 'text' && source.reason === 'explicit-reference').map(source => source.title);
+            result.text += `\n已识别 ${steps.length} 步：新建「${title}」 → ${assembly.textDraft ? '沿用本对话已生成的正文' : operationLabel(task.operation) + '「' + sourceTitles.join('、') + '」的正文'} → 将实际正文填入新节点。`;
+          }
           directPlanId = offer.directPlanId;
         }
         if (options.tasks.get(prepared.sessionId) !== task) { logAnswer('cancelled'); return; }

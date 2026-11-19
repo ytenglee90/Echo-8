@@ -1,3 +1,4 @@
+import { fulfillSemanticDecomposition } from './semantic-model-fixture.ts';
 import { expect, test, type Page } from '@playwright/test';
 import type { CanvasControlPlan } from '../../src/protocols/canvas-control.ts';
 import { parseProject, serializeProject } from '../../src/plugins/import-export/codec.ts';
@@ -21,6 +22,24 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 ] };
 
 export function canvasControlScenarios(url: string): void {
+  test('parallel local editor targets and unpunctuated immersive dependencies avoid all model calls', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await seedCanvas(page, url, [{ title: '甲卡', body: '甲卡正文。' }, { title: '乙卡', body: '乙卡正文。' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true }); const input = ai.locator('.ai-composer textarea');
+    await input.fill('打开「甲卡」和「乙卡」的正文'); await input.press('Enter');
+    await expect(page.locator('.editor-writing-area').filter({ visible: true })).toHaveCount(2);
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    await input.fill('关闭全部编辑器'); await input.press('Enter');
+    await expect(page.locator('.editor-writing-area').filter({ visible: true })).toHaveCount(0);
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    await input.fill('打开甲卡的正文并进入它的沉浸编辑'); await input.press('Enter');
+    await expect(page.getByRole('button', { name: '退出沉浸写作', exact: true })).toBeVisible();
+    await expect(page.locator('.editor-writing-area').filter({ visible: true }).first()).toContainText('甲卡正文。');
+    await page.getByRole('button', { name: '退出沉浸写作', exact: true }).click();
+    expect(calls).toBe(0);
+  });
   test.beforeEach(async ({page})=>installLocalLanguageAssets(page));
   test('expanded polite controls and same-request pronouns remain local with real editor state', async ({ page }) => {
     let calls = 0;
@@ -52,6 +71,7 @@ export function canvasControlScenarios(url: string): void {
   test('incomplete model coverage is corrected before either editor opens', async ({ page }) => {
     let calls = 0; let selections = 0; let plans = 0;
     await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const body = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -87,7 +107,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('the selected model observes actual sizes before choosing and opening the wider card', async ({ page }) => {
     let calls = 0; let selections = 0; let plans = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const body = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -119,7 +140,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('unrecognized interface wording reaches the selected model once and executes without canvas metadata', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const body = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -153,7 +175,8 @@ export function canvasControlScenarios(url: string): void {
   test('a weak title lookup reaches model parsing and returns real connection endpoints', async ({ page }) => {
     let calls = 0;
     let selections = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const body = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -380,9 +403,159 @@ export function canvasControlScenarios(url: string): void {
     await page.getByRole('button', { name: '退出沉浸写作', exact: true }).click();
     expect(calls).toBe(0);
   });
-  for (const fieldOrder of ['rewrite-first', 'create-first'] as const) test('rewrite into a named new node generates only prose and creates an undoable result: ' + fieldOrder, async ({ page }) => {
+  test('semantic decomposition links a transformed result to a new object without sending unrelated prose', async ({ page }) => {
+    const stages: string[] = [];
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      const body = route.request().postDataJSON();
+      const headers = { 'access-control-allow-origin': '*' };
+      let output: unknown;
+      if (body.stream) {
+        stages.push('generate');
+        expect(JSON.stringify(body)).toContain('来源只记载他在雨中醒来');
+        expect(JSON.stringify(body)).not.toContain('无关正文不应外发');
+        const content = JSON.stringify({ texts: ['雨声惊醒了他。'] });
+        return route.fulfill({ headers, contentType: 'text/event-stream', body: 'data: ' + JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n' });
+      }
+      const payload = JSON.parse(body.messages[1].content);
+      expect(JSON.stringify(body)).not.toContain('来源只记载他在雨中醒来');
+      expect(JSON.stringify(body)).not.toContain('无关正文不应外发');
+      if (payload.stage === 'decompose') {
+        stages.push('decompose'); expect(payload.directory).toBeUndefined(); expect(payload.actions).toBeUndefined();
+        output = { version: 1, intents: [
+          { id: 'new', kind: 'create', request: '创建名为周明瑞的新节点', objects: [], dependsOn: [], output: 'object' },
+          { id: 'body', kind: 'transform', request: '将未命名节点正文换个说法', objects: [{ role: 'source', name: '未命名节点' }], dependsOn: [], output: 'text' },
+          { id: 'fill', kind: 'write', request: '将改写结果填入新节点', objects: [{ role: 'source', from: 'body' }, { role: 'destination', from: 'new' }], dependsOn: ['new', 'body'] },
+        ], coverage: [{ requirementId: 'r1', intentIds: ['body'] }, { requirementId: 'r2', intentIds: ['new', 'fill'] }, { requirementId: 'r3', intentIds: ['new'] }], clarification: '' };
+      } else {
+        stages.push('map'); expect(payload.semanticGraph.intents).toHaveLength(3); expect(payload.actions).toHaveLength(1);
+        const source = payload.directory.nodes.find((node: { title: string }) => node.title === '未命名节点');
+        output = { version: 2, phase: 'final', steps: [{ id: 'compose', action: 'text.composeAndWrite', arguments: { steps: [
+          { id: 'new', kind: 'create-node', title: '周明瑞' },
+          { id: 'body', kind: 'transform-text', sourceIds: [source.id], operation: 'rewrite', instruction: '换一种叙述，保留事实' },
+          { id: 'fill', kind: 'fill-node', targetFrom: 'new', textFrom: 'body' },
+        ] } }], coverage: ['new','body','fill'].map(requirementId => ({ requirementId, status: 'planned', stepIds: ['compose'] })), clarification: '' };
+      }
+      return route.fulfill({ headers, json: { choices: [{ message: { role: 'assistant', content: JSON.stringify(output) }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 10 } } });
+    });
+    await seedCanvas(page, url, [{ title: '未命名节点', body: '来源只记载他在雨中醒来。' }, { title: '无关卡', body: '无关正文不应外发' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('把未命名节点的正文换个说法，放到新节点，标题为周明瑞');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.getByRole('article', { name: /文本节点：周明瑞$/u })).toContainText('雨声惊醒了他。');
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    expect(stages).toEqual(['decompose','map','generate']);
+    await expect(ai.locator('.ai-chat-bubble.assistant').last()).toContainText('已识别 3 步');
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(page.getByRole('article', { name: /文本节点：周明瑞$/u })).toHaveCount(0);
+    await expect(page.getByRole('article', { name: /文本节点：未命名节点$/u })).toContainText('来源只记载他在雨中醒来');
+  });
+  test('independent semantic actions in one clause cannot share one editor operation', async ({ page }) => {
+    let decomposition = 0, mappings = 0, total = 0;
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      total++; const body = route.request().postDataJSON(); const payload = JSON.parse(body.messages[1].content);
+      let output: unknown;
+      if (payload.stage === 'decompose') {
+        decomposition++;
+        output = { version: 1, intents: ['甲卡','乙卡'].map((name,i) => ({ id: 'open' + i, kind: 'control', request: '打开' + name + '的正文', objects: [{ role: 'target', name }], dependsOn: [] })),
+          coverage: [{ requirementId: 'r1', intentIds: ['open0','open1'] }], clarification: '' };
+      } else if (!payload.directory) output = { actions: ['editor.open'], clarification: '' };
+      else {
+        mappings++; await expect(page.locator('.editor-writing-area').filter({ visible: true })).toHaveCount(0);
+        const nodes = ['甲卡','乙卡'].map(title => payload.directory.nodes.find((node: { title: string }) => node.title === title));
+        const steps = nodes.map((node,i) => ({ id: 'open' + i, action: 'editor.open', arguments: { target: { id: node.id }, mode: 'add' } }));
+        output = { version: 2, phase: 'final', steps: mappings === 1 ? steps.slice(0,1) : steps, clarification: '',
+          coverage: ['open0','open1'].map((requirementId,i) => ({ requirementId, status: 'planned', stepIds: ['open' + (mappings === 1 ? 0 : i)] })) };
+      }
+      return route.fulfill({ headers: { 'access-control-allow-origin': '*' }, json: { choices: [{ message: { role: 'assistant', content: JSON.stringify(output) }, finish_reason: 'stop' }] } });
+    });
+    await seedCanvas(page, url, [{ title: '甲卡', body: '甲的正文。' }, { title: '乙卡', body: '乙的正文。' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('让甲卡和乙卡的编辑器一起出现'); await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.locator('.editor-writing-area').filter({ visible: true })).toHaveCount(2);
+    expect(decomposition).toBe(1); expect(mappings).toBe(2); expect(total).toBeLessThanOrEqual(4);
+  });
+  test('semantic result dependencies also append to an existing node through review and one undo', async ({ page }) => {
+    const stages: string[] = [];
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      const body = route.request().postDataJSON(); const headers = { 'access-control-allow-origin': '*' };
+      if (body.stream) {
+        stages.push('generate'); const content = JSON.stringify({ text: '这是重述后的甲卡正文。' });
+        return route.fulfill({ headers, contentType: 'text/event-stream', body: 'data: ' + JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n' });
+      }
+      const payload = JSON.parse(body.messages[1].content); let output: unknown;
+      if (payload.stage === 'decompose') {
+        stages.push('decompose'); output = { version: 1, intents: [
+          { id: 'body', kind: 'transform', request: '重述甲卡正文', objects: [{ role: 'source', name: '甲卡' }], dependsOn: [], output: 'text' },
+          { id: 'write', kind: 'write', request: '把结果追加到乙卡末尾', objects: [{ role: 'source', from: 'body' }, { role: 'destination', name: '乙卡' }], dependsOn: ['body'] },
+        ], coverage: [{ requirementId: 'r1', intentIds: ['body'] }, { requirementId: 'r2', intentIds: ['write'] }], clarification: '' };
+      } else {
+        stages.push('map');
+        const a = payload.directory.nodes.find((node: { title: string }) => node.title === '甲卡');
+        const b = payload.directory.nodes.find((node: { title: string }) => node.title === '乙卡');
+        output = { version: 2, phase: 'final', steps: [{ id: 'compose', action: 'text.composeAndWrite', arguments: { steps: [
+          { id: 'body', kind: 'transform-text', sourceIds: [a.id], operation: 'rewrite', instruction: '重述甲卡正文' },
+          { id: 'write', kind: 'fill-node', targetId: b.id, textFrom: 'body', mode: 'append' },
+        ] } }], coverage: ['body','write'].map(requirementId => ({ requirementId, status: 'planned', stepIds: ['compose'] })), clarification: '' };
+      }
+      return route.fulfill({ headers, json: { choices: [{ message: { role: 'assistant', content: JSON.stringify(output) }, finish_reason: 'stop' }] } });
+    });
+    await seedCanvas(page, url, [{ title: '甲卡', body: '甲卡原文。' }, { title: '乙卡', body: '乙卡原文必须保留。' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('将甲卡的正文重述一遍，然后把结果追加到乙卡的末尾'); await ai.locator('.ai-composer textarea').press('Enter');
+    const control = page.getByRole('region', { name: '画布控制', exact: true });
+    await expect(control.getByRole('button', { name: /^应用/u })).toBeEnabled();
+    const destination = page.getByRole('article', { name: /文本节点：乙卡$/u });
+    await expect(destination).not.toContainText('这是重述后的甲卡正文');
+    await control.getByRole('button', { name: /^应用/u }).click();
+    await expect(destination).toContainText('这是重述后的甲卡正文'); await expect(destination).toContainText('乙卡原文必须保留');
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    await expect(destination).not.toContainText('这是重述后的甲卡正文'); await expect(destination).toContainText('乙卡原文必须保留');
+    expect(stages).toEqual(['decompose','map','generate']);
+  });
+  test('placeholder prose fails before creating an empty or misleading result', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++; const content = JSON.stringify({ texts: ['见下方改写正文。'] });
+      return route.fulfill({ headers: { 'access-control-allow-origin': '*' }, contentType: 'text/event-stream', body: 'data: ' + JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n' });
+    });
+    await seedCanvas(page, url, [{ title: '甲卡', body: '原正文。' }], true); await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('改写甲卡的正文，用新的节点填入内容，标题为失败结果'); await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(ai.getByRole('status')).toContainText('模型没有返回符合本轮写入范围的正文');
+    await expect(page.getByRole('article', { name: /文本节点：失败结果$/u })).toHaveCount(0); expect(calls).toBe(1);
+    await expect(page.getByRole('article', { name: /文本节点：甲卡$/u })).toContainText('原正文。');
+  });
+  test('a complete previous rewrite can be put into a new node locally without generating it again', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      const content = '这是一段已经生成、应当原样沿用的改写正文。';
+      return route.fulfill({ headers: { 'access-control-allow-origin': '*' }, contentType: 'text/event-stream', body: 'data: ' + JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n' });
+    });
+    await seedCanvas(page, url, [{ title: '原稿', body: '原来那段正文。' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const input = ai.locator('.ai-composer textarea');
+    await input.fill('改写原稿的正文'); await input.press('Enter');
+    await expect(ai.locator('.ai-chat-bubble.assistant').last()).toContainText('这是一段已经生成');
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+    await input.fill('把刚才改写好的正文原样放进新节点，叫改写存稿'); await input.press('Enter');
+    await expect(page.getByRole('article', { name: /文本节点：改写存稿$/u })).toContainText('这是一段已经生成、应当原样沿用的改写正文。');
+    await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible(); expect(calls).toBe(1);
+    await expect(ai.getByLabel('本轮 Token 用量', { exact: true }).last()).toContainText('输入 0 · 输出 0');
+  });
+  for (const fieldOrder of ['rewrite-first', 'create-first', 'fill-without-title', 'created-first', 'created-body-field'] as const) test('rewrite into a named new node generates only prose and creates an undoable result: ' + fieldOrder, async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const body = route.request().postDataJSON() as { messages: Array<{content: string}>; tools?: unknown };
@@ -395,11 +568,15 @@ export function canvasControlScenarios(url: string): void {
     await seedCanvas(page, url, [{ title: '未命名节点', body: '原正文里只有这项事实。' }], true);
     await configure(page, url, 'openai', undefined, 'direct', false);
     const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
-    await ai.locator('.ai-composer textarea').fill(fieldOrder === 'rewrite-first'
+    const resultTitle = fieldOrder === 'fill-without-title' ? '未命名节点 · 改写结果' : '周明瑞';
+    await ai.locator('.ai-composer textarea').fill(fieldOrder === 'fill-without-title' ? '改写未命名节点的内容，用新的节点填入内容'
+      : fieldOrder === 'created-first' ? '新建的节点插入内容，标题为周明瑞，内容为改写后的未命名节点的内容'
+      : fieldOrder === 'created-body-field' ? '新建的节点，标题为周明瑞，正文内容为改写后的未命名节点内容'
+      : fieldOrder === 'rewrite-first'
       ? '改写未命名节点的内容，用新的节点插入内容，标题为周明瑞'
       : '用新的节点插入内容，标题为周明瑞，内容为改写后的未命名节点的内容，');
     await ai.locator('.ai-composer textarea').press('Enter');
-    const result = page.getByRole('article', { name: /文本节点：周明瑞$/u });
+    const result = page.getByRole('article', { name: new RegExp('文本节点：' + resultTitle + '$', 'u') });
     await expect(result).toContainText('周明瑞在晨光中醒来');
     await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
     await ai.locator('.ai-composer textarea').fill('选中未命名节点');
@@ -480,6 +657,7 @@ export function canvasControlScenarios(url: string): void {
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls++;
       await held;
@@ -562,7 +740,8 @@ export function canvasControlScenarios(url: string): void {
   });
   for (const bodyUpdate of [false, true]) test(`model removal from a numbered group handles pending body update ${bodyUpdate} and undoes once`, async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls++;
       const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -661,7 +840,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('semantic fallback uses the chosen model and waits for confirmation while model selection stays beside the composer', async ({ page }, info) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls++;
       const body = JSON.stringify({ steps: [{ action: 'appearance.preset.apply', arguments: { id: 'eye-care' } }], clarification: '' });
@@ -700,7 +880,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('conversational theme names apply all three complete presets locally and the chooser matches the interface', async ({ page }, info) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() !== 'OPTIONS') calls++;
       return route.fulfill({ status: 500, headers: { 'access-control-allow-origin': '*' }, body: 'Unexpected model request' });
     });
@@ -742,7 +923,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('supported canvas controls keep themes backgrounds and annotations local with a configured model', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() !== 'OPTIONS') calls++;
       return route.fulfill({ status: 500, headers: { 'access-control-allow-origin': '*' }, body: 'Unexpected model request' });
     });
@@ -777,7 +959,8 @@ export function canvasControlScenarios(url: string): void {
     let calls = 0;
     const draft = '雨夜里，他把最后一盏灯让给陌生人。';
     const unrelated = '正弦和余弦是三角函数。';
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       return route.fulfill({ contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },
@@ -811,7 +994,8 @@ export function canvasControlScenarios(url: string): void {
     let calls = 0;
     const biography = '林见秋在社区护理站值夜班。';
     const followup = '写一段人物小传，然后写入到角色中';
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const body = route.request().postDataJSON() as { messages: Array<{ role: string; content: string }>; tools?: unknown };
@@ -861,7 +1045,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('creating a card with prose asks the model only for text and writes the locally bound card', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const body = route.request().postDataJSON() as { messages: Array<{ content: string }>; tools?: unknown };
@@ -884,7 +1069,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('reported counted grouping keeps outside cards separate and unpunctuated targets receive generated prose', async ({ page }) => {
     const calls: string[] = [];
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       const body = route.request().postDataJSON() as { messages: Array<{ content: string }>; tools?: unknown };
       expect(body.tools).toBeUndefined();
@@ -923,7 +1109,8 @@ export function canvasControlScenarios(url: string): void {
   test('a delegated biography name is generated once and updates only the bound field on approval', async ({ page }) => {
     await seedCanvas(page, url, [{ title: '角色', body: '人物小传\n姓名：沈昭秋\n年龄：34岁' }, { title: '人物' }]);
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const body = route.request().postDataJSON() as { messages: Array<{ content: string }>; tools?: unknown };
@@ -1071,7 +1258,8 @@ export function canvasControlScenarios(url: string): void {
   test('a distant chosen draft sends one exact version and keeps its first sentence', async ({ page }) => {
     const requests: Array<{ messages: Array<{ role: string; content: string }>; max_tokens: number }> = [];
     const firstSentence = '午夜的钟响了。';
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       requests.push(route.request().postDataJSON() as (typeof requests)[number]);
       const content = requests.length === 1 ? '第一版：\n雨水落进旧井。\n\n第二版：\n' + firstSentence + '她推开门。' :
@@ -1138,6 +1326,7 @@ export function canvasControlScenarios(url: string): void {
     test.setTimeout(60000);
     let round = 0;
     await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       round++;
       const request=route.request().postDataJSON() as {tools?:Array<{function:{name:string}}>};
@@ -1327,7 +1516,8 @@ export function canvasControlScenarios(url: string): void {
       JSON.stringify({ type: 'end' })].join('\n');
     const replies = [{ text: '三人各自守护不同地点。' }, { texts: ['追查钟声', '让乡亲过河'] }, { text: '第二段改写为简报。' }];
     let requests = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ content: string }> };
       expect(request.tools).toBeUndefined();
@@ -1381,7 +1571,8 @@ export function canvasControlScenarios(url: string): void {
 
   test('unresolved narrative requests use the current model and a clarification never produces partial writes', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls++;
       return route.fulfill({ json: { choices: [{ message: { content: JSON.stringify({ actions: [], clarification: '请补充人物资料和创建方式。' }) }, finish_reason: 'stop' }],
@@ -1467,7 +1658,8 @@ export function canvasControlScenarios(url: string): void {
 
   test('reported character-card writing binds the actual node and puts generated content into its reviewed plan', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls += 1;
       const request = route.request().postDataJSON() as { messages: Array<{ role: string; content: string }> };
@@ -1564,6 +1756,7 @@ export function canvasControlScenarios(url: string): void {
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       if (route.request().postData()?.includes('private-model-failure-724')) {
         return route.fulfill({ status: 400, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
@@ -1613,7 +1806,8 @@ export function canvasControlScenarios(url: string): void {
 
   test('natural character creation keeps the local title and requests only background prose', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ content: string }> };
@@ -1636,7 +1830,8 @@ export function canvasControlScenarios(url: string): void {
   test('mixed text and canvas operations show one preview and undo together', async ({ page }) => {
     await seedCanvas(page, url, [{ title: '混合甲' }, { title: '混合乙', body: '已有介绍。' }, { title: '混合丙' }]);
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       calls++;
       const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ content: string }> };
@@ -1683,7 +1878,8 @@ export function canvasControlScenarios(url: string): void {
 
   test('named comparison sends both sources and saves the result only after confirmation', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls += 1;
       const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -1760,7 +1956,8 @@ export function canvasControlScenarios(url: string): void {
 
   test('a described paragraph is rewritten in place and a short follow-up uses the applied text', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls += 1;
       const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -1837,7 +2034,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('flexible arrangement uses a local default gap without sending a title directory', async ({ page }) => {
     let requests = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       requests += 1;
       const body = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -2033,7 +2231,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('a named canvas query finds the protagonist and a short follow-up changes the real weapon line without model calls', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls += 1;
       const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -2076,7 +2275,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('designing a protagonist fills the selected blank node directly and undo restores the blank node', async ({ page }) => {
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls += 1;
       const request = route.request().postDataJSON() as { messages: Array<{ content: string }> };
@@ -2103,7 +2303,8 @@ export function canvasControlScenarios(url: string): void {
   test('paragraph rewrite sends a bound range and applies only the replacement with one undo', async ({ page }) => {
     test.setTimeout(60_000);
     let calls = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       calls += 1;
       if (calls === 1) {
@@ -2132,7 +2333,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('native role follow-ups retain constraints and task totals separate new tasks from retries', async ({ page }) => {
     const requests: Array<{ messages: Array<{ role: string; content: string }> }> = [];
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       requests.push(route.request().postDataJSON());
       return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: requests.length === 1 ? '已保留人物限制。' : '他害怕钟声，不能复活。' }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 20, prompt_cache_hit_tokens: 50, prompt_cache_miss_tokens: 50 } })}\n\ndata: [DONE]\n\n` });
@@ -2162,7 +2364,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('explicit selected-node recolor makes no model call, remains reviewed and undoes normally', async ({ page }) => {
     let requests = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       requests += 1;
       return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' }, body: `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify({ version: 1, actions: [{ type: 'create-node', ref: 'hero', title: '本地改色目标', text: '原文必须保留。', color: '#a83d44' }] }) }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 } })}\n\ndata: [DONE]\n\n` });
@@ -2262,7 +2465,8 @@ export function canvasControlScenarios(url: string): void {
   });
   test('a prose response containing canvas actions is rejected without a paid plan repair', async ({ page }) => {
     let requests = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       requests++;
       const content = JSON.stringify({ texts: ['不应写入'], actions: [{ type: 'delete', ids: ['other'] }] });
@@ -2280,7 +2484,8 @@ export function canvasControlScenarios(url: string): void {
 
   for (const failure of ['format', 'scope'] as const) test(`AI prose ${failure} failure releases its task and allows an explicit retry`, async ({ page }) => {
     let requests = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
       requests++;
       const content = JSON.stringify(requests === 1 ? (failure === 'format' ? { text: '错误字段' } : { texts: ['正文'], id: 'other' }) : { texts: ['重试后的正文'] });
@@ -2298,7 +2503,8 @@ export function canvasControlScenarios(url: string): void {
   test('AI node editing binds the selected object and refuses a review after the user edits it', async ({ page }) => {
     test.setTimeout(60_000);
     let requests = 0;
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       requests++;
       const request = route.request().postDataJSON() as { tools?: unknown; messages: Array<{ content: string }> };
@@ -2337,7 +2543,8 @@ export function canvasControlScenarios(url: string): void {
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true }));
     let requestText = '';
-    await page.route('https://canvas-control.test/**', route => {
+    await page.route('https://canvas-control.test/**', async route => {
+      if (await fulfillSemanticDecomposition(route)) return;
       if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       requestText = route.request().postData() ?? '';
       return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'access-control-allow-origin': '*' },

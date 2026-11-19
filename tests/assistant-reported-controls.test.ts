@@ -1,3 +1,4 @@
+import { semanticModelFixture } from './helpers/semantic-model-fixture.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ApplicationKernel } from '../src/core/kernel.ts';
@@ -132,8 +133,11 @@ test('model fallback uses current provider metadata and registered actions, requ
   let output: { steps: Array<{ action: string; arguments: Record<string, unknown> }>; clarification: string } =
     { steps: [{ action: 'editor.immersive.enter', arguments: { target: { title: '空白31' } } }], clarification: '' };
   const planner = { ...context, capabilities: { ...context.capabilities, request: async (key: string, input: unknown, signal?: AbortSignal) => {
+    if (key === 'ai.generate@1') { const graph = semanticModelFixture(input as AIGenerateRequest); if (graph) return { text: JSON.stringify(graph), provider: 'fixture', model: 'decomposition', usage: { inputTokens: 0, outputTokens: 0 } }; }
     if (key === 'ai.provider.catalog@1') return { activeId: 'chosen', options: [{ id: 'chosen', configured: true }] };
-    if (key === 'ai.generate@1') { request = input as AIGenerateRequest; return { text: JSON.stringify(output), provider: 'fixture', model: 'chosen', usage: { inputTokens: 42, outputTokens: 12 } }; }
+    if (key === 'ai.generate@1') {
+        const graph = semanticModelFixture(input as AIGenerateRequest);
+        if (graph) return { provider: 'fixture', model: 'semantic', text: JSON.stringify(graph), usage: { inputTokens: 0, outputTokens: 0 } };  request = input as AIGenerateRequest; return { text: JSON.stringify(output), provider: 'fixture', model: 'chosen', usage: { inputTokens: 42, outputTokens: 12 } }; }
     return context.capabilities.request(key as KnownCapabilityType, input, signal);
   } } } as PluginContext;
   const prepared: AIPreparedContext = { id: 'semantic-turn', sessionId: 'semantic-session', prompt: '请带我进入空白31的沉浸编辑', providerProfileId: 'chosen',
@@ -158,8 +162,9 @@ test('model fallback uses current provider metadata and registered actions, requ
 
   output = { steps: [{ action: 'editor.immersive.enter', arguments: { target: { title: '更新后的标题' } } }], clarification: '' };
   const changedWhileParsing = { ...planner, capabilities: { ...planner.capabilities, request: async (key: string, input: unknown, signal?: AbortSignal) => {
+    if (key === 'ai.generate@1') { const graph = semanticModelFixture(input as AIGenerateRequest); if (graph) return { text: JSON.stringify(graph), provider: 'fixture', model: 'decomposition', usage: { inputTokens: 0, outputTokens: 0 } }; }
     const result = await planner.capabilities.request(key as KnownCapabilityType, input, signal);
-    if (key === 'ai.generate@1') await dispatch('node.rename', { id: target.id, title: '解析期间改变' });
+    if (key === 'ai.generate@1' && !semanticModelFixture(input as AIGenerateRequest)) await dispatch('node.rename', { id: target.id, title: '解析期间改变' });
     return result;
   } } } as PluginContext;
   await assert.rejects(planWorkspaceWithModel(changedWhileParsing, { ...prepared, id: 'changed-during-parse' }, new AbortController().signal), /解析期间文档已变化/u);
@@ -170,6 +175,7 @@ test('a model plan stays pending until the document owner preview is actually ap
   await dispatch('node.create', { title: '待确认卡' });
   const node = (await nodes()).find(node => node.title === '待确认卡')!;
   const planner = { ...context, capabilities: { ...context.capabilities, request: async (key: string, input: unknown, signal?: AbortSignal) => {
+    if (key === 'ai.generate@1') { const graph = semanticModelFixture(input as AIGenerateRequest); if (graph) return { text: JSON.stringify(graph), provider: 'fixture', model: 'decomposition', usage: { inputTokens: 0, outputTokens: 0 } }; }
     if (key === 'ai.provider.catalog@1') return { activeId: 'chosen', options: [{ id: 'chosen', configured: true }] };
     if (key === 'ai.generate@1') return { text: JSON.stringify({ steps: [{ action: 'node.color', arguments: { target: { id: node.id }, color: '#3568a8' } }], clarification: '' }),
       provider: 'fixture', model: 'chosen', usage: { inputTokens: 30, outputTokens: 10 } };
@@ -202,6 +208,7 @@ for (const change of ['conversation', 'target-body', 'target-title', 'group-memb
   const node = members[0]!;
   await dispatch('selection.set', { ids: [node.id], mode: 'replace' });
   const planner = { ...context, capabilities: { ...context.capabilities, request: async (key: string, input: unknown, signal?: AbortSignal) => {
+    if (key === 'ai.generate@1') { const graph = semanticModelFixture(input as AIGenerateRequest); if (graph) return { text: JSON.stringify(graph), provider: 'fixture', model: 'decomposition', usage: { inputTokens: 0, outputTokens: 0 } }; }
     if (key === 'ai.provider.catalog@1') return { activeId: 'chosen', options: [{ id: 'chosen', configured: true }] };
     if (key === 'ai.generate@1') return { text: JSON.stringify({ steps: [{ action: 'group.remove', arguments: { groupId: group!.id, nodeIds: [node.id] } }], clarification: '' }), provider: 'fixture', model: 'chosen' };
     return context.capabilities.request(key as KnownCapabilityType, input, signal);
@@ -286,8 +293,11 @@ test('interface model fallback sends only interface actions without canvas direc
   await dispatch('node.create', { title: '不应发送的私有标题', body: '不应发送的正文' });
   let recorded: AIGenerateRequest | undefined;
   const planner = { ...context, capabilities: { ...context.capabilities, request: async (key: string, input: unknown, signal?: AbortSignal) => {
+    if (key === 'ai.generate@1') { const graph = semanticModelFixture(input as AIGenerateRequest); if (graph) return { text: JSON.stringify(graph), provider: 'fixture', model: 'decomposition', usage: { inputTokens: 0, outputTokens: 0 } }; }
     if (key === 'ai.provider.catalog@1') return { activeId: 'chosen', options: [{ id: 'chosen', configured: true, contextWindowTokens: 16000 }] };
-    if (key === 'ai.generate@1') { recorded = input as AIGenerateRequest; return { text: JSON.stringify({ steps: [], clarification: '请指定设置页' }), provider: 'fixture', model: 'chosen' }; }
+    if (key === 'ai.generate@1') {
+        const graph = semanticModelFixture(input as AIGenerateRequest);
+        if (graph) return { provider: 'fixture', model: 'semantic', text: JSON.stringify(graph), usage: { inputTokens: 0, outputTokens: 0 } };  recorded = input as AIGenerateRequest; return { text: JSON.stringify({ steps: [], clarification: '请指定设置页' }), provider: 'fixture', model: 'chosen' }; }
     return context.capabilities.request(key as KnownCapabilityType, input, signal);
   } } } as PluginContext;
   await planWorkspaceWithModel(planner, { id: 'interface', sessionId: 'interface', prompt: '我想打开配置里那个管理页面', providerProfileId: 'chosen',

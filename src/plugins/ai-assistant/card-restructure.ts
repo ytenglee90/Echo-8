@@ -7,8 +7,8 @@ import { canvasTitleAliases, normalizeCanvasTitle } from '../../services/canvas-
 import { readContextSource } from './context-source-reader.ts';
 import { estimateAITokens } from './evidence-boundaries.ts';
 
-interface RestructureTask { names: string[]; titles: string[]; reconnect: boolean }
-export interface RestructureBinding { ids: string[]; titles: string[]; reconnect: boolean }
+interface RestructureTask { names: string[]; sourceIds?: string[]; titles: string[]; reconnect: boolean; allowEmpty?: boolean }
+export interface RestructureBinding { ids: string[]; titles: string[]; reconnect: boolean; instruction?: string }
 
 /** Bind all three explicit fields regardless of their order; quoted names are data. */
 function rewriteIntoNewNode(text: string): RestructureTask | undefined {
@@ -62,9 +62,9 @@ export async function prepareCardRestructure(
   budget: { characters: number; tokens: number }, signal: AbortSignal,
 ): Promise<{ sources?: AIPreparedSource[]; restructure?: RestructureBinding; clarify?: string }> {
   const sources: AIPreparedSource[] = [];
-  for (const name of task.names) {
+  for (const name of task.sourceIds ?? task.names) {
     const ref = refs.find(item => naturalName(item.token) === name);
-    const candidates = catalog.filter(source => source.kind === 'text' && (ref ? source.sourceId === ref.sourceId :
+    const candidates = catalog.filter(source => source.kind === 'text' && (task.sourceIds ? source.sourceId === name : ref ? source.sourceId === ref.sourceId :
       source.automaticRetrieval !== false && canvasTitleAliases(source.title).includes(normalizeCanvasTitle(name))));
     if (candidates.length !== 1) return { clarify: `请用 @ 指定唯一的来源卡片「${name}」。` };
     const source = candidates[0]!;
@@ -80,7 +80,7 @@ export async function prepareCardRestructure(
   }
   const ids = sources.map(source => source.sourceId);
   if (new Set(ids).size !== ids.length) return { clarify: '请指定互不相同的来源卡片。' };
-  if (sources.every(source => !source.text.trim())) return { clarify: '来源正文为空，请先指定有内容的卡片。' };
+  if (!task.allowEmpty && sources.every(source => !source.text.trim())) return { clarify: '来源正文为空，请先指定有内容的卡片。' };
   return { sources, restructure: { ids, titles: task.titles, reconnect: task.reconnect } };
 }
 

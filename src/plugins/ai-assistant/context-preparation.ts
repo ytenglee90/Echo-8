@@ -65,6 +65,7 @@ import { prepareCardRestructure } from './card-restructure.ts';
 import { canvasReceiptReply, checkCanvasRecovery, readCanvasReceipt, recoverCanvasRequest, recoverFieldDelegation } from './canvas-recovery.ts';
 import { interpretLocalTurn } from './local-turn-routing.ts';
 import { requestsCanvasTextGeneration } from './canvas-execution-policy.ts';
+import { prepareTextComposition } from './text-composition-preparation.ts';
 
 export interface AIContextBudget {
   characterLimit: number;
@@ -314,7 +315,7 @@ export async function prepareAIContext(
     preparationId, sessionId: session.id, prompt: payload.prompt,
     sourceIds: payload.references?.filter(reference => payload.prompt.includes(reference.token)).map(reference => reference.sourceId),
   }, signal) : undefined;
-  if (route.native || local.instructions || local.clarification || route.clarification || route.applyItems ||
+  if (route.compositionCandidate && !route.textComposition || route.native || local.instructions || local.clarification || route.clarification || route.applyItems ||
     (route.creationText && !route.history && !payload.references?.length && !parseExplicitReferences(payload.prompt).length) ||
     (route.category === 'operation' && !route.history && !route.fieldTask && !requestsCanvasTextGeneration(route) &&
       !payload.references?.length && !parseExplicitReferences(payload.prompt).length) ||
@@ -403,7 +404,7 @@ export async function prepareAIContext(
   const conversationalFollowup = editIntent?.kind === 'followup' && (!previousProposal?.suggestedTarget?.range || previousProposal.status === 'dismissed');
   const naturalEdit = conversationalFollowup ? undefined : editIntent;
   const externalCatalog = await readContextCatalog(context);
-  if (route.operation === 'canvas-control' && (route.fieldTask || route.restructureTask)) {
+  if (route.operation === 'canvas-control' && (route.textComposition || route.fieldTask || route.restructureTask)) {
     const limits = {
       characters: Math.max(0, budget.characterLimit - payload.prompt.length),
       tokens: Math.max(0, budget.tokenLimit - estimateAITokens(payload.prompt)),
@@ -411,7 +412,9 @@ export async function prepareAIContext(
     const sourceId = sessionTranscriptSourceId(session);
     const needsTranscript = route.fieldTask?.kind === 'restore' || route.fieldTask?.kind === 'scan-old';
     const transcript = needsTranscript ? (await readContextSource(context, { sourceId, start: 0, length: 0 }, signal)).source : undefined;
-    const { sources = [], ...binding } = route.fieldTask
+    const { sources = [], ...binding } = route.textComposition
+      ? await prepareTextComposition(context, route.textComposition, externalCatalog, boundReferences, session, selectionAtSend, limits, signal)
+      : route.fieldTask
       ? await prepareStructuredFields(context, route.fieldTask, externalCatalog, limits, signal, boundReferences, transcript)
       : await prepareCardRestructure(context, route.restructureTask!, externalCatalog, boundReferences, limits, signal);
     const createdAt = Date.now();
