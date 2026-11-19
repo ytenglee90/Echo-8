@@ -1,4 +1,5 @@
 import type { PalettePresetId } from '../protocols/appearance.ts';
+import { workspaceRequestText } from './workspace-request-intent.ts';
 
 const names = '明调|暗调|护眼|明亮|浅色|亮色|深色|暗色|夜间|日间|白天|暗黑';
 const subject = '(?:(?:全局|应用|界面)?(?:主题(?:颜色|色)?|配色(?:方案)?|颜色方案|模式)|界面|外观)';
@@ -10,7 +11,8 @@ const objectFirst = new RegExp(`^(?:把|将)?${target}(?:打开|启用|应用|�
 
 /** Only a complete theme-change request is executable; titles and discussions stay data. */
 export function palettePresetIntent(input: string): PalettePresetId | undefined {
-  const text = input.normalize('NFKC').trim()
+  const requested = new RegExp('^(?:我想(?:要)?|我要|我希望|我需要)\\s*(?=' + names + ')', 'u').test(input.trim());
+  const text = (requested ? '用' : '') + workspaceRequestText(input).normalize('NFKC').trim()
     .replace(/^(?:(?:请你?|麻烦你?|帮我|给我)\s*[，,]?\s*)+/u, '')
     .replace(/^(?:我想(?:要)?|我要)\s*(?=明调|暗调|护眼)/u, '用')
     .replace(/^(?:我想(?:要)?|我要)\s*/u, '')

@@ -62,7 +62,7 @@ function localTurnInput(prompt: string, route: AITurnRoute) {
   const startsWithCreation = CREATE_PREFIX.test(clauses[0] ?? '') || generateBatch;
   const compoundCreation = startsWithCreation && clauses.length > 1 &&
     !clauses.slice(1).some(clause => /^(?:叫|就叫|名为|命名为|标题(?:是|为))/u.test(clause));
-  if (route.semanticFallback || route.workspaceSteps || route.catalogIntent || route.applyItems || route.fieldTask || route.restructureTask || route.creationText || route.history || route.category === 'mixed' ||
+  if (route.semanticFallback && !startsWithCreation || route.workspaceSteps || route.catalogIntent || route.applyItems || route.fieldTask || route.restructureTask || route.creationText || route.history || route.category === 'mixed' ||
     route.disposition !== 'normal' || route.repeatCreation || isCanvasStatusFollowup(prompt) || isCanvasFailureFollowup(prompt) ||
     route.clarification || !['general', 'canvas-control'].includes(route.operation) || route.local && !compoundCreation || route.native ||
     route.interpretedSearch || isLocalDiscussion(prompt) ||

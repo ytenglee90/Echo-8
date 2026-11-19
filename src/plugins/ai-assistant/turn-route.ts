@@ -23,7 +23,8 @@ import { workspaceCatalogIntent } from '../../services/workspace-catalog-intent.
 import { readWorkspaceSequence } from '../../services/workspace-sequence-intent.ts';
 import { isCurrentConversationArchiveRequest } from '../../services/conversation-archive-intent.ts';
 import { isWorkspacePreviewRequest } from '../../services/workspace-structural-intent.ts';
-import { isWorkspaceCommandRequest, needsSemanticCanvasParsing } from '../../services/workspace-request-intent.ts';
+import { isWorkspaceCommandRequest, needsSemanticCanvasParsing, localCanvasCoversModifiers } from '../../services/workspace-request-intent.ts';
+import { workspaceRequirements } from '../../services/workspace-semantic-plan.ts';
 
 const OBJECT = /画布|卡(?:片)?|节点|文本框|群组|选区|连线|这条线|主题|背景|注释|批注|标注|导航栏|工具栏|编辑器|小地图|视图|缩放/u;
 const ANALYSIS = /总结|概括|归纳|对比|比较|分析|检查|核对|找出|根据|结合|参考/u;
@@ -93,6 +94,11 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
     (/^(?:请\s*|帮我\s*)?让.{1,90}(?:资料|正文|设定).{0,50}(?:更完整|补充|建立联系)/u.test(text) ||
       /落实到画布|^让(?:当前)?画布.{0,12}出现|换成.{0,60}关系改成/u.test(text));
   const workspaceRequest = !contentOperation && disposition === 'normal' && (semanticFallback || isWorkspaceCommandRequest(prompt));
+  const uncompiledWorkspace = workspaceRequest && !local && !native && !workspaceSteps && !catalogIntent && !compound &&
+    !fieldTask && !restructureTask && !creationText && !repeatCreation && !interpretedSearch;
+  const requirements = workspaceRequirements(prompt);
+  const incompleteSequence = workspaceRequest && requirements.length > 1 && !localCanvasCoversModifiers(prompt, parsedLocal, requirements.map(req => req.text)) && !workspaceSteps && !catalogIntent &&
+    !compound && !restructureTask && !creationText && parsedLocal?.kind !== 'create';
   const operation = revisePending || isCanvasStatusFollowup(prompt) ? 'general'
     : restructureTask && disposition === 'normal' ? 'canvas-control'
     : catalogIntent || archiveSession || native?.kind === 'connection-inspect' ? 'canvas-control' : disposition === 'read-only' ? 'general'
@@ -119,7 +125,9 @@ export function classifyAITurn(prompt: string, explicit?: AIOperation, requested
     : (!explicit || explicit === 'general') && !writeCommand && !mixed && /^(?:(?:请|帮我)\s*)?(?:处理|弄|改|收|整理)一下\s*(?:这个|它|这张卡|这张卡片)?[。！!]?$/u.test(text)
     ? '你希望我在画布上修改什么，还是先讨论怎么改？' : undefined;
   return {
-    category, operation, local, semanticFallback: semanticFallback && !workspaceSteps && !catalogIntent && !native && !compound, disposition, repeatCreation, native: category === 'operation' ? native : undefined, history, draft, continuation, mechanical, geometryOnly, interpretedSearch, lookupOnly,
+    category, operation, local: incompleteSequence ? undefined : local,
+    semanticFallback: uncompiledWorkspace || incompleteSequence || semanticFallback && !workspaceSteps && !catalogIntent && !native && !compound,
+    disposition, repeatCreation, native: category === 'operation' && !incompleteSequence ? native : undefined, history, draft, continuation, mechanical, geometryOnly, interpretedSearch, lookupOnly,
     excludesHistory, revisePending, workspaceSteps, archiveSession, catalogIntent: operation === 'canvas-control' ? catalogIntent : undefined,
     compound: operation === 'canvas-control' ? compound : undefined,
     readCanvas: category !== 'chat' || !standalone && (canvas || IMPLICIT_CANVAS_QUESTION.test(text) || /(?:这两张|这三张|它们).{0,10}(?:怎么连|如何连接)/u.test(text)),

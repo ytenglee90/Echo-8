@@ -1,3 +1,4 @@
+import { workspaceRequirements } from '../../services/workspace-semantic-plan.ts';
 import { createId, type PluginContext } from '../../core/contracts.ts';
 import type {
   AIContextSearchContribution,
@@ -94,7 +95,7 @@ export async function prepareAIContext(
   selectionAtSend?: string[],
 ): Promise<AIPreparedContext> {
   let route = turnRoute ?? classifyAITurn(payload.prompt, explicitAtOperation(payload.prompt) ?? payload.operation);
-  if (route.semanticFallback) {
+  if (route.semanticFallback && workspaceRequirements(payload.prompt).length === 1) {
     const parsed = naturalCanvasOperation(payload.prompt);
     const nodes = await context.capabilities.request<ContentSummary[]>('content.summaries@1', undefined, signal)
       .catch(error => { if (isCapabilityUnavailable(error, 'content.summaries@1')) return []; throw error; });
@@ -130,13 +131,14 @@ export async function prepareAIContext(
     }, { route });
   }
   if (route.catalogIntent) {
-    const { steps, clarify } = await prepareCatalogIntent(
+    const { steps, clarify, needsModel } = await prepareCatalogIntent(
       context, route.catalogIntent, session.id, payload.assistantId, selectionAtSend, signal,
     );
     const createdAt = Date.now();
     signal.throwIfAborted();
     report(1);
-    return rememberTurnAssembly({
+    if (needsModel) route = { ...route, catalogIntent: undefined, local: undefined, native: undefined, workspaceSteps: undefined, semanticFallback: true };
+    else return rememberTurnAssembly({
       id: preparationId, sessionId: session.id, assistantId: payload.assistantId, prompt: payload.prompt,
       operation: 'canvas-control', contextMode: 'explicit-only', sources: [], totalCharacters: payload.prompt.length,
       estimatedTokens: 0, createdAt, expiresAt: createdAt + 10 * 60_000,

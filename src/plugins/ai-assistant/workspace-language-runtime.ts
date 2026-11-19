@@ -9,7 +9,7 @@ import { naturalNames } from '../../services/natural-canvas-rules.ts';
 import type { TextFormattingSnapshot } from '../../protocols/formatting.ts';
 import type { WorkspaceActionIndex, WorkspacePlanStep } from '../../protocols/workspace-actions.ts';
 import type { CatalogIntent } from '../../services/workspace-catalog-intent.ts';
-import { compileWorkspaceLanguage, workspaceNameKey, type WorkspaceLanguageStep } from '../../services/workspace-language.ts';
+import { compileWorkspaceLanguage, bindLocalWorkspacePronouns, workspaceNameKey, type WorkspaceLanguageStep } from '../../services/workspace-language.ts';
 import { selectedWorkspaceName } from '../../services/workspace-selection-reference.ts';
 import { isCapabilityUnavailable } from './runtime-errors.ts';
 
@@ -236,7 +236,7 @@ async function bindCatalogArguments(
 export async function prepareCatalogIntent(
   context: PluginContext, intent: CatalogIntent, sessionId: string, assistantId: string | undefined,
   selectedIds: string[] | undefined, signal: AbortSignal,
-): Promise<{ steps?: WorkspaceLanguageStep[]; clarify?: string }> {
+): Promise<{ steps?: WorkspaceLanguageStep[]; clarify?: string; needsModel?: true }> {
   const index = await context.queries.ask<WorkspaceActionIndex>('workspace.actions@1').catch(error => {
     if (error instanceof Error && error.message === 'Query unavailable: workspace.actions@1') return undefined;
     throw error;
@@ -248,9 +248,8 @@ export async function prepareCatalogIntent(
   }
   if (intent.parts) {
     const effects = new Map(index?.actions.map(action => [action.id, action.effect]));
-    if (intent.steps.some(step => !['query', 'workspace'].includes(effects.get(step.action) ?? ''))) {
-      return { clarify: '这份组合中的文档或文件步骤暂未接入自动执行。' };
-    }
+    if (intent.steps.some(step => effects.get(step.action) === 'file')) return { clarify: '文件操作需要从对应功能界面完成授权，组合尚未执行。' };
+    if (intent.steps.some(step => effects.get(step.action) === 'document')) return { needsModel: true };
     const prepared = await Promise.all(intent.parts.map(part =>
       prepareCatalogIntent(context, part, sessionId, assistantId, selectedIds, signal)));
     const clarification = prepared.find(part => part.clarify)?.clarify;
@@ -278,7 +277,10 @@ export async function prepareCatalogIntent(
   if (intent.primitive && intent.steps.some(step => step.arguments?.target || step.arguments?.targets)) {
     const nodes = await context.capabilities.request<ContentSummary[]>('content.summaries@1', undefined, signal);
     const steps = compileWorkspaceLanguage(intent.input, new Set(nodes.map(node => workspaceNameKey(node.title))));
-    return steps ? { steps } : { clarify: '无法完整核对这一步的对象，请明确名称。' };
+    const priorTarget = intent.steps[0]?.arguments?.target;
+    const bound = steps && bindLocalWorkspacePronouns(steps, isRecord(priorTarget) ? priorTarget : undefined,
+      /「[^」]+」|『[^』]+』|“[^”]+”|"[^"]+"/u.test(intent.input));
+    return bound ? { steps: bound.steps } : { clarify: '无法完整核对这一步的对象，请明确名称。' };
   }
   if (!intent.binding) return { steps: intent.steps };
   try {

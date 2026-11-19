@@ -1,4 +1,5 @@
 import { workspaceSimpleControl } from './workspace-controls.ts';
+import { workspaceRequestText } from './workspace-request-intent.ts';
 import type { WorkspacePlanStep } from '../protocols/workspace-actions.ts';
 import { readWorkspaceSelectionReference, type WorkspaceSelectionReference } from './workspace-selection-reference.ts';
 
@@ -52,9 +53,29 @@ export interface WorkspaceLanguageStep extends WorkspacePlanStep {
 type Action = Omit<WorkspaceLanguageStep, 'id' | 'dependsOn' | 'when'>;
 type Title = (value: string) => string;
 
+/** Bind singular pronouns only to an explicit earlier node in the same complete local request. */
+export function bindLocalWorkspacePronouns<T extends Pick<WorkspacePlanStep, 'action' | 'arguments'>>(
+  input: T[], previous?: Record<string, unknown>, literal = false,
+): { steps: T[]; target?: Record<string, unknown> } | undefined {
+  let target = previous;
+  const steps: T[] = [];
+  for (const step of input) {
+    const candidate = step.arguments?.target as Record<string, unknown> | undefined;
+    let bound = step;
+    if (candidate && typeof candidate.title === 'string' && !literal && /^(?:它|这张卡|这张卡片|刚才那张|刚才打开的(?:卡片|节点))$/u.test(candidate.title)) {
+      if (!target) return undefined;
+      bound = { ...step, arguments: { ...step.arguments, target: { ...target } } };
+    }
+    if (bound.arguments?.target) target = bound.arguments.target as Record<string, unknown>;
+    else if (bound.arguments?.targets || bound.arguments?.from || bound.arguments?.to) target = undefined;
+    steps.push(bound);
+  }
+  return { steps, target };
+}
+
 function objectAction(text: string, title: Title, literal: Title): Action | undefined {
   const target = (value: string) => ({ target: { title: title(value) } });
-  const focus = /^(?:(?:聚焦|居中到|跳转|跳)(?:到|至|于)?\s*(.+)|(?:把|将)\s*(.+?)\s*(?:放到|置于)(?:视口|画面|视图)正中(?:间|心)?|(?:让)\s*(.+?)\s*显示在(?:画面|视口)中央)$/u.exec(text);
+  const focus = /^(?:(?:(?:聚焦|居中到|跳转)(?:到|至|于)?|跳(?:到|至|于))\s*(.+)|(?:把|将)\s*(.+?)\s*(?:放到|置于)(?:视口|画面|视图)正中(?:间|心)?|(?:让)\s*(.+?)\s*显示在(?:画面|视口)中央)$/u.exec(text);
   if (focus && !/^(?:下一个|上一个|刚才|标注|批注|选区|选中|它$)/u.test(focus[1] ?? focus[2] ?? focus[3]!)) {
     return { action: 'viewport.set', arguments: target(focus[1] ?? focus[2] ?? focus[3]!) };
   }
@@ -87,7 +108,7 @@ function objectAction(text: string, title: Title, literal: Title): Action | unde
   if (immersive) return { action: 'editor.immersive.enter', arguments: target(immersive[1] ?? immersive[2] ?? immersive[3] ?? immersive[4]!) };
   const reversedEditor = /^(?:把|将)\s*(.+?)(?:的)?(?:正文|编辑器|编辑窗格)\s*(打开|关掉|关闭)$/u.exec(text);
   if (reversedEditor) return { action: reversedEditor[2] === '打开' ? 'editor.open' : 'editor.close', arguments: target(reversedEditor[1]!) };
-  const namedEditor = /^(?:打开|进入|编辑|阅读)\s*(.+?)(?:的)?(?:正文|编辑器|编辑窗格|编辑页)$/u.exec(text);
+  const namedEditor = /^(?:打开|展开|进入|编辑|阅读)\s*(.+?)(?:的)?(?:正文|编辑器|编辑窗格|编辑页)$/u.exec(text);
   if (namedEditor && /^(?:当前)?选中/u.test(namedEditor[1]!)) return undefined;
   if (namedEditor) return { action: 'editor.open', arguments: target(namedEditor[1]!) };
   const explicitNode = /^(打开|编辑|阅读|关闭|关掉)\s*(.+)$/u.exec(text);
@@ -175,6 +196,9 @@ function parseClause(clause: string, title: Title, literal: Title): Action | und
   const focus = focusAtZoom.exec(clause);
   if (focus) return { action: 'viewport.set', arguments: { target: { title: title(focus[3]!) }, zoom: percentValue(focus) } };
   if (zoomQuestion.test(clause)) return { action: 'viewport.read' };
+  if (/^(?:重置|还原|恢复)(?:画布|视口|视图)?(?:缩放|原始大小|原始比例|原大小)$|^(?:画布|视图|视口)(?:恢复|还原|重置)(?:原始大小|原大小|原始比例)$/u.test(clause)) {
+    return { action: 'viewport.set', arguments: { zoom: 1 } };
+  }
   const control = workspaceSimpleControl(clause);
   if (control) return control;
   const simple = simpleActions.find(([pattern]) => pattern.test(clause));
@@ -212,7 +236,7 @@ export function compileWorkspaceLanguage(prompt: string, knownTitles: ReadonlySe
     const stripped = unwrapped.replace(NODE_TYPE, '').replace(/(?:的|这张|那张|那个)$/u, '').trim();
     return stripped || raw;
   };
-  const parse = (value: string) => parseClause(value.trim()
+  const parse = (value: string) => parseClause(workspaceRequestText(value)
     .replace(/^(?:(?:麻烦|请|帮我|给我|我要|我想要|先|再|让我|带我)\s*)+/u, '')
     .replace(/^(?:仍然用|继续用)(?=\s*(?:[0-9０-９]|百分之))/u, '保持')
     .replace(/(?:一下|吧)$/u, '').trim(), title, literal);
@@ -224,10 +248,15 @@ export function compileWorkspaceLanguage(prompt: string, knownTitles: ReadonlySe
   const clauses = text.split(separator).map(clause => clause.trim()).filter(Boolean);
   if (clauses.length < 2 || clauses.length > 8) return undefined;
   const actions: Action[] = [];
+  let previousTarget: Record<string, unknown> | undefined;
   for (const clause of clauses) {
     if (noMovement.test(clause.trim())) continue;
-    const action = parse(clause);
-    if (!action) return undefined;
+    const parsed = parse(clause);
+    if (!parsed) return undefined;
+    const bound = bindLocalWorkspacePronouns([parsed], previousTarget, /\uE000/u.test(clause));
+    if (!bound) return undefined;
+    previousTarget = bound.target;
+    const action = bound.steps[0]!;
     const last = actions.at(-1);
     if (last?.action === 'viewport.set' && action.action === 'viewport.set' &&
       !Object.keys(action.arguments ?? {}).some(key => Object.hasOwn(last.arguments ?? {}, key))) {

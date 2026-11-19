@@ -1,5 +1,7 @@
 # Echo-8 Architecture
 
+Complete local requests remain free of model calls. Internal semantic transport v2 maps every bounded source clause to actions, checks known action coverage, and permits at most one correction before execution. Bounded observation rounds run only metadata queries through existing owners, project safe feedback to the chosen model, and revalidate observed state before the final plan. Dependencies, result references, conditional existence, document review, transactions and retry receipts retain the existing workspace v1 boundary; see ADR-0169.
+
 Workspace command candidates and weak local operands share a conservative semantic handoff. Typed incomplete parsing may use the selected model; actual owner errors stay local. Model workspace steps execute through owners and stable receipts, while document edits retain review. Sender identity is application-bound, interface planning excludes canvas metadata, and referenced-object guards tolerate unrelated document revisions. See ADR-0168.
 
 Complete open/close/switch instructions share a local control compiler and live action coverage checks. Sender-bound assistant views and configured-model selection remain local, while missing values and unavailable targets clarify without paid planning. The versioned UI close-settings command invokes only the active registered settings owner. Existing feature commands retain transactions, history and readback. See ADR-0167.

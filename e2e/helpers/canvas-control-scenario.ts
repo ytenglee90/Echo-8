@@ -22,6 +22,101 @@ const plan: CanvasControlPlan = { version: 1, actions: [
 
 export function canvasControlScenarios(url: string): void {
   test.beforeEach(async ({page})=>installLocalLanguageAssets(page));
+  test('expanded polite controls and same-request pronouns remain local with real editor state', async ({ page }) => {
+    let calls = 0;
+    await page.route('https://canvas-control.test/**', route => { calls++; return route.abort(); });
+    await page.setViewportSize({ width: 1800, height: 1000 });
+    await seedCanvas(page, url, [{ title: '空白11', body: '同句指代必须打开这份正文' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    const ask = async (prompt: string) => {
+      await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
+      const replies = ai.locator('.ai-chat-bubble.assistant:not(.ai-streaming-response)'); const before = await replies.count();
+      await ai.locator('.ai-composer textarea').fill(prompt); await ai.locator('.ai-composer textarea').press('Enter');
+      await expect(replies).toHaveCount(before + 1);
+    };
+    await ask('我希望去群组管理');
+    await expect(page.getByRole('dialog', { name: '加入或移出已有群组', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '关闭群组成员管理', exact: true }).click();
+    await ask('打开空白11的正文，然后进入它的沉浸写作模式');
+    await expect(page.getByRole('button', { name: '退出沉浸写作', exact: true })).toBeVisible();
+    await expect(page.locator('.editor-writing-area').filter({ visible: true }).first()).toContainText('同句指代必须打开这份正文');
+    await page.getByRole('button', { name: '退出沉浸写作', exact: true }).click();
+    await ask('重置画布缩放');
+    await expect(page.getByRole('textbox', { name: '画布缩放 100%', exact: true })).toHaveValue('100');
+    await ask('我希望把主题切换到护眼好吗？');
+    await expect(ai.locator('.ai-chat-bubble.assistant').last()).toContainText('护眼');
+    await expect(ai.getByLabel('本轮 Token 用量', { exact: true }).last()).toContainText('输入 0 · 输出 0');
+    expect(calls).toBe(0);
+  });
+  test('incomplete model coverage is corrected before either editor opens', async ({ page }) => {
+    let calls = 0; let selections = 0; let plans = 0;
+    await page.route('https://canvas-control.test/**', async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      const body = route.request().postDataJSON() as { messages: Array<{ content: string }> };
+      const payload = JSON.parse(body.messages.at(-1)!.content);
+      let result: unknown;
+      if (!payload.directory) { selections++; result = { actions: ['editor.open'], clarification: '' }; }
+      else {
+        plans++;
+        expect(payload.requirements).toHaveLength(2);
+        expect(JSON.stringify(body)).not.toContain('甲卡的保密正文'); expect(JSON.stringify(body)).not.toContain('乙卡的保密正文');
+        const a = payload.directory.nodes.find((node: { title: string }) => node.title === '甲卡');
+        const b = payload.directory.nodes.find((node: { title: string }) => node.title === '乙卡');
+        const first = { id: 'a', action: 'editor.open', arguments: { target: { id: a.id } } };
+        if (plans === 1) result = { steps: [first], clarification: '' };
+        else {
+          expect(payload.feedback).toContain('覆盖');
+          await expect(page.locator('.editor-writing-area').filter({ visible: true })).toHaveCount(0);
+          result = { version: 2, phase: 'final', steps: [first, { id: 'b', action: 'editor.open', arguments: { target: { id: b.id }, mode: 'add' } }],
+            coverage: [{ requirementId: 'r1', status: 'planned', stepIds: ['a'] }, { requirementId: 'r2', status: 'planned', stepIds: ['b'] }], clarification: '' };
+        }
+      }
+      return route.fulfill({ headers: { 'access-control-allow-origin': '*' }, json: { choices: [{ message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 30, completion_tokens: 10 } } });
+    });
+    await page.setViewportSize({ width: 1800, height: 1000 });
+    await seedCanvas(page, url, [{ title: '甲卡', body: '甲卡的保密正文' }, { title: '乙卡', body: '乙卡的保密正文' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('把甲卡送到右边编辑区，然后将乙卡也放进阅读窗格');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.locator('.editor-writing-area').filter({ visible: true })).toHaveCount(2);
+    await expect(ai.locator('.ai-chat-bubble.assistant').last()).toContainText('模型解析已完成');
+    expect(plans).toBe(2); expect(calls).toBe(2 + selections); expect(calls).toBeLessThanOrEqual(3);
+  });
+  test('the selected model observes actual sizes before choosing and opening the wider card', async ({ page }) => {
+    let calls = 0; let selections = 0; let plans = 0;
+    await page.route('https://canvas-control.test/**', route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+      calls++;
+      const body = route.request().postDataJSON() as { messages: Array<{ content: string }> };
+      const payload = JSON.parse(body.messages.at(-1)!.content);
+      expect(JSON.stringify(body)).not.toContain('只属于甲卡的秘密段落'); expect(JSON.stringify(body)).not.toContain('只属于乙卡的秘密段落');
+      let result: unknown;
+      if (!payload.directory) { selections++; result = { actions: ['node.inspect', 'editor.open'], clarification: '' }; }
+      else if (++plans === 1) {
+        const nodes = payload.directory.nodes.filter((node: { title: string }) => ['甲卡', '乙卡'].includes(node.title));
+        result = { version: 2, phase: 'observe', steps: nodes.map((node: { id: string }, i: number) => ({ id: 'q' + i, action: 'node.inspect', arguments: { target: { id: node.id } } })),
+          coverage: [{ requirementId: 'r1', status: 'observing', stepIds: nodes.map((_node: unknown, i: number) => 'q' + i) }, { requirementId: 'r2', status: 'pending', stepIds: [] }], clarification: '' };
+      } else {
+        const rows = payload.observations[0] as Array<{ id: string; result: { id: string; title: string; width: number } }>;
+        const widest = rows.reduce((a, b) => a.result.width > b.result.width ? a : b);
+        expect(widest.result.title).toBe('乙卡');
+        result = { version: 2, phase: 'final', steps: [{ id: 'open', action: 'editor.open', arguments: { target: { id: widest.result.id } } }],
+          coverage: [{ requirementId: 'r1', status: 'observed', stepIds: rows.map(row => row.id) }, { requirementId: 'r2', status: 'planned', stepIds: ['open'] }], clarification: '' };
+      }
+      return route.fulfill({ headers: { 'access-control-allow-origin': '*' }, json: { choices: [{ message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 30, completion_tokens: 10 } } });
+    });
+    await seedCanvas(page, url, [{ title: '甲卡', width: 300, body: '只属于甲卡的秘密段落' }, { title: '乙卡', width: 700, body: '只属于乙卡的秘密段落' }], true);
+    await configure(page, url, 'openai', undefined, 'direct', false);
+    const ai = page.getByRole('region', { name: 'AI 助手', exact: true });
+    await ai.locator('.ai-composer textarea').fill('先查看甲乙卡片谁更宽，再把更宽的卡片打开');
+    await ai.locator('.ai-composer textarea').press('Enter');
+    await expect(page.locator('.editor-writing-area').filter({ visible: true })).toHaveCount(1);
+    await expect(page.locator('.editor-writing-area').filter({ visible: true }).first()).toContainText('只属于乙卡的秘密段落');
+    expect(plans).toBe(2); expect(calls).toBe(2 + selections); expect(calls).toBeLessThanOrEqual(3);
+  });
   test('unrecognized interface wording reaches the selected model once and executes without canvas metadata', async ({ page }) => {
     let calls = 0;
     await page.route('https://canvas-control.test/**', route => {
@@ -47,7 +142,7 @@ export function canvasControlScenarios(url: string): void {
     await expect(page.getByRole('dialog', { name: '加入或移出已有群组', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '关闭群组成员管理', exact: true }).click();
     await expect(ai.getByRole('button', { name: '发送给模型', exact: true })).toBeVisible();
-    await ai.locator('.ai-composer textarea').fill('让我看看能调模型的那个页面');
+    await ai.locator('.ai-composer textarea').fill('显露模型连接的那个设置页面');
     await ai.locator('.ai-composer textarea').press('Enter');
     await expect(page.getByRole('region', { name: 'AI 模型连接与密钥', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '关闭 AI 模型连接', exact: true }).click();
@@ -2309,7 +2404,7 @@ async function openControl(page: Page): Promise<void> {
   await palette.getByRole('option', { name: /^画布控制/u }).click();
 }
 
-async function seedCanvas(page: Page, url: string, nodes: Array<{ title: string; body?: string; color?: string }>, clean = false, connect = false): Promise<void> {
+async function seedCanvas(page: Page, url: string, nodes: Array<{ title: string; body?: string; color?: string; width?: number }>, clean = false, connect = false): Promise<void> {
   const kernel = new ApplicationKernel([createTextNodePlugin(), ...(clean ? [createSelectionPlugin()] : []), ...(connect ? [createConnectionsPlugin()] : [])]);
   await kernel.start();
   if (clean) {

@@ -29,12 +29,12 @@ const surfaces = [
   { names: '标注窗口|注释窗口|批注窗口|标注面板|注释面板|批注面板', close: 'annotation.close' },
 ] as const;
 
-const OPEN = '打开|开启|显示|展开|进入|弹出|返回|回到|切换到|切到|切回|转到|回|使用|继续显示|调出|唤出|呼出|叫出|调|看看';
-const CLOSE = '关闭|关掉|关上|收起|隐藏|退出|关|退掉';
+const OPEN = '打开|开启|显示|展开|进入|弹出|返回|回到|切换到|切到|切回|转到|回|使用|继续显示|调出|唤出|呼出|叫出|调|看看|亮出|弹开|翻到|翻开|去到|去|进到|进|看一下|看下|查看一下|开起来|开(?!关)';
+const CLOSE = '关闭|关掉|关上|收起|隐藏|退出|关|退掉|收起来|关起来|藏起来|隐藏掉';
 const SWITCH = '切换|切一下|开关';
 export function controlText(input: string): string {
-  return workspaceRequestText(input).replace(/^(?:带我)\s*/u, '')
-    .replace(/(?:一下|吧|就好|就行)?[。！!]*$/u, '').trim();
+  return workspaceRequestText(input).replace(/^(?:带我到|带我去|带我|先)\s*/u, '')
+    .replace(/(?:一下|吧|就好|就行|就可以了|就行了)?[。！!]*$/u, '').trim();
 }
 
 function controlOperand(input: string): { name: string; operation: 'open' | 'close' | 'read' | 'toggle' } | undefined {
@@ -42,7 +42,7 @@ function controlOperand(input: string): { name: string; operation: 'open' | 'clo
   const query = /^(?:(?:查看|查询)(?:一下)?\s*)?(?:现在|当前)?(.+?)(?:目前|现在)?(?:打开了吗|开着吗|显示了吗|开没开|是否打开|是开还是关)[？?]?$/u.exec(text);
   if (query) return { name: query[1]!, operation: 'read' };
   const command = new RegExp('^(?:从(?:当前)?书库)?(' + OPEN + '|' + CLOSE + '|查看|查询|' + SWITCH + ')\\s*(.+)$', 'u').exec(text);
-  const reversed = new RegExp('^(?:把|将)?\\s*(.+?)\\s*(' + OPEN + '|' + CLOSE + ')(?:来|出来|起来|了)?$', 'u').exec(text);
+  const reversed = new RegExp('^(?:把|将)?\\s*(.+?)\\s*(' + OPEN + '|' + CLOSE + ')(?:一下|来|出来|起来|了)?$', 'u').exec(text);
   const hide = /^(?:不要|别|不再)显示\s*(.+?)(?:了)?$/u.exec(text);
   if (!command && !reversed && !hide) return undefined;
   const verb = command?.[1] ?? reversed?.[2] ?? '隐藏';
@@ -75,10 +75,10 @@ export function workspaceSimpleControl(input: string): Control | undefined {
   const surface = workspaceSurfaceAction(input);
   if (surface) return { action: surface };
   const text = controlText(input);
-  const enabled = /^(启用|停用|禁用)\s*(.+)$/u.exec(text);
+  const enabled = /^(启用|停用|禁用|停止|暂停|恢复)\s*(.+)$/u.exec(text);
   const state = /^(?:把|将)?\s*(.+?)(?:的)?(?:设为|设置为|改为|改成|切换为|切换到)\s*(开启|打开|启用|关闭|关掉|停用)$/u.exec(text);
   const operand = state ? { name: state[1]!, operation: /关闭|关掉|停用/u.test(state[2]!) ? 'close' as const : 'open' as const }
-    : enabled ? { name: enabled[2]!, operation: enabled[1] === '启用' ? 'open' as const : 'close' as const } : controlOperand(text);
+    : enabled ? { name: enabled[2]!, operation: /启用|恢复/u.test(enabled[1]!) ? 'open' as const : 'close' as const } : controlOperand(text);
   const item = operand && switches.find(item => item.names.split('|').includes(operand.name.replace(/的?(?:状态|功能|开关)$/u, '')));
   if (item && operand && operand.operation !== 'read') return { action: item.action,
     ...(operand.operation === 'toggle' ? {} : { arguments: { enabled: operand.operation === 'open' } }) };
@@ -89,8 +89,8 @@ export function workspaceSimpleControl(input: string): Control | undefined {
   if (/^(?:切换|开关)(?:当前编辑器的)?格式刷$/u.test(text)) return { action: 'editor.formatBrush.toggle' };
   if (/^(?:关闭|关掉|收起)(?:当前|这个|当前的)?(?:编辑器|编辑窗格|编辑页)$/u.test(text)) return { action: 'editor.closeActive' };
   if (/^(?:关闭|关掉|收起)(?:全部|所有)(?:的)?(?:编辑器|编辑窗格|编辑页)$/u.test(text)) return { action: 'editor.closeAll' };
-  if (/^(?:上一步|刚才那一步)(?:撤销|撤回)$|^(?:撤回|退回)上一步$/u.test(text)) return { action: 'history.undo' };
-  if (/^(?:上一步|刚才撤销的那一步)重做$|^恢复刚才撤销的操作$/u.test(text)) return { action: 'history.redo' };
+  if (/^(?:上一步|刚才那一步)(?:撤销|撤回)$|^(?:撤回|退回)上一步$|^(?:撤销掉|撤回|退回)(?:刚才|上一次|最后)(?:的)?(?:一步|操作|修改)$/u.test(text)) return { action: 'history.undo' };
+  if (/^(?:上一步|刚才撤销的那一步)重做$|^恢复刚才撤销的操作$|^(?:再做一次|重新执行)(?:刚才|上次)(?:撤销|撤回)(?:的)?(?:操作|修改)$/u.test(text)) return { action: 'history.redo' };
   const pane = /^(?:切换?到?|切回|跳到|回到|激活)(?:右侧|右边)?(?:第)?(下一个|下一张|下个|上一个|上一张|上个|前一个)(?:编辑窗格|编辑器|编辑页|文档|窗格)$/u.exec(text);
   if (pane) return { action: /^下/u.test(pane[1]!) ? 'editor.next' : 'editor.previous' };
   const tool = /^(?:(?:把|将)?(?:画布)?(?:当前)?工具(?:切换|切|设|改|换)(?:为|到|成)?|(?:切换?|改用|使用|用|换)(?:到|成|为)?)\s*(?:拖动画布的)?(手抓|手形|手型|抓手|平移|选择|框选|选取|箭头)(?:工具|模式)?(?:平移画面)?$/u.exec(text);

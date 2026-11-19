@@ -330,7 +330,7 @@ export function registerAIGenerationRuntime(
           return { text: plan.text, provider: 'local', model: route.fieldTask?.kind === 'change' ? '字段写入' : '历史原文恢复',
             usage: { inputTokens: 0, outputTokens: 0 } };
         }
-        if (route.category === 'operation' && !assembly.compoundTargets && !route.semanticFallback) {
+        if (route.category === 'operation' && !assembly.compoundTargets && (!route.semanticFallback || Boolean(assembly.localInstructions?.length))) {
           const instructions = assembly.localInstructions ?? (assembly.workspaceLocalPrompt ? [assembly.workspaceLocalPrompt] : undefined);
           if (prepared.selectionAtSend && /选中|选区/u.test(instructions?.join(' ') ?? prepared.prompt)) {
             const current = await context.capabilities.request<{ ids: string[] }>('selection.read@1', undefined, signal);
